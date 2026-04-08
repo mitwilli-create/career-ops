@@ -718,11 +718,12 @@ tracked_companies:
     notes: "Lisbon PT / Remote. AI-native sales platform."
     enabled: true
 
-    # -- This batch is clean and consistent with the existing style, and each company has a live careers board/result that matches the repo’s AI / automation / developer-tool focus. Perplexity uses Ashby and has roles like Forward Deployed Engineer / Applied AI; Clay Labs uses Ashby and shows engineering plus AI-adjacent roles; Runway uses Greenhouse; Hightouch uses Greenhouse and shows Solutions Engineer plus AI Agents roles; WorkOS uses Ashby and shows Solutions Engineer / developer-tool roles. --
-    - name: Perplexity
+  # -- AI / Developer Tools --
+
+  - name: Perplexity
     careers_url: https://jobs.ashbyhq.com/perplexity
     scan_method: websearch
-    scan_query: 'site:jobs.ashbyhq.com/perplexity "AI" OR "Applied AI" OR "Forward Deployed" OR "Engineer"'
+    scan_query: ‘site:jobs.ashbyhq.com/perplexity "AI" OR "Applied AI" OR "Forward Deployed" OR "Engineer"’
     notes: "AI-native search and enterprise AI platform."
     enabled: true
 

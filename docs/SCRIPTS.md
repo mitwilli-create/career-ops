@@ -17,6 +17,7 @@ All scripts live in the project root as `.mjs` modules and are exposed via `npm 
 | `npm run update` | `update-system.mjs apply` | Apply upstream update |
 | `npm run rollback` | `update-system.mjs rollback` | Rollback last update |
 | `npm run liveness` | `check-liveness.mjs` | Test if job URLs are still active |
+| `npm run scan` | `scan.mjs` | Zero-token portal scanner |
 
 ---
 
@@ -174,3 +175,15 @@ npm run liveness -- --file urls.txt
 Each URL gets a verdict: `active`, `expired`, or `uncertain` with a reason.
 
 **Exit codes:** `0` all URLs active, `1` any expired or uncertain.
+
+---
+
+## scan
+
+Zero-token portal scanner. Hits ATS APIs (Greenhouse, Ashby, Lever) and career pages directly — no LLM tokens consumed. Reads `portals.yml` for target companies and search queries, outputs matching listings to stdout and optionally appends to `data/pipeline.md`.
+
+```bash
+npm run scan
+```
+
+**Exit codes:** `0` scan completed, `1` configuration error or no portals.yml found.

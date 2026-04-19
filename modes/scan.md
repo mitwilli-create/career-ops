@@ -191,6 +191,18 @@ Nuevas añadidas a pipeline.md: N
 
 Cada empresa en `tracked_companies` debe tener `careers_url` — la URL directa a su página de ofertas. Esto evita buscarlo cada vez.
 
+**REGLA: Usa siempre la URL corporativa de la empresa; recurre al endpoint ATS solo si no existe página corporativa propia.**
+
+El `careers_url` debe apuntar a la página de empleo propia de la empresa siempre que esté disponible. Muchas empresas usan Workday, Greenhouse o Lever por debajo, pero exponen los IDs de las vacantes solo a través de su dominio corporativo. Usar la URL ATS directa cuando existe una página corporativa puede causar falsos errores 410 porque los IDs de los puestos no coinciden.
+
+| ✅ Correcto (corporativa) | ❌ Incorrecto como primera opción (ATS directo) |
+|---|---|
+| `https://careers.mastercard.com` | `https://mastercard.wd1.myworkdayjobs.com` |
+| `https://openai.com/careers` | `https://job-boards.greenhouse.io/openai` |
+| `https://stripe.com/jobs` | `https://jobs.lever.co/stripe` |
+
+Fallback: si solo tienes la URL ATS directa, navega primero al sitio web de la empresa y localiza su página corporativa de empleo. Usa la URL ATS directa únicamente si la empresa no tiene página corporativa propia.
+
 **Patrones conocidos por plataforma:**
 - **Ashby:** `https://jobs.ashbyhq.com/{slug}`
 - **Greenhouse:** `https://job-boards.greenhouse.io/{slug}` o `https://job-boards.eu.greenhouse.io/{slug}`

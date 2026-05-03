@@ -102,5 +102,8 @@ will be announced in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
-© 2026 Santiago Fernández de Valderrama. "career-ops" is an unregistered
-trademark; trademark applications may be filed in relevant jurisdictions.
+© 2026 Santiago Fernández de Valderrama. "career-ops"™ is a trademark of
+Santiago Fernández de Valderrama. A trademark application has been filed
+with the Spanish Patent and Trademark Office (OEPM) in classes 9
+(downloadable software) and 42 (Software-as-a-Service); registration
+pending. International extensions under the Madrid Protocol may follow.

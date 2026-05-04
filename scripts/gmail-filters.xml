@@ -1,0 +1,369 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns='http://www.w3.org/2005/Atom' xmlns:apps='http://schemas.google.com/apps/2006'>
+  <title>career-ops job-alert filters</title>
+  <id>tag:mail.google.com,2008:filters:career-ops</id>
+  <updated>2026-04-27T00:00:00Z</updated>
+
+  <!-- ============================================================
+       Auth-walled mainstream boards — Tier 1 (highest volume)
+       ============================================================ -->
+
+  <entry>
+    <category term='filter'></category>
+    <title>LinkedIn job alerts</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-linkedin</id>
+    <updated>2026-04-27T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='jobalerts-noreply@linkedin.com OR jobs-noreply@linkedin.com OR jobs-listings@linkedin.com OR notifications-noreply@linkedin.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>Indeed job alerts</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-indeed</id>
+    <updated>2026-04-27T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='alert@indeed.com OR noreply@email.indeed.com OR donotreply@indeed.com OR jobalerts@indeed.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>Glassdoor job alerts</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-glassdoor</id>
+    <updated>2026-04-27T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='noreply@glassdoor.com OR alerts@glassdoor.com OR community@glassdoor.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>ZipRecruiter job alerts</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-ziprecruiter</id>
+    <updated>2026-04-27T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='alerts@ziprecruiter.com OR noreply@ziprecruiter.com OR jobs@ziprecruiter.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <!-- ============================================================
+       AI / startup boards — Tier 2 (high signal for your archetypes)
+       ============================================================ -->
+
+  <entry>
+    <category term='filter'></category>
+    <title>BuiltIn job alerts</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-builtin</id>
+    <updated>2026-04-27T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='noreply@builtin.com OR alerts@builtin.com OR notifications@builtin.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>Wellfound (AngelList) job alerts</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-wellfound</id>
+    <updated>2026-04-27T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='notifications@wellfound.com OR notify@angel.co OR team@wellfound.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>Otta job alerts</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-otta</id>
+    <updated>2026-04-27T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='noreply@otta.com OR hello@otta.com OR jobs@otta.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <!-- ============================================================
+       Niche comms / editorial / journalism / content boards
+       ============================================================ -->
+
+  <entry>
+    <category term='filter'></category>
+    <title>Mediabistro alerts</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-mediabistro</id>
+    <updated>2026-04-27T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='noreply@mediabistro.com OR jobs@mediabistro.com OR alerts@mediabistro.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>WorkingInContent alerts</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-workingincontent</id>
+    <updated>2026-04-27T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='hello@workingincontent.com OR jobs@workingincontent.com OR noreply@workingincontent.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>PRSA Job Center alerts</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-prsa</id>
+    <updated>2026-04-27T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='noreply@prsa.org OR jobs@prsa.org OR jobsfromprsa@boxwoodtech.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>Ragan / PR Daily alerts</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-ragan</id>
+    <updated>2026-04-27T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='noreply@ragan.com OR newsletter@ragan.com OR alerts@ragan.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>IABC Job Centre alerts</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-iabc</id>
+    <updated>2026-04-27T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='noreply@iabc.com OR jobs@iabc.com OR jobcentre@iabc.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>JournalismJobs alerts</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-journalismjobs</id>
+    <updated>2026-04-27T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='alerts@journalismjobs.com OR noreply@journalismjobs.com OR contact@journalismjobs.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>MarketingHire alerts</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-marketinghire</id>
+    <updated>2026-04-27T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='alerts@marketinghire.com OR noreply@marketinghire.com OR jobs@marketinghire.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>Communications Network alerts</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-comnetwork</id>
+    <updated>2026-04-27T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='jobs@comnetwork.org OR noreply@comnetwork.org OR info@comnetwork.org'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>Idealist alerts</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-idealist</id>
+    <updated>2026-04-27T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='noreply@idealist.org OR alerts@idealist.org OR notifications@idealist.org'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <!-- ============================================================
+       Gig / freelance platforms — for AI side-work pipeline
+       ============================================================ -->
+
+  <entry>
+    <category term='filter'></category>
+    <title>Upwork job alerts</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-upwork</id>
+    <updated>2026-04-27T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='alerts@upwork.com OR noreply@upwork.com OR notifications@upwork.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>Fiverr alerts</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-fiverr</id>
+    <updated>2026-04-27T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='noreply@fiverr.com OR alerts@fiverr.com OR notifications@fiverr.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>Contra alerts</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-contra</id>
+    <updated>2026-04-27T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='hello@contra.com OR noreply@contra.com OR alerts@contra.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>Freelancer.com alerts</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-freelancer</id>
+    <updated>2026-04-27T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='noreply@freelancer.com OR alerts@freelancer.com OR support@freelancer.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <!-- ============================================================
+       Recruiter / application-confirmation senders — Tier 5
+       (added 2026-05-04 from find-unfiltered-alerts.mjs audit)
+       ============================================================ -->
+
+  <entry>
+    <category term='filter'></category>
+    <title>LinkedIn extended (DMs / InMail / groups / direct hires)</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-linkedin-extended</id>
+    <updated>2026-05-04T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='messaging-digest-noreply@linkedin.com OR inmail-hit-reply@linkedin.com OR groups-noreply@linkedin.com OR hiring-noreply@linkedin.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>Teal job-board alerts</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-teal</id>
+    <updated>2026-05-04T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='hello@tealhq.com OR noreply@tealhq.com OR david.fano@hello.tealhq.com OR notifications@tealhq.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>Greenhouse application confirmations</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-greenhouse-mail</id>
+    <updated>2026-05-04T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='no-reply@us.greenhouse-mail.io OR no-reply@greenhouse-mail.io OR no-reply@eu.greenhouse-mail.io'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <!-- ============================================================
+       Tier 5 (cont.) — added 2026-05-04 from user-supplied samples
+       ============================================================ -->
+
+  <entry>
+    <category term='filter'></category>
+    <title>Welcome to the Jungle (Otta rebrand) job alerts</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-welcometothejungle</id>
+    <updated>2026-05-04T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='help@welcometothejungle.com OR noreply@welcometothejungle.com OR jobs@welcometothejungle.com OR alerts@welcometothejungle.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>Ragan Communications Daily Headlines newsletter</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-ragan</id>
+    <updated>2026-05-04T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='ragandaily@om.ragannewsletters.com OR no_reply@ragan.com OR noreply@ragan.com OR alerts@ragan.com OR newsletters@ragannewsletters.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>YourMembership white-label boards (IABC / PRSA / association job centres)</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-yourmembership</id>
+    <updated>2026-05-04T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='jobalerts@yourmembership.com OR clientserv@yourmembership.com OR noreply@yourmembership.com OR alerts@yourmembership.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+</feed>

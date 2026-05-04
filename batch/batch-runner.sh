@@ -568,9 +568,9 @@ main() {
             running=$((running - 1))
           fi
         done
-        # Compact arrays
-        pids=("${pids[@]}")
-        pid_ids=("${pid_ids[@]}")
+        # Compact arrays — guard for empty under `set -u` on bash 3.2 (macOS).
+        pids=(${pids[@]+"${pids[@]}"})
+        pid_ids=(${pid_ids[@]+"${pid_ids[@]}"})
         sleep 1
       done
 
@@ -581,8 +581,8 @@ main() {
       running=$((running + 1))
     done
 
-    # Wait for remaining workers
-    for pid in "${pids[@]}"; do
+    # Wait for remaining workers — guard for empty array under `set -u`.
+    for pid in ${pids[@]+"${pids[@]}"}; do
       wait "$pid" 2>/dev/null || true
     done
   fi

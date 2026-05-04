@@ -3,18 +3,47 @@ cv.md
 data/applications.md
 data/pipeline.md
 data/scan-history.tsv
+data/vimeo-inventory-*.md
+data/heartbeat-*.md
+data/triage-batch.tsv
+data/curator-mentions.md
+data/rejection-history.*
+data/grok-spend.log
+data/ingestion-report-*.md
+data/dry-run-state.md
+data/apply-workflow.md
+data/return-day-checklist.md
+data/alerts-signup-checklist.md
+data/logs/
 reports/*.md
+reports/**/*.md
 !reports/.gitkeep
+
+# Generated dashboard HTML (contains user job-search data)
+dashboard/index.html
 output/*
 !output/.gitkeep
 batch/logs/*
 !batch/logs/.gitkeep
 batch/batch-state.tsv
+batch/batch-state.archive-*.tsv
 batch/batch-input.tsv
+batch/batch-input.original-*.tsv
 batch/tracker-additions/**/*.tsv
 !batch/tracker-additions/.gitkeep
 jds/*
 !jds/.gitkeep
+corpus/
+
+# Auto-generated per-role apply-packs (personal output)
+apply-pack/
+
+# Generated dashboard reports (personal)
+dashboard/reports/
+
+# Backup of user-specific portals.yml
+portals.yml.santifer-backup
+portals.yml.*-backup
 
 # Writing samples (user's personal files — never committed)
 writing-samples/*
@@ -45,3 +74,4 @@ bun.lock
 .claude/memory/
 career-dashboard
 package-lock.json
+article-digest.md

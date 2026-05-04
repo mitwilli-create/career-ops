@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  EXAMPLE launchd plist for the career-ops dashboard server.
+
+  Setup (replace USERNAME, NODE_PATH, REPO_PATH with your own values):
+    1. Copy this file to ~/Library/LaunchAgents/com.career-ops.dashboard-server.plist
+    2. Replace placeholder paths below with your actual values
+    3. launchctl load ~/Library/LaunchAgents/com.career-ops.dashboard-server.plist
+    4. Verify: curl -s http://localhost:7777/dashboard/
+
+  This serves the project root over http://localhost:7777, bound to 127.0.0.1
+  only (never network-exposed). Powers the clickable dashboard / report / Apply
+  Pack links in the daily heartbeat email.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.career-ops.dashboard-server</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <!-- Replace with output of `which node` (e.g. /usr/local/bin/node, /opt/homebrew/bin/node, or an nvm path) -->
+        <string>/PATH/TO/node</string>
+        <!-- Replace REPO_PATH with the absolute path of your career-ops checkout -->
+        <string>/PATH/TO/REPO/scripts/dashboard-server.mjs</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/PATH/TO/REPO</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/PATH/TO/REPO/data/logs/dashboard-server.out</string>
+
+    <key>StandardErrorPath</key>
+    <string>/PATH/TO/REPO/data/logs/dashboard-server.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/PATH/TO/node-bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/USERNAME</string>
+        <key>CAREER_OPS_DASHBOARD_PORT</key>
+        <string>7777</string>
+    </dict>
+</dict>
+</plist>

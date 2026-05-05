@@ -333,14 +333,40 @@ function renderMarkPage(ctx) {
 </body></html>`;
 }
 
+// Allowlist: only these path prefixes may be served. The server was designed
+// for localhost-only use; when exposed via Cloudflare Tunnel this list is the
+// only thing standing between the internet and cv.md / .career-ops-secrets.
+const ALLOWED_PREFIXES = ['/dashboard', '/reports', '/mark', '/favicon.ico'];
+
+function isAllowed(p) {
+  if (p === '/') return true; // redirected below, not served
+  return ALLOWED_PREFIXES.some(prefix => p === prefix || p.startsWith(prefix + '/'));
+}
+
 const server = http.createServer((req, res) => {
   try {
     const urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
+
+    // Redirect bare root to the dashboard index.
+    if (urlPath === '/') {
+      res.writeHead(302, { Location: '/dashboard/' });
+      res.end();
+      return;
+    }
 
     // Status-flip endpoint — handled before the static-file resolver so
     // /mark never collides with a file in the project root.
     if (urlPath === '/mark') {
       handleMarkRequest(req, res);
+      return;
+    }
+
+    // Block anything outside the allowlist — prevents directory traversal
+    // and stops .career-ops-secrets / cv.md / data/ from being served
+    // when the server is reachable via Cloudflare Tunnel.
+    if (!isAllowed(urlPath)) {
+      res.writeHead(403, { 'Content-Type': 'text/plain' });
+      res.end('Forbidden');
       return;
     }
 

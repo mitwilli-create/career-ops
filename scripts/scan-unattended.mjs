@@ -38,10 +38,12 @@ function run(label, args) {
 run('scan.mjs', ['scan.mjs']);            // ATS APIs (Greenhouse/Ashby/Lever)
 run('scan-rss.mjs', ['scan-rss.mjs']);    // RemoteOK + WeWorkRemotely RSS/JSON
 run('scan-email.mjs', ['scan-email.mjs']); // Gmail-labelled job alerts (LinkedIn/BuiltIn/Wellfound/Otta)
-// Limit raised from 30 → 100 on 2026-04-27 to cast a wider net. At parallel=2
-// in batch-runner-unattended.mjs, expect ~4-5 hr batch runs (was ~50 min for
-// 30). Watchdog timeout in batch-runner-unattended.mjs raised in tandem.
-run('triage-pipeline.mjs', ['scripts/triage-pipeline.mjs', '--limit=100']);
+// Limit lowered from 100 → 30 on 2026-05-05: at 100 the nightly batch was
+// spawning 100 claude -p sessions/night (~700/week) and draining the Max cap.
+// 30 is the original limit; raises ~50 min batch runtime. To raise again,
+// add an ANTHROPIC_API_KEY to ~/.career-ops-secrets and port batch-runner.sh
+// to use the API directly so batch costs don't hit the subscription.
+run('triage-pipeline.mjs', ['scripts/triage-pipeline.mjs', '--limit=30']);
 
 // Bridge: triage-batch.tsv (6-col) → batch-input.tsv (4-col) for batch-runner.sh
 const TRIAGE_TSV = join(PROJECT_DIR, 'data/triage-batch.tsv');

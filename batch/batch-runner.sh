@@ -350,9 +350,11 @@ process_offer() {
     -e "s|{{ID}}|${esc_id}|g" \
     "$PROMPT_FILE" > "$resolved_prompt"
 
-  # Launch claude -p worker (uses default model from Claude Max subscription)
+  # Sonnet: uses the separate "Sonnet only" quota, not the shared "All models"
+  # Opus bucket. Switched 2026-05-05 to stop draining the weekly Max cap.
   local exit_code=0
   claude -p \
+    --model claude-sonnet-4-6 \
     --dangerously-skip-permissions \
     --append-system-prompt-file "$resolved_prompt" \
     "$prompt" \

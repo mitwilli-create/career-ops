@@ -539,7 +539,7 @@ function guessTeamName(report) {
 }
 
 function oneLineVerdict(report, role) {
-  return `I'm an 18-year editorial principal who shipped three production AI agents at Google xGE for 1,000 senior engineers. The shape I bring is the ${ledFraming(role)} hybrid — uncommon for ${role.company}'s ${role.role} brief, and the ${report.matches[0]?.requirement.toLowerCase().slice(0, 60) || 'top JD requirement'} is where my evidence is strongest.`;
+  return `I'm an 18-year editorial principal who shipped production AI agents at Google xGE for 1,000 senior engineers (Comms Triage Agent + Voice DNA). The shape I bring is the ${ledFraming(role)} hybrid — uncommon for ${role.company}'s ${role.role} brief, and the ${report.matches[0]?.requirement.toLowerCase().slice(0, 60) || 'top JD requirement'} is where my evidence is strongest.`;
 }
 
 function buildPreApplicationChecklist(role, report) {

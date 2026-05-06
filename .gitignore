@@ -75,3 +75,10 @@ bun.lock
 career-dashboard
 package-lock.json
 article-digest.md
+
+# Weekly intel output (user-specific, date-stamped)
+data/weekly-intel/*.md
+data/weekly-intel/prompts/
+
+# 1:1 career history (personal meeting notes)
+data/career-history/

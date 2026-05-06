@@ -1,728 +1,874 @@
 # Application Materials Prompt Guide
 ### Mitchell Williams · Claude Sonnet 4.6 · career-ops
+#### Revised: 2026-05-06 — Integrated Grok community intelligence (Reddit/X/Blind/HN, Mar–May 2026)
 
 > **Reusable for every role in the Apply Now queue.**
-> Run phases in order. Human-edit every output before submitting — your voice is the only differentiator that 40–80% of AI-generated applications cannot replicate.
+> Run phases in the order shown. This order is not arbitrary — it reflects what community data says about where callback rates actually come from.
+
+---
+
+## The Brutal Reality First
+
+From 700+ real candidate reports (Reddit r/cscareerquestions, r/jobsearchhacks, Blind Anthropic/OpenAI megathreads, X threads, Mar–May 2026):
+
+| Channel | Approx. callback rate |
+|---|---|
+| Cold application, generic materials | ~2–4% |
+| Cold application, highly tailored materials | ~8–12% |
+| **Referral or warm intro** | **~20–30% (5× cold)** |
+| Referral + company-specific 1-pager/prototype | ~35–45% |
+| Public "audition" artifact (GitHub/demo) + outreach | High, anecdotal but consistent |
+
+**What this means for how you run this guide:**
+- Phases 0 and 0.5 (referral sourcing and audition artifact) are your highest-leverage moves
+- Application materials (Phases 1–4) are still required — but they're what backs up the referral, not the primary bet
+- 40–80% of applications are AI-generated in 2026; recruiters at Anthropic/OpenAI say they spot slop in under 20 seconds; the 70–80% human rewrite rule is non-negotiable
 
 ---
 
 ## Contents
 
-- [Quick Start](#quick-start)
-- [Mitchell's Context Block](#mitchells-context-block) ← paste this once per session
-- [Phase 0 — Job Intelligence](#phase-0--job-intelligence)
-- [Phase 1 — CV Tailoring](#phase-1--cv-tailoring)
-- [Phase 2 — Cover Letter](#phase-2--cover-letter)
-- [Phase 3 — Application Form Fields](#phase-3--application-form-fields)
-- [Phase 4 — ATS Optimization Pass](#phase-4--ats-optimization-pass)
-- [Phase 5 — Recruiter / Hiring Manager Outreach](#phase-5--recruiter--hiring-manager-outreach)
-- [Phase 6 — Pre-Submit Quality Check](#phase-6--pre-submit-quality-check)
-- [Grok Community Intelligence Prompt](#grok-community-intelligence-prompt)
+- [Live Role Targets Right Now](#live-role-targets-right-now)
+- [Mitchell's Context Block](#mitchells-context-block) ← paste once per session
+- [Phase 0 — Referral Activation (do this first)](#phase-0--referral-activation)
+- [Phase 0.5 — Audition Artifact](#phase-05--audition-artifact)
+- [Phase 1 — Job Intelligence Decode](#phase-1--job-intelligence-decode)
+- [Phase 2 — CV Tailoring](#phase-2--cv-tailoring)
+- [Phase 3 — Cover Letter](#phase-3--cover-letter)
+- [Phase 4 — Application Form Fields](#phase-4--application-form-fields)
+- [Phase 5 — ATS + Format Checklist](#phase-5--ats--format-checklist)
+- [Phase 6 — 1-Pager / HM Outreach](#phase-6--1-pager--hm-outreach)
+- [Phase 7 — Pre-Submit Quality Check](#phase-7--pre-submit-quality-check)
+- [Phase 8 — Interview Defense Prep](#phase-8--interview-defense-prep)
+- [Grok Prompt Template](#grok-prompt-template)
 
 ---
 
-## Quick Start
+## Live Role Targets Right Now
 
-```
-1. Open a fresh Claude Sonnet 4.6 conversation (claude.ai or terminal)
-2. Copy-paste the [Mitchell's Context Block] below — this loads your full profile
-3. Paste the JD — run Phase 0 first, always
-4. Run only the phases that apply (not every role needs a cover letter)
-5. Human-edit every output before submitting
-6. For essay / open-text fields: draft → cut 40% → read aloud → submit
-```
+> Community intelligence (Blind megathreads + company career pages, April–May 2026)
+> flags these as active, near-exact profile matches for Mitchell's comms × builder hybrid.
+> Apply within 48 hours of posting — early applicants bypass initial AI-screen volume.
 
-**The 6-second rule:** A hiring manager spends ~6 seconds on first scan.
-Your above-the-fold line — title, summary, first bullet — must earn the next 60 seconds.
-Every phase in this guide optimizes for that handoff.
+| Company | Role | Why it fits | Apply channel |
+|---|---|---|---|
+| **Anthropic** | Internal Communications Manager (Policy) | Comms + judgment + AI-native = exact match | careers.anthropic.com directly |
+| **Anthropic** | Communications Lead (Claude Code) | Developer-adjacent comms; builder fluency required | careers.anthropic.com directly |
+| **Anthropic** | Engineering Editorial Lead | Editorial at AI-scale; broadcast → agent pipeline bridge | careers.anthropic.com directly |
+| **OpenAI** | Executive Communications Manager | VP-comms + production AI = rare combination | openai.com/careers |
+| **OpenAI** | AI Enablement Lead | Stakeholder translation + shipped systems | openai.com/careers |
+| **Any AI-native** | Forward Deployed Engineer | Comms triage agent is the proof point | Company career page first |
+
+**Timing rule:** Apply within 48 hours of posting. Company career page is primary. Google for Jobs surfaces different listings than LinkedIn (~10% app-to-interview rate vs. LinkedIn's lower signal-to-noise). Use LinkedIn's 1-hour filter (`f_TPR=r3600` parameter) to surface freshest postings.
 
 ---
 
 ## Mitchell's Context Block
 
-> **Paste this at the start of every fresh Claude session before running any phase.**
-> It replaces the need to re-explain yourself every time.
+> **Paste this at the start of every fresh Claude session.** One paste, zero re-explaining.
 
 ```
 You are working as an expert application strategist for Mitchell Williams.
-Here is everything you need to know about him. Reference this throughout our session.
+Reference this context throughout our entire session.
 
 ─── IDENTITY ───
 Name: Mitchell Williams
-Location: Seattle, WA (open to relocation globally)
+Location: Seattle, WA (open to relocation globally — location is never a hard blocker)
 Email: mitwilli@gmail.com | LinkedIn: linkedin.com/in/mitwilli
 GitHub: github.com/mitwilli-create | Portfolio: thestorytellermitch.com
 
 ─── CURRENT ROLE ───
 Internal Communications Lead + Program Manager
-Google — Office of Cross-Google Engineering (xGE)
-June 2024 – present
+Google — Office of Cross-Google Engineering (xGE) | June 2024 – present
+Audience: ~1,000 senior technical ICs at Principal / Distinguished / Fellow tiers —
+Google's top 1–2% of technical staff globally.
 
-Audience: ~1,000 senior technical ICs at Principal / Distinguished / Fellow tiers.
-This is Google's senior engineering leadership cohort — the top 1-2% of technical staff.
+─── THREE DEPLOYED PRODUCTION AI AGENTS ───
+These are not prototypes. Not demos. Production systems.
 
-─── THREE DEPLOYED PRODUCTION AI AGENTS (not demos, not prototypes) ───
-
-1. Communications Triage Agent (Google xGE)
+1. COMMUNICATIONS TRIAGE AGENT (Google xGE)
    Architecture: 3-prompt (triage → revise → escalate) + conditional KB loading
-   Result: ~160 operational hours/year recaptured at >90% classification accuracy
-   Audience served: ~1,000 senior Google engineers
+   Audience: ~1,000 senior Google engineers
+   Impact: ~160 operational hours/year recaptured | >90% classification accuracy
    Status: Production, deployed
 
-2. Executive RAG Pipeline / Voice DNA (Google xGE)
+2. EXECUTIVE RAG PIPELINE / VOICE DNA (Google xGE)
    Architecture: VP-level "digital twin" — curated Voice DNA corpus + Kill List
    of rejected drafts that teach the agent risk tolerance and rhetorical pace
-   Result: 90% reduction in drafting latency; 99% stylistic fidelity
+   Impact: 90% reduction in drafting latency | 99% stylistic fidelity for VP comms
    Status: Production, deployed
 
-3. Voice OS (personal corpus)
-   Architecture: 1.08M-word personal corpus (Gmail 2007–2026, Instagram, Facebook,
-   LinkedIn, iMessage) analyzed for voice signatures, banned phrases, AI-detection risks
-   Result: 6-axis voice scoring + AI-detection risk surface
+3. VOICE OS (personal corpus)
+   Architecture: 1.08M-word corpus (Gmail 2007–2026, Instagram, Facebook,
+   LinkedIn, iMessage) → voice signatures + AI-detection risk surface
+   Impact: 6-axis voice scoring system
    Status: Production, personal deployment
 
-─── DIFFERENTIATORS (what most candidates cannot claim) ───
-• "Comms × Builder hybrid" — VP-caliber writer AND production AI system builder.
-  Most comms people can't build. Most builders can't write for the C-suite.
-• Voice DNA / Kill List — coined methodology, Mitchell's own IP.
-  Training an agent on what to REJECT is as important as what to accept.
-• Regulatory/litigation-grade communication discipline — worked under Scientology's
-  "attack the attacker" litigation posture (HuffPost Live), active $500M presidential
-  lawsuit (Fusion/Univision), human rights activists from Egypt and Russia.
-  This is not typical. It means: no sloppy language, no ambiguity under pressure.
-• Broadcast-to-AI bridge — the same operating instincts that made live broadcast
-  production work (no buffer, no rewind) transfer directly to agentic AI pipelines
-  (no edit window, consequence-bearing output).
+─── THE DIFFERENTIATOR — say this out loud ───
+"I don't just communicate about AI. I build the agents that make communication
+10× more effective — and I've done it in production, at Google's senior engineering
+leadership scale."
 
-─── PROOF POINTS WITH METRICS ───
-• Comms Triage Agent: ~160 ops hrs/yr recaptured at >90% classification accuracy
-• Executive RAG: 90% drafting latency reduction, 99% stylistic fidelity for VP comms
+Most comms people cannot build. Most builders cannot write for the C-suite.
+Mitchell is the rare candidate who does both, with measurable production proof.
+
+─── ADDITIONAL PROOF POINTS WITH METRICS ───
 • Mentorship Platform: 90% admin reduction (3.5 hrs → 20 min/match), 300%+ capacity scaling
-• Remote-work pivot (Q1 2020): 9,000 machines + 9,500 hotspots provisioned in one week
-• Day One overhaul: 75,000+ new hires, 88% autonomous hardware provisioning within 24 hrs
+• Q1 2020 remote-work pivot: 9,000 machines + 9,500 hotspots in one week
+• Day One overhaul: 75,000+ new hires; 88% autonomous hardware provisioning in 24 hrs
 • AJ+ viral campaign: 50M+ views, 40K+ comments
-• career-ops fork: Agentic pipeline with zero-token portal scanning, unattended launchd schedule
+• career-ops fork: Agentic pipeline with zero-token portal scanning, unattended schedule
+
+─── FRAMING LANGUAGE THAT LANDS (use these, not paraphrases) ───
+• "VP-level writer who ships production AI systems"
+• "I translate complex AI systems into stakeholder action — and I build the systems doing the translating"
+• "Comms × builder hybrid — one hire who does what usually requires two"
+• "Voice DNA / Kill List methodology" (coined; Mitchell's IP)
+• "Live-broadcast-grade operating discipline" (the no-edit-window analogy to agentic pipelines)
 
 ─── TARGET ROLE ARCHETYPES ───
 Primary (A2): AI Solutions Architect, Forward Deployed Engineer, Applied AI Engineer,
 AI Enablement Lead, AI Program Manager, AI Technical Program Manager
-Secondary (B): Developer Education Lead, Developer Advocate, Communications Lead
-at AI-native companies
+Secondary (B): Developer Education Lead, Developer Advocate, Communications Lead,
+Engineering Editorial Lead at AI-native companies
 
-─── COMPENSATION TARGET ───
-$140K–$240K total comp. Walk-away floor: $110K (remote/international).
-Seattle floor: $120K.
+─── COMPENSATION ───
+Target: $140K–$240K TC | Walk-away floor: $110K (remote/int'l) | Seattle floor: $120K
 
-─── VOICE CONSTRAINTS (always apply) ───
-• Lead with the point. Never bury the lede.
-• Short sentences. Action verbs. No passive voice.
-• Specific warmth — personal, not corporate.
-• Contractions in casual contexts (emails, outreach). Avoid in formal materials.
-• Banned phrases: "passionate about", "leverage", "synergy", "results-driven",
-  "thought leader", "innovative", "detail-oriented", "team player", "go-getter",
-  "I am excited to", "I would love to", "best-in-class", "move the needle",
-  "at the end of the day", "circle back", "deep dive", "value add"
-• 350-word maximum on professional emails
+─── VOICE CONSTRAINTS (always active — no exceptions) ───
+Hard rules:
+• Lead with the point — never bury the lede
+• Short sentences. Active voice. Strong verbs.
+• 350-word max on professional emails; 300-word max on cover letters
 • Every draft must survive a 40% cut without losing what makes it Mitchell's
+• No adjectives without evidence ("strong communicator" → always a specific example)
+• 70–80% human rewrite of any AI draft — add personal anecdotes, ownership language, messy real-world details
 
-The above is your operating context. You will refer to it throughout this session.
-Confirm you've received it with: "Context loaded. Ready for [Phase X]."
+Banned phrases (non-negotiable): "passionate about", "leverage", "synergy",
+"results-driven", "thought leader", "innovative", "detail-oriented", "team player",
+"go-getter", "I am excited to", "I would love to", "best-in-class", "move the needle",
+"at the end of the day", "circle back", "deep dive", "value add", "I am writing to",
+"dynamic", "cutting-edge", "game-changer", "hit the ground running"
+
+Context loaded. Ready for [Phase X].
 ```
 
 ---
 
-## Phase 0 — Job Intelligence
+## Phase 0 — Referral Activation
 
-> **Run this first. Always. Before touching any materials.**
-> The goal: decode what the role is actually asking for, not what the JD says.
+> **Do this before submitting anything. Referrals deliver 5× the callback rate of cold apps.**
+> The goal: identify who you know (or who you know who knows someone) at the target company,
+> and activate that connection before or the same day as applying.
 
-### Prompt 0A — Deep JD Decode
+### Step 0A — Network Map (do this yourself, then prompt Claude)
+
+For each target company:
+1. Search LinkedIn: `[Company Name] + "Google" OR "xGE" OR "Internal Communications" OR "Program Manager"` — find 1st and 2nd-degree connections
+2. Check X/Twitter: who at this company posts about AI, comms, or enablement?
+3. Check your Google network: any colleagues who moved to this company?
+
+### Prompt 0A — Referral Outreach Strategy
 
 ```
-Context is loaded above.
+Context is loaded.
 
-I am about to apply to this role. Before I touch any materials, I need you
-to decode the JD like a senior hiring manager who wrote it.
+I want to get a referral at [COMPANY] for [ROLE]. I've identified these potential
+connections:
+[List what you found: Name, title, connection degree, any context on them]
+
+For each connection, write:
+1. The right channel (LinkedIn note, email, X DM, shared Slack, mutual intro)
+2. A specific reason to contact them (not "I saw you work at [Company]")
+3. A draft message — 100 words maximum:
+   • Opens with something specific to them or their work
+   • One sentence on my profile signal (agents + Google xGE — specific)
+   • A clear, low-friction ask ("Would you be open to sharing any context
+     on what the team is working on?" — not "Can you refer me?")
+   • Zero banned phrases
+
+If I have no direct connections at [COMPANY], identify:
+• Recently promoted employees I could cold-approach with a specific value offer
+• Any Google alumni who've moved there (use your training data)
+• What online communities (Slack, Discord, X, HN threads) might have employees from this team
+```
+
+---
+
+## Phase 0.5 — Audition Artifact
+
+> **The highest-leverage outreach is a working artifact, not just words about yourself.**
+> Community data (X @noahbkuhn May 2026, career-ops thread @heygurisingh Apr 2026):
+> candidates who built a company-specific demo or 1-pager got responses where cold applications failed.
+
+There are two artifact types. Use whichever fits the role.
+
+### Option A — Company-Specific 1-Pager
+
+A single page (PDF or Notion) that shows:
+1. **Their problem** — one specific comms/enablement/AI pain you've observed at their company (from public posts, release notes, docs, job descriptions)
+2. **Your solution** — how one of your three production agents could address it, adapted to their context
+3. **The evidence** — the metric from your deployment that proves you've solved an analogous problem
+
+### Option B — Mini Working Prototype
+
+A public GitHub repo or Loom recording of a small agent/tool adapted to their domain. Does not need to be production-ready. Needs to show judgment and architectural thinking.
+
+### Prompt 0B — 1-Pager Strategy
+
+```
+Context is loaded.
+
+I want to build a company-specific 1-pager for [COMPANY] targeting [ROLE].
+
+Here is what I know about their current work / pain points:
+[Paste: recent product announcements, blog posts, job description language,
+public statements about comms/AI challenges]
+
+Design the 1-pager structure:
+1. THEIR PROBLEM — Write 2–3 sentences framing a specific comms, enablement, or
+   operational AI pain at [COMPANY] that I've identified from public signals.
+   Make it specific enough that a reader thinks "they've done their homework."
+
+2. THE ANALOGOUS PROOF — Which of my 3 production agents best maps to this problem?
+   Write the 2-sentence connection: "At Google xGE, I faced a similar challenge.
+   Here's what I built and what happened."
+
+3. MY PROPOSED APPROACH — In 3 bullet points, how would I adapt my agent/methodology
+   to their specific context? Keep it directional, not exhaustive.
+
+4. THE ASK — One sentence. Specific and low-friction.
+   ("15 minutes to discuss how this maps to what your team is building.")
+
+Format: Fits on one page. Can be pasted into a Notion page or exported as PDF.
+Zero banned phrases. Reads like someone who has shipped, not someone who is pitching.
+```
+
+---
+
+## Phase 1 — Job Intelligence Decode
+
+> **Run this before touching materials.** Decode the actual ask behind the JD.
+
+### Prompt 1A — Deep JD Decode
+
+```
+Context is loaded.
 
 [PASTE FULL JOB DESCRIPTION HERE]
 
-Return a structured analysis:
+Decode this JD as a senior hiring manager who wrote it. Return:
 
 1. THE REAL ROLE (1 sentence)
-   Strip the marketing copy. What is this person actually doing day-to-day?
+   Strip marketing copy. What is this person doing day-to-day?
 
-2. THE THREE THINGS THAT WILL WIN THIS APPLICATION
-   Ranked. What matters most to whoever wrote this JD?
+2. THE THREE THINGS THAT WIN THIS APPLICATION
+   Ranked by weight. What does the hiring manager care about most?
 
-3. THE SUBTEXT (what they didn't say but implicitly require)
-   What signals in the JD reveal unstated priorities?
+3. SUBTEXT (what they didn't say but implicitly require)
+   Read between the lines. What unstated signals are in the JD?
 
 4. MY BEST ANGLE
-   Given my profile (context block above), what is the single strongest
-   argument for why I'm the right hire? What story should run through
-   every piece of material I submit?
+   Given my profile above, what is my single strongest argument for this role?
+   Name the differentiator: comms × builder, or scale of audience, or
+   production proof — whichever fits this specific role best.
 
-5. MY GAPS
+5. MY GAPS + BRIDGES
    What does this JD require that I don't clearly demonstrate?
-   For each gap, suggest a bridge or mitigation framing.
+   For each gap: suggest a bridge framing or proof-point substitution.
 
-6. KILLER KEYWORDS
-   Exact phrases from the JD that must appear in my CV and cover letter
-   to pass ATS and resonate with a human reader. List 10–15.
+6. KILLER KEYWORDS (10–15)
+   Exact phrases that must appear naturally in my materials to pass ATS
+   and resonate with a human reader.
 
-7. THEIR PAIN
-   What problem is this company trying to solve by filling this role?
-   Frame it in one sentence — this becomes the opening of my cover letter.
+7. THEIR PAIN (1 sentence)
+   The problem this company is solving by hiring for this role.
+   This becomes the first sentence of my cover letter.
 
-8. RED FLAGS OR OPEN QUESTIONS
-   Anything I should clarify before applying, or watch for in the process.
+8. CULTURE SIGNALS
+   What does the language of this JD tell me about what this team actually values?
+   How do I mirror that in my materials without sounding like I just copied their vocabulary?
+
+9. ANTHROPIC-SPECIFIC (if applicable)
+   Anthropic culture-fit questions to prepare for:
+   — "How would you communicate a model capability limitation to executives?"
+   — "Describe a time you made a complex technical tradeoff accessible to non-technical stakeholders"
+   — "How do you think about mission alignment in your day-to-day work?"
 ```
 
-### Prompt 0B — Recruiter Scan Simulation
-
-> Run this after 0A. Forces Claude to think from the screener's perspective.
+### Prompt 1B — 6-Second Recruiter Scan
 
 ```
-Context is loaded. I've decoded the JD above.
+Context is loaded. JD decoded above.
 
-Now act as a senior technical recruiter at [COMPANY NAME] who receives
-400+ applications per role and spends 6–8 seconds on initial scan.
+Act as a senior recruiter at [COMPANY] who receives 400+ applications per role
+and makes a pass/fail decision in 6–8 seconds on first scan.
 
-Given my profile and the JD, answer:
+1. PASS or FAIL — does my profile survive first scan for this role?
+   Be specific about what earns the pass or triggers the fail.
 
-1. PASS or FAIL — does my profile survive the 6-second scan? Why?
-2. What is the single line on my CV that earns the next 30 seconds of attention?
-3. What would make a recruiter at this company stop and email me today?
-4. What would cause an ATS or first-pass screener to filter me out — and how do I fix it?
-5. What does a recruiter at [COMPANY NAME] specifically care about that most
-   candidates miss?
+2. ABOVE-THE-FOLD CHECK — what does a recruiter see in 6 seconds?
+   (Title, summary headline, first bullet.) Is it immediately clear why I'm right for THIS role?
+
+3. THE ONE LINE — what single line in my CV earns the next 30 seconds?
+
+4. THE KILL SHOT — what would cause a recruiter to stop and email me today?
+   What is the most unusual and credible signal in my profile for this company?
+
+5. FILTER RISK — what might cause an ATS or first-pass screener to filter me out?
+   Specific fix for each risk.
 ```
 
 ---
 
-## Phase 1 — CV Tailoring
+## Phase 2 — CV Tailoring
 
-> **Your CV is not one document. It is a starting point that changes for every role.**
-> The goal: make the first 1/3 of the page look like it was written for this specific JD.
+> **Format rules (from ATS failure data, Reddit r/jobsearchhacks April 2026):**
+> - Single-column layout. No tables, graphics, multi-columns, or color headers.
+> - Standard fonts: Arial or Calibri, 10–11pt.
+> - Reverse-chronological.
+> - 1 page preferred; 2 pages only if every bullet adds signal.
+> - Submit both .docx AND clean PDF — higher parse success reported.
+> - **Put "Production AI Systems Shipped" or equivalent section IMMEDIATELY after summary.**
+>   Recruiter scan lands there first. Lead with the agents.
 
-### Prompt 1A — Role-Specific Bullet Rewrites
+### Prompt 2A — Role-Specific Bullet Rewrites
 
 ```
-Context is loaded. JD decoded (Phase 0 output above).
-
-I need to tailor my CV bullets for this specific role.
+Context is loaded. JD decoded (Phase 1).
 
 Here is my current experience section:
-[PASTE YOUR CURRENT CV BULLETS FOR THE 2-3 MOST RELEVANT ROLES]
+[PASTE YOUR CURRENT CV BULLETS FOR THE 2–3 MOST RELEVANT ROLES]
 
-For each bullet, do the following:
-1. Score it 1–5 for relevance to THIS role (1 = barely relevant, 5 = exact match)
-2. Rewrite every bullet scoring 4–5 to maximize impact for this specific JD
-3. For bullets scoring 1–3: either suggest a replacement from my proof points
-   (above in context) or recommend dropping it for this application
+For each bullet:
+1. Score 1–5 for relevance to THIS role (1 = barely relevant, 5 = exact match)
+2. Rewrite every bullet scoring 4–5 using CAR format:
+   Challenge (or Context) → Action (what I specifically did) → Result (metric)
+3. For bullets scoring 1–3: suggest a replacement from my proof points,
+   or recommend dropping for this application
 
 Rewrite rules:
-• Lead with the outcome/impact, not the action
-• Embed killer keywords naturally (from Phase 0 analysis)
-• Keep all metrics — never remove a number
-• Maximum 2 lines per bullet
-• Active voice, strong verbs
+• CAR format — lead with the outcome, not the task
+• Embed killer keywords naturally (from Phase 1 decode)
+• Keep all metrics — never remove a number; add one if missing
+• Maximum 2 lines per bullet — ruthless compression
+• Active voice, strong verbs — no "was responsible for", no "helped with"
 • Do not start two consecutive bullets with the same verb
+• Every bullet must be defensible in an interview — no vague claims
 ```
 
-### Prompt 1B — Summary / Headline Rewrite
+### Prompt 2B — Production AI Systems Section
 
-```
-Context is loaded.
-
-Rewrite my professional summary for this role.
-
-My current summary: [PASTE CURRENT SUMMARY]
-Target role: [ROLE TITLE] at [COMPANY]
-The real role (from Phase 0): [PASTE PHASE 0 OUTPUT — "THE REAL ROLE"]
-Their pain (from Phase 0): [PASTE]
-My best angle (from Phase 0): [PASTE]
-
-Rules:
-• 3–4 sentences maximum
-• Open with my most credible signal for THIS role (not my entire career history)
-• Second sentence: the comms × builder hybrid angle — name the overlap
-• Third sentence: one specific metric that proves the claim
-• Fourth sentence (optional): trajectory / what I'm optimizing for now
-• Zero banned phrases (see context block)
-• Sounds like a person wrote it, not a template
-```
-
-### Prompt 1C — Three-Version Comparison
-
-> Use this when you're uncertain which angle to lead with.
+> This section leads your CV above all other experience.
 
 ```
 Context is loaded.
 
-Generate THREE versions of my CV summary for [ROLE] at [COMPANY].
-Each version emphasizes a different angle:
+Write a "Production AI Systems" section for my CV targeting [ROLE] at [COMPANY].
+This section appears immediately after my summary, before my work history.
 
-Version A — BUILDER ANGLE
-Lead with my three deployed production AI agents. Frame everything through
-the lens of someone who ships systems, not just communicates about them.
+Format: 3 entries, one per agent. Each entry:
+• Name + one-line description of the system
+• Architecture beat (1 sentence — what it does technically, calibrated to [ROLE]'s
+  technical depth requirement)
+• Impact beat (1 metric — the most impressive number)
+• Scale beat (audience or scope — "serving ~1,000 Google Principal/Distinguished/Fellow engineers")
 
-Version B — SCALE ANGLE
-Lead with the audience (1,000 senior Google engineers — top 1-2% of technical staff
-globally). Frame everything through the lens of someone who operates at engineering leadership scale.
+After the section, write: "PLACEMENT NOTE — where on the page does this section create
+the most impact for this specific role?" Give me the layout logic.
+```
 
-Version C — HYBRID ANGLE
-Lead with the rarity of the comms × builder combination. Frame everything
-through the lens: "you're hiring one person who does what usually requires two."
+### Prompt 2C — Three-Angle Summary Comparison
 
-After all three, tell me: which version best fits THIS specific role and why?
+```
+Context is loaded.
+
+Write THREE versions of my CV summary for [ROLE] at [COMPANY]:
+
+VERSION A — BUILDER LEAD
+Open with the three production agents. Make the first sentence about
+what I've shipped, not who I am.
+
+VERSION B — SCALE LEAD
+Open with the audience: ~1,000 senior Google engineers at Principal/Distinguished/Fellow tier.
+Frame everything through the lens of operating at engineering leadership scale.
+
+VERSION C — HYBRID LEAD
+Open with the rarity of the comms × builder combination.
+First sentence: no other candidate can say what I'm about to say.
+
+After all three: which version best fits THIS specific role? Why?
+Which version would cause a recruiter at [COMPANY] to stop and read the next paragraph?
 ```
 
 ---
 
-## Phase 2 — Cover Letter
+## Phase 3 — Cover Letter
 
-> **Only write a cover letter if the application explicitly asks for one, or if
-> you're applying to a top-priority role where differentiation matters most.**
-> Most ATS systems don't parse cover letters — spend time on the letter only when
-> a human will read it first.
+> **Write only when the role explicitly requests one, or for top-priority targets.**
+> Most ATS systems don't parse cover letters — spend time on it only when a human reads it first.
+> The goal: make them want to call you before they finish the first paragraph.
 
-### Prompt 2A — Cover Letter Draft
+### Prompt 3A — Cover Letter Draft
 
 ```
-Context is loaded. JD decoded (Phase 0).
+Context is loaded. JD decoded (Phase 1).
 
 Write a cover letter for [ROLE] at [COMPANY].
 
-STRUCTURAL RULES (non-negotiable):
-• Open with THEIR situation/pain — not "I am applying for..." and not
-  your accomplishments. Make the first sentence about what they need.
-• Paragraph 1 (2–3 sentences): Name their pain. Signal you understand
-  the problem they're solving by hiring for this role.
-• Paragraph 2 (3–4 sentences): Your single strongest proof point for this
-  specific role. One story. Specific numbers. Real outcomes.
-• Paragraph 3 (2–3 sentences): The comms × builder hybrid angle —
-  what you bring that a single-discipline hire cannot.
-• Closing (1–2 sentences): Clear, direct ask. No "I hope to hear from you."
-  Something like: "I'd like to talk about [specific aspect of the role]."
+STRUCTURAL RULES:
+• PARAGRAPH 1 — Open with THEIR situation. Not "I am applying for..."
+  First sentence is about their pain or a specific thing they're building.
+  Signal you understand what they need before you say anything about yourself.
+• PARAGRAPH 2 — One proof point. Not a summary of your career.
+  The single strongest story for this specific role. One metric. One system. Real.
+• PARAGRAPH 3 — The comms × builder hybrid angle.
+  What you bring that a single-discipline hire cannot.
+  Use the framing: "I don't just communicate about AI — I build the agents
+  that make communication 10× more effective." Adapt as needed.
+• CLOSING — Specific and direct. Not "I hope to hear from you."
+  Reference something specific about [COMPANY] or the team's current work.
 
 VOICE RULES:
-• 300 words maximum (shorter is better — leave them wanting more)
-• Zero banned phrases (see context block)
-• No adjectives without evidence ("strong communicator" → always a specific example)
-• One sentence per paragraph that a recruiter could quote to justify advancing me
-• Read it aloud test: if it sounds like a brochure, rewrite it
+• 300 words maximum — shorter is better
+• Zero banned phrases
+• No adjectives without evidence
+• Reads like a person wrote it — messy real-world details, first-person ownership,
+  specific decisions ("I decided to..." not "the team decided to...")
+• Human-rewrite this draft 70–80% before sending — add your actual voice
 
-After the draft, write:
-— WHAT WORKS: 2 things that are strong
-— WHAT TO WATCH: 1 thing I should human-edit before sending
-— CUT VERSION: A 150-word version for applications with character limits
+After draft, output:
+— WHAT WORKS: 2 strongest lines
+— WHAT TO WATCH: 1 thing to human-edit
+— CUT VERSION: 150-word version for character-limited fields
 ```
 
-### Prompt 2B — Cover Letter Roast
-
-> Run this AFTER 2A. Forces an honest second opinion.
+### Prompt 3B — The Roast
 
 ```
-Act as a brutally honest senior hiring manager who has reviewed 10,000+
-cover letters and rejects 90% in under 30 seconds.
+Act as a brutally honest senior hiring manager who rejects 90% of cover letters
+in under 30 seconds and has seen every template on the internet.
 
-Here is my cover letter draft: [PASTE DRAFT]
+Cover letter: [PASTE DRAFT]
 
 Tell me:
-1. What is the first sentence? Is it about me or them? If it's about me, rewrite it.
-2. What is the single most credible sentence in this letter?
+1. Is the first sentence about them or me? If it's about me, rewrite it.
+2. What is the most credible sentence? Mark it.
 3. What sentence would cause you to stop reading? Remove it.
-4. Does this letter say something no other candidate could say? If not, what's missing?
-5. Overall verdict: ADVANCE, BORDERLINE, or REJECT — and the specific reason.
+4. Does this say something no other candidate could say? If not, what's missing?
+5. Verdict: ADVANCE / BORDERLINE / REJECT — and the exact reason in one sentence.
 ```
 
 ---
 
-## Phase 3 — Application Form Fields
+## Phase 4 — Application Form Fields
 
-> **The hardest part.** Most AI-assisted applications fail here because candidates
-> paste generic output into essay boxes. These fields are where voice, specificity,
-> and differentiation separate you from the 80% who used the same prompts.
->
-> **Rule:** Never paste AI output directly into an essay field.
-> Use these prompts to surface your raw material, then write the final answer yourself.
+> **Essay fields are where AI slop fails hardest and where your voice wins.**
+> Rule: these prompts generate raw material for you to write from — not paste-ready output.
+> Every essay answer must be written in your own words, using your own details.
 
-### Prompt 3A — "Why [Company]?" Field
+### Prompt 4A — "Why [Company]?" Field
 
 ```
-Context is loaded. I am applying to [COMPANY] for [ROLE].
+Context is loaded. Applying to [COMPANY] for [ROLE].
+Character/word limit: [X]
 
-This application has a "Why [Company]?" or "Why do you want to work here?" field.
-Character limit: [X characters / words / leave blank if none]
-
-DO NOT write the answer for me yet. Instead:
+DO NOT write my answer. Surface the raw material:
 
 1. COMPANY SIGNAL ANALYSIS
-   Based on what you know about [COMPANY], what are the 2–3 most credible
-   reasons someone with my profile would genuinely want to work there?
-   (Exclude generic answers like "great culture" or "innovative products.")
-   
-2. MY HONEST HOOK
-   Given my profile, what is my single most authentic reason? What does
-   [COMPANY] have that I specifically need for my trajectory?
-   
+   What are the 2–3 most credible, non-generic reasons someone with my profile
+   would genuinely want to work at [COMPANY]?
+   (Exclude: "great culture", "innovative products", "market leader".)
+
+2. MY AUTHENTIC HOOK
+   What does [COMPANY] specifically have that I need for my trajectory?
+   What can I learn or build there that I cannot do at Google xGE?
+
 3. PROOF OF RESEARCH
-   What should I reference to show I've done real homework on [COMPANY]?
-   (Specific product, recent launch, team, published essay, technical approach.)
+   What specific thing should I reference — product, publication, approach,
+   person, philosophy — that signals I've done real homework?
 
-4. DRAFT SCAFFOLD
-   Write a 3-sentence scaffold that I will fill in with my own voice:
-   — Sentence 1: The specific thing about [COMPANY] that no generic answer mentions
-   — Sentence 2: How my work connects to that specific thing
-   — Sentence 3: What I want to contribute / build / learn
+4. MISSION ALIGNMENT (for Anthropic)
+   How does my work on the comms triage agent and executive RAG pipeline
+   directly connect to [COMPANY]'s mission? Frame this as belief + evidence,
+   not aspiration.
 
-I will take this scaffold and write the final answer in my own words.
+5. SCAFFOLD (3 sentences I will rewrite in my voice):
+   — S1: The specific thing about [COMPANY] no generic answer mentions
+   — S2: How my production work connects to that specific thing
+   — S3: What I want to build or contribute
+
+I will write the final answer from this scaffold.
 ```
 
-### Prompt 3B — "Tell Me About Yourself" / Open Intro Field
+### Prompt 4B — "Tell Me About Yourself" / Open Intro
 
 ```
-Context is loaded. This application has an open intro field:
-"[PASTE THE EXACT FIELD PROMPT]"
+Context is loaded.
+Field prompt: "[PASTE EXACT QUESTION TEXT]"
 Character/word limit: [X]
 
-Build me a structured brief I can use to write this myself:
+Build the scaffold:
 
 1. WHAT THEY'RE REALLY ASKING
-   Decode this question. What does [COMPANY] actually want to learn from it?
+   Decode this question. What does [COMPANY] actually want to learn?
 
-2. THE HOOK (first sentence)
-   Give me 3 options for the opening sentence. Each should be:
+2. THREE OPENING LINE OPTIONS
+   Each option should be:
    — Specific to my actual experience (not generic)
-   — Relevant to THIS role
-   — Surprising or counterintuitive enough to earn the next sentence
+   — Relevant to this role
+   — Surprising enough to earn the next sentence
 
-3. THE CORE ARGUMENT (middle)
-   What is the one-sentence argument that makes me the right hire?
-   This should reference the comms × builder hybrid without using those exact words.
+3. THE CORE ARGUMENT (1 sentence)
+   My single strongest claim for this role, without using banned framing.
+   Reference the comms × builder hybrid without those exact words.
 
-4. THE PROOF POINT (evidence)
-   Which single proof point from my profile (context block) best supports
-   the core argument for THIS specific role?
+4. THE PROOF POINT
+   Which one agent or metric best supports the core argument for THIS role?
 
-5. THE CLOSE (what I want)
-   One sentence on why this role, at this company, now.
+5. THE CLOSE
+   One honest sentence on why this role, this company, now.
+   Must connect to something specific about [COMPANY], not just my goals.
 
-I will use this structure to write the final answer in my own voice.
+I will write the final answer from this scaffold.
 ```
 
-### Prompt 3C — "Describe a Challenge You Overcame" / Behavioral Field
+### Prompt 4C — Behavioral Question ("Describe a Challenge...")
 
 ```
-Context is loaded. This application has a behavioral question:
-"[PASTE THE EXACT QUESTION]"
+Context is loaded.
+Question: "[PASTE EXACT QUESTION]"
 Character/word limit: [X]
 
-Using the SOAR framework (Situation / Obstacle / Action / Result):
+Using the CAR framework (Challenge → Action → Result):
 
 1. SELECT THE BEST STORY
-   From my proof points and experience, which story best answers this specific
-   behavioral question? Give me 2–3 candidates ranked by fit.
+   From my proof points and experience, which story best answers this question?
+   Give me 2–3 candidates, ranked by fit to this specific question.
 
-2. BUILD THE SOAR SCAFFOLD for the top story:
-   — Situation: [the context, in 1 sentence]
-   — Obstacle: [the specific challenge, in 1 sentence — what made it hard?]
-   — Action: [what I specifically did — use "I", not "we"]
-   — Result: [the metric, the outcome, the before/after]
+2. BUILD THE CAR SCAFFOLD for the top story:
+   — Challenge: what made this hard? (1 sentence — be specific about the obstacle)
+   — Action: what did I specifically do? ("I" not "we" — own the decision)
+   — Result: the metric + the before/after
 
-3. VOICE NOTES
-   What would make this answer sound like a person wrote it, not an AI?
+3. THE MESSY DETAIL
    What specific detail should I add that only someone who was there would know?
+   This is what passes the "real story" test that AI slop fails.
 
-4. LENGTH CHECK
-   Given the [X] limit, which elements should I expand vs. compress?
+4. DEFENSE PREP
+   If an interviewer says "tell me more about the Challenge" — what is the
+   honest, specific follow-up answer I need ready?
 
-I will write the final answer using this scaffold.
+I will write the final answer from this scaffold.
 ```
 
-### Prompt 3D — Technical / Portfolio Question Field
+### Prompt 4D — Technical / Portfolio Question
 
 ```
-Context is loaded. This application asks:
-"[PASTE THE EXACT QUESTION — e.g., 'Describe a technical system you built']"
+Context is loaded.
+Question: "[PASTE EXACT QUESTION — e.g., 'Describe a technical system you built']"
 Character/word limit: [X]
 
-I want to answer this using one of my three deployed production AI agents
-(Comms Triage Agent, Executive RAG Pipeline, or Voice OS).
-
 1. WHICH AGENT TO FEATURE
-   Given this specific question and this role, which of my three agents
-   is the strongest answer? Why?
+   Given this question and this role, which of my three agents is the strongest answer?
 
 2. TECHNICAL DEPTH CALIBRATION
-   Based on the role's JD and company type, what level of technical depth
-   should I use? (1 = non-technical audience / 5 = technical hiring panel)
+   Based on the role's JD, what depth level? (1 = comms/exec audience, 5 = technical panel)
+   Adjust the architecture explanation accordingly.
 
-3. THE ARCHITECTURE BEAT
-   For the selected agent, what is the clearest 1–2 sentence description
-   of the architecture that sounds technically credible without being
-   inaccessible?
+3. FOUR BEATS to write from:
+   — Architecture beat (1–2 sentences, calibrated to depth level above)
+   — Impact beat (the single most impressive metric)
+   — Decision beat (one key design choice I made and why — shows judgment)
+   — Connection beat (how this maps to what [COMPANY] is building)
 
-4. THE IMPACT BEAT
-   What is the most impressive single metric from that agent?
-
-5. THE "WHY IT MATTERS" BEAT
-   How does this agent directly connect to what [COMPANY] is building?
-
-I will write the final answer using these beats in my own voice.
+I will write the final answer from these beats.
 ```
 
 ---
 
-## Phase 4 — ATS Optimization Pass
+## Phase 5 — ATS + Format Checklist
 
-> **Modern ATS doesn't just match keywords — it analyzes context.**
-> The goal: natural keyword integration that reads well to humans AND scores well
-> to the algorithm.
+> Run this on your final CV draft before submission.
 
-### Prompt 4A — Keyword Gap Analysis
-
-```
-Context is loaded. Here is my tailored CV draft for [ROLE] at [COMPANY]:
-[PASTE TAILORED CV DRAFT]
-
-Here is the full JD:
-[PASTE JD]
-
-Run a keyword gap analysis:
-
-1. MISSING KEYWORDS
-   List every significant keyword, skill, or phrase from the JD that does
-   NOT appear in my CV. Flag these as: CRITICAL (must add), IMPORTANT (should add), OPTIONAL.
-
-2. CONTEXT MISMATCHES
-   Are there keywords I've used but in a context that wouldn't score well?
-   (e.g., I use "AI" 12 times but never in the context the JD uses it)
-
-3. NATURAL INSERTION POINTS
-   For each CRITICAL keyword: where exactly in my CV should it appear,
-   and what's the most natural way to include it without stuffing?
-
-4. TITLE / HEADLINE ALIGNMENT
-   Does my current title/headline contain the role title or a close variant?
-   ATS frequently matches on title proximity. If not, suggest a fix.
-
-5. FINAL VERDICT
-   On a scale of 1–10, how well would this CV score in an ATS for this role?
-   What are the top 3 changes that would move the score most?
-```
-
----
-
-## Phase 5 — Recruiter / Hiring Manager Outreach
-
-> **Outreach is not a formality — it is the highest-leverage activity in the process.**
-> A well-timed message to the right person bypasses the ATS entirely.
-> The goal: one specific sentence they can forward to get you a conversation.
-
-### Prompt 5A — LinkedIn Connection + Message
+### Prompt 5A — Keyword Gap Analysis
 
 ```
 Context is loaded.
 
-I want to send a LinkedIn connection request + short message to [NAME],
-[TITLE] at [COMPANY]. I am applying for [ROLE].
+CV draft: [PASTE]
+JD: [PASTE]
 
-CONTEXT I HAVE ON THIS PERSON:
-[Paste any relevant info: their recent posts, what they've written, their background, mutual connections]
+Run keyword gap analysis:
 
-Write a LinkedIn message following these rules:
-• 300 characters maximum (LinkedIn connection note limit)
+1. MISSING KEYWORDS — list significant JD terms not in my CV:
+   Flag each as CRITICAL / IMPORTANT / OPTIONAL
+
+2. CONTEXT MISMATCHES — keywords I've used but in wrong context?
+
+3. NATURAL INSERTION POINTS — for each CRITICAL keyword:
+   Where exactly, and what's the most natural insertion?
+
+4. TITLE ALIGNMENT — does my title/headline contain the role title or close variant?
+   ATS matches on title proximity. If not, fix it.
+
+5. FORMAT RISKS — flag anything that would cause parsing failures:
+   (tables, graphics, columns, non-standard headers, unusual fonts)
+
+6. VERDICT — ATS score 1–10 for this role. Top 3 changes for highest score lift.
+```
+
+**Format checklist (apply before every submission):**
+```
+□ Single-column layout — no tables, graphics, or multi-column sections
+□ Standard font: Arial or Calibri, 10–11pt
+□ Standard headings: Experience, Skills, Projects (not custom labels)
+□ "Production AI Systems" section immediately after summary
+□ All metrics present — every bullet has a number
+□ Title/headline contains the target role title or close variant
+□ Saved as both .docx AND clean PDF
+□ File names: Mitchell_Williams_[Role]_[Company].pdf
+□ No headers/footers with contact info (some ATS parsers fail these)
+```
+
+---
+
+## Phase 6 — 1-Pager / HM Outreach
+
+> **Outreach + 1-pager is the highest-ROI activity in the process.**
+> A well-targeted message to the right person bypasses ATS entirely.
+> Send this before or the same day as applying — not after.
+
+### Prompt 6A — LinkedIn Message (connection note)
+
+```
+Context is loaded.
+
+Sending a LinkedIn connection note to [NAME], [TITLE] at [COMPANY].
+Applying for: [ROLE]
+Context I have on them: [paste anything — recent posts, their background, shared connections]
+
+Write a connection note (300 characters maximum):
 • Opens with something specific to THEM — not "I saw you work at [Company]"
-• References one specific thing from their content/background that is genuinely relevant
-• One clear sentence on why I'm reaching out
-• No ask for a job — the ask is for a conversation or perspective
+• References one specific thing from their public work or background
+• One sentence on why I'm reaching out
+• No ask for a job — the ask is a conversation or their perspective
 • Ends with a specific, easy-to-answer question
 
-Then write a FOLLOW-UP message (if they accept but don't reply within 5 days):
+Then write a FOLLOW-UP (if they accept but don't reply within 5 days):
 • 150 characters maximum
-• Surfaces my single strongest signal for their team
-• Gentle, not desperate
+• My single strongest signal for their team
+• Warm, not desperate
 ```
 
-### Prompt 5B — Cold Email to Hiring Manager
+### Prompt 6B — Cold Email to Hiring Manager
 
 ```
 Context is loaded.
 
-I want to send a cold email to [NAME], [TITLE] at [COMPANY].
-I have applied / I am about to apply for [ROLE].
+Sending a cold email to [NAME], [TITLE] at [COMPANY].
+Applied / about to apply for: [ROLE]
 
 EMAIL RULES:
-• Subject line: specific, not generic — reference something real about [COMPANY] or their work
-• 200 words maximum (hiring managers delete long emails)
-• Paragraph 1 (2 sentences): What I noticed about their team / product / a specific thing
-  they shipped or wrote that is relevant
-• Paragraph 2 (2–3 sentences): My single strongest proof point for this team.
-  One metric. One system. Real.
-• Paragraph 3 (1–2 sentences): The ask — specific and low-friction
-  (15-min call, not "I'd love to connect and explore opportunities")
+• Subject line: specific — reference something real about [COMPANY] or their work
+• 200 words maximum
+• P1 (2 sentences): What I noticed about their team / product / a specific signal
+• P2 (2–3 sentences): My single strongest proof point for their team — one agent, one metric
+• P3 (1–2 sentences): Low-friction ask (15-min call, not "explore opportunities")
 • Zero banned phrases
 
-Also write 3 subject line options. For each, explain why it would or wouldn't
-get opened in an inbox that receives 200 emails/day.
+Output:
+— The email draft
+— 3 subject line options with rationale for each
+— The attach/no-attach decision: should I attach the 1-pager? (Phase 0.5)
 ```
 
 ---
 
-## Phase 6 — Pre-Submit Quality Check
+## Phase 7 — Pre-Submit Quality Check
 
-> **Run before every submission. Non-negotiable.**
+> **Non-negotiable before every submission.**
 
-### Prompt 6A — The Full Package Review
+### Prompt 7A — Full Package Review
 
 ```
-Context is loaded. Here is my complete application package for [ROLE] at [COMPANY]:
+Context is loaded.
 
 CV (tailored): [PASTE]
 Cover letter (if applicable): [PASTE]
 Application form answers (if applicable): [PASTE]
 
-Run the following checks:
+Run all checks:
 
 1. VOICE INTEGRITY
-   Does this sound like one person wrote all of it? Or does it shift register
-   between sections? Flag any sentence that sounds like it came from a different writer.
-   Check against my voice constraints (banned phrases, active voice, short sentences).
+   Does this sound like one person wrote all of it?
+   Flag any sentence that shifts register or sounds like a different writer.
+   Check all banned phrases.
 
-2. AI DETECTION RISK
-   Flag any sentence that reads as AI-generated to a sophisticated reader.
-   Look for: hedging language, passive constructions, vague superlatives,
-   over-structured parallel lists, phrases that are grammatically perfect but
-   say nothing specific.
+2. AI SLOP DETECTION
+   Flag sentences a sophisticated reader would identify as unedited AI output.
+   Signals: hedging language, passive constructions, vague superlatives,
+   over-structured parallel lists, grammatically perfect but content-empty phrases,
+   em-dashes used as stylistic filler, repetitive sentence structure.
 
 3. DIFFERENTIATOR CHECK
-   Does my "comms × builder hybrid" angle come through clearly?
    Can a recruiter state my key differentiator in one sentence after reading this?
+   Does the comms × builder angle come through clearly?
 
 4. ABOVE-THE-FOLD CHECK
-   What does a recruiter see in the first 6 seconds?
-   (Name, title, first bullet, summary headline.) Is it immediately clear
-   why I'm right for THIS role?
+   What does a recruiter see in 6 seconds?
+   Is it immediately clear why I'm right for THIS role?
 
-5. CONSISTENCY CHECK
-   Are all names, titles, dates, and metrics consistent across all documents?
-   Any claims I can't back up in an interview?
+5. DEFENSE READINESS
+   For every metric and every specific claim: can I defend this live in an interview?
+   Flag any claim that might prompt a probe I'm not ready for.
 
-6. THE COMPRESSION TEST
+6. COMPRESSION TEST
    Cut this cover letter / summary by 40%. What survives?
-   If the cuts make it stronger, the original was too long.
+   If it's stronger after cuts, the original was too long.
 
-Verdict: READY TO SUBMIT / NEEDS REVISION + specific changes to make.
+7. CONSISTENCY CHECK
+   Names, titles, dates, metrics consistent across all documents?
+
+VERDICT: READY TO SUBMIT / NEEDS REVISION + specific changes.
 ```
 
-### Prompt 6B — Interview Anticipation
+---
 
-> Optional but high-value for top-priority roles.
+## Phase 8 — Interview Defense Prep
+
+> **Community data is clear: the interview is the real filter.**
+> Recruiters at Anthropic/OpenAI probe immediately on bullets.
+> Candidates who can't elaborate on "their" work get rejected on the spot.
+> Run this before every first interview, not after you get the call.
+
+### Prompt 8A — Anticipate + Prep
 
 ```
-Context is loaded. I am submitting my application to [COMPANY] for [ROLE].
-
-Based on the JD and my profile, generate:
+Context is loaded. I am interviewing at [COMPANY] for [ROLE].
 
 1. THE THREE QUESTIONS THEY WILL DEFINITELY ASK
-   Specific to this role and this company. Not generic behavioral questions.
+   Specific to this role, this company, and my profile — not generic behavioral questions.
+   Include at least one Anthropic-specific culture question if applicable:
+   • "How would you communicate a model capability limitation to executives?"
+   • "Describe a time you made a complex technical tradeoff accessible to non-technical stakeholders"
+   • "How do you think about mission alignment in your day-to-day work?"
 
 2. MY BEST ANSWER TO EACH
-   Use the SOAR scaffold. One proof point per question.
-   Flag if I need to prepare additional material (portfolio link, specific metric, etc.)
+   CAR scaffold. One proof point per question. Flag any metric I need to have exact.
 
-3. THE QUESTION I AM MOST LIKELY TO FUMBLE
-   What's the hardest question for me given my profile gaps (Phase 0 analysis)?
-   Draft a strong-but-honest answer that acknowledges the gap and pivots
-   to the bridge.
+3. THE HARDEST QUESTION FOR MY PROFILE
+   Given my gaps (Phase 1 analysis): what's the question I'm most likely to fumble?
+   Draft a strong, honest answer that acknowledges the gap and pivots to the bridge.
+   No bluffing — interviewers probe depth.
 
-4. MY CLOSING QUESTION
-   What is the one question I should ask the interviewer that signals
-   I understand the real problem they're trying to solve?
+4. THE BULLET DEFENSE DRILL
+   Pick the 3 most impressive bullets on my tailored CV.
+   For each: write the likely follow-up question + my 60-second spoken answer.
+   This should sound like a person talking, not a resume.
+
+5. MY CLOSING QUESTION
+   One question I ask the interviewer that signals I understand the real
+   problem they're trying to solve — not the JD, the actual problem.
+```
+
+### Prompt 8B — Messy Story Extraction
+
+> The detail that separates human stories from AI output.
+
+```
+Context is loaded. I am preparing for a behavioral interview at [COMPANY].
+
+For each of my three production agents, extract the "messy detail" —
+the specific decision, constraint, trade-off, or unexpected problem
+that only someone who built it would know.
+
+For each agent:
+1. WHAT ALMOST WENT WRONG (or did go wrong and required a pivot)
+2. THE DECISION I MADE that isn't in the polished story
+3. WHAT I WOULD DO DIFFERENTLY NOW — and why
+4. THE ONE TECHNICAL DETAIL that proves I understand what I built at a deep level
+
+These details make the difference between an answer that sounds coached
+and an answer that lands as credible. Prep them. Know them cold.
 ```
 
 ---
 
-## Grok Community Intelligence Prompt
+## Grok Prompt Template
 
-> **Paste this into Grok (x.ai) to surface the most current community intelligence
-> on job searching, AI application tools, and recruiter behavior in real-time.**
-> Grok's access to X (Twitter), Reddit, Blind, and real-time discussion threads
-> surfaces knowledge that is weeks ahead of any published article.
+> **Paste this into Grok (x.ai) for real-time community intelligence before applying
+> to any new company or role type.** Grok's access to X, Blind, Reddit, and HN surfaces
+> tactics that are weeks ahead of any published article or guide.
 
 ```
-I want a comprehensive real-time intelligence report on AI-assisted job searching
-in 2026, sourced specifically from community discussion threads — Reddit, X/Twitter,
-Blind, Glassdoor, Hacker News, Indie Hackers, and any other active forums where
-job seekers and AI builders share what's actually working.
+I want a real-time intelligence report on job searching at [COMPANY] and/or
+AI-native companies in [current month/year], sourced from community discussion threads.
 
-I am a candidate with this profile:
-- Currently: Internal Communications Lead + AI Program Manager at Google (xGE)
-- 3 production-deployed AI agents (autonomous comms triage, executive RAG, corpus analysis)
-- Target roles: AI Solutions Architect, Forward Deployed Engineer, AI Enablement Lead,
-  AI Program Manager at AI-native companies
-- Comp target: $140K–$240K TC
+Search and synthesize from: Reddit r/cscareerquestions, r/jobsearchhacks, r/ClaudeAI,
+r/recruitinghell; X/Twitter (especially AI builders and job-seekers); Blind megathreads
+for [COMPANY]; Hacker News "Who's Hiring" threads and discussion; Glassdoor reviews;
+Indie Hackers. Weight posts from the last 60 days most heavily.
+
+My profile:
+- Current: Internal Communications Lead + AI Program Manager at Google (xGE)
+- 3 production-deployed AI agents (comms triage, executive RAG, corpus analysis)
 - Background: comms × builder hybrid — VP-level writer who ships production AI systems
+- Target roles: AI Solutions Architect, Forward Deployed Engineer, AI Enablement Lead,
+  Communications Lead, Engineering Editorial Lead at AI-native companies
+- TC target: $140K–$240K
 
-I want you to search and synthesize:
+Find and report verbatim from community posts (cite source + date + user):
 
-THREAD 1 — What is ACTUALLY working right now for job seekers applying to AI-native
-companies (Anthropic, OpenAI, Mistral, ElevenLabs, Cohere, etc.)? What do candidates
-say caused them to get recruiter responses or interviews? Surface specific tactics,
-not generic advice.
+THREAD 1 — What is ACTUALLY working right now for candidates applying to [COMPANY]?
+What specifically caused someone to get a recruiter response or interview invitation?
+Pull exact tactics, not summaries.
 
-THREAD 2 — What resume / CV formats, lengths, and content choices are causing real
-candidates to pass or fail ATS + recruiter screens in 2026? What's changed in the
-last 6 months? Pull from r/cscareerquestions, r/jobsearchhacks, Blind, and any
-relevant X threads.
+THREAD 2 — What does the interview process at [COMPANY] actually look like in 2026?
+What questions do they ask? What signals do interviewers look for? What trips candidates up?
 
-THREAD 3 — What are AI builders, developers, and technical job seekers sharing about
-using Claude, GPT, or other LLMs to create standout application materials? What
-specific prompt techniques, workflows, or tools are getting results vs. what is
-getting filtered out as AI slop?
+THREAD 3 — What are candidates with non-traditional backgrounds (comms, media, program
+management → AI roles) doing that works or fails at AI-native companies right now?
 
-THREAD 4 — What do recruiters and hiring managers at AI-native companies post or
-complain about regarding candidate quality, application volume, or screening?
-What insider signals are available from people who work inside the hiring funnel?
+THREAD 4 — What are recruiters or hiring managers at AI-native companies currently
+complaining about? What specific patterns in applications are getting candidates filtered?
 
-THREAD 5 — For candidates with strong non-traditional backgrounds (not CS/ML PhDs)
-pivoting into AI roles: what specific positioning, framing, or proof points are
-helping people make that transition? What are the successful candidates leading with?
+THREAD 5 — What specific AI-assisted application workflows are candidates reporting
+as effective vs. getting them filtered as AI slop?
 
-THREAD 6 — What is the current state of AI-detection in hiring? Are companies
-screening for AI-generated applications? What have candidates reported about this?
+Do NOT generalize. Pull specific tactics, exact language, and reported outcomes.
+Cite source, date, and poster (or "anonymous" for Blind/Glassdoor) for every data point.
 
-For each thread: cite the source, date, and poster (or "anonymous" for Blind/Glassdoor).
-Weight recent posts (last 30–60 days) more heavily than older ones.
-Do NOT summarize into platitudes — pull the specific tactics, exact language,
-and real examples that candidates are reporting worked.
-
-After all six threads, synthesize into:
-TOP 5 HIGHEST-LEVERAGE TACTICS for my specific profile right now.
-Each tactic should have: what to do, why it works, and one example from the threads.
+After all threads:
+TOP 3 ACTIONS I should take THIS WEEK for my specific profile and target role.
+Each action: what to do, why it works based on the thread data, one specific example.
 ```
 
 ---
 
-## System Evaluation Notes
+## System Integration Notes
 
-> **What career-ops does well for application materials (leverage these):**
-> - `modes/pdf.md` generates tailored CVs from your proof point bank — use it before Phase 1
-> - `modes/oferta.md` scores roles and surfaces gaps before you apply — run it before Phase 0
-> - `modes/apply.md` handles live application form filling with voice constraints active
-> - `article-digest.md` contains your full STAR proof point bank — reference it for Phase 3C
-> - `corpus/voice-profile.md` contains your 6 voice signatures + banned phrase list
+> **How this guide connects to career-ops internals:**
+
+| career-ops tool | What it does | When to use it |
+|---|---|---|
+| `/career-ops oferta` | Scores the role; surfaces gaps | Before Phase 1 — don't spend time on a 3.5/5 role |
+| `/career-ops pdf` | Generates tailored CV from proof bank | Use as Phase 2 starting draft |
+| `/career-ops apply` | Live form filling with voice constraints | Use for Phase 4 with this guide's scaffolds |
+| `article-digest.md` | Full STAR proof point bank | Pull from this for Phase 4C/4D scaffolds |
+| `corpus/voice-profile.md` | 6 voice signatures + banned phrases | Always active; check Phase 7 against it |
+| `modes/_profile.md §5` | REQUIRES-HUMAN-REWRITE flag | If triggered: use Phase 4 scaffolds, write yourself |
 
 > **What this guide adds that career-ops doesn't cover:**
-> - The job intelligence decode (Phase 0) optimized for human psychology, not just scoring
-> - The three-version A/B comparison for CV angles (Phase 1C)
-> - The essay field scaffolding that gives you raw material to write yourself (Phase 3)
-> - The full pre-submit quality check including AI-detection scan (Phase 6)
-> - The Grok community intelligence prompt for real-time tactics
+> - Referral activation strategy (Phase 0) — the 5× multiplier
+> - Audition artifact / 1-pager methodology (Phase 0.5)
+> - Three-angle CV comparison (Phase 2C)
+> - Essay field scaffolding that surfaces raw material for human writing (Phase 4)
+> - Interview defense prep and "messy story" extraction (Phase 8)
+> - ATS format checklist based on 2026 community failure data (Phase 5)
+> - The brutal reality table that reorders your effort priorities
 
 ---
 
-*Guide version: 2026-05-06 | Built for career-ops by Claude Sonnet 4.6*
-*Reusable for any role in the Apply Now queue. Update Mitchell's Context Block if profile changes.*
+*Guide version: 2026-05-06 · Integrated Grok community intelligence (Reddit/X/Blind/HN, Mar–May 2026)*
+*Reusable for any role in the Apply Now queue. Update Mitchell's Context Block when profile changes.*

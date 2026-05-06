@@ -9,10 +9,14 @@
  *   ├── cover-letter.md               ← drafted from eval report's
  *   │                                    "How to emphasize" hints + gap
  *   │                                    mitigations (verbatim from report)
+ *   ├── form-fields.md                ← essay field scaffolds with AI-detection flags
+ *   ├── one-pager.md                  ← audition artifact / 90-day vision doc
+ *   ├── interview-prep-teaser.md      ← Block F STAR stories (top 5)
+ *   ├── interview-prep-full.md        ← full Phase 8: loop, all stories, hard Qs, defense
  *   ├── pre-application-checklist.md  ← gap-closing actions
- *   ├── grok-intel.md                 ← Block D (comp) + Block G + recent
- *   │                                    web research signals
- *   ├── interview-prep-teaser.md      ← Block F STAR stories
+ *   ├── grok-intel.md                 ← Block D (comp) + Block G + signals
+ *   ├── ats-check.md                  ← keyword coverage + 70–80% sweet spot rationale
+ *   ├── formatting-guide.md           ← font/spacing/margin/bullet design spec
  *   ├── linkedin/
  *   │   ├── hiring-manager.md         ← 3 DM variants
  *   │   ├── recruiter.md              ← search URL + DM template
@@ -383,15 +387,20 @@ function buildReadme(role, report) {
 
 See [pre-application-checklist.md](pre-application-checklist.md) — gap-closing actions extracted from the eval report.
 
+**Optional but high-leverage:** See [one-pager.md](one-pager.md) — a 90-day vision doc that can be shared with the hiring manager before the recruiter call. If you post it on LinkedIn as a native document first, it often converts to inbound.
+
 ### 1. Tailored CV (10 min)
 
 - [ ] Open [tailored-cv.pdf](tailored-cv.pdf) — verify it exists. If symlink is broken, re-run \`/career-ops pdf\` with the JD.
 - [ ] Confirm the personalization plan from Block E of the report was applied (top-line skills section, reordered bullets, keyword injection).
+- [ ] Apply [formatting-guide.md](formatting-guide.md) spec before exporting: Calibri 11pt, 0.75–1 in margins, standard bullet (•), ≤2 pages.
 
-### 2. Cover letter (5 min)
+### 2. Cover letter + form fields (15 min)
 
 - [ ] Open [cover-letter.md](cover-letter.md) — drafted from the report's "How to emphasize" hints + gap mitigations (verbatim).
-- [ ] Read through, swap any wording that doesn't sound like you, paste into the application form.
+- [ ] ⚠️ Read the cover letter aloud. Any sentence that sounds smooth or corporate needs to be roughened — add one specific detail only you'd know (a project name, a number, a tension moment).
+- [ ] Open [form-fields.md](form-fields.md) — pre-drafted answers for all essay fields. Sections flagged 🔴 MUST REWRITE require your voice. Fill in the bracketed placeholders before pasting.
+- [ ] See [formatting-guide.md](formatting-guide.md) for per-field length and structure rules.
 
 ### 3. Outreach drafts (15 min — copy/paste, you send)
 
@@ -432,6 +441,11 @@ See [pre-application-checklist.md](pre-application-checklist.md) — gap-closing
 | [pre-application-checklist.md](pre-application-checklist.md) | Pre-submission gap-closing actions extracted from the eval report |
 | [grok-intel.md](grok-intel.md) | Comp benchmarks, posting legitimacy signals, current company state |
 | [interview-prep-teaser.md](interview-prep-teaser.md) | Top 5 STAR stories pre-loaded for the recruiter screen |
+| [form-fields.md](form-fields.md) | Pre-drafted application essay answers with AI-detection risk flags per field |
+| [one-pager.md](one-pager.md) | Audition artifact / 90-day vision doc for hiring manager outreach or LinkedIn post |
+| [interview-prep-full.md](interview-prep-full.md) | Full interview preparation: loop structure, all STAR stories, hard Q anticipation, defense drill |
+| [formatting-guide.md](formatting-guide.md) | Visual design standards: fonts, spacing, margins, bullets, file format (sourced from recruiter communities) |
+| [ats-check.md](ats-check.md) | ATS keyword coverage report + rationale for the 70–80% sweet spot (don't over-optimize) |
 | [linkedin/hiring-manager.md](linkedin/hiring-manager.md) | Hiring-chain DM drafts |
 | [linkedin/recruiter.md](linkedin/recruiter.md) | Recruiter search URLs + DM template |
 | [linkedin/peer-referral.md](linkedin/peer-referral.md) | Peer / referral DM pattern (non-pitch) |
@@ -462,6 +476,8 @@ function buildCoverLetter(role, report) {
   return `# Cover Letter — ${role.company}, ${role.role}
 
 > Drafted from the eval report's strongest matches and gap mitigations. Read through, swap any wording that doesn't sound like you, then paste into the application form.
+>
+> ⚠️ **AI-DETECTION NOTICE:** This draft was generated from the eval report. Before submitting: (1) read it aloud — anything that sounds smooth or corporate needs to be roughened up; (2) add one specific detail only you could know (a project name, a precise date, a tension moment); (3) ensure no paragraph starts with "I". See [formatting-guide.md](formatting-guide.md) for font/spacing spec (Calibri 11pt, 250–400 words, left-aligned, single-spaced).
 
 ---
 
@@ -903,6 +919,671 @@ ${storyBlocks}
 }
 
 // ────────────────────────────────────────────────────────────────────
+// Form field helpers + new builders
+// ────────────────────────────────────────────────────────────────────
+
+function behavioralPrompts(archetype, roleTitle) {
+  const r = (archetype + ' ' + roleTitle).toLowerCase();
+  const core = [
+    'Tell me about a time you navigated a disagreement with a key stakeholder.',
+    "Describe a project you led that didn't go as planned. What did you learn and how did you course-correct?",
+    'Give me an example of a time you had to influence without authority.',
+  ];
+  const domain = [];
+  if (/comms|editorial|content|writer|communications/i.test(r)) {
+    domain.push(
+      'Walk me through a time you had to simplify a highly technical concept for a non-technical audience.',
+      "Tell me about a time your editorial judgment conflicted with a business stakeholder's request. What happened?",
+      'Describe a situation where you had to maintain quality under extreme time pressure.',
+    );
+  }
+  if (/ai|ml|machine learning|agent|llm/i.test(r)) {
+    domain.push(
+      'Tell me about a production AI system you shipped. What went wrong, and how did you diagnose and resolve it?',
+      "Describe how you've approached responsible AI or safety considerations in your work.",
+    );
+  }
+  if (/product|pm|program manager/i.test(r)) {
+    domain.push(
+      'Tell me about a time you had to make a difficult product prioritization call with limited data.',
+      "Describe a roadmap decision you made that you'd make differently now.",
+    );
+  }
+  if (/engineer|engineering|developer|dev|software/i.test(r)) {
+    domain.push(
+      'Tell me about a technically complex system you designed. What were the key trade-offs?',
+      'Describe a production incident you owned. How did you communicate it to stakeholders?',
+    );
+  }
+  return [...core, ...domain].map(p =>
+    `- **${p}**\n  → See [interview-prep-full.md](interview-prep-full.md) for the pre-loaded STAR answer for this prompt.`
+  ).join('\n\n');
+}
+
+function technicalScaffolds(report, role) {
+  const r = (report.archetype + ' ' + role.role).toLowerCase();
+  if (/comms|editorial|content|writer|communications/i.test(r)) {
+    return `
+
+### Writing sample / portfolio submission
+
+If the form requests a writing sample or portfolio link, submit in this order of preference:
+
+1. **Production AI artifact** (methodology brief, Voice DNA doc, agent output explainer) — directly signals the role intersection
+2. **High-stakes communication** (exec speech, crisis statement, board update) — signals seniority
+3. **Published editorial piece** with a named byline
+
+Portfolio anchor: **thestorytellermitch.com** + **github.com/mitwilli-create/career-ops** for the AI proof.
+
+> ⚠️ **HUMAN REWRITE REQUIRED** if the form asks "describe your editorial philosophy" or "walk us through your approach to [craft X]." Paste your answer into a document and read it aloud — if it sounds like a LinkedIn post, rewrite it.`;
+  }
+  if (/forward deployed|solutions engineer|customer engineer|field engineer/i.test(r)) {
+    return `
+
+### Technical case study (if requested)
+
+Lead with a specific customer outcome, not implementation details. Format: Problem → What I built → Measurable result → What broke and how I fixed it.
+
+⚠️ Don't use AI to draft the case study body — the content should contain proprietary specifics that an LLM wouldn't know.`;
+  }
+  if (/developer|devrel|advocacy/i.test(r)) {
+    return `
+
+### Code sample / demo link
+
+Lead with your most recent production project that a developer audience would recognize as real — not a tutorial. Include the GitHub link directly in the form field.`;
+  }
+  return '';
+}
+
+function buildFormFields(role, report) {
+  return `# Application Form Fields — ${role.company}, ${role.role}
+
+> Pre-drafted answers for the most common application essay fields. Sections marked ⚠️ HUMAN REWRITE REQUIRED carry high AI-detection risk — rewrite in your own voice before pasting. See [formatting-guide.md](formatting-guide.md) for spacing, length, and structure rules.
+
+---
+
+## Risk legend
+
+| Symbol | Meaning |
+|---|---|
+| ⚠️ HUMAN REWRITE REQUIRED | Highest AI-detection risk — rewrite before pasting. Add one messy/specific detail (number, month, failure, tension) no LLM would generate. |
+| 🟡 LIGHT EDIT NEEDED | Scaffold is sound; swap in one personal detail and verify tone. |
+| 🟢 USE AS-IS | Factual / data-driven; AI voice is not a detection signal here. |
+
+---
+
+## "Why are you interested in this role / company?"
+
+⚠️ **HUMAN REWRITE REQUIRED** — "I admire your mission" is the #1 AI-detection pattern. Lead with a specific personal trigger (something you read, a product you used, a person's work you follow). The scaffold below is a starting point only — do NOT paste verbatim.
+
+**Scaffold:**
+
+> [OPEN WITH A SPECIFIC TRIGGER — not a mission statement. E.g.: "I've used [product] in my own work for [specific purpose] since [month/year], and I kept running into [specific friction]. When I saw this brief, it mapped directly to that gap."]
+>
+> The ${role.role} brief maps to the intersection I've been building toward: [YOUR HONEST 1-SENTENCE characterization — not the JD's language].
+>
+> What I'd bring specifically: [STRONGEST MATCH — ${report.matches[0]?.requirement || 'see eval report Block B'}], and [SECOND MATCH — ${report.matches[1]?.requirement || 'see eval report Block B'}].
+
+---
+
+## "Tell us about yourself" / Open intro (50–150 words)
+
+⚠️ **HUMAN REWRITE REQUIRED** — Add one messy/specific detail that no AI would generate (a specific project name, a precise metric, a month/year, a tension or failure you owned).
+
+**Scaffold (150-word version — trim for shorter fields):**
+
+> I'm a ${report.archetype || role.role.split(' ').slice(-2).join(' ')} who's spent [X] years at the intersection of [DOMAIN 1] and [DOMAIN 2]. Most recently, I [WHAT YOU ACTUALLY DID — plain language, not what the company does].
+>
+> The through-line: [HONEST CHARACTERIZATION of your approach — specific enough that someone who knows your work would say "yes, that's exactly how Mitchell works."]
+>
+> What I'm looking for now: [BE SPECIFIC — not "to grow" or "to make an impact", but the actual thing].
+
+---
+
+## "What excites you most about this role?"
+
+⚠️ **HUMAN REWRITE REQUIRED** — Recruiters know this question by its generic answers. Lead with the specific problem, not the company's prestige.
+
+**Scaffold:**
+
+> The problem I'm most interested in: [SPECIFIC CHALLENGE from the JD — use their exact phrasing, not a paraphrase].
+>
+> I've been working adjacent to this at [PAST PROJECT/COMPANY] — specifically [1–2 sentences of concrete experience]. The gap I kept hitting was [HONEST FRICTION POINT — this is the "messy detail" that makes the answer credible].
+>
+> This role is the most direct path I've seen to closing that gap.
+
+---
+
+## Behavioral questions
+
+${behavioralPrompts(report.archetype, role.role)}
+
+---
+
+## Technical / competency questions${technicalScaffolds(report, role)}
+
+---
+
+## Salary / compensation expectations
+
+🟢 **USE AS-IS** — Data-driven responses are not AI-detected.
+
+> My target base is in the [${report.salary || 'see grok-intel.md for comp signals'}] range. I'm comfortable discussing total comp structure including equity — open to landing toward the top of band given tenure and production deliverables. Not anchored to a single number; the right role and team weight more than a 10% comp delta.
+
+---
+
+## Work authorization / location
+
+🟢 **USE AS-IS**
+
+From eval report: **${report.locations || 'see eval report'}** · ${report.remote || ''} · Visa: ${report.visa || 'not flagged in JD'}
+
+> Answer honestly and directly. Don't hedge or qualify more than the facts warrant.
+
+---
+
+## "How did you hear about this role?"
+
+🟡 **LIGHT EDIT NEEDED**
+
+> **Template:** "Via career-ops — a job-search automation system I built and open-sourced (github.com/mitwilli-create/career-ops). The system scored this role ${role.score.toFixed(2)}/5 against my profile."
+
+Honest, references the OSS, signals technical sophistication. Only use if the form has a free-text field — not in a dropdown.
+
+---
+
+## "Do you have questions for us?" (form field version)
+
+⚠️ **HUMAN REWRITE REQUIRED** — Generic curiosity is the second-most-detected AI pattern after "I admire your mission."
+
+**Pattern:** "I noticed [SPECIFIC THING from grok-intel.md or recent company news] — I'm curious how the ${role.role} role intersects with [THAT SPECIFIC THING]."
+
+**Examples of the right specificity level (adapt, don't copy):**
+- "You shipped [product name] in [month] — how does the ${guessTeamName(report)} team decide what gets a full communications strategy vs. what ships quietly?"
+- "I read [name]'s post about [specific topic] — is that framing representative of how the team thinks about [related challenge]?"
+
+---
+
+## Human-rewrite risk tracker
+
+| Section | Risk | Action required |
+|---|---|---|
+| Why this company | 🔴 MUST REWRITE | Lead with a specific personal trigger |
+| Tell us about yourself | 🔴 MUST REWRITE | Add one messy/specific detail |
+| What excites you | 🔴 MUST REWRITE | Lead with problem, not prestige |
+| Behavioral STAR answers | 🟡 EDIT | Swap in specific names, dates, numbers |
+| Technical / writing sample | 🟡 EDIT | Verify specifics are real, not plausible |
+| Salary expectations | 🟢 USE AS-IS | Data-driven = not flagged |
+| Work authorization | 🟢 USE AS-IS | Factual = not flagged |
+| "How did you hear" | 🟡 EDIT | Ensure it's honest |
+| "Questions for us" | 🔴 MUST REWRITE | Make it specific to recent news |
+`;
+}
+
+function buildOnePager(role, report) {
+  const companyProblem = report.tldr
+    ? report.tldr.split(/\.\s*/)[0].slice(0, 300)
+    : `${role.company}'s ${role.role} brief`;
+
+  return `# Audition Artifact / 1-Pager — ${role.company}, ${role.role}
+
+> Phase 0.5 from the Application Prompt Guide. This is the **pre-application audition artifact** — a 1-page "proof-of-work" you attach alongside the cover letter, share with the hiring manager before the recruiter call, or post on LinkedIn to generate inbound. Its purpose is to demonstrate that you understand the company's problem deeply enough to have a point of view on it, before anyone asks.
+
+**Submission options:**
+- Attach as a separate PDF alongside your CV
+- Share the link in the hiring manager DM (see [linkedin/hiring-manager.md](linkedin/hiring-manager.md))
+- Post on LinkedIn as a native document (carousel format gets 3× reach vs. a link post)
+
+---
+
+## The problem I see at ${role.company}
+
+> ⚠️ **HUMAN REWRITE REQUIRED** — Add 1–2 sentences based on what you personally observed or experienced as a user/observer of ${role.company}'s product or communications. Generic "the company faces X challenge" reads as AI.
+
+${companyProblem}.
+
+**What I believe is happening under the surface:** [YOUR SPECIFIC DIAGNOSIS — based on what you've read/used/observed, not what the JD says. This is the "smart insider" voice that makes audition artifacts worth reading.]
+
+---
+
+## What I would do in the first 90 days
+
+> This section is the audition. Make it specific, opinionated, and actionable. "I would learn the team's priorities" is not an answer — write what you believe the priorities *should* be and why.
+
+### Month 1 — Diagnosis
+- [SPECIFIC THING to audit/observe/measure first — and why]
+- [SPECIFIC CONVERSATION to have — with whom, and what the goal is]
+- [SPECIFIC ARTIFACT to produce — a doc, a brief, a working prototype — and for what audience]
+
+### Month 2 — First proof point
+- [SPECIFIC DELIVERABLE — something the team can see and critique]
+- [SPECIFIC METRIC — how you'd know if it's working]
+
+### Month 3 — System, not project
+- [SPECIFIC PROCESS or infrastructure to build so the work doesn't depend on you personally]
+
+---
+
+## My relevant proof
+
+| Requirement (from JD) | My evidence |
+|---|---|
+${report.matches.slice(0, 3).map(m => `| ${m.requirement} | ${m.evidence.replace(/<br\s*\/?>/gi, ' ').replace(/\s+/g, ' ').slice(0, 200)} |`).join('\n')}
+
+---
+
+## What I'm not claiming
+
+> Optional but powerful — signals self-awareness and earns trust faster than a perfect CV.
+
+${report.gaps.length > 0
+  ? report.gaps.slice(0, 2).map(g => `- **${g.gap}** — ${g.mitigation.replace(/\s+/g, ' ').slice(0, 200)}`).join('\n')
+  : '- No material gaps flagged in the eval — this section can be omitted or used for a nuanced framing point.'}
+
+---
+
+## Format notes (apply before exporting to PDF)
+
+- **Length:** 1 page hard limit. If it spills to page 2, cut Month 3 and tighten Month 1.
+- **Font:** Calibri 11pt body, 14pt section headers. See [formatting-guide.md](formatting-guide.md) for full spec.
+- **Title:** "${role.company} — 90-Day Vision: ${role.role}" or "${role.company} / Mitchell Williams — [SHORT REFRAME OF YOUR CONTRIBUTION]"
+- **Footer:** Name · Email · LinkedIn URL · Date
+- **File name:** \`mitch-williams-${slugify(role.company)}-90-day-vision.pdf\`
+`;
+}
+
+function buildLoopPattern(role, report) {
+  const archetype = (report.archetype || '').toLowerCase();
+  if (/comms|editorial|content|writer|communications/i.test(archetype)) {
+    return `**Typical Comms/Editorial loop at a tech company (5–6 rounds):**
+1. **Recruiter screen (30 min)** — Background + motivation + basic comp check
+2. **Hiring manager intro (45–60 min)** — Vision fit + how you work + role scope
+3. **Writing/editorial exercise** — Usually 48–72h take-home. Expect a prompt requiring both craft and strategic judgment, not just clean prose.
+4. **Cross-functional panel (60–90 min)** — 2–4 stakeholders (product, eng, design, legal). They're testing whether you can hold your ground while being collaborative.
+5. **Leadership presentation (30–45 min)** — VP or C-level. Big-picture fit, strategic framing. They're checking whether you think at the right level.
+6. **Reference calls** — Usually 2–3, including one they find independently.
+
+**Typical duration:** 3–6 weeks from screen to offer.`;
+  }
+  if (/forward deployed|solutions|customer engineer/i.test(archetype)) {
+    return `**Typical Forward Deployed / Solutions Engineering loop:**
+1. **Recruiter screen (30 min)** — Background + motivation
+2. **Technical screen (60 min)** — Coding + system design or a customer scenario
+3. **Customer scenario role-play (60 min)** — You play the account lead, interviewer plays a skeptical customer.
+4. **Behavioral panel (90 min)** — Cross-functional: solutions, product, eng. STAR-format behavioral questions.
+5. **Leadership bar-raiser (30–45 min)** — Culture + strategic fit
+
+**Typical duration:** 4–8 weeks.`;
+  }
+  return `**Typical loop for this role type at a scaling AI company:**
+1. **Recruiter screen (30 min)** — Background, motivation, comp check
+2. **Hiring manager (45–60 min)** — Vision + role scope + team fit
+3. **Panel / loop (60–90 min)** — 3–4 interviewers, mix of behavioral and craft/technical
+4. **Executive / leadership (30–45 min)** — Strategic fit + ambition signal
+
+**Typical duration:** 3–6 weeks from screen to offer.`;
+}
+
+function buildInterviewPrepFull(role, report) {
+  const allStories = starStories(report.blockF, 10);
+  const storyBlocks = allStories.length > 0
+    ? allStories.map((s, i) => `### Story ${i + 1} — ${s.requirement || 'Pre-loaded story'}
+
+| | |
+|---|---|
+| **Situation** | ${s.s.replace(/<br\s*\/?>/g, ' ').slice(0, 600)} |
+| **Task** | ${s.t.replace(/<br\s*\/?>/g, ' ').slice(0, 400)} |
+| **Action** | ${s.a.replace(/<br\s*\/?>/g, ' ').slice(0, 800)} |
+| **Result** | ${s.r.replace(/<br\s*\/?>/g, ' ').slice(0, 600)} |
+`).join('\n')
+    : '_No STAR stories in the eval report. Run `/career-ops interview-prep` to generate a full story bank for this role._';
+
+  const hardQs = report.gaps.length > 0
+    ? report.gaps.map((g, i) =>
+      `${i + 1}. **"You don't have experience in ${g.gap} — how would you approach that?"**\n   → ${g.mitigation.replace(/\s+/g, ' ').slice(0, 300)}`
+    ).join('\n\n')
+    : '_No material gaps flagged in the eval report — standard behavioral prep applies._';
+
+  const defenseDrill = report.matches.slice(0, 4).map((m, i) =>
+    `**Drill ${i + 1}: "${m.requirement}"**
+- Your 60-second answer: [Fill in — 1 sentence of context, 1 sentence of action, 1 specific result with a number]
+- Most likely follow-up: "Tell me more about [SPECIFIC DETAIL from your answer]" — pre-think this now
+- Failure mode to avoid: Generalizing. If you can't name a specific project/date/number, the answer is too vague.`
+  ).join('\n\n');
+
+  return `# Interview Prep (Full) — ${role.company}, ${role.role}
+
+> Full Phase 8 interview preparation. STAR stories come from the eval report. Section 5 (Messy Story Extraction) requires your input — designed to surface the rough-edged specifics that make answers AI-undetectable.
+
+---
+
+## Section 1 — Interview loop structure (likely)
+
+${buildLoopPattern(role, report)}
+
+---
+
+## Section 2 — All STAR stories from eval report
+
+${storyBlocks}
+
+---
+
+## Section 3 — Hard questions to anticipate
+
+> Based on gaps identified in the eval report. Prepare these before the recruiter screen — they will surface.
+
+${hardQs}
+
+---
+
+## Section 4 — CV bullet defense drill
+
+> For each top CV claim, prepare a 60-second expansion and anticipate the follow-up. Recruiters test CV bullets in ~40% of screens.
+
+${defenseDrill}
+
+---
+
+## Section 5 — Messy story extraction (⚠️ requires your input)
+
+> AI-generated interview answers are detected because they sound smooth. Real answers have edges — specific failure moments, precise numbers, named people, an admission of something that didn't work. Answer these in a voice note or doc — don't polish the output.
+
+1. **The specific project name** — What's the informal name your team used for the project your strongest story comes from? (Not the official name — the one in Slack.)
+2. **The number that surprised you** — What metric changed in a way you didn't expect? Larger or smaller than you predicted — either is useful.
+3. **The person who pushed back** — Who was the hardest stakeholder to bring along? What was their actual concern (not the diplomatic version)?
+4. **The thing that almost didn't ship** — What nearly derailed the project? What would a dispassionate observer say was the root cause?
+5. **The result you're least proud of** — Where did the numbers land short of your internal target? Why?
+6. **What you'd do differently** — Not "I'd communicate more" — name the specific decision you'd reverse.
+
+Feed your answers into [../../docs/APPLICATION_PROMPT_GUIDE.md](../../docs/APPLICATION_PROMPT_GUIDE.md) Phase 8 for the full interview defense drill.
+
+---
+
+## Section 6 — Closing questions (one per round)
+
+**Tier 1 — Strongest (specific + researched):**
+- "I noticed [SPECIFIC THING from grok-intel.md — company news, product launch, team change] — how does that intersect with the priorities this role will own?"
+- "What does success in this role look like at 6 months — in concrete terms, what artifact would exist that wouldn't exist today?"
+
+**Tier 2 — Strong (shows systems thinking):**
+- "How does the ${guessTeamName(report)} team get input into product decisions? What's the feedback loop?"
+- "What's the one thing the previous person in this role did that you'd want the next person to continue?"
+
+**Tier 3 — Acceptable:**
+- "What's the hardest part of this role that doesn't show up in the JD?"
+- "What does onboarding look like for this function specifically?"
+
+**Avoid:**
+- "What does ${role.company} do?" — read the JD
+- "What are the growth opportunities?" — reads as self-interested in a first screen
+- "When will I hear back?" — ask the recruiter separately
+
+---
+
+## After each interview round
+
+- [ ] Write down 3 specific things that came up within 2 hours (before they blur)
+- [ ] Send a thank-you within 24h referencing one specific moment from the conversation
+- [ ] Update [../../data/applications.md](../../data/applications.md) row #${role.num} with the latest status
+`;
+}
+
+function buildFormattingGuide(role, report) {
+  return `# Visual Formatting Guide — ${role.company}, ${role.role}
+
+> Sourced from r/resumes, r/cscareerquestions, Blind (AI company threads), Resume Genius 2026 survey, MIT/Columbia career development resources. These are the formatting standards hiring managers and recruiter communities have explicitly called for. Apply across ALL submitted materials: CV, cover letter, form fields, and one-pager.
+
+---
+
+## CV Formatting
+
+### Font
+
+| Setting | Value | Why |
+|---|---|---|
+| Primary font | **Calibri** (first choice) or Georgia | ATS-safe, clean on screen and print; r/resumes consensus |
+| Alternate safe | Arial, Verdana, Garamond | Acceptable — avoid Times New Roman (reads dated 2026) |
+| Body size | **11pt** | Below 10pt triggers readability rejection; above 12pt wastes space |
+| Name (header) | **14–16pt, bold** | Must stand out from everything else on the page |
+| Section headers | **11–12pt, bold, ALL CAPS or Title Case** | Pick one style — inconsistency is the #1 amateurism signal |
+| Job title + company | **11pt, bold** | Visually separates from bullets beneath |
+
+### Color
+
+| Use | Value |
+|---|---|
+| Body text | **Pure black (#000000)** — not dark gray, not 90% black |
+| Accent (optional) | ONE color max: dark navy (#1a3a5c) or dark teal (#1a5c4f) for your name or section rules only |
+| Background | **White only** — colored backgrounds fail ATS and print poorly |
+
+> Glassdoor and Blind threads consistently flag colored text boxes and shaded section headers as "design-school aesthetic that signals you don't understand enterprise hiring."
+
+### Spacing and margins
+
+| Setting | Value |
+|---|---|
+| Top / bottom margins | **0.75 in** — slightly tighter than default 1 in; allows more content without looking cramped |
+| Left / right margins | **1 in** |
+| Line spacing (body) | **1.0 (single)** |
+| Space after each bullet | **2–3pt** — enough air to separate lines without wasting vertical space |
+| Space between sections | **8–10pt** or a single thin horizontal rule |
+
+### Page length
+
+| Experience | Pages |
+|---|---|
+| Under 10 years | **1 page** |
+| 10–20 years | **1–2 pages** — page 2 must add a strong signal, not just another job |
+| 20+ years | **2 pages max** outside academia/research |
+
+> Blind consensus (AI company applications, Q1 2026): "Anything over 2 pages gets skimmed at page 1 and discarded. The 3-page resume is a talent-acquisition meme — nobody reads it."
+
+**Mitchell's profile (18+ years):** 2 pages is appropriate. Page 1 must stand alone — if a recruiter prints only page 1, it should be a complete picture.
+
+### Visual hierarchy
+
+| Level | Element | Format |
+|---|---|---|
+| 1 (highest) | Your name | Largest text on the page, 14–16pt, bold |
+| 2 | Section headers | Bold, 11–12pt, separated by thin rule |
+| 3 | Company + title | Bold, 11pt |
+| 4 | Date / location | Right-aligned, regular weight, same size as body |
+| 5 (lowest) | Bullet content | Regular weight, 11pt |
+
+### Bullet point structure
+
+**Formula:** Strong verb → specific context → measurable result (X-Y-Z)
+
+| Rule | Good | Bad |
+|---|---|---|
+| Start with a strong verb | "Shipped a production RAG that drafted VP comms at 99% fidelity" | "Was responsible for developing a system that helped with communications" |
+| Include a number | "Reduced turnaround from 4 days to 3 hours for 1,000 engineers" | "Significantly reduced turnaround time" |
+| 1–2 lines max | 15–25 words per bullet | 40-word bullets that wrap to 3 lines |
+| No terminal periods | Fragment structure | Full sentences with periods |
+| Verb tense | Past tense for past roles, present for current | Mixed tense within a single role |
+
+**Strong action verbs (r/resumes 2026 approved):**
+- **Built / shipped:** Shipped, Engineered, Launched, Deployed, Authored, Architected
+- **Led:** Owned, Directed, Spearheaded, Championed, Drove
+- **Improved:** Reduced, Increased, Accelerated, Optimized, Cut
+- **Collaborated:** Partnered, Advised, Coordinated, Aligned
+- **Created:** Designed, Developed, Produced, Established
+
+### Bullet symbols
+
+| Rule | Format |
+|---|---|
+| Bullet type | **Standard round (•)** — no dashes, no arrows, no custom glyphs |
+| Nested bullets | **Avoid** — ATS parses them poorly and they signal over-engineering |
+| Em dashes | OK for clarity (e.g., "Google xGE — Office of the CTO") |
+| Numbers in text | Always **%** not "percent", **$2M** not "two million dollars" |
+
+---
+
+## Cover Letter Formatting
+
+### Structure
+
+| Section | Content | Length |
+|---|---|---|
+| Header | Name, Email, LinkedIn, Date | 1–2 lines |
+| Greeting | "Dear [Name] / [Team] team," — never "To Whom It May Concern" | 1 line |
+| Opening | Specific trigger + 1-sentence role alignment | 3–4 sentences |
+| Body | 2–3 paragraphs: evidence, gap acknowledgment, framing | 2–3 sentences each |
+| Close | Clear ask + sign-off | 2 sentences |
+
+**Length:** 250–400 words. 70% of hiring managers reject cover letters over 400 words. (Resume Genius 2026 survey)
+
+**Font / spacing:** Match your CV exactly. Calibri 11pt, 1-inch margins, left-aligned, single-spaced, one blank line between paragraphs.
+
+**File format:** PDF primary + .docx as backup. File name: \`mitch-williams-cover-letter-${slugify(role.company)}.pdf\`
+
+### Paragraph grammar rules
+
+- **Left-align only** — justified text creates uneven word spacing that slows scanning
+- **Never start a paragraph with "I"** — standard style rule AND an AI-detection signal
+- **Vary sentence length** — 2–3 short sentences (under 15 words) for impact, 1 longer sentence for complexity. A paragraph of all long sentences reads as AI.
+- **No corporate filler:** "leverage," "synergize," "dynamic team environment," "results-driven" — replace with the specific thing you actually did
+
+---
+
+## Application Form Field Formatting
+
+| Field type | Format |
+|---|---|
+| Short text (under 150 words) | Plain prose, no bullets, no headers |
+| Long text (150–500 words) | Short paragraphs (3–4 sentences), 1 blank line between |
+| Very long text (500+ words) | 2–3 sections with **bold subheadings**; treat as a mini-doc |
+| Dropdown / checkbox | Answer directly; don't add caveats in a text field below |
+
+> If the form has no character counter, assume 400–500 word max unless told otherwise. Going over reads as someone who can't edit.
+
+---
+
+## One-Pager / Audition Artifact Formatting
+
+- **1 page hard limit** — use 0.7-inch margins and 10.5pt body to fit if needed
+- **Title:** Large, bold, left-aligned — visible within 2 seconds of opening
+- **Structure:** Problem → Diagnosis → 90-day plan → Your evidence → What you're not claiming
+- **Visual accent:** One thin horizontal rule between sections. No borders, no shading.
+- **Footer:** Name · Date · GitHub / portfolio URL
+
+---
+
+## What NOT to do (community consensus, r/resumes + Blind AI company threads Q1–Q2 2026)
+
+- ❌ **No infographic resumes** — ATS and most enterprise HRMs can't parse them. At Anthropic/OpenAI/Perplexity, design is irrelevant; content wins.
+- ❌ **No columns or text boxes** — ATS reads these as garbled or skips them
+- ❌ **No photos** — US/Canada hiring; adds bias liability for the company
+- ❌ **No "References available upon request"** — wastes space
+- ❌ **No objective statement** — replace with a production-summary section at the top
+- ❌ **No colored backgrounds or gradients**
+- ❌ **No 3+ fonts** — every additional font reduces perceived professionalism
+- ❌ **No tables in the CV body** — safe only in a dedicated skills-matrix section, and only if simple
+
+---
+
+## Pre-submission visual QA checklist
+
+- [ ] Font: Calibri or Georgia, 11pt body, consistent throughout
+- [ ] Margins: 0.75–1 in on all sides
+- [ ] Line spacing: 1.0 (single), 8–10pt between sections
+- [ ] Bullets: Standard round (•), 15–25 words, strong verb opening, at least one number
+- [ ] Color: Black text, max one accent color
+- [ ] Length: CV ≤2 pages; cover letter ≤400 words; form fields ≤500 words unless specified
+- [ ] File format: PDF primary, .docx backup
+- [ ] File name: descriptive (\`mitch-williams-${slugify(role.company)}-cv.pdf\`), not \`resume_final_v3.pdf\`
+- [ ] Print test: Print page 1 in black and white — if it's hard to read, it won't survive recruiter printing
+`;
+}
+
+function buildAtsCheck(role, report) {
+  const matchRows = report.matches.map(m =>
+    `| ✅ In CV | **${m.requirement}** | ${m.evidence.replace(/<br\s*\/?>/gi, ' ').replace(/\s+/g, ' ').slice(0, 120)} |`
+  ).join('\n');
+  const gapRows = report.gaps.map(g =>
+    `| ⚠️ Soft gap | **${g.gap}** | Add to CV summary or cover letter: ${g.mitigation.replace(/\s+/g, ' ').slice(0, 120)} |`
+  ).join('\n');
+
+  return `# ATS Keyword Check — ${role.company}, ${role.role}
+
+> Auto-generated from the eval report's Block B match analysis. This is your CV's keyword coverage against the JD requirements — the same signal ATS systems use to score applications. Review before submitting.
+
+---
+
+## Why you should NOT aim for 100% ATS match
+
+**The human screen is where applications are won or lost — not the ATS score.**
+
+The ATS filters out the bottom 20–30% of applications. Once you're past the filter, a human reads your CV in 6–7 seconds. A CV optimized for 95%+ ATS match tends to:
+- Use the exact JD phrasing verbatim (reads as keyword-stuffed to a recruiter)
+- Repeat the same terms 4–6 times across different sections (obvious and off-putting)
+- Use passive constructions ("experienced in X") instead of active proof ("shipped X that achieved Y")
+- Sound like a job description, not a person
+
+**The target sweet spot: 70–80% keyword match.**
+
+At 70–80%:
+- You clear the ATS filter (most systems use 60–70% as the passing threshold)
+- You still sound like a human when the recruiter reads page 1
+- You have room for specific proof points that no other candidate will have (the 20–30% that's yours alone)
+
+**The actual risk at different match levels:**
+
+| ATS score | ATS outcome | Human screen outcome |
+|---|---|---|
+| < 60% | Filtered out before human sees it | N/A |
+| 60–70% | Borderline — depends on system thresholds | Reads human, but risky if ATS is strict |
+| **70–80%** | **Cleared — you're in the human pile** | **Reads like a person. This is the target.** |
+| 85–90% | Cleared with margin | Reads polished but slightly mechanical |
+| 95–100% | Cleared | Reads as keyword-stuffed — recruiters notice |
+
+---
+
+## Current keyword coverage (from eval Block B)
+
+| Status | Requirement | Coverage in your CV |
+|---|---|---|
+${matchRows}
+${gapRows || '| — | No soft gaps flagged | All key requirements covered |}'}
+
+---
+
+## Keywords to add (if not already in CV)
+
+Review the ⚠️ soft gap rows above. For each gap:
+1. **Don't add the keyword verbatim** — add it as a proof point ("Led X which required Y" not "Experienced in Y")
+2. **One addition per section max** — CV summary, one experience bullet, or skills section. Not all three.
+3. **Check the count** — if a keyword already appears 2× in your CV, don't add a third instance.
+
+---
+
+## Manual ATS verification (optional — takes 5 min)
+
+For a more precise score, paste your CV and the JD into one of these free tools:
+
+- [Jobscan](https://www.jobscan.co) — most widely used; shows match % and missing keywords
+- [resume.worded.com](https://resume.worded.com) — ATS simulation + line-by-line feedback
+- [Rezi](https://www.rezi.ai) — ATS optimization with keyword injection suggestions
+
+> Target: 70–80% match. If Jobscan returns < 65%, check the ⚠️ rows above and add the highest-priority keyword as a proof bullet.
+
+---
+
+## ATS format safety checklist
+
+- [ ] No tables in the CV body (ATS skips them)
+- [ ] No columns or text boxes (ATS reads these as garbled)
+- [ ] Standard section headers: "Experience", "Education", "Skills" (not "My Journey", "Where I've Worked")
+- [ ] File saved as .docx AND .pdf — some ATS systems only parse .docx cleanly
+- [ ] Font: Calibri or Arial (ATS-safe) — not a script or display font
+- [ ] No headers/footers with content — ATS often skips them
+`;
+}
+
+// ────────────────────────────────────────────────────────────────────
 // Main
 // ────────────────────────────────────────────────────────────────────
 
@@ -930,6 +1611,11 @@ function buildPack(role) {
   writeFileSync(join(dir, 'pre-application-checklist.md'), buildPreApplicationChecklist(role, report));
   writeFileSync(join(dir, 'grok-intel.md'), buildGrokIntel(role, report));
   writeFileSync(join(dir, 'interview-prep-teaser.md'), buildInterviewPrep(role, report));
+  writeFileSync(join(dir, 'form-fields.md'), buildFormFields(role, report));
+  writeFileSync(join(dir, 'one-pager.md'), buildOnePager(role, report));
+  writeFileSync(join(dir, 'interview-prep-full.md'), buildInterviewPrepFull(role, report));
+  writeFileSync(join(dir, 'formatting-guide.md'), buildFormattingGuide(role, report));
+  writeFileSync(join(dir, 'ats-check.md'), buildAtsCheck(role, report));
   writeFileSync(join(linkedinDir, 'hiring-manager.md'), buildHiringManager(role, report));
   writeFileSync(join(linkedinDir, 'recruiter.md'), buildRecruiter(role, report));
   writeFileSync(join(linkedinDir, 'peer-referral.md'), buildPeerReferral(role, report));

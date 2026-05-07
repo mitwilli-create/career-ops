@@ -17,7 +17,7 @@
  * Free-tier model: gemini-2.0-flash (generous quota, no billing required)
  */
 
-import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -89,6 +89,11 @@ if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
 let jdText = '';
 let modelName = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 let saveReport = true;
+let batchMode = false;
+let batchReportNum = null;
+let batchId = null;
+let batchDate = null;
+let batchUrl = null;
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--file' && args[i + 1]) {
@@ -102,8 +107,40 @@ for (let i = 0; i < args.length; i++) {
     modelName = args[++i];
   } else if (args[i] === '--no-save') {
     saveReport = false;
+  } else if (args[i] === '--batch') {
+    batchMode = true;
+  } else if (args[i] === '--report-num' && args[i + 1]) {
+    batchReportNum = args[++i];
+  } else if (args[i] === '--id' && args[i + 1]) {
+    batchId = args[++i];
+  } else if (args[i] === '--date' && args[i + 1]) {
+    batchDate = args[++i];
+  } else if (args[i] === '--url' && args[i + 1]) {
+    batchUrl = args[++i];
   } else if (!args[i].startsWith('--')) {
     jdText += (jdText ? '\n' : '') + args[i];
+  }
+}
+
+if (!jdText && batchUrl) {
+  try {
+    const res = await fetch(batchUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 career-ops/1.7.0' },
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const html = await res.text();
+    jdText = html
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ')
+      .replace(/\s{3,}/g, '\n\n')
+      .trim()
+      .slice(0, 20000);
+  } catch (err) {
+    console.error(`❌  Failed to fetch JD from ${batchUrl}: ${err.message}`);
+    process.exit(1);
   }
 }
 
@@ -148,15 +185,6 @@ function nextReportNumber() {
   return String(Math.max(...files) + 1).padStart(3, '0');
 }
 
-// Lazy import — only used when saving
-let readdirSync;
-try {
-  ({ readdirSync } = await import('fs'));
-} catch { /* already imported above via named exports */ }
-// Use named import fallback
-if (!readdirSync) {
-  readdirSync = (await import('fs')).readdirSync;
-}
 
 // ---------------------------------------------------------------------------
 // Load context files
@@ -166,6 +194,8 @@ console.log('\n📂  Loading context files...');
 const sharedContext  = readFile(PATHS.shared,   'modes/_shared.md');
 const ofertaLogic    = readFile(PATHS.oferta,   'modes/oferta.md');
 const cvContent      = readFile(PATHS.cv,       'cv.md');
+const articleDigestPath = join(ROOT, 'article-digest.md');
+const articleDigest  = existsSync(articleDigestPath) ? readFileSync(articleDigestPath, 'utf-8').trim() : null;
 
 // ---------------------------------------------------------------------------
 // Build the system prompt (mirrors the Claude skill router logic)
@@ -189,7 +219,12 @@ ${ofertaLogic}
 CANDIDATE RESUME (cv.md)
 ═══════════════════════════════════════════════════════
 ${cvContent}
-
+${articleDigest ? `
+═══════════════════════════════════════════════════════
+PROOF POINTS (article-digest.md)
+═══════════════════════════════════════════════════════
+${articleDigest}
+` : ''}
 ═══════════════════════════════════════════════════════
 IMPORTANT OPERATING RULES FOR THIS CLI SESSION
 ═══════════════════════════════════════════════════════
@@ -283,8 +318,8 @@ if (saveReport) {
       mkdirSync(PATHS.reports, { recursive: true });
     }
 
-    const num         = nextReportNumber();
-    const today       = new Date().toISOString().split('T')[0];
+    const num         = batchReportNum || nextReportNumber();
+    const today       = batchDate || new Date().toISOString().split('T')[0];
     const companySlug = company.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     const filename    = `${num}-${companySlug}-${today}.md`;
     const reportPath  = join(PATHS.reports, filename);
@@ -306,9 +341,19 @@ ${evaluationText.replace(/---SCORE_SUMMARY---[\s\S]*?---END_SUMMARY---/, '').tri
     writeFileSync(reportPath, reportContent, 'utf-8');
     console.log(`\n✅  Report saved: reports/${filename}`);
 
-    // Append tracker entry reminder
-    console.log(`\n📊  Tracker entry (add to data/applications.md):`);
-    console.log(`    | ${num} | ${today} | ${company} | ${role} | ${score} | Evaluada | ❌ | [${num}](reports/${filename}) |`);
+    if (batchMode && batchId) {
+      const tsvDir = join(ROOT, 'batch', 'tracker-additions');
+      if (!existsSync(tsvDir)) mkdirSync(tsvDir, { recursive: true });
+      const companySlugTsv = company.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const tsvPath = join(tsvDir, `${num}-${companySlugTsv}.tsv`);
+      const scoreForTsv = score !== '?' ? `${score}/5` : '-';
+      const reportLink = `[${num}](reports/${filename})`;
+      writeFileSync(tsvPath, `${num}\t${today}\t${company}\t${role}\tEvaluated\t${scoreForTsv}\t❌\t${reportLink}\tGemini (${modelName})\n`, 'utf-8');
+      console.log(`✅  TSV written: batch/tracker-additions/${num}-${companySlugTsv}.tsv`);
+    } else {
+      console.log(`\n📊  Tracker entry (add to data/applications.md):`);
+      console.log(`    | ${num} | ${today} | ${company} | ${role} | ${score} | Evaluada | ❌ | [${num}](reports/${filename}) |`);
+    }
   } catch (err) {
     console.warn(`⚠️   Could not save report: ${err.message}`);
   }

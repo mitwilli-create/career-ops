@@ -22,7 +22,7 @@
  * Cost cap: enforced via data/grok-spend.log file. Default $5/day.
  */
 
-import { readFileSync, existsSync, appendFileSync } from 'fs';
+import { readFileSync, existsSync, appendFileSync, writeFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 
 const ROOT = process.cwd();
@@ -55,22 +55,56 @@ if (!process.env.XAI_API_KEY) {
   process.exit(2);
 }
 
-function checkSpendCap() {
-  if (!existsSync(SPEND_LOG)) return { allowed: true, todaySpent: 0 };
-  const today = new Date().toISOString().slice(0, 10);
-  const lines = readFileSync(SPEND_LOG, 'utf-8').split('\n').filter(Boolean);
-  const todayLines = lines.filter(l => l.startsWith(today));
-  const todaySpent = todayLines.reduce((sum, l) => {
-    const cost = parseFloat(l.split('\t')[2] || 0);
-    return sum + (isNaN(cost) ? 0 : cost);
-  }, 0);
-  return { allowed: todaySpent < DAILY_CAP_USD, todaySpent };
+const SPEND_LOCK = SPEND_LOG + '.lock';
+const LOCK_TIMEOUT_MS = 5000;
+
+function acquireSpendLock() {
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    try {
+      writeFileSync(SPEND_LOCK, String(process.pid), { flag: 'wx' }); // O_EXCL: atomic exclusive create
+      return;
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      // Stale lock check: if the PID in the lock file is dead, reclaim it
+      try {
+        const pid = parseInt(readFileSync(SPEND_LOCK, 'utf-8').trim(), 10);
+        try { process.kill(pid, 0); } catch { unlinkSync(SPEND_LOCK); continue; }
+      } catch { /* lock file unreadable — another process is mid-write, retry */ }
+      const t = Date.now() + 20; while (Date.now() < t) {} // 20ms spin
+    }
+  }
+  throw new Error(`Timeout acquiring grok spend lock after ${LOCK_TIMEOUT_MS}ms`);
 }
 
-function logSpend(cost) {
-  const today = new Date().toISOString().slice(0, 10);
-  const ts = new Date().toISOString();
-  appendFileSync(SPEND_LOG, `${today}\t${ts}\t${cost.toFixed(4)}\t${COMPANY} - ${ROLE}\n`);
+function releaseSpendLock() {
+  try { unlinkSync(SPEND_LOCK); } catch {}
+}
+
+// Atomic check-and-commit: acquires lock, reads log, checks cap, writes estimated
+// cost if allowed — all before the API call. Prevents concurrent processes from
+// both seeing under-cap and both proceeding.
+function checkAndCommitSpend(cost) {
+  acquireSpendLock();
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    let todaySpent = 0;
+    if (existsSync(SPEND_LOG)) {
+      const lines = readFileSync(SPEND_LOG, 'utf-8').split('\n').filter(Boolean);
+      todaySpent = lines.filter(l => l.startsWith(today)).reduce((sum, l) => {
+        const c = parseFloat(l.split('\t')[2] || 0); // col 2 = cost (date\tts\tcost\tname)
+        return sum + (isNaN(c) ? 0 : c);
+      }, 0);
+    }
+    if (todaySpent + cost > DAILY_CAP_USD) {
+      return { allowed: false, todaySpent };
+    }
+    const ts = new Date().toISOString();
+    appendFileSync(SPEND_LOG, `${today}\t${ts}\t${cost.toFixed(4)}\t${COMPANY} - ${ROLE}\n`);
+    return { allowed: true, todaySpent: todaySpent + cost };
+  } finally {
+    releaseSpendLock();
+  }
 }
 
 function emitFailureBlock(reason) {
@@ -208,7 +242,7 @@ function extractContent(data) {
 }
 
 async function main() {
-  const { allowed, todaySpent } = checkSpendCap();
+  const { allowed, todaySpent } = checkAndCommitSpend(ESTIMATED_COST_PER_QUERY);
   if (!allowed) {
     emitFailureBlock(`Daily cost cap reached ($${todaySpent.toFixed(2)} of $${DAILY_CAP_USD})`);
   }
@@ -220,7 +254,6 @@ async function main() {
     emitFailureBlock(`Grok query failed: ${err.message}`);
   }
 
-  logSpend(ESTIMATED_COST_PER_QUERY);
   emitBlock(result.content, result.citations);
 }
 

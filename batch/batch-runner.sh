@@ -33,6 +33,7 @@ RETRY_FAILED=false
 START_FROM=0
 MAX_RETRIES=2
 MIN_SCORE=0
+ENGINE="claude"
 
 usage() {
   cat <<'USAGE'
@@ -48,6 +49,7 @@ Options:
   --start-from N       Start from offer ID N (skip earlier IDs)
   --max-retries N      Max retry attempts per offer (default: 2)
   --min-score N        Skip PDF/tracker for offers scoring below N (default: 0 = off)
+  --engine ENGINE      Worker engine: claude (default) or gemini
   -h, --help           Show this help
 
 Files:
@@ -81,6 +83,7 @@ while [[ $# -gt 0 ]]; do
     --start-from) START_FROM="$2"; shift 2 ;;
     --max-retries) MAX_RETRIES="$2"; shift 2 ;;
     --min-score) MIN_SCORE="$2"; shift 2 ;;
+    --engine) ENGINE="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1"; usage; exit 1 ;;
   esac
@@ -124,7 +127,16 @@ check_prerequisites() {
     exit 1
   fi
 
-  if ! command -v claude &>/dev/null; then
+  if [[ "$ENGINE" == "gemini" ]]; then
+    if ! command -v node &>/dev/null; then
+      echo "ERROR: 'node' not found in PATH (required for Gemini engine)."
+      exit 1
+    fi
+    if [[ ! -f "$PROJECT_DIR/gemini-eval.mjs" ]]; then
+      echo "ERROR: gemini-eval.mjs not found at $PROJECT_DIR/gemini-eval.mjs"
+      exit 1
+    fi
+  elif ! command -v claude &>/dev/null; then
     echo "ERROR: 'claude' CLI not found in PATH."
     exit 1
   fi
@@ -336,35 +348,44 @@ process_offer() {
 
   local log_file="$LOGS_DIR/${report_num}-${id}.log"
 
-  # Prepare system prompt with placeholders resolved
-  local resolved_prompt="$BATCH_DIR/.resolved-prompt-${id}.md"
-  # Escape sed delimiter characters in variables to prevent substitution breakage
-  local esc_url esc_jd_file esc_report_num esc_date esc_id
-  esc_url="${url//\\/\\\\}"
-  esc_url="${esc_url//|/\\|}"
-  esc_jd_file="${jd_file//\\/\\\\}"
-  esc_jd_file="${esc_jd_file//|/\\|}"
-  esc_report_num="${report_num//|/\\|}"
-  esc_date="${date//|/\\|}"
-  esc_id="${id//|/\\|}"
-  sed \
-    -e "s|{{URL}}|${esc_url}|g" \
-    -e "s|{{JD_FILE}}|${esc_jd_file}|g" \
-    -e "s|{{REPORT_NUM}}|${esc_report_num}|g" \
-    -e "s|{{DATE}}|${esc_date}|g" \
-    -e "s|{{ID}}|${esc_id}|g" \
-    "$PROMPT_FILE" > "$resolved_prompt"
-
-  # Launch claude -p worker (uses default model from Claude Max subscription)
+  # Launch worker (engine-specific)
   local exit_code=0
-  claude -p \
-    --dangerously-skip-permissions \
-    --append-system-prompt-file "$resolved_prompt" \
-    "$prompt" \
-    > "$log_file" 2>&1 || exit_code=$?
+  if [[ "$ENGINE" == "gemini" ]]; then
+    node "$PROJECT_DIR/gemini-eval.mjs" \
+      --url "$url" \
+      --report-num "$report_num" \
+      --id "$id" \
+      --date "$date" \
+      --batch \
+      > "$log_file" 2>&1 || exit_code=$?
+  else
+    # Prepare system prompt with placeholders resolved
+    local resolved_prompt="$BATCH_DIR/.resolved-prompt-${id}.md"
+    # Escape sed delimiter characters in variables to prevent substitution breakage
+    local esc_url esc_jd_file esc_report_num esc_date esc_id
+    esc_url="${url//\\/\\\\}"
+    esc_url="${esc_url//|/\\|}"
+    esc_jd_file="${jd_file//\\/\\\\}"
+    esc_jd_file="${esc_jd_file//|/\\|}"
+    esc_report_num="${report_num//|/\\|}"
+    esc_date="${date//|/\\|}"
+    esc_id="${id//|/\\|}"
+    sed \
+      -e "s|{{URL}}|${esc_url}|g" \
+      -e "s|{{JD_FILE}}|${esc_jd_file}|g" \
+      -e "s|{{REPORT_NUM}}|${esc_report_num}|g" \
+      -e "s|{{DATE}}|${esc_date}|g" \
+      -e "s|{{ID}}|${esc_id}|g" \
+      "$PROMPT_FILE" > "$resolved_prompt"
 
-  # Cleanup resolved prompt
-  rm -f "$resolved_prompt"
+    claude -p \
+      --dangerously-skip-permissions \
+      --append-system-prompt-file "$resolved_prompt" \
+      "$prompt" \
+      > "$log_file" 2>&1 || exit_code=$?
+
+    rm -f "$resolved_prompt"
+  fi
 
   local completed_at
   completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -373,7 +394,8 @@ process_offer() {
     # Try to extract score from worker output
     local score="-"
     local score_match
-   score_match=$(sed -nE 's/.*"score":[[:space:]]*([0-9.]+).*/\1/p' "$log_file" 2>/dev/null | head -1 || true)
+   score_match=$(grep -oE 'SCORE:[[:space:]]*([0-9.]+)|\*\*Score:\*\*[[:space:]]*([0-9.]+)' "$log_file" \
+      | grep -oE '[0-9]+\.[0-9]+' | head -1 || true)
     if [[ -n "$score_match" ]]; then
       score="$score_match"
     fi
@@ -466,7 +488,7 @@ main() {
   fi
 
   echo "=== career-ops batch runner ==="
-  echo "Parallel: $PARALLEL | Max retries: $MAX_RETRIES"
+  echo "Engine: $ENGINE | Parallel: $PARALLEL | Max retries: $MAX_RETRIES"
   echo "Input: $total_input offers"
   echo ""
 

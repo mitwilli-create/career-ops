@@ -391,20 +391,6 @@ tracked_companies:
     notes: "GPU cloud for AI."
     enabled: true
 
-  # -- Hardware / silicon (AI infrastructure layer) --
-
-  - name: Nvidia
-    careers_url: https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite
-    notes: "AI infra + frontier silicon. Workday cxs API — confirmed working with native scanner."
-    enabled: true
-
-  - name: AMD
-    careers_url: https://careers.amd.com/careers-home/jobs
-    scan_method: websearch
-    scan_query: 'site:careers.amd.com ("Communications" OR "Editorial" OR "Content" OR "Solutions Architect" OR "Forward Deployed" OR "Customer Engineer" OR "Developer Relations" OR "Developer Education" OR "Technical Program Manager" OR "Applied AI" OR "AI Engineer")'
-    notes: "Rising AI silicon competitor (MI300/MI325 generation). Phenom People ATS — no native API in scan.mjs; WebSearch fallback covers the full archetype band (comms/editorial + FDE/SA + DevRel)."
-    enabled: true
-
   - name: Glean
     careers_url: https://job-boards.greenhouse.io/gleanwork
     api: https://boards-api.greenhouse.io/v1/boards/gleanwork/jobs

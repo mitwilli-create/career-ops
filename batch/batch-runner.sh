@@ -4,6 +4,11 @@ set -euo pipefail
 # career-ops batch runner — standalone orchestrator for claude -p workers
 # Reads batch-input.tsv, delegates each offer to a claude -p worker,
 # tracks state in batch-state.tsv for resumability.
+#
+# NOTE: This script is Claude Code-specific. It uses claude -p with
+# --dangerously-skip-permissions and --append-system-prompt-file flags
+# that are not available in other CLIs. Multi-CLI support is out of scope
+# for now — contributions welcome.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -350,11 +355,9 @@ process_offer() {
     -e "s|{{ID}}|${esc_id}|g" \
     "$PROMPT_FILE" > "$resolved_prompt"
 
-  # Sonnet: uses the separate "Sonnet only" quota, not the shared "All models"
-  # Opus bucket. Switched 2026-05-05 to stop draining the weekly Max cap.
+  # Launch claude -p worker (uses default model from Claude Max subscription)
   local exit_code=0
   claude -p \
-    --model claude-sonnet-4-6 \
     --dangerously-skip-permissions \
     --append-system-prompt-file "$resolved_prompt" \
     "$prompt" \
@@ -570,9 +573,9 @@ main() {
             running=$((running - 1))
           fi
         done
-        # Compact arrays — guard for empty under `set -u` on bash 3.2 (macOS).
-        pids=(${pids[@]+"${pids[@]}"})
-        pid_ids=(${pid_ids[@]+"${pid_ids[@]}"})
+        # Compact arrays
+        pids=("${pids[@]}")
+        pid_ids=("${pid_ids[@]}")
         sleep 1
       done
 
@@ -583,8 +586,8 @@ main() {
       running=$((running + 1))
     done
 
-    # Wait for remaining workers — guard for empty array under `set -u`.
-    for pid in ${pids[@]+"${pids[@]}"}; do
+    # Wait for remaining workers
+    for pid in "${pids[@]}"; do
       wait "$pid" 2>/dev/null || true
     done
   fi

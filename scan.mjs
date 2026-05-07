@@ -69,29 +69,6 @@ function detectApi(company) {
     };
   }
 
-  // Workday — pattern: {tenant}.{wd1-9}.myworkdayjobs.com/{site}
-  // The cxs API returns JSON: POST to /wday/cxs/{tenant}/{site}/jobs
-  const workdayMatch = url.match(/^https?:\/\/([\w-]+)\.(wd\d+)\.myworkdayjobs\.com\/(?:[\w-]+\/)?([\w-]+)/i)
-    || url.match(/^https?:\/\/([\w-]+)\.(wd\d+)\.myworkdayjobs\.com\/?$/i);
-  if (workdayMatch) {
-    const tenant = workdayMatch[1];
-    const site = workdayMatch[3] || 'External';
-    return {
-      type: 'workday',
-      url: `https://${tenant}.${workdayMatch[2]}.myworkdayjobs.com/wday/cxs/${tenant}/${site}/jobs`,
-      tenant, site,
-    };
-  }
-
-  // Amazon Jobs — public search.json
-  if (url.includes('amazon.jobs')) {
-    return {
-      type: 'amazon',
-      // Page through with offset; result_limit caps at 100. We pull top 100.
-      url: 'https://www.amazon.jobs/en/search.json?result_limit=100&offset=0&base_query=' + encodeURIComponent(company.scan_query || 'AI'),
-    };
-  }
-
   return null;
 }
 
@@ -127,65 +104,20 @@ function parseLever(json, companyName) {
   }));
 }
 
-function parseWorkday(json, companyName, api) {
-  const jobs = json.jobPostings || [];
-  return jobs.map(j => ({
-    title: j.title || '',
-    url: j.externalPath
-      ? `https://${api.tenant}.wd5.myworkdayjobs.com${j.externalPath}`
-      : '',
-    company: companyName,
-    location: j.locationsText || '',
-  }));
-}
-
-function parseAmazon(json, companyName) {
-  const jobs = json.jobs || [];
-  return jobs.map(j => ({
-    title: j.title || '',
-    url: j.job_path ? `https://www.amazon.jobs${j.job_path}` : '',
-    company: companyName,
-    location: j.location || j.normalized_location || '',
-  }));
-}
-
-const PARSERS = {
-  greenhouse: parseGreenhouse,
-  ashby: parseAshby,
-  lever: parseLever,
-  workday: parseWorkday,
-  amazon: parseAmazon,
-};
+const PARSERS = { greenhouse: parseGreenhouse, ashby: parseAshby, lever: parseLever };
 
 // ── Fetch with timeout ──────────────────────────────────────────────
 
-async function fetchJson(url, options = {}) {
+async function fetchJson(url) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(url, { signal: controller.signal, ...options });
+    const res = await fetch(url, { signal: controller.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
   } finally {
     clearTimeout(timer);
   }
-}
-
-// Workday's cxs API requires POST with JSON body. Loop pages of 20 until done.
-async function fetchWorkday(api) {
-  const all = [];
-  for (let offset = 0; offset < 200; offset += 20) {
-    const json = await fetchJson(api.url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify({ appliedFacets: {}, limit: 20, offset, searchText: '' }),
-    });
-    const page = json.jobPostings || [];
-    if (page.length === 0) break;
-    all.push(...page);
-    if (page.length < 20) break;
-  }
-  return { jobPostings: all };
 }
 
 // ── Title filter ────────────────────────────────────────────────────
@@ -358,11 +290,10 @@ async function main() {
   const errors = [];
 
   const tasks = targets.map(company => async () => {
-    const api = company._api;
-    const { type, url } = api;
+    const { type, url } = company._api;
     try {
-      const json = type === 'workday' ? await fetchWorkday(api) : await fetchJson(url);
-      const jobs = PARSERS[type](json, company.name, api);
+      const json = await fetchJson(url);
+      const jobs = PARSERS[type](json, company.name);
       totalFound += jobs.length;
 
       for (const job of jobs) {

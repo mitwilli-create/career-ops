@@ -16,6 +16,28 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
 
+// Load .env for Telegram credentials (non-critical — fails silently)
+try {
+  const envText = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '.env'), 'utf8');
+  for (const line of envText.split('\n')) {
+    const m = line.match(/^([A-Z_]+)=(.+)$/);
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].trim();
+  }
+} catch {}
+
+async function sendTelegram(message) {
+  const token  = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML' }),
+    });
+  } catch { /* non-critical — never break the audit over a notification */ }
+}
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
 const TODAY = new Date().toISOString().slice(0, 10);
@@ -357,6 +379,20 @@ async function main() {
   if (!DRY_RUN) {
     writeFileSync(REPORT_PATH, md);
     console.log(`\nReport written → ${REPORT_PATH}`);
+
+    // Telegram alert — crits always, warns only if no crits
+    if (crits.length > 0) {
+      const lines = crits.map(f => `🔴 [${f.section}] ${f.message}`).join('\n');
+      await sendTelegram(`<b>career-ops audit — ${TODAY}</b>\n🔴 ${crits.length} CRITICAL\n\n${lines}\n\nOpen dashboard: http://localhost:3000`);
+      console.log(`Telegram alert sent (${crits.length} critical findings).`);
+    } else if (warns.length > 0) {
+      const lines = warns.slice(0, 3).map(f => `🟡 [${f.section}] ${f.message}`).join('\n');
+      await sendTelegram(`<b>career-ops audit — ${TODAY}</b>\n🟡 ${warns.length} warnings (no criticals)\n\n${lines}`);
+      console.log(`Telegram alert sent (${warns.length} warnings).`);
+    } else {
+      await sendTelegram(`<b>career-ops audit — ${TODAY}</b>\n✅ All healthy — no issues found.`);
+      console.log(`Telegram alert sent (healthy).`);
+    }
   } else {
     console.log('\n--- DRY RUN — report preview ---\n');
     console.log(md.slice(0, 2000));

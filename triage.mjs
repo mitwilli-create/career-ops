@@ -20,7 +20,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
@@ -189,21 +189,25 @@ function quickScore(url, tier, jdSnippet) {
     .replace('{{TIER}}', String(tier))
     .replace('{{JD_SNIPPET}}', (jdSnippet || '(page body unavailable — score based on URL/domain only)').slice(0, 3000));
 
-  try {
-    const raw = execSync(
-      `claude -p ${JSON.stringify(prompt)} --model claude-haiku-4-5-20251001 --dangerously-skip-permissions`,
-      { encoding: 'utf8', timeout: 60_000, cwd: ROOT }
-    ).trim();
+  // Use spawnSync with array args — avoids shell interpretation of JD content
+  const result = spawnSync(
+    'claude',
+    ['-p', prompt, '--model', 'claude-haiku-4-5-20251001', '--dangerously-skip-permissions'],
+    { encoding: 'utf8', timeout: 60_000, cwd: ROOT }
+  );
 
-    const score     = parseFloat((raw.match(/score:\s*([\d.]+)/i)   || [])[1] ?? 'NaN');
-    const archetype = ((raw.match(/archetype:\s*([A-Z0-9]+)/i)       || [])[1] ?? '?');
-    const decision  = ((raw.match(/decision:\s*(ADVANCE|SKIP)/i)     || [])[1] ?? null);
-    const reason    = ((raw.match(/reason:\s*(.+)/i)                 || [])[1] ?? '').trim();
-
-    return { score: isNaN(score) ? null : score, archetype, decision, reason };
-  } catch (err) {
-    return { score: null, archetype: '?', decision: null, reason: `claude error: ${err.message.slice(0, 60)}` };
+  if (result.error || result.status !== 0) {
+    const msg = result.error?.message || result.stderr?.slice(0, 60) || 'non-zero exit';
+    return { score: null, archetype: '?', decision: null, reason: `claude error: ${msg}` };
   }
+
+  const raw       = (result.stdout || '').trim();
+  const score     = parseFloat((raw.match(/score:\s*([\d.]+)/i)   || [])[1] ?? 'NaN');
+  const archetype = ((raw.match(/archetype:\s*([A-Z0-9]+)/i)       || [])[1] ?? '?');
+  const decision  = ((raw.match(/decision:\s*(ADVANCE|SKIP)/i)     || [])[1] ?? null);
+  const reason    = ((raw.match(/reason:\s*(.+)/i)                 || [])[1] ?? '').trim();
+
+  return { score: isNaN(score) ? null : score, archetype, decision, reason };
 }
 
 // ── Concurrent pool helper ───────────────────────────────────────

@@ -192,7 +192,7 @@ function quickScore(url, tier, jdSnippet) {
   // Use spawnSync with array args — avoids shell interpretation of JD content
   const result = spawnSync(
     'claude',
-    ['-p', prompt, '--model', 'claude-haiku-4-5-20251001', '--dangerously-skip-permissions'],
+    ['-p', prompt, '--model', 'claude-haiku-4-5-20251001', '--dangerously-skip-permissions', '--tools', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}'],
     { encoding: 'utf8', timeout: 60_000, cwd: ROOT }
   );
 

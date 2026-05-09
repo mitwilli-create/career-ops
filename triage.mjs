@@ -21,6 +21,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync } fr
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { spawnSync } from 'child_process';
+import { isCircuitOpen, withRetryBackoff, recordSuccess, recordFailure } from './lib/provider-client.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
@@ -256,6 +257,58 @@ function quickScore(url, tier, jdSnippet) {
   return { score: 0, archetype: 'NO', decision: 'SKIP', reason: 'parse failure after 3 retries' };
 }
 
+// ── Gemini triage fallback ───────────────────────────────────────
+async function quickScoreGemini(url, tier, jdSnippet) {
+  if (!process.env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not set');
+  return withRetryBackoff(async () => {
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.0-flash',
+      generationConfig: { temperature: 0, maxOutputTokens: 80 },
+    });
+    const promptTemplate = readFileSync(TRIAGE_PROMPT, 'utf8');
+    const prompt = promptTemplate
+      .replace('{{URL}}', url)
+      .replace('{{TIER}}', String(tier))
+      .replace('{{JD_SNIPPET}}', (jdSnippet || '').slice(0, 3000));
+    const result = await model.generateContent([{ text: prompt }]);
+    const raw = result.response.text().trim();
+    const parsed = parseTriageOutput(raw);
+    if (parsed.error) throw new Error(`Gemini parse failed: ${parsed.error}`);
+    return parsed;
+  }, 'gemini');
+}
+
+// ── Provider routing (local → anthropic → gemini) ────────────────
+// TRIAGE_PROVIDER_PRIORITY env var controls order (default: local,anthropic,gemini)
+const PROVIDER_CHAIN = (process.env.TRIAGE_PROVIDER_PRIORITY || 'local,anthropic,gemini')
+  .split(',').map(p => p.trim());
+
+async function quickScoreRouted(url, tier, jdSnippet) {
+  for (const provider of PROVIDER_CHAIN) {
+    if (isCircuitOpen(provider)) continue;
+    try {
+      switch (provider) {
+        case 'local': {
+          // Phase 6 — quickScoreLocal imported dynamically to avoid hard dep
+          try {
+            const { quickScoreLocal } = await import('./triage-local.mjs');
+            const result = await quickScoreLocal(url, tier, jdSnippet);
+            if (result && !result.error) { recordSuccess('local'); return result; }
+          } catch { /* local not available yet */ }
+          continue;
+        }
+        case 'anthropic': return quickScore(url, tier, jdSnippet);
+        case 'gemini':    return await quickScoreGemini(url, tier, jdSnippet);
+      }
+    } catch (err) {
+      console.warn(`[triage] ${provider} failed: ${err.message.slice(0, 80)} — trying next`);
+    }
+  }
+  throw new Error('All triage providers exhausted');
+}
+
 // ── Concurrent pool helper ───────────────────────────────────────
 // Runs `fn` over `items` with at most `maxConcurrent` in-flight at once.
 // Calls `onBatchDone(batchResults)` after each pool-sized wave (for progress).
@@ -368,11 +421,11 @@ async function main() {
 
       if (LIVENESS_ONLY) { processed++; continue; }
 
-      // ── Phase 1: Haiku quick-score ──
+      // ── Phase 1: Quick-score (routed: local → anthropic → gemini) ──
       const threshold = ADVANCE_THRESHOLDS[tier] ?? ADVANCE_THRESHOLDS[2];
       process.stdout.write(`⚡ scoring… `);
 
-      const { score, archetype, decision, reason: scoreReason } = quickScore(url, tier, body || '');
+      const { score, archetype, decision, reason: scoreReason } = await quickScoreRouted(url, tier, body || '');
 
       if (score === null) {
         console.log(`⚠️  score failed (${scoreReason}) → advancing cautiously`);

@@ -94,9 +94,15 @@ let batchReportNum = null;
 let batchId = null;
 let batchDate = null;
 let batchUrl = null;
+let triageMode = false;
+let triageTier = 2;
+let triageJdSnippet = '';
 
 for (let i = 0; i < args.length; i++) {
-  if (args[i] === '--file' && args[i + 1]) {
+  if (args[i] === '--mode=triage' || args[i] === '--mode' && args[i + 1] === 'triage') {
+    triageMode = true;
+    if (args[i] === '--mode') i++;
+  } else if (args[i] === '--file' && args[i + 1]) {
     const filePath = args[++i];
     if (!existsSync(filePath)) {
       console.error(`❌  File not found: ${filePath}`);
@@ -117,9 +123,43 @@ for (let i = 0; i < args.length; i++) {
     batchDate = args[++i];
   } else if (args[i] === '--url' && args[i + 1]) {
     batchUrl = args[++i];
+  } else if (args[i] === '--tier' && args[i + 1]) {
+    triageTier = parseInt(args[++i]) || 2;
+  } else if (args[i] === '--jd-snippet' && args[i + 1]) {
+    triageJdSnippet = args[++i];
   } else if (!args[i].startsWith('--')) {
     jdText += (jdText ? '\n' : '') + args[i];
   }
+}
+
+// ── Triage mode: quick-score via JSON output, then exit ──────────
+if (triageMode) {
+  const geminiApiKey = process.env.GEMINI_API_KEY;
+  if (!geminiApiKey) {
+    console.error('GEMINI_API_KEY not set — cannot run triage mode');
+    process.exit(1);
+  }
+  const triagePromptPath = join(ROOT, 'batch', 'triage-prompt.md');
+  if (!existsSync(triagePromptPath)) {
+    console.error(`triage-prompt.md not found at ${triagePromptPath}`);
+    process.exit(1);
+  }
+  const triagePrompt = readFileSync(triagePromptPath, 'utf8')
+    .replace('{{URL}}', batchUrl || '(url not provided)')
+    .replace('{{TIER}}', String(triageTier))
+    .replace('{{JD_SNIPPET}}', (triageJdSnippet || jdText || '(no JD available)').slice(0, 3000));
+
+  const { GoogleGenerativeAI: GeminiAI } = await import('@google/generative-ai');
+  const gai   = new GeminiAI(geminiApiKey);
+  const gmod  = gai.getGenerativeModel({ model: modelName, generationConfig: { temperature: 0, maxOutputTokens: 80 } });
+  try {
+    const result = await gmod.generateContent([{ text: triagePrompt }]);
+    process.stdout.write(result.response.text().trim() + '\n');
+  } catch (err) {
+    console.error(`Gemini triage error: ${err.message}`);
+    process.exit(1);
+  }
+  process.exit(0);
 }
 
 if (!jdText && batchUrl) {

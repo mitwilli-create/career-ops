@@ -56,6 +56,74 @@ const QUOTA_FILE      = join(ROOT, 'batch/daily-quota.json');
 const ADVANCE_FILE    = join(ROOT, 'batch/triage-advance.tsv');
 const SKIPS_TSV       = join(ROOT, 'batch/tracker-additions/triage-skips.tsv');
 const TRIAGE_PROMPT   = join(ROOT, 'batch/triage-prompt.md');
+const URL_CACHE_FILE  = join(ROOT, 'data/triage-cache.tsv');
+const URL_CACHE_TTL_DAYS = 7;   // re-triage after 7 days
+
+// ── Persistent URL dedup cache ───────────────────────────────────
+// Format: url TAB date TAB score TAB decision TAB archetype
+// Only caches clear results (score <3.0 SKIP or >4.0 ADVANCE) to avoid
+// locking in borderline scores that might change with updated prompts.
+const _urlCache = new Map(); // url → { date, score, decision, archetype }
+function loadUrlCache() {
+  if (!existsSync(URL_CACHE_FILE)) return;
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - URL_CACHE_TTL_DAYS);
+  for (const line of readFileSync(URL_CACHE_FILE, 'utf8').split('\n')) {
+    if (!line.trim() || line.startsWith('url')) continue;
+    const [url, date, score, decision, archetype] = line.split('\t');
+    if (url && date && new Date(date) >= cutoff) {
+      _urlCache.set(url.trim(), { date, score: parseFloat(score), decision: decision?.trim(), archetype: archetype?.trim() });
+    }
+  }
+}
+function saveUrlCacheEntry(url, score, decision, archetype) {
+  // Only cache clear results to avoid freezing borderline scores
+  if (score >= 3.0 && score <= 4.0) return;
+  const date = new Date().toISOString().slice(0, 10);
+  const header = !existsSync(URL_CACHE_FILE) ? 'url\tdate\tscore\tdecision\tarchetype\n' : '';
+  appendFileSync(URL_CACHE_FILE, header + [url, date, score, decision, archetype].join('\t') + '\n');
+  _urlCache.set(url, { date, score, decision, archetype });
+}
+loadUrlCache();
+
+// ── In-memory session dedup (same URL within one run) ────────────
+const _sessionCache = new Map(); // url → parsed triage result
+
+// ── Scan-history for freshness-aware ordering ────────────────────
+const SCAN_HISTORY_FILE = join(ROOT, 'data/scan-history.tsv');
+const _scanHistory = new Map(); // url → first_seen (ISO date string)
+
+function loadScanHistory() {
+  if (!existsSync(SCAN_HISTORY_FILE)) return;
+  for (const line of readFileSync(SCAN_HISTORY_FILE, 'utf8').split('\n').slice(1)) {
+    if (!line.trim()) continue;
+    const [url, first_seen] = line.split('\t');
+    if (url?.trim() && first_seen?.trim()) _scanHistory.set(url.trim(), first_seen.trim());
+  }
+}
+
+// Per-source staleness TTLs (days). Sources with faster posting cycles go stale sooner.
+function getSourceTTL(url) {
+  try {
+    const host = new URL(url).hostname.replace('www.', '');
+    if (host.includes('linkedin'))                              return 10; // posts disappear fast
+    if (host.includes('glassdoor'))                            return 0;  // always 403 — skip
+    if (host.includes('myworkday') || host.includes('workday')) return 14;
+    if (host === 'amazon.jobs')                                return 28; // stable ATS
+    if (host.includes('ashbyhq') || host.includes('lever') || host.includes('greenhouse')) return 21;
+    return 21; // default
+  } catch { return 21; }
+}
+
+function getUrlAgeDays(url) {
+  const firstSeen = _scanHistory.get(url);
+  if (!firstSeen) return null;
+  try {
+    return Math.floor((Date.now() - new Date(firstSeen).getTime()) / 86_400_000);
+  } catch { return null; }
+}
+
+loadScanHistory();
 
 // ── Daily quota ─────────────────────────────────────────────────
 function getQuota() {
@@ -220,7 +288,9 @@ function parseTriageOutput(raw) {
 function callHaiku(prompt) {
   const result = spawnSync(
     'claude',
-    ['-p', prompt, '--model', 'claude-haiku-4-5-20251001', '--dangerously-skip-permissions', '--tools', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}'],
+    // --max-tokens 150: triage JSON fits in ~80 tokens; cap prevents runaway output spend
+    ['-p', prompt, '--model', 'claude-haiku-4-5-20251001', '--max-tokens', '150',
+     '--dangerously-skip-permissions', '--tools', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}'],
     { encoding: 'utf8', timeout: 60_000, cwd: ROOT }
   );
   if (result.error || result.status !== 0) {
@@ -295,6 +365,20 @@ const PROVIDER_CHAIN = (process.env.TRIAGE_PROVIDER_PRIORITY || 'local,anthropic
   .split(',').map(p => p.trim());
 
 async function quickScoreRouted(url, tier, jdSnippet) {
+  // 1. In-memory session cache — free, zero latency
+  if (_sessionCache.has(url)) {
+    const cached = _sessionCache.get(url);
+    console.log(`[cache-hit] session: ${url.slice(0, 60)}`);
+    return cached;
+  }
+
+  // 2. Persistent URL cache — clear results within TTL window
+  const persisted = _urlCache.get(url);
+  if (persisted) {
+    console.log(`[cache-hit] url-cache (${persisted.date}): ${url.slice(0, 60)}`);
+    return { score: persisted.score, archetype: persisted.archetype, decision: persisted.decision, reason: 'cached result' };
+  }
+
   for (const provider of PROVIDER_CHAIN) {
     if (isCircuitOpen(provider)) continue;
     try {
@@ -304,12 +388,29 @@ async function quickScoreRouted(url, tier, jdSnippet) {
           try {
             const { quickScoreLocal } = await import('./triage-local.mjs');
             const result = await quickScoreLocal(url, tier, jdSnippet);
-            if (result && !result.error) { recordSuccess('local'); return result; }
+            if (result && !result.error) {
+              recordSuccess('local');
+              _sessionCache.set(url, result);
+              saveUrlCacheEntry(url, result.score, result.decision, result.archetype);
+              return result;
+            }
           } catch { /* local not available yet */ }
           continue;
         }
-        case 'anthropic': return quickScore(url, tier, jdSnippet);
-        case 'gemini':    return await quickScoreGemini(url, tier, jdSnippet);
+        case 'anthropic': {
+          const result = quickScore(url, tier, jdSnippet);
+          if (result.score !== null) {
+            _sessionCache.set(url, result);
+            saveUrlCacheEntry(url, result.score, result.decision, result.archetype);
+          }
+          return result;
+        }
+        case 'gemini': {
+          const result = await quickScoreGemini(url, tier, jdSnippet);
+          _sessionCache.set(url, result);
+          saveUrlCacheEntry(url, result.score, result.decision, result.archetype);
+          return result;
+        }
       }
     } catch (err) {
       console.warn(`[triage] ${provider} failed: ${err.message.slice(0, 80)} — trying next`);
@@ -353,8 +454,29 @@ async function main() {
   }
 
   const allItems = parsePipeline();
-  const items = allItems.filter(i => TIERS.includes(i.tier)).slice(0, LIMIT);
-  console.log(`Found ${allItems.filter(i => TIERS.includes(i.tier)).length} unchecked items in tiers [${TIERS.join(',')}] (${allItems.length} total pipeline pending)`);
+
+  // ── Freshness sweep ─────────────────────────────────────────────
+  // Mark stale URLs [x] before spending quota, then sort newest-first
+  const staleUrls = [];
+  const freshItems = [];
+  for (const item of allItems) {
+    const age = getUrlAgeDays(item.url);
+    const ttl = getSourceTTL(item.url);
+    if (ttl === 0 || (age !== null && age > ttl)) {
+      staleUrls.push(item.url);
+    } else {
+      freshItems.push({ ...item, _age: age ?? 999 });
+    }
+  }
+  if (staleUrls.length > 0 && !DRY_RUN) {
+    console.log(`[freshness] Auto-expiring ${staleUrls.length} stale URLs (past source TTL) → marking [x]`);
+    markCheckedBatch(staleUrls);
+  }
+  // Sort freshest first so quota is spent on highest-probability-live items
+  freshItems.sort((a, b) => a._age - b._age);
+
+  const items = freshItems.filter(i => TIERS.includes(i.tier)).slice(0, LIMIT);
+  console.log(`Found ${freshItems.filter(i => TIERS.includes(i.tier)).length} fresh items in tiers [${TIERS.join(',')}] (${staleUrls.length} expired, ${allItems.length} total pending)`);
   console.log(`Processing:  ${items.length} this run\n`);
 
   let processed = 0, dead = 0, skipped = 0, advanced = 0, uncertain = 0;

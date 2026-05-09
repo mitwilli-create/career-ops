@@ -198,7 +198,7 @@ function appendToPipeline(offers) {
     const procIdx = text.indexOf('## Procesadas');
     const insertAt = procIdx === -1 ? text.length : procIdx;
     const block = `\n${marker}\n\n` + offers.map(o =>
-      `- [ ] ${o.url} | ${o.company} | ${o.title}`
+      `- [ ] ${o.url} | ${o.company} | ${o.title} | ${date}`
     ).join('\n') + '\n\n';
     text = text.slice(0, insertAt) + block + text.slice(insertAt);
   } else {
@@ -208,7 +208,7 @@ function appendToPipeline(offers) {
     const insertAt = nextSection === -1 ? text.length : nextSection;
 
     const block = '\n' + offers.map(o =>
-      `- [ ] ${o.url} | ${o.company} | ${o.title}`
+      `- [ ] ${o.url} | ${o.company} | ${o.title} | ${date}`
     ).join('\n') + '\n';
     text = text.slice(0, insertAt) + block + text.slice(insertAt);
   }

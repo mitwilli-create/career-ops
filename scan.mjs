@@ -97,6 +97,30 @@ function detectApi(company) {
 
 // ── API parsers ─────────────────────────────────────────────────────
 
+// ── Date normalizer ─────────────────────────────────────────────────
+// Returns YYYY-MM-DD string from various ATS date formats.
+
+function isoToDate(val) {
+  if (!val) return '';
+  try { return new Date(val).toISOString().slice(0, 10); } catch { return ''; }
+}
+
+// Workday returns human strings like "Posted 2 Days Ago", "Posted Today",
+// "Posted 30+ Days Ago". Convert to approximate YYYY-MM-DD.
+function workdayPostedToDate(str) {
+  if (!str) return '';
+  const s = str.toLowerCase();
+  const today = new Date();
+  if (s.includes('today') || s.includes('0 day')) return today.toISOString().slice(0, 10);
+  const m = s.match(/(\d+)\+?\s*day/);
+  if (m) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - parseInt(m[1], 10));
+    return (parseInt(m[1], 10) >= 30 ? '≥30d ' : '') + d.toISOString().slice(0, 10);
+  }
+  return '';
+}
+
 function parseGreenhouse(json, companyName) {
   const jobs = json.jobs || [];
   return jobs.map(j => ({
@@ -104,6 +128,7 @@ function parseGreenhouse(json, companyName) {
     url: j.absolute_url || '',
     company: companyName,
     location: j.location?.name || '',
+    posted: isoToDate(j.first_published || j.updated_at),
   }));
 }
 
@@ -114,6 +139,7 @@ function parseAshby(json, companyName) {
     url: j.jobUrl || '',
     company: companyName,
     location: j.location || '',
+    posted: isoToDate(j.publishedAt),
   }));
 }
 
@@ -124,6 +150,8 @@ function parseLever(json, companyName) {
     url: j.hostedUrl || '',
     company: companyName,
     location: j.categories?.location || '',
+    // createdAt is Unix ms
+    posted: j.createdAt ? new Date(j.createdAt).toISOString().slice(0, 10) : '',
   }));
 }
 
@@ -136,6 +164,7 @@ function parseWorkday(json, companyName, meta) {
     url: `${base}${j.externalPath || ''}`,
     company: companyName,
     location: j.locationsText || '',
+    posted: workdayPostedToDate(j.postedOn),
   }));
 }
 
@@ -146,6 +175,7 @@ function parseSmartRecruiters(json, companyName) {
     url: j.ref || `https://careers.smartrecruiters.com/${j.company?.identifier || ''}/${j.id}`,
     company: companyName,
     location: j.location?.city || j.location?.country || '',
+    posted: isoToDate(j.releasedDate || j.updatedAt),
   }));
 }
 
@@ -287,7 +317,7 @@ function appendToPipeline(offers, date) {
     const procIdx = text.indexOf('## Procesadas');
     const insertAt = procIdx === -1 ? text.length : procIdx;
     const block = `\n${marker}\n\n` + offers.map(o =>
-      `- [ ] ${o.url} | ${o.company} | ${o.title} | ${date}`
+      `- [ ] ${o.url} | ${o.company} | ${o.title} | ${o.posted || date}`
     ).join('\n') + '\n\n';
     text = text.slice(0, insertAt) + block + text.slice(insertAt);
   } else {
@@ -297,7 +327,7 @@ function appendToPipeline(offers, date) {
     const insertAt = nextSection === -1 ? text.length : nextSection;
 
     const block = '\n' + offers.map(o =>
-      `- [ ] ${o.url} | ${o.company} | ${o.title} | ${date}`
+      `- [ ] ${o.url} | ${o.company} | ${o.title} | ${o.posted || date}`
     ).join('\n') + '\n';
     text = text.slice(0, insertAt) + block + text.slice(insertAt);
   }
@@ -442,7 +472,7 @@ async function main() {
   if (newOffers.length > 0) {
     console.log('\nNew offers:');
     for (const o of newOffers) {
-      console.log(`  + ${o.company} | ${o.title} | ${o.location || 'N/A'}`);
+      console.log(`  + ${o.company} | ${o.title} | ${o.location || 'N/A'} | posted:${o.posted || '?'}`);
     }
     if (dryRun) {
       console.log('\n(dry run — run without --dry-run to save results)');

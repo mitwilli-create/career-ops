@@ -179,7 +179,7 @@ Triage score: ${item.score}/5 (archetype: ${item.archetype})
 Report number: ${reportNum.toString().padStart(3, '0')}
 Date: ${date}
 
-### JD Content (first 12,000 chars)
+### JD Content (first 5,500 chars)
 ${jdText || '(JD unavailable — evaluate from URL and company context only)'}
 
 ## Scan History (prior appearances of this company)
@@ -330,7 +330,8 @@ async function fetchJD(url) {
     }
     const expired = EXPIRED_PATTERNS.find(p => p.test(body));
     if (expired) return { ok: false, reason: `expired (${expired.source})`, text: body };
-    return { ok: true, reason: 'live', text: body.slice(0, 12_000) };
+    // 5,500 chars ≈ 1,375 tokens — covers role/requirements; trims benefits boilerplate
+    return { ok: true, reason: 'live', text: body.slice(0, 5_500) };
   } catch (err) {
     clearTimeout(timer);
     return { ok: false, reason: err.name === 'AbortError' ? 'timeout' : err.message.slice(0, 80), text: '' };
@@ -369,7 +370,7 @@ Triage score: ${item.score}/5 (archetype: ${item.archetype})
 Report number: ${reportNum.toString().padStart(3, '0')}
 Date: ${date}
 
-### JD Content (first 12,000 chars)
+### JD Content (first 5,500 chars)
 ${jdText || '(JD unavailable — evaluate from URL and company context only)'}
 
 ## Scan History (prior appearances of this company)
@@ -522,11 +523,14 @@ async function phaseSubmit(apiKey) {
     const userPrompt  = buildDynamicEvalPrompt(item, text, reportNum, date);
 
     // Static context in system block with cache_control — API caches this prefix across requests
+    // max_tokens capped at 1,400: eval reports are 500–900 tokens; 4096 wastes money on runaway outputs
+    // temperature: 0 eliminates verbose preambles that inflate output tokens in scoring tasks
     let params;
     try {
       params = {
         model: MODEL,
-        max_tokens: 4096,
+        max_tokens: 1400,
+        temperature: 0,
         system: [{ type: 'text', text: staticBlock, cache_control: { type: 'ephemeral' } }],
         messages: [{ role: 'user', content: userPrompt }],
       };
@@ -535,7 +539,8 @@ async function phaseSubmit(apiKey) {
       console.warn(`[cache] Falling back to flat message for ${customId}: ${cacheErr.message}`);
       params = {
         model: MODEL,
-        max_tokens: 4096,
+        max_tokens: 1400,
+        temperature: 0,
         messages: [{ role: 'user', content: `${staticBlock}\n\n${userPrompt}` }],
       };
     }
@@ -558,8 +563,16 @@ async function phaseSubmit(apiKey) {
 
   console.log(`\n${requests.length} requests ready (${fetchErrors} skipped due to fetch errors).`);
   if (DRY_RUN) {
+    // Cost estimate: static block cached (90% hit → $0.15/MTok read), dynamic ~2k tokens input, output capped at 1,400
+    const staticTokens  = 26_715;
+    const dynamicTokens = 2_000;
+    const outputTokens  = 900; // p95 actual (max_tokens=1400 hard cap)
+    const costPerItem = (staticTokens * 0.10 * 1.50 / 1e6)  // cache miss (10%)
+                      + (staticTokens * 0.90 * 0.15 / 1e6)  // cache read (90%)
+                      + (dynamicTokens * 1.50 / 1e6)         // dynamic input
+                      + (outputTokens  * 7.50 / 1e6);        // output
     console.log(`\nDRY RUN — would submit ${requests.length} requests to Batches API.`);
-    console.log(`Estimated cost: ~$${(requests.length * 0.035).toFixed(2)} (Sonnet, 50% off)`);
+    console.log(`Estimated cost: ~$${(requests.length * costPerItem).toFixed(3)} (Sonnet+cache, 50% off, max_tokens=1400)`);
     return;
   }
 

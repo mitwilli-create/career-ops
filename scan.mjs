@@ -173,9 +173,13 @@ async function fetchJson(url) {
 
 // Workday requires a POST with a JSON body; supports pagination via offset.
 // Returns merged jobPostings array across all pages.
-async function fetchWorkday(apiUrl) {
+async function fetchWorkday(apiUrl, { searchText = '', maxResults = 500 } = {}) {
+  // Per-company timeout: scale with maxResults (≈200ms/page, 20 results/page).
+  // Minimum 20s; large boards (Micron 2,889 jobs) capped at maxResults to avoid timeout.
+  const estimatedPages = Math.ceil(maxResults / 20);
+  const timeoutMs = Math.max(FETCH_TIMEOUT_MS * 2, estimatedPages * 500);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS * 2); // longer timeout for paginated
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     // Workday's public API caps at 20 results per page (limit > 20 → HTTP 400).
     const LIMIT = 20;
@@ -183,11 +187,11 @@ async function fetchWorkday(apiUrl) {
     let allPostings = [];
     let total = Infinity;
 
-    while (offset < total) {
+    while (offset < total && allPostings.length < maxResults) {
       const res = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ appliedFacets: {}, limit: LIMIT, offset, searchText: '' }),
+        body: JSON.stringify({ appliedFacets: {}, limit: LIMIT, offset, searchText }),
         signal: controller.signal,
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

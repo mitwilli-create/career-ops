@@ -208,6 +208,67 @@ async function fetchHNWhoIsHiring(_url, sourceName) {
   return offers;
 }
 
+// ── hnrss.org parser ───────────────────────────────────────────────
+//
+// hnrss.org/whoishiring?q=<keyword> returns an RSS feed of individual HN
+// comments from "Who is Hiring?" threads that match the keyword. Each
+// <description> is the raw comment HTML; we decode entities, strip tags,
+// then extract any ATS URLs and company/role from the first pipe-delimited
+// segment (standard HN hiring format).
+//
+// This is complementary to fetchHNWhoIsHiring (Algolia, monthly full dump):
+//   - Algolia: fetches ALL comments, deduplicates via title filter
+//   - hnrss.org: keyword pre-filtered, multi-month archive, lower false positives
+
+function parseHNrss(xml, sourceName) {
+  const atsRe = /https?:\/\/(?:[\w-]+\.)*?(?:greenhouse\.io|ashbyhq\.com|lever\.co|workable\.com|amazon\.jobs|wellfound\.com|workatastartup\.com|otta\.com)\b[^\s<>"')&]+/gi;
+
+  const htmlDecode = (s) => s
+    .replace(/&#x2F;/gi, '/')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;/gi, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+
+  const offers = [];
+  let items = [...xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)];
+  if (items.length === 0) {
+    items = [...xml.matchAll(/<entry\b[^>]*>([\s\S]*?)<\/entry>/gi)];
+  }
+
+  for (const m of items) {
+    const block = m[1];
+    // description may be in <description> or <content:encoded>
+    const descRaw = extractTag(block, 'description') ||
+                    block.match(/<content:encoded\b[^>]*>([\s\S]*?)<\/content:encoded>/i)?.[1] || '';
+    const decoded = htmlDecode(descRaw);
+    const stripped = decoded.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+    // Extract all ATS URLs from description
+    const urls = [...decoded.matchAll(atsRe)].map(u => u[0]);
+    if (urls.length === 0) continue;
+
+    // Parse standard HN format: "Company (Stage) | Role | Location | ..."
+    const segs = stripped.split('|').map(s => s.trim());
+    const company = segs[0].replace(/\([^)]*\)/g, '').trim().slice(0, 80) || sourceName;
+    const role = segs[1] || segs[0].slice(0, 120);
+    const location = segs[2] || '';
+
+    // Emit one offer per unique ATS URL in the comment
+    for (const url of urls) {
+      offers.push({
+        title: role,
+        url,
+        company,
+        location,
+        source: sourceName,
+      });
+    }
+  }
+  return offers;
+}
+
 // ── Feed registry ──────────────────────────────────────────────────
 
 const RSS_FEEDS = [
@@ -251,14 +312,65 @@ const RSS_FEEDS = [
     enabled: true,
     notes: 'Remote DevOps/infra.',
   },
+  // ── hnrss.org keyword feeds (complement to Algolia full-thread below) ──
+  // Each URL is keyword-pre-filtered; the atsRe pattern in parseHNrss ensures
+  // only real job board links are emitted. Covers multi-month archive.
   {
-    name: 'Hacker News — Who is Hiring',
+    name: 'HN Hiring — Forward Deployed',
+    url: 'https://hnrss.org/whoishiring?q=forward+deployed',
+    type: 'rss',
+    parser: parseHNrss,
+    enabled: true,
+    notes: 'hnrss.org: HN Who is Hiring filtered to "forward deployed" comments.',
+  },
+  {
+    name: 'HN Hiring — Solutions Architect',
+    url: 'https://hnrss.org/whoishiring?q=solutions+architect',
+    type: 'rss',
+    parser: parseHNrss,
+    enabled: true,
+    notes: 'hnrss.org: HN Who is Hiring filtered to "solutions architect" comments.',
+  },
+  {
+    name: 'HN Hiring — Applied AI',
+    url: 'https://hnrss.org/whoishiring?q=applied+AI',
+    type: 'rss',
+    parser: parseHNrss,
+    enabled: true,
+    notes: 'hnrss.org: HN Who is Hiring filtered to "applied AI" comments.',
+  },
+  {
+    name: 'HN Hiring — AI Enablement',
+    url: 'https://hnrss.org/whoishiring?q=AI+enablement',
+    type: 'rss',
+    parser: parseHNrss,
+    enabled: true,
+    notes: 'hnrss.org: HN Who is Hiring filtered to "AI enablement" comments.',
+  },
+  {
+    name: 'HN Hiring — Anthropic',
+    url: 'https://hnrss.org/whoishiring?q=anthropic',
+    type: 'rss',
+    parser: parseHNrss,
+    enabled: true,
+    notes: 'hnrss.org: company-specific — Anthropic postings in HN threads.',
+  },
+  {
+    name: 'HN Hiring — Sierra / Cognition / Perplexity',
+    url: 'https://hnrss.org/whoishiring?q=sierra+OR+cognition+OR+perplexity',
+    type: 'rss',
+    parser: parseHNrss,
+    enabled: true,
+    notes: 'hnrss.org: company-specific — Tier 1 AI-native targets in HN threads.',
+  },
+  {
+    name: 'Hacker News — Who is Hiring (Algolia full thread)',
     url: 'https://news.ycombinator.com/jobs',  // referenced for context; actual fetch hits Algolia
     type: 'custom',                              // signal to use fetchHNWhoIsHiring
     parser: null,
     fetcher: fetchHNWhoIsHiring,
     enabled: true,
-    notes: 'Monthly Ask HN thread — extracts ATS URLs from each top-level job posting.',
+    notes: 'Monthly Ask HN thread — extracts ATS URLs from ALL top-level job postings.',
   },
 ];
 

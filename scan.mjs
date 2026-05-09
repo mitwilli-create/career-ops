@@ -177,7 +177,8 @@ async function fetchWorkday(apiUrl) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS * 2); // longer timeout for paginated
   try {
-    const LIMIT = 100;
+    // Workday's public API caps at 20 results per page (limit > 20 → HTTP 400).
+    const LIMIT = 20;
     let offset = 0;
     let allPostings = [];
     let total = Infinity;

@@ -3,16 +3,16 @@
 /**
  * scan.mjs — Zero-token portal scanner
  *
- * Fetches Greenhouse, Ashby, and Lever APIs directly, applies title
- * filters from portals.yml, deduplicates against existing history,
- * and appends new offers to pipeline.md + scan-history.tsv.
+ * Fetches Greenhouse, Ashby, Lever, Workday, and SmartRecruiters APIs
+ * directly, applies title filters from portals.yml, deduplicates against
+ * existing history, and appends new offers to pipeline.md + scan-history.tsv.
  *
  * Zero Claude API tokens — pure HTTP + JSON.
  *
  * Usage:
  *   node scan.mjs                  # scan all enabled companies
  *   node scan.mjs --dry-run        # preview without writing files
- *   node scan.mjs --company Cohere # scan a single company
+ *   node scan.mjs --company NVIDIA # scan a single company
  */
 
 import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync } from 'fs';
@@ -69,6 +69,29 @@ function detectApi(company) {
     };
   }
 
+  // Workday — matches {company}.wd{N}.myworkdayjobs.com/{career-site}
+  // Builds the internal CXS JSON endpoint (no auth required for public boards).
+  const wdMatch = url.match(/([a-z0-9-]+)\.(wd\d+)\.myworkdayjobs\.com\/(?:en-US\/)?([^/?#]+)/i);
+  if (wdMatch) {
+    const [, slug, wdN, site] = wdMatch;
+    return {
+      type: 'workday',
+      url: `https://${slug}.${wdN}.myworkdayjobs.com/wday/cxs/${slug}/${site}/jobs`,
+      meta: { slug, wdN, site },
+    };
+  }
+
+  // SmartRecruiters — matches careers.{company}.com or {company}.com/careers-home
+  // AMD, and others use this ATS. Public API requires no auth.
+  const srMatch = url.match(/careers\.([a-z0-9-]+)\.com\/careers-home/i) ||
+                  url.match(/([a-z0-9-]+)\.com\/careers-home/i);
+  if (srMatch && company.smartrecruiters_id) {
+    return {
+      type: 'smartrecruiters',
+      url: `https://api.smartrecruiters.com/v1/companies/${company.smartrecruiters_id}/postings?status=PUBLIC&limit=100`,
+    };
+  }
+
   return null;
 }
 
@@ -104,7 +127,35 @@ function parseLever(json, companyName) {
   }));
 }
 
-const PARSERS = { greenhouse: parseGreenhouse, ashby: parseAshby, lever: parseLever };
+function parseWorkday(json, companyName, meta) {
+  const postings = json.jobPostings || [];
+  const base = `https://${meta.slug}.${meta.wdN}.myworkdayjobs.com/en-US/${meta.site}`;
+  return postings.map(j => ({
+    title: j.title || '',
+    // externalPath is like "/job/Seattle/Solutions-Architect_R12345"
+    url: `${base}${j.externalPath || ''}`,
+    company: companyName,
+    location: j.locationsText || '',
+  }));
+}
+
+function parseSmartRecruiters(json, companyName) {
+  const content = json.content || [];
+  return content.map(j => ({
+    title: j.name || '',
+    url: j.ref || `https://careers.smartrecruiters.com/${j.company?.identifier || ''}/${j.id}`,
+    company: companyName,
+    location: j.location?.city || j.location?.country || '',
+  }));
+}
+
+const PARSERS = {
+  greenhouse: parseGreenhouse,
+  ashby: parseAshby,
+  lever: parseLever,
+  workday: parseWorkday,
+  smartrecruiters: parseSmartRecruiters,
+};
 
 // ── Fetch with timeout ──────────────────────────────────────────────
 
@@ -115,6 +166,39 @@ async function fetchJson(url) {
     const res = await fetch(url, { signal: controller.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Workday requires a POST with a JSON body; supports pagination via offset.
+// Returns merged jobPostings array across all pages.
+async function fetchWorkday(apiUrl) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS * 2); // longer timeout for paginated
+  try {
+    const LIMIT = 100;
+    let offset = 0;
+    let allPostings = [];
+    let total = Infinity;
+
+    while (offset < total) {
+      const res = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ appliedFacets: {}, limit: LIMIT, offset, searchText: '' }),
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const postings = data.jobPostings || [];
+      total = data.total ?? postings.length;
+      allPostings = allPostings.concat(postings);
+      offset += postings.length;
+      if (postings.length < LIMIT) break; // no more pages
+    }
+
+    return { jobPostings: allPostings, total: allPostings.length };
   } finally {
     clearTimeout(timer);
   }
@@ -290,10 +374,15 @@ async function main() {
   const errors = [];
 
   const tasks = targets.map(company => async () => {
-    const { type, url } = company._api;
+    const { type, url, meta } = company._api;
     try {
-      const json = await fetchJson(url);
-      const jobs = PARSERS[type](json, company.name);
+      // Workday requires a POST-based paginated fetch; all others use GET.
+      const json = type === 'workday'
+        ? await fetchWorkday(url)
+        : await fetchJson(url);
+      const jobs = type === 'workday'
+        ? PARSERS.workday(json, company.name, meta)
+        : PARSERS[type](json, company.name);
       totalFound += jobs.length;
 
       for (const job of jobs) {

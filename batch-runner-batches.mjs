@@ -117,29 +117,50 @@ async function apiCall(method, path, body, apiKey) {
   return res.json();
 }
 
+// ── Module-level file cache (eliminates repeated reads within a run) ─
+const _fileCache = new Map();
+function readCached(filePath) {
+  if (!_fileCache.has(filePath)) {
+    _fileCache.set(filePath, existsSync(filePath) ? readFileSync(filePath, 'utf8') : null);
+  }
+  return _fileCache.get(filePath);
+}
+
 // ── Source file readers ───────────────────────────────────────────
-function readCv()      { return existsSync(CV_FILE)      ? readFileSync(CV_FILE, 'utf8')      : '(cv.md not found)'; }
-function readDigest()  { return existsSync(DIGEST_FILE)  ? readFileSync(DIGEST_FILE, 'utf8')  : '(article-digest.md not found)'; }
-function readProfile() { return existsSync(PROFILE_FILE) ? readFileSync(PROFILE_FILE, 'utf8') : '(config/profile.yml not found)'; }
+function readCv()      { return readCached(CV_FILE)      ?? '(cv.md not found)'; }
+function readDigest()  { return readCached(DIGEST_FILE)  ?? '(article-digest.md not found)'; }
+function readProfile() { return readCached(PROFILE_FILE) ?? '(config/profile.yml not found)'; }
 
 // ── Static context block (built once per batch run, cached by API) ─
-function buildStaticContextBlock(cvText, digestText, profileText) {
-  const SHARED_FILE  = join(ROOT, 'modes/_shared.md');
-  const PROFILE_MODE = join(ROOT, 'modes/_profile.md');
-  const sharedText   = existsSync(SHARED_FILE)  ? readFileSync(SHARED_FILE,  'utf8') : '';
-  const profileMode  = existsSync(PROFILE_MODE) ? readFileSync(PROFILE_MODE, 'utf8') : '';
+// Reads from pre-baked bundle if available (scripts/prebake-context.mjs),
+// otherwise falls back to reading individual files.
+const BAKED_CONTEXT = join(ROOT, 'data', 'baked-context.md');
 
-  const block = [
-    `You are a job evaluation AI for Mitchell Williams. Produce a full A-G evaluation of this job posting.\n`,
-    `--- cv.md ---\n${cvText}`,
-    `--- config/profile.yml ---\n${profileText}`,
-    `--- modes/_shared.md ---\n${sharedText}`,
-    `--- modes/_profile.md ---\n${profileMode}`,
-    `--- article-digest.md ---\n${digestText}`,
-  ].join('\n\n').trim();
+function buildStaticContextBlock(cvText, digestText, profileText) {
+  // Prefer baked bundle — single read, hash-validated by prebake-context.mjs
+  const baked = readCached(BAKED_CONTEXT);
+  let block;
+  if (baked) {
+    block = `You are a job evaluation AI for Mitchell Williams. Produce a full A-G evaluation of this job posting.\n\n${baked}`;
+  } else {
+    const SHARED_FILE  = join(ROOT, 'modes/_shared.md');
+    const PROFILE_MODE = join(ROOT, 'modes/_profile.md');
+    const sharedText   = readCached(SHARED_FILE)  ?? '';
+    const profileMode  = readCached(PROFILE_MODE) ?? '';
+
+    block = [
+      `You are a job evaluation AI for Mitchell Williams. Produce a full A-G evaluation of this job posting.\n`,
+      `--- cv.md ---\n${cvText}`,
+      `--- config/profile.yml ---\n${profileText}`,
+      `--- modes/_shared.md ---\n${sharedText}`,
+      `--- modes/_profile.md ---\n${profileMode}`,
+      `--- article-digest.md ---\n${digestText}`,
+    ].join('\n\n').trim();
+  }
 
   const tokenEst = Math.round(block.length / 4);
-  console.log(`[cache] Static block: ~${tokenEst.toLocaleString()} tokens (cache_control: ephemeral)`);
+  const source   = baked ? 'baked-context.md' : 'individual files';
+  console.log(`[cache] Static block: ~${tokenEst.toLocaleString()} tokens (source: ${source}, cache_control: ephemeral)`);
   if (tokenEst < 1024) {
     console.warn('[cache] WARNING: static block < 1024 tokens — cache hit rate will be low');
   }

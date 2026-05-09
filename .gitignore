@@ -15,6 +15,9 @@ data/apply-workflow.md
 data/return-day-checklist.md
 data/alerts-signup-checklist.md
 data/logs/
+data/pending-diffs/*.md
+!data/pending-diffs/.gitkeep
+data/research-state.json
 reports/*.md
 reports/**/*.md
 !reports/.gitkeep
@@ -82,3 +85,7 @@ data/weekly-intel/prompts/
 
 # 1:1 career history (personal meeting notes)
 data/career-history/
+
+# Prebaked context bundle (generated, not source)
+data/baked-context.md
+data/baked-context.hash

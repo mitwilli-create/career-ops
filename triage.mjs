@@ -230,10 +230,19 @@ function callHaiku(prompt) {
   return (result.stdout || '').trim();
 }
 
+// ── Module-level file cache (eliminates repeated reads per session) ─
+const _fileCache = new Map();
+function readCached(filePath) {
+  if (!_fileCache.has(filePath)) {
+    _fileCache.set(filePath, existsSync(filePath) ? readFileSync(filePath, 'utf8') : null);
+  }
+  return _fileCache.get(filePath);
+}
+
 // ── Haiku quick-score with retry loop (max 3 attempts) ──────────
 function quickScore(url, tier, jdSnippet) {
-  // Read prompt template once (caller may cache this; see readCached in Phase 7)
-  const promptTemplate = readFileSync(TRIAGE_PROMPT, 'utf8');
+  // Cached read — triage-prompt.md is the same for every item in a session
+  const promptTemplate = readCached(TRIAGE_PROMPT) ?? readFileSync(TRIAGE_PROMPT, 'utf8');
   const prompt = promptTemplate
     .replace('{{URL}}', url)
     .replace('{{TIER}}', String(tier))
@@ -267,7 +276,7 @@ async function quickScoreGemini(url, tier, jdSnippet) {
       model: 'gemini-2.0-flash',
       generationConfig: { temperature: 0, maxOutputTokens: 80 },
     });
-    const promptTemplate = readFileSync(TRIAGE_PROMPT, 'utf8');
+    const promptTemplate = readCached(TRIAGE_PROMPT) ?? readFileSync(TRIAGE_PROMPT, 'utf8');
     const prompt = promptTemplate
       .replace('{{URL}}', url)
       .replace('{{TIER}}', String(tier))

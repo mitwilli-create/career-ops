@@ -27,6 +27,7 @@ import {
 } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { logBatchCost } from './scripts/cost-logger.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
@@ -562,6 +563,28 @@ async function phaseSubmit(apiKey) {
     return;
   }
 
+  // Budget guard — abort if rolling 30-day spend exceeds MONTHLY_BUDGET_USD
+  const MONTHLY_BUDGET = parseFloat(process.env.MONTHLY_BUDGET_USD ?? '0');
+  if (MONTHLY_BUDGET > 0) {
+    const COST_LOG = join(ROOT, 'data', 'cost-log.tsv');
+    if (existsSync(COST_LOG)) {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 30);
+      let spent = 0;
+      for (const line of readFileSync(COST_LOG, 'utf8').split('\n').slice(1)) {
+        if (!line.trim()) continue;
+        const cols = line.split('\t');
+        if (new Date(cols[0]) >= cutoff) spent += parseFloat(cols[7]) || 0;
+      }
+      if (spent >= MONTHLY_BUDGET) {
+        console.error(`\n⛔ Budget guard: $${spent.toFixed(2)} spent (limit $${MONTHLY_BUDGET.toFixed(2)}/mo) — aborting batch submission.`);
+        console.error(`   Unset MONTHLY_BUDGET_USD or raise the limit to proceed.`);
+        process.exit(1);
+      }
+      console.log(`[budget] $${spent.toFixed(2)} / $${MONTHLY_BUDGET.toFixed(2)} spent this month`);
+    }
+  }
+
   console.log(`\nSubmitting to Batches API…`);
   const batch = await apiCall('POST', '/messages/batches', { requests: apiRequests }, apiKey);
 
@@ -723,6 +746,23 @@ async function phaseProcess(apiKey) {
 
       console.log(`  ✅ ${numStr} ${company} — ${role} (${score.toFixed(1)}/5)`);
       written++;
+    }
+
+    // Aggregate token usage across succeeded results and log cost
+    const aggregatedUsage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+    for (const result of results) {
+      if (result.result?.type === 'succeeded') {
+        const u = result.result.message?.usage ?? {};
+        aggregatedUsage.input_tokens                += u.input_tokens                ?? 0;
+        aggregatedUsage.output_tokens               += u.output_tokens               ?? 0;
+        aggregatedUsage.cache_read_input_tokens     += u.cache_read_input_tokens     ?? 0;
+        aggregatedUsage.cache_creation_input_tokens += u.cache_creation_input_tokens ?? 0;
+      }
+    }
+    try {
+      logBatchCost({ batchId: batchRecord.id, model: batchRecord.model ?? MODEL, requests: written, usage: aggregatedUsage });
+    } catch (e) {
+      console.warn(`[cost] Could not log batch cost: ${e.message}`);
     }
 
     batchRecord.processed_at = new Date().toISOString();

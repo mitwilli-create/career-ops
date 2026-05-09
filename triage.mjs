@@ -181,33 +181,71 @@ async function checkLiveness(url) {
   }
 }
 
-// ── Haiku quick-score ───────────────────────────────────────────
+// ── JSON schema parser (replaces brittle regex) ─────────────────
+function parseTriageOutput(raw) {
+  if (!raw) return { error: 'empty output' };
+  const cleaned = raw
+    .replace(/^```json?\s*/im, '')
+    .replace(/```\s*$/m, '')
+    .replace(/^\s*Here.*?:\s*/im, '')
+    .trim();
+  const jsonMatch = cleaned.match(/\{[^}]+\}/);
+  if (!jsonMatch) return { error: 'no JSON object found' };
+  try {
+    const obj = JSON.parse(jsonMatch[0]);
+    const score = parseFloat(obj.score);
+    if (typeof obj.score === 'undefined') return { error: 'missing score' };
+    if (isNaN(score) || score < 1.0 || score > 5.0) return { error: `invalid score: ${obj.score}` };
+    const archetype = String(obj.archetype || '');
+    if (!['A1', 'A2', 'B', 'NO'].includes(archetype)) return { error: `invalid archetype: ${archetype}` };
+    const decision = String(obj.decision || '');
+    if (!['ADVANCE', 'SKIP'].includes(decision)) return { error: `invalid decision: ${decision}` };
+    const reason = String(obj.reason || '').slice(0, 120);
+    return { score, archetype, decision, reason };
+  } catch (e) {
+    return { error: `JSON parse failed: ${e.message}`, raw: cleaned.slice(0, 200) };
+  }
+}
+
+// ── Haiku quick-score (single call, returns raw stdout) ─────────
+function callHaiku(prompt) {
+  const result = spawnSync(
+    'claude',
+    ['-p', prompt, '--model', 'claude-haiku-4-5-20251001', '--dangerously-skip-permissions', '--tools', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}'],
+    { encoding: 'utf8', timeout: 60_000, cwd: ROOT }
+  );
+  if (result.error || result.status !== 0) {
+    const msg = result.error?.message || result.stderr?.slice(0, 60) || 'non-zero exit';
+    throw new Error(`claude error: ${msg}`);
+  }
+  return (result.stdout || '').trim();
+}
+
+// ── Haiku quick-score with retry loop (max 3 attempts) ──────────
 function quickScore(url, tier, jdSnippet) {
+  // Read prompt template once (caller may cache this; see readCached in Phase 7)
   const promptTemplate = readFileSync(TRIAGE_PROMPT, 'utf8');
   const prompt = promptTemplate
     .replace('{{URL}}', url)
     .replace('{{TIER}}', String(tier))
     .replace('{{JD_SNIPPET}}', (jdSnippet || '(page body unavailable — score based on URL/domain only)').slice(0, 3000));
 
-  // Use spawnSync with array args — avoids shell interpretation of JD content
-  const result = spawnSync(
-    'claude',
-    ['-p', prompt, '--model', 'claude-haiku-4-5-20251001', '--dangerously-skip-permissions', '--tools', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}'],
-    { encoding: 'utf8', timeout: 60_000, cwd: ROOT }
-  );
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let raw;
+    try {
+      raw = callHaiku(prompt);
+    } catch (err) {
+      if (attempt < 2) continue;
+      return { score: null, archetype: '?', decision: null, reason: `claude error: ${err.message.slice(0, 60)}` };
+    }
 
-  if (result.error || result.status !== 0) {
-    const msg = result.error?.message || result.stderr?.slice(0, 60) || 'non-zero exit';
-    return { score: null, archetype: '?', decision: null, reason: `claude error: ${msg}` };
+    const parsed = parseTriageOutput(raw);
+    if (parsed && !parsed.error) return parsed;
+    console.warn(`[triage] Parse failed (attempt ${attempt + 1}/3): ${parsed?.error || 'null'}`);
   }
 
-  const raw       = (result.stdout || '').trim();
-  const score     = parseFloat((raw.match(/score:\s*([\d.]+)/i)   || [])[1] ?? 'NaN');
-  const archetype = ((raw.match(/archetype:\s*([A-Z0-9]+)/i)       || [])[1] ?? '?');
-  const decision  = ((raw.match(/decision:\s*(ADVANCE|SKIP)/i)     || [])[1] ?? null);
-  const reason    = ((raw.match(/reason:\s*(.+)/i)                 || [])[1] ?? '').trim();
-
-  return { score: isNaN(score) ? null : score, archetype, decision, reason };
+  console.error(`[triage] All retries failed for ${url} — defaulting to SKIP`);
+  return { score: 0, archetype: 'NO', decision: 'SKIP', reason: 'parse failure after 3 retries' };
 }
 
 // ── Concurrent pool helper ───────────────────────────────────────

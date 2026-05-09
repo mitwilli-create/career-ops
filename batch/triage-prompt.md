@@ -54,17 +54,23 @@ Score 1.0–5.0 using these weighted dimensions (all equally apply):
 - Pure marketing, no AI content, traditional PR
 - Company has zero AI relevance (legacy, non-tech)
 
-**Advance threshold:** score ≥ 3.5 for Tier 1/2; score ≥ 4.0 for Tier 3. The orchestrator applies the threshold — output your honest score and a SKIP/ADVANCE recommendation.
+**Advance threshold:** score ≥ 3.7 for Tier 1/2; score ≥ 4.2 for Tier 3. The orchestrator applies the threshold — output your honest score and a SKIP/ADVANCE recommendation.
 
 ---
 
-## Output Format (STRICT — parseable)
+## Output Format (STRICT — machine parsed)
 
-Respond with EXACTLY these 4 lines, nothing else:
+Output EXACTLY this JSON object on a single line, nothing else before or after:
+{"score": 3.7, "archetype": "A2", "decision": "ADVANCE", "reason": "strong AI-native fit, solutions architect signals"}
 
-```
-score: X.X
-archetype: A1|A2|B|NO
-decision: ADVANCE|SKIP
-reason: [15 words max explaining the key fit signal or blocker]
-```
+Rules:
+- score: float 1.0–5.0, exactly one decimal place
+- archetype: exactly one of "A1", "A2", "B", "NO"
+- decision: exactly "ADVANCE" or "SKIP"
+- reason: string ≤15 words, no internal quotes or special characters
+- NO preamble, NO explanation, NO markdown, NO code fences
+
+## Examples of correct output:
+{"score": 4.2, "archetype": "A2", "decision": "ADVANCE", "reason": "AI-native company, solutions architect role matches background"}
+{"score": 2.1, "archetype": "NO", "decision": "SKIP", "reason": "pure SWE, mandatory Java production, no AI content"}
+{"score": 3.5, "archetype": "B", "decision": "SKIP", "reason": "comms role but below comp floor, non-AI company"}

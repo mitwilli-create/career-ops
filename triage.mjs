@@ -33,8 +33,16 @@ const ARGS = Object.fromEntries(
 );
 const TIERS          = (ARGS.tier   ?? '1,2,3').split(',').map(Number);
 const LIMIT          = parseInt(ARGS.limit     ?? '50');
-const THRESHOLD      = parseFloat(ARGS.threshold ?? '3.5');
-const T3_THRESHOLD   = parseFloat(ARGS['tier3-threshold'] ?? '4.0');
+
+// Thresholds: env vars take precedence, then CLI args, then new defaults (raised from 3.5/4.0)
+const ADVANCE_THRESHOLDS = {
+  1: parseFloat(process.env.TRIAGE_THRESHOLD_T1 ?? ARGS.threshold              ?? '3.7'),
+  2: parseFloat(process.env.TRIAGE_THRESHOLD_T2 ?? ARGS.threshold              ?? '3.9'),
+  3: parseFloat(process.env.TRIAGE_THRESHOLD_T3 ?? ARGS['tier3-threshold']     ?? '4.2'),
+};
+// Keep backward-compatible aliases for any external scripts referencing these
+const THRESHOLD    = ADVANCE_THRESHOLDS[1];
+const T3_THRESHOLD = ADVANCE_THRESHOLDS[3];
 const DAILY_LIMIT    = parseInt(ARGS['daily-limit'] ?? '50');
 const LIVENESS_ONLY  = ARGS['liveness-only'] === true || ARGS['liveness-only'] === 'true';
 const DRY_RUN        = ARGS['dry-run']       === true || ARGS['dry-run']       === 'true';
@@ -268,7 +276,7 @@ async function main() {
   const concLabel = CONCURRENCY > 1 ? ` (${CONCURRENCY}x concurrent)` : '';
   const mode  = LIVENESS_ONLY
     ? `LIVENESS-ONLY (free)${concLabel}`
-    : `LIVENESS + HAIKU SCORE (threshold ≥ ${THRESHOLD})`;
+    : `LIVENESS + HAIKU SCORE (T1≥${ADVANCE_THRESHOLDS[1]}/T2≥${ADVANCE_THRESHOLDS[2]}/T3≥${ADVANCE_THRESHOLDS[3]})`;
 
   console.log(`\n=== career-ops triage.mjs ===`);
   console.log(`Mode:        ${mode}`);
@@ -361,7 +369,7 @@ async function main() {
       if (LIVENESS_ONLY) { processed++; continue; }
 
       // ── Phase 1: Haiku quick-score ──
-      const threshold = tier === 3 ? T3_THRESHOLD : THRESHOLD;
+      const threshold = ADVANCE_THRESHOLDS[tier] ?? ADVANCE_THRESHOLDS[2];
       process.stdout.write(`⚡ scoring… `);
 
       const { score, archetype, decision, reason: scoreReason } = quickScore(url, tier, body || '');

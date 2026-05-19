@@ -451,7 +451,7 @@ async function main() {
       ({ results } = await callCouncil({
         prompt,
         models: councilModels,
-        opts: { maxTokens: 2500 },
+        opts: { timeoutMs: 180000, maxTokens: 2500 },
       }));
     } catch (e) {
       console.log(`  [council] hard error: ${e.message}`);

@@ -289,7 +289,7 @@ export async function runWhyStatement(input) {
     const councilResult = await callCouncil({
       prompt: userPrompt,
       models: [modelKey],
-      opts: { systemPrompt: SYSTEM_PROMPT, maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
+      opts: { timeoutMs: 180000, systemPrompt: SYSTEM_PROMPT, maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
     });
     const result = councilResult.results?.[0];
     if (!result) throw new Error('callCouncil returned no results');
@@ -328,7 +328,7 @@ export async function runWhyStatement(input) {
           const retry = await callCouncil({
             prompt: strictPrompt,
             models: [modelKey],
-            opts: { systemPrompt: SYSTEM_PROMPT, maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
+            opts: { timeoutMs: 180000, systemPrompt: SYSTEM_PROMPT, maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
           });
           const rr = retry.results?.[0];
           if (rr && !rr.error) {
@@ -402,7 +402,7 @@ export async function runWhyStatement(input) {
           const retryCouncil = await callCouncil({
             prompt: userPrompt,
             models: [modelKey],
-            opts: { systemPrompt: stricterPrompt, maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
+            opts: { timeoutMs: 180000, systemPrompt: stricterPrompt, maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
           });
           const rr = retryCouncil.results?.[0];
           if (rr && !rr.error) {

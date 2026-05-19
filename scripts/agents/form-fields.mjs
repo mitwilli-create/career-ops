@@ -242,7 +242,7 @@ async function callHaikuOrFallback(userPrompt, systemPrompt, maxTokens) {
   const councilResult = await callCouncil({
     prompt: userPrompt,
     models: ['openai:gpt-5'],
-    opts: {
+    opts: { timeoutMs: 180000,
       systemPrompt,
       maxTokens,
       reasoningEffort: 'minimal',

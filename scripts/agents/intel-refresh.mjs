@@ -137,7 +137,7 @@ async function refreshToxicity(row, opts = {}) {
     council = await callCouncil({
       prompt,
       models: ['perplexity:sonar-deep-research', 'xai:grok-4-x-search'],
-      opts: { maxTokens: 4000 },
+      opts: { timeoutMs: 180000, maxTokens: 4000 },
     });
     cost = council.report?.totalCost || 0;
   } catch (e) {
@@ -221,7 +221,7 @@ async function refreshStrategyCeiling(row, opts = {}) {
       council = await callCouncil({
         prompt,
         models: ['anthropic:claude-sonnet-4-6', 'openai:gpt-5'],
-        opts: {
+        opts: { timeoutMs: 180000,
           maxTokens: 2000,
           cacheStableContent: stableCorpus,
           cacheCaller: `intel-refresh:strategy-ceiling:${metric}`,
@@ -292,7 +292,7 @@ async function refreshPositioning(row, opts = {}) {
     council = await callCouncil({
       prompt,
       models: ['anthropic:claude-sonnet-4-6', 'openai:gpt-5', 'google:gemini-2.5-pro', 'perplexity:sonar-pro'],
-      opts: {
+      opts: { timeoutMs: 180000,
         maxTokens: 2500,
         cacheStableContent: stableCorpus,
         cacheCaller: 'intel-refresh:positioning',
@@ -321,7 +321,7 @@ async function refreshPositioning(row, opts = {}) {
     const adj = await callCouncil({
       prompt: adjPrompt,
       models: ['anthropic:claude-opus-4-7'],
-      opts: {
+      opts: { timeoutMs: 180000,
         maxTokens: 2000,
         cacheStableContent: stableCorpus,
         cacheCaller: 'intel-refresh:positioning:adjudicate',

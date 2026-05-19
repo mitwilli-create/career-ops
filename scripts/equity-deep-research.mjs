@@ -94,7 +94,7 @@ for (const c of companies) {
   process.stdout.write(`  ${c.company.padEnd(20)} → `);
   const t0 = Date.now();
   try {
-    const r = await callCouncil({ prompt: buildPrompt(c.company, c.role), models: ['google:gemini-2.5-pro'], opts: { maxTokens: 2500 } });
+    const r = await callCouncil({ prompt: buildPrompt(c.company, c.role), models: ['google:gemini-2.5-pro'], opts: { timeoutMs: 180000, maxTokens: 2500 } });
     const out = r.results[0];
     if (out.error) {
       console.log(`❌ ${out.error}`);

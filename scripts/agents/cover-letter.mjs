@@ -386,7 +386,7 @@ export async function runCoverLetter(input) {
     const councilResult = await callCouncil({
       prompt: userPrompt,
       models: [modelKey],
-      opts: {
+      opts: { timeoutMs: 180000,
         systemPrompt: SYSTEM_PROMPT,
         maxTokens: MAX_COMPLETION_TOKENS,
         reasoningEffort,
@@ -441,7 +441,7 @@ export async function runCoverLetter(input) {
           const retry = await callCouncil({
             prompt: strictPrompt,
             models: [modelKey],
-            opts: { systemPrompt: SYSTEM_PROMPT, maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
+            opts: { timeoutMs: 180000, systemPrompt: SYSTEM_PROMPT, maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
           });
           const retryResult = retry.results?.[0];
           if (retryResult && !retryResult.error) {
@@ -510,7 +510,7 @@ export async function runCoverLetter(input) {
         const retryResult = await callCouncil({
           prompt: userPrompt,
           models: [modelKey],
-          opts: { systemPrompt: stricterSystemPrompt, maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
+          opts: { timeoutMs: 180000, systemPrompt: stricterSystemPrompt, maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
         });
         const rr = retryResult.results?.[0];
         if (rr && !rr.error) {
@@ -567,7 +567,7 @@ export async function runCoverLetter(input) {
             const retryCouncil = await callCouncil({
               prompt: userPrompt,
               models: [modelKey],
-              opts: { systemPrompt, maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
+              opts: { timeoutMs: 180000, systemPrompt, maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
             });
             const rr = retryCouncil.results?.[0];
             if (!rr || rr.error) throw new Error(rr?.error || 'no result');

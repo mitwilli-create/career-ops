@@ -136,7 +136,7 @@ for (const f of targets) {
     const r = await callCouncil({
       prompt: buildPrompt(j.company, j.role, summarizeForPrompt(j)),
       models: ['xai:grok-4-x-search'],
-      opts: { maxTokens: 3500 },
+      opts: { timeoutMs: 180000, maxTokens: 3500 },
     });
     const out = r.results[0];
     if (out.error) {

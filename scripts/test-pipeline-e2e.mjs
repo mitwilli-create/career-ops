@@ -92,7 +92,7 @@ await runTest('extractRichContent normalizes empty/partial inputs safely', async
 await runTest('callCouncil default lineup (4 models) returns results', async () => {
   const PROMPT = 'Reply with the single word "ok" and nothing else.';
   const t0 = Date.now();
-  const report = await callCouncil({ prompt: PROMPT, opts: { maxTokens: 50 } });
+  const report = await callCouncil({ prompt: PROMPT, opts: { timeoutMs: 180000, maxTokens: 50 } });
   const ms = Date.now() - t0;
   if (!report.results || report.results.length === 0) throw new Error('no results');
   // We expect 4 default-lineup models; some may fail (e.g., rate limit) but at least 2 should succeed.
@@ -112,7 +112,7 @@ await runTest('Gemini grounded call returns grounding_urls', async () => {
   const { results } = await callCouncil({
     prompt: PROMPT,
     models: ['google:gemini-2.5-pro'],
-    opts: { maxTokens: 200, grounded: true },
+    opts: { timeoutMs: 180000, maxTokens: 200, grounded: true },
   });
   const r = results[0];
   if (r.error) throw new Error(r.error);
@@ -133,7 +133,7 @@ await runTest('Anthropic jitter delays Anthropic dispatch (0-1500ms) without bre
   const { results } = await callCouncil({
     prompt: 'Reply "ok".',
     models: ['anthropic:claude-sonnet-4-6', 'openai:gpt-5-3-chat-latest'],
-    opts: { maxTokens: 30 },
+    opts: { timeoutMs: 180000, maxTokens: 30 },
   });
   const totalMs = Date.now() - t0;
   const anth = results.find(r => r.model === 'anthropic:claude-sonnet-4-6');

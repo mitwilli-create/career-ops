@@ -7551,6 +7551,15 @@ async function build() {
      violation when a row used --red-bg=#fee2e2 in light mode while the
      body.dark class was set on the audit pass (mixed-mode rendering). */
   body.dark .age-amber { color: #fbbf24; }
+  /* BRAVO followup 2026-05-20 Item 9 / AA-11 — real fix for the .age-red
+     dark-mode contrast violation. Per the impl-report NEEDS_HUMAN: override
+     --red-bg in dark mode so the muted-text row uses a dark-tinted surface
+     instead of inheriting the light --red-bg (#fee2e2). The previous attempt
+     overrode only the foreground (.age-red) which created a mixed-mode
+     contradiction. This version pairs a dark-tinted bg with a light-red
+     foreground so contrast clears AA across both surface contexts. */
+  body.dark { --red-bg: rgba(220, 38, 38, 0.18); }
+  body.dark .age-red { color: #fca5a5; }
 
   /* ── Filters bar ─────────────────────────────────────────────── */
   .filters { display: flex; flex-direction: column; gap: 8px; margin: 0 0 14px; }

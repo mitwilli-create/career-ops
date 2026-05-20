@@ -4947,6 +4947,17 @@ async function build() {
     // contains.
     const jsonStr = JSON.stringify(_cbData);
     waveCBDataJson = Buffer.from(jsonStr, 'utf-8').toString('base64');
+    // 2026-05-20 — Also write raw JSON to dashboard/data/wave-cb.json so the
+    // client can fetch it instead of inlining the 790KB base64 blob into
+    // block 2 of the page. See the matching `window._waveCBReadyPromise =
+    // fetch('/data/wave-cb.json')` shim in the dashboard's inline script.
+    try {
+      const waveCBOutDir = join(ROOT, 'dashboard/data');
+      mkdirSync(waveCBOutDir, { recursive: true });
+      writeFileSync(join(waveCBOutDir, 'wave-cb.json'), jsonStr);
+    } catch (writeErr) {
+      console.warn('[build] failed to write dashboard/data/wave-cb.json:', writeErr.message);
+    }
   } catch (topErr) { waveCBDataJson = ''; }
 
   // ── Cmd-K palette data ────────────────────────────────────────────
@@ -14958,21 +14969,25 @@ window.setUseInlineExpand = setUseInlineExpand;
 // 'role' type; for other types it opens a lightweight popover-style overlay
 // that does NOT conflict with the existing drawer or status-popover.
 
-// ── Wave C-B: baked build-time data ────────────────────────────────────────
-// Base64-encoded JSON (see P0-2 fix in scripts/build-dashboard.mjs — apostrophes
-// in the source data broke the previous \\' escape strategy).
-window._waveCB = (function() {
+// ── Wave C-B: build-time data (externalized 2026-05-20) ─────────────────
+// Previously inlined as a 790KB base64 blob (the b64 + atob + TextDecoder
+// dance below was the P0-2 escape-safety workaround). Now lazy-fetched
+// from dashboard/data/wave-cb.json as plain JSON. Block 2 of the inline
+// script shrinks ~790KB. Consumers already read window._waveCB defensively
+// (with empty-object fallback), so empty default during the fetch window
+// is safe.
+window._waveCB = {};
+window._waveCBReadyPromise = fetch('/data/wave-cb.json', { cache: 'force-cache' })
+  .then(function(r){ return r.ok ? r.json() : {}; })
+  .then(function(d){ window._waveCB = d || {}; return d; })
+  .catch(function(e){ console.warn('[wave-cb] fetch failed:', e.message); return {}; });
+// Legacy IIFE shell kept for the closing brace — no-op now.
+(function(){
   try {
-    var b64 = '${waveCBDataJson}';
-    if (!b64) return {};
-    // atob → UTF-8 decode (TextDecoder handles non-ASCII chars in source data)
-    var binary = atob(b64);
-    var bytes = new Uint8Array(binary.length);
-    for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    var jsonStr = new TextDecoder('utf-8').decode(bytes);
-    return JSON.parse(jsonStr);
+    // No-op: data fetched async above.
+    return;
   } catch (e) {
-    console.warn('[build] _waveCB decode failed:', e.message);
+    console.warn('[build] _waveCB shim failed:', e.message);
     return {};
   }
 })();
@@ -25772,11 +25787,37 @@ function renderNetworkGraphSvg(contacts, cx, cy, r) {
 }
 window.renderNetworkGraphSvg = renderNetworkGraphSvg;
 
-// ── Contacts directory (2026-05-18) ──────────────────────────────
+// ── Contacts directory (2026-05-18, externalized 2026-05-20) ────────────
 // Sidebar Contacts modal renders this list. Sources: outreach-state +
-// LinkedIn Connections.csv merged at build time. ~2.9k rows.
-var _CONTACTS_DATA = ${JSON.stringify(contactsDirectory).replace(/<\//g, '<\\/')};
-var _CONTACTS_STATS = ${JSON.stringify(contactsDirectoryStats).replace(/<\//g, '<\\/')};
+// LinkedIn Connections.csv merged at build time. ~2.9k rows ≈ 2.36MB.
+// Previously inlined into block 2 — caused ~5-10s parse delay on cold load.
+// Now lazy-fetched from dashboard/data/contacts.json (written at build
+// time). Consumers see empty defaults until the fetch resolves (~50-100ms
+// on a warm connection), then _onContactsReady() callbacks fire to
+// re-render any UI bound to this data.
+var _CONTACTS_DATA = [];
+var _CONTACTS_STATS = {};
+window._CONTACTS_DATA = _CONTACTS_DATA;
+window._CONTACTS_STATS = _CONTACTS_STATS;
+window._contactsReadyCallbacks = [];
+window._onContactsReady = function(cb) {
+  if (window._CONTACTS_DATA && window._CONTACTS_DATA.length) { try { cb(); } catch(_){} return; }
+  window._contactsReadyCallbacks.push(cb);
+};
+window._contactsReadyPromise = fetch('/data/contacts.json', { cache: 'force-cache' })
+  .then(function(r){ return r.ok ? r.json() : null; })
+  .then(function(payload){
+    if (!payload) return;
+    _CONTACTS_DATA = payload.contacts || [];
+    _CONTACTS_STATS = payload.stats || {};
+    window._CONTACTS_DATA = _CONTACTS_DATA;
+    window._CONTACTS_STATS = _CONTACTS_STATS;
+    var cbs = window._contactsReadyCallbacks || [];
+    window._contactsReadyCallbacks = [];
+    for (var i = 0; i < cbs.length; i++) { try { cbs[i](); } catch(_) {} }
+    if (typeof _updateContactsChip === 'function') _updateContactsChip();
+  })
+  .catch(function(err){ console.warn('[contacts] fetch failed:', err.message); });
 // 2026-05-18 — defensive multi-shot update: synchronous IIFE first (works
 // when script runs after the sidebar HTML — typical case), then a
 // DOMContentLoaded re-fire (covers the case where script ran before the
@@ -30613,6 +30654,22 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 
   writeFileSync(OUT_PATH, minifiedHtml);
   console.log(`Wrote ${OUT_PATH}`);
+
+  // 2026-05-20 — Write the contacts directory as a separate JSON file so
+  // the dashboard can lazy-fetch it instead of inlining 2.36MB into block
+  // 2 of the page. Matched by the `window._contactsReadyPromise =
+  // fetch('/data/contacts.json')` shim in the inline script.
+  try {
+    const contactsOutDir = join(ROOT, 'dashboard/data');
+    mkdirSync(contactsOutDir, { recursive: true });
+    const contactsPayload = { contacts: contactsDirectory, stats: contactsDirectoryStats };
+    writeFileSync(join(contactsOutDir, 'contacts.json'), JSON.stringify(contactsPayload));
+    const contactsBytes = Buffer.byteLength(JSON.stringify(contactsPayload), 'utf8');
+    console.log(`  Externalized:      contacts.json (${contactsBytes.toLocaleString()} bytes) — was inlined`);
+  } catch (writeErr) {
+    console.warn('[build] failed to write dashboard/data/contacts.json:', writeErr.message);
+  }
+
   console.log(`  Total evaluations: ${total}`);
   console.log(`  Apply-Now queue:   ${applyNow.length}`);
   console.log(`  Pipeline pending:  ${pipelinePending}`);

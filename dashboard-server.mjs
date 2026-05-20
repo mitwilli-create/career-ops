@@ -2544,6 +2544,184 @@ function buildBatchStatusDetailed() {
   _batchStatusCacheTs = Date.now();
   return result;
 }
+// BRAVO followup 2026-05-20 — per-state item drill-in for the Batch
+// Status modal. Reads batch/batch-state.tsv directly for the current
+// run (latest started_at group, 15-min gap heuristic) and returns the
+// matching rows. For pipeline_pending + batch_input, reads the source
+// queues. Cap at 200 to keep payload tight; UI shows truncation note.
+function buildBatchItemsForState(state) {
+  const MAX_ROWS = 200;
+  const ROOT_LOCAL = ROOT;
+
+  // Parse batch-state.tsv into rows + group into "current run" (latest
+  // gap-bounded cluster) plus map status → state-name.
+  function parseBatchStateRows() {
+    const fp = join(ROOT_LOCAL, 'batch/batch-state.tsv');
+    if (!existsSync(fp)) return [];
+    return readFileSync(fp, 'utf-8').split('\n')
+      .filter(l => l.trim() && !l.startsWith('id\t'))
+      .map(l => {
+        const [id, url, status, started_at, completed_at, report_num, score, error, retries] = l.split('\t');
+        return {
+          id: parseInt(id, 10) || 0,
+          url: url || '',
+          status: status || '',
+          started_at: started_at || '',
+          completed_at: completed_at || '',
+          report_num: report_num && report_num !== '-' ? report_num : null,
+          score: score && score !== '-' ? parseFloat(score) : null,
+          error: error && error !== '-' ? error : null,
+          retries: parseInt(retries, 10) || 0,
+        };
+      });
+  }
+
+  function classifyError(msg) {
+    if (!msg) return 'unknown';
+    const s = String(msg).toLowerCase();
+    if (s.includes('rate limit') || s.includes('rate_limit') || s.includes('429')) return 'rate-limit';
+    if (s.includes('token') && (s.includes('limit') || s.includes('exceed') || s.includes('too large'))) return 'token-limit';
+    if (s.includes('parse') || s.includes('json') || s.includes('schema')) return 'parse-error';
+    if (s.includes('timeout') || s.includes('etimedout')) return 'timeout';
+    if (s.includes('econnreset') || s.includes('econnrefused') || s.includes('network')) return 'network';
+    if (s.includes('400') || s.includes('401') || s.includes('403')) return 'api-auth';
+    if (s.includes('500') || s.includes('502') || s.includes('503') || s.includes('504')) return 'api-server';
+    if (s.includes('exit=') && !s.includes('exit=0')) return 'worker-exit';
+    return 'other';
+  }
+
+  // Helper: extract a company/role label from a JD URL — best-effort. Strips
+  // protocol + greenhouse / lever / ashby host prefixes, returns a short
+  // hostname + path tail for human scanning.
+  function urlLabel(u) {
+    if (!u) return '';
+    try {
+      const parsed = new URL(u);
+      const host = parsed.hostname.replace(/^www\./, '').replace(/^(jobs|boards|careers)\./, '');
+      const tail = parsed.pathname.split('/').filter(Boolean).slice(-2).join('/');
+      return host + (tail ? ('/' + tail) : '');
+    } catch (_) { return u.slice(0, 80); }
+  }
+
+  // Map state to filter predicate over batch-state rows.
+  let rows = parseBatchStateRows();
+  // Filter to the current run (gap of >15 min from the LATEST started_at
+  // partitions the cluster). This matches the detailBatches grouping.
+  const GAP_MS = 15 * 60 * 1000;
+  if (rows.length) {
+    rows.sort((a, b) => a.started_at.localeCompare(b.started_at));
+    const latestStart = rows[rows.length - 1].started_at ? Date.parse(rows[rows.length - 1].started_at) : 0;
+    if (latestStart) {
+      const cutoff = latestStart - GAP_MS;
+      rows = rows.filter(r => r.started_at && Date.parse(r.started_at) >= cutoff);
+    }
+  }
+
+  // For each state, derive the filtered + augmented list.
+  if (state === 'completed') {
+    const matching = rows.filter(r => r.status === 'completed');
+    const items = matching.slice(0, MAX_ROWS).map(r => ({
+      id: r.id,
+      url: r.url,
+      label: urlLabel(r.url),
+      report_num: r.report_num,
+      report_link: r.report_num ? ('/reports/' + r.report_num) : null,
+      score: r.score,
+      started_at: r.started_at,
+      completed_at: r.completed_at,
+    }));
+    return { items, total: matching.length, truncated: matching.length > MAX_ROWS };
+  }
+
+  if (state === 'failed') {
+    const matching = rows.filter(r => r.status === 'failed');
+    // Cluster by category for the UI's grouping affordance.
+    const categories = {};
+    for (const r of matching) {
+      const cat = classifyError(r.error);
+      categories[cat] = (categories[cat] || 0) + 1;
+    }
+    const items = matching.slice(0, MAX_ROWS).map(r => ({
+      id: r.id,
+      url: r.url,
+      label: urlLabel(r.url),
+      error: r.error,
+      error_category: classifyError(r.error),
+      retries: r.retries,
+      started_at: r.started_at,
+    }));
+    return { items, total: matching.length, truncated: matching.length > MAX_ROWS, error_categories: categories };
+  }
+
+  if (state === 'running') {
+    const matching = rows.filter(r => r.status === 'running');
+    const now = Date.now();
+    const items = matching.slice(0, MAX_ROWS).map(r => {
+      const elapsedMs = r.started_at ? (now - Date.parse(r.started_at)) : 0;
+      return {
+        id: r.id,
+        url: r.url,
+        label: urlLabel(r.url),
+        started_at: r.started_at,
+        elapsed_seconds: Math.max(0, Math.round(elapsedMs / 1000)),
+      };
+    });
+    return { items, total: matching.length, truncated: matching.length > MAX_ROWS };
+  }
+
+  if (state === 'pending') {
+    const matching = rows.filter(r => !['completed', 'failed', 'running'].includes(r.status));
+    const items = matching.slice(0, MAX_ROWS).map((r, i) => ({
+      id: r.id,
+      url: r.url,
+      label: urlLabel(r.url),
+      position: i + 1,
+      started_at: r.started_at || null,
+    }));
+    return { items, total: matching.length, truncated: matching.length > MAX_ROWS };
+  }
+
+  if (state === 'pipeline_pending') {
+    // data/pipeline.md — count + list of pending row URLs.
+    const fp = join(ROOT_LOCAL, 'data/pipeline.md');
+    if (!existsSync(fp)) return { items: [], total: 0, truncated: false };
+    const text = readFileSync(fp, 'utf-8');
+    const urls = [];
+    for (const ln of text.split('\n')) {
+      const m = ln.match(/(https?:\/\/\S+)|local:(\S+)/);
+      if (m) urls.push(m[1] || ('local:' + m[2]));
+    }
+    const items = urls.slice(0, MAX_ROWS).map((u, i) => ({
+      position: i + 1,
+      url: u,
+      label: urlLabel(u),
+    }));
+    return { items, total: urls.length, truncated: urls.length > MAX_ROWS };
+  }
+
+  if (state === 'batch_input') {
+    // batch/batch-input.tsv — pending items queued for the next batch run.
+    const fp = join(ROOT_LOCAL, 'batch/batch-input.tsv');
+    if (!existsSync(fp)) return { items: [], total: 0, truncated: false };
+    try {
+      if (!statSync(fp).isFile()) return { items: [], total: 0, truncated: false };
+    } catch (_) { return { items: [], total: 0, truncated: false }; }
+    const lines = readFileSync(fp, 'utf-8').split('\n').filter(l => l.trim() && !l.startsWith('id'));
+    const items = lines.slice(0, MAX_ROWS).map((l, i) => {
+      const cols = l.split('\t');
+      return {
+        position: i + 1,
+        id: cols[0] || null,
+        url: cols[1] || '',
+        label: urlLabel(cols[1] || ''),
+      };
+    });
+    return { items, total: lines.length, truncated: lines.length > MAX_ROWS };
+  }
+
+  return { items: [], total: 0, truncated: false };
+}
+
 function _buildBatchStatusDetailedUncached() {
   const live = batchLive();
 
@@ -5207,6 +5385,25 @@ const server = createServer((req, res) => {
   if (url === '/api/batch/status-detailed') {
     try { return json(buildBatchStatusDetailed()); }
     catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ ok: false, error: err.message }));
+      return;
+    }
+  }
+
+  // BRAVO followup 2026-05-20 — per-state batch-item drill-in for the
+  // Batch Status modal. ?state= one of: completed | failed | running |
+  // pending | pipeline_pending | batch_input. Returns per-item rows for
+  // the matching state — used by the modal's click-to-drill side panel.
+  // Caps result at 200 rows; the UI surfaces a "showing N of M" footer
+  // when truncated.
+  if (url.startsWith('/api/batch/items')) {
+    try {
+      const u = new URL(url, 'http://localhost');
+      const state = (u.searchParams.get('state') || 'failed').toLowerCase();
+      const items = buildBatchItemsForState(state);
+      return json({ ok: true, state: state, items: items.items, total: items.total, truncated: items.truncated, error_categories: items.error_categories || null });
+    } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify({ ok: false, error: err.message }));
       return;

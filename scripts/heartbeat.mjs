@@ -676,11 +676,9 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
     runwayAlertHtml = renderRunwayAlertTiered(density);
   } catch {}
 
-  // Tier 5 system-status banner (calibration brief 2026-05-16)
-  // Phase A · A3 · HIGH-1 (2026-05-19) — banner now renders as a one-liner
-  // with a "details →" link pointing at the dashboard, not the 7-row table.
-  let systemBannerHtml = '';
-  try { systemBannerHtml = renderSystemBanner({ format: 'html', dashboardUrl: DASHBOARD_PUBLIC_URL }) || ''; } catch {}
+  // Tier 5 system-status banner — Phase B (2026-05-19): removed from morning.
+  // Full feature table moved to evening digest (heartbeat-evening.mjs, 18:00 PT).
+  const systemBannerHtml = '';  // Phase B: evening only
 
   // Master CV freshness banner (audit Item L 2026-05-18) — surfaces today's
   // master PDF path or a re-render reminder. Renders inline so it stacks with
@@ -707,9 +705,9 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
     }
   } catch { /* non-fatal */ }
 
-  // Rejected pattern (auto-suppresses on zero discards in 7d)
-  let discardSectionHtml = '';
-  try { discardSectionHtml = renderDiscardPatternSection({ format: 'html', days: 7 }) || ''; } catch {}
+  // Rejected pattern — Phase B (2026-05-19): removed from morning HTML.
+  // Discard pattern section moved to evening digest (heartbeat-evening.mjs, Fridays).
+  const discardSectionHtml = '';  // Phase B: evening only
 
   // §5 WEEKLY GROWTH — TPgM section (Monday only, de-emphasized)
   let tpgmHeartbeatSectionHtml = '';
@@ -1897,100 +1895,33 @@ async function generateHeartbeat() {
   // the §2 DUE TODAY card from {{dueTodayHtml}} instead of this block).
   for (const line of formatOutreachCadence()) lines.push(line);
 
-  // Rejected Pattern of the Week
-  try {
-    const discardMd = renderDiscardPatternSection({ format: 'markdown', days: 7 });
-    if (discardMd) {
-      for (const line of discardMd.split('\n')) lines.push(line);
-      lines.push('');
-    }
-  } catch (e) {
-    console.warn(`[heartbeat] discard pattern section unavailable: ${e.message}`);
-  }
+  // Phase B (2026-05-19) — sections removed from morning body, now in evening:
+  //   - Rejected Pattern of the Week (heartbeat-evening.mjs, Fridays)
+  //   - Activity Snapshot (heartbeat-evening.mjs, SECTION 2)
+  //   - Pipeline Funnel (heartbeat-evening.mjs, SECTION 3)
+  //   - System Status (heartbeat-evening.mjs, SECTION 1)
+  //   - Errors / Warnings (heartbeat-evening.mjs, SECTION 5)
+  //   - Action Required (heartbeat-evening.mjs, SECTION 5, suppressed when no errors)
+  //
+  // Variables still computed below because meta/subject builder needs them.
 
-  // Activity + Pipeline figures (still needed downstream for meta/subject build).
-  const buckets = getStatusBreakdown(trackerRows);  // kept for future surfacing
+  // Compute stats needed for meta object (subject line + preheader).
+  const buckets = getStatusBreakdown(trackerRows);  // subject builder downstream
   const inflow = getInflowStats(TARGET_DATE);
   const reportsToday = countReports(TARGET_DATE);
   const applicationsRows = countApplicationsRows(join(ROOT, 'data/applications.md'));
+  void buckets;  // subject builder uses trackedCount from applicationsRows
 
-  // Phase A · A8 · MEDIUM-3 (2026-05-19) — two stats tables collapsed to one
-  // line. The dashboard at /?focus=funnel surfaces the full breakdown when
-  // Mitchell needs it; the 09:01 PT morning email does not.
+  // One-line stat summary — the sole system-at-a-glance line in morning.
+  // Phase B: link label updated to reference the 18:00 evening digest.
   const todayNew = (inflow.portalNew || 0) + (inflow.rssNew || 0) + (inflow.emailNew || 0);
-  lines.push(`**Tracked:** ${applicationsRows} (+${todayNew} today) · **Apply-Now:** ${applyNow.length} · **Evaluated today:** ${reportsToday} · [details →](${DASHBOARD_PUBLIC_URL}/?focus=funnel)`);
-  lines.push('');
-  // `buckets` is intentionally unused here (post-A8) but still computed — keep
-  // for the subject/preheader builder downstream.
-  void buckets;
-
-  // System Status — compact table, visually de-emphasized in HTML (last visible
-  // section before footer; no accent color on heading).
-  lines.push('## System Status');
+  lines.push(`**Tracked:** ${applicationsRows} (+${todayNew} today) · **Apply-Now:** ${applyNow.length} · **Evaluated today:** ${reportsToday} · [full system digest 18:00 →](${DASHBOARD_PUBLIC_URL}/?focus=funnel)`);
   lines.push('');
 
-  const pipelinePending = countPipelinePending(join(ROOT, 'data/pipeline.md'));
-  const triageRows = countTriageRows(join(ROOT, 'data/triage-batch.tsv'));
-  const triageModified = fileModifiedRecently(join(ROOT, 'data/triage-batch.tsv'));
-  const scanRows = countScanHistoryRows(join(ROOT, 'data/scan-history.tsv'));
-  // Detect via the scan log, not scan-history.tsv: the history file only updates
-  // when new URLs are added, so a successful scan that finds zero new offers
-  // (everything is a duplicate) leaves history mtime stale. Window is 12h so the
-  // signal survives manual reruns through late morning PT after the 02:00 PT
-  // scheduled fire, while still excluding prior-evening tests (~13h gap).
-  const scanRanToday = fileModifiedRecently(join(ROOT, `data/logs/scan-${TARGET_DATE}.log`), 12);
-  const grok = grokStatus(TARGET_DATE);
-
-  lines.push('| Component | Status | Detail |');
-  lines.push('|-----------|--------|--------|');
-  lines.push(`| Portal scan (\`scan.mjs\`) | ${scanRanToday ? '✅ ran today' : '❌ did not run'} | ${scanRows} URLs tracked all-time |`);
-  lines.push(`| Triage refresh | ${triageModified ? '✅ refreshed today' : '❌ stale'} | ${triageRows} candidates queued |`);
-  lines.push(`| Pipeline depth | ${pipelinePending > 0 ? '✅' : '⚠️'} ${pipelinePending} pending | feeds tomorrow's batch |`);
-  lines.push(`| Batch eval | ${reportsToday > 0 ? `✅ ${reportsToday} reports` : '❌ 0 reports'} | A–G evaluations written today |`);
-  lines.push(`| Tracker | ✅ ${applicationsRows} rows | every role ever evaluated |`);
-  lines.push(`| Grok #1 (social-intel) | ${grok.queries > 0 ? '✅ active' : '⏸ idle'} | $${grok.spent.toFixed(2)} / $5.00 daily cap · ${grok.queries} queries |`);
-  // 6L: Additional status rows — voice calibration, error health, quota schedule
-  lines.push(`| Voice calibration | ${existsSync(join(ROOT, 'writing-samples/voice-reference.md')) ? '✅ active' : '⚠️ not configured'} | writing-samples/voice-reference.md |`);
-  lines.push(`| Errors today | ${existsSync(join(ROOT, 'data/errors.log')) && readFileSync(join(ROOT, 'data/errors.log'),'utf-8').includes(TARGET_DATE) ? '⚠️ see errors.log' : '✅ clean'} | data/errors.log |`);
-  lines.push(`| Quota schedule | ✅ 08:05 PT | batch fires after Claude Max reset |`);
-  lines.push('');
-
-  // Phase A · A2 · CRITICAL-3 (2026-05-19) — collapse the two empty-state H2
-  // sections (Errors / Warnings + Action Required) into one quiet footer line
-  // on no-error days. Both sections still render as H2s when something needs
-  // attention so the signal is not buried.
-  const errorLog = join(ROOT, 'data/errors.log');
-  let todaysErrors = [];
-  if (existsSync(errorLog)) {
-    todaysErrors = readFileSync(errorLog, 'utf-8')
-      .split('\n')
-      .filter(l => l.includes(TARGET_DATE));
-  }
-  if (todaysErrors.length === 0) {
-    lines.push('<small style="color:#9ca3af">No errors · no action required · system running unattended.</small>');
-    lines.push('');
-  } else {
-    lines.push('## Errors / Warnings');
-    lines.push('');
-    lines.push('```');
-    todaysErrors.slice(-20).forEach(e => lines.push(e));
-    lines.push('```');
-    lines.push('');
-    lines.push('## Action Required');
-    lines.push('');
-    lines.push('- [ ] Review the errors above before acting on the queue.');
-    lines.push('');
-  }
   lines.push('---');
   lines.push('');
 
-  // Phase A · A10 · MEDIUM-5 (2026-05-19) — glossary blockquote removed.
-  // Quiet attribution line with commit SHA replaces it.
-  let commitSha = '';
-  try {
-    commitSha = execSync('git rev-parse --short HEAD', { encoding: 'utf-8', timeout: 3000 }).trim();
-  } catch { commitSha = 'unknown'; }
-  lines.push(`*heartbeat.mjs · 09:00 PT · v.${commitSha} · [dashboard →](${DASHBOARD_URL})*`);
+  lines.push(`*heartbeat.mjs · 09:00 PT · [dashboard →](${DASHBOARD_URL})*`);
 
   // Pull state for the dynamic subject + hidden preheader (Phase 2 Day-1 quick
   // wins, 2026-05-17). The four signals all-7-models converged on:

@@ -128,8 +128,8 @@
 
     <!-- ═══════════════════════════════════════════════════════════════════
          §7 MAIN CONTENT — markdown body rendered via renderContentHtml().
-         Contains: What's New Overnight → Apply-Now Queue → Activity Snapshot
-         → Pipeline Funnel → System Status → Errors → Interpretation guide.
+         Morning (Phase B): What's New Overnight → Apply-Now Queue → Outreach → stat summary.
+         System-health sections moved to heartbeat-evening.mjs (18:00 PT).
          Wave D changes (H5–H7, T2#7) applied inside renderContentHtml().
          ═══════════════════════════════════════════════════════════════════ -->
     <mj-section padding="0 0 8px 0">

@@ -2328,7 +2328,7 @@ async function main() {
     const subject = `[career-ops] SMTP test ${new Date().toISOString()}`;
     const body = `This is a test email from scripts/heartbeat.mjs.\n\nIf you received this, SMTP delivery is working.\n\nDate: ${TARGET_DATE}\nHost: ${process.env.USER || 'unknown'}@${process.env.HOSTNAME || 'localhost'}\n`;
     const id = await sendEmail({ subject, body });
-    console.log(`Test email sent. Message-ID: ${id}`);
+    console.log(`Test email sent. Message-ID: ${id.messageId}`);
     return;
   }
 
@@ -2391,7 +2391,7 @@ async function main() {
 
   if (SEND) {
     const id = await sendEmail({ subject, body, meta });
-    console.log(`Heartbeat email sent. Message-ID: ${id}`);
+    console.log(`Heartbeat email sent. Message-ID: ${id.messageId}`);
   } else {
     console.log('---');
     console.log(body);

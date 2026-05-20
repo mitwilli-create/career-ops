@@ -901,6 +901,25 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
   return result.html || '';
 }
 
+// ── Phase F-5 dispatch dispatch (2026-05-20) ────────────────────────────────
+// HEARTBEAT_DESIGN=dispatch routes to the Vogue+Bloomberg editorial Dispatch
+// module instead of the Phase E2 emission path. Anything else (including the
+// flag being unset) keeps the existing Phase E2 path byte-identical.
+async function renderDispatchHtml(meta) {
+  const { renderDispatchMorning } = await import('./heartbeat-dispatch.mjs');
+  return renderDispatchMorning({
+    ...meta,
+    // heartbeat.mjs's meta object already contains queueCount, trackedCount,
+    // evaluatedToday, runwayState, runwayAlert, outreachDue, newRoles, topRole,
+    // applyNow, whatsNew. F-5 needs todaysFocus and density too — recompute
+    // both here so the dispatch module stays decoupled from heartbeat.mjs's
+    // private state.
+    todaysFocus: await getTodaysFocus(meta).catch(() => ''),
+    density:     computeRunwayDensityForHeartbeat(),
+    markdownBody: meta._markdownBody || '',
+  });
+}
+
 async function sendEmail({ subject, body, meta = {} }) {
   const secrets = loadSecrets();
   const transporter = nodemailer.createTransport({
@@ -931,7 +950,17 @@ async function sendEmail({ subject, body, meta = {} }) {
     }
   }
 
-  const html = await renderHtmlEmail(body, meta);
+  // Phase F-5 dispatch toggle — env-flag-conditional. Default (unset / any
+  // value other than 'dispatch') keeps the Phase E2 path BYTE-IDENTICAL.
+  let html, dispatchSubject, dispatchAttachments;
+  if (process.env.HEARTBEAT_DESIGN === 'dispatch') {
+    const r = await renderDispatchHtml({ ...meta, _markdownBody: body });
+    html = r.html;
+    dispatchSubject = r.subject;
+    dispatchAttachments = r.attachments;
+  } else {
+    html = await renderHtmlEmail(body, meta);
+  }
 
   // Archive rendered HTML for /email-review skill (added 2026-05-19).
   // The email-review-strategist orchestrator at 09:30 PT reads
@@ -945,9 +974,10 @@ async function sendEmail({ subject, body, meta = {} }) {
     from: secrets.GMAIL_USER,
     to: secrets.HEARTBEAT_TO,
     bcc,
-    subject,
+    subject: dispatchSubject || subject,
     text: body,
     html,
+    attachments: dispatchAttachments || undefined,
   });
   return { messageId: info.messageId, bccTo: bcc || null };
 }
@@ -2226,8 +2256,19 @@ async function main() {
   console.log(`Wrote ${outPath}`);
 
   if (PREVIEW) {
-    const html = await renderHtmlEmail(body, meta);
-    const previewPath = '/tmp/heartbeat-preview.html';
+    // Phase F-5 dispatch toggle — preview also routes via env flag so the
+    // preview path matches what would actually be sent.
+    let html;
+    if (process.env.HEARTBEAT_DESIGN === 'dispatch') {
+      const r = await renderDispatchHtml({ ...meta, _markdownBody: body });
+      html = r.html;
+      console.log(`Subject (dispatch): ${r.subject}  [source: ${r.subjectSource}]`);
+    } else {
+      html = await renderHtmlEmail(body, meta);
+    }
+    const previewPath = process.env.HEARTBEAT_DESIGN === 'dispatch'
+      ? '/tmp/dispatch-morning.html'
+      : '/tmp/heartbeat-preview.html';
     writeFileSync(previewPath, html);
     console.log(`Wrote ${previewPath} (${html.length} chars)`);
 

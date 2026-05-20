@@ -158,6 +158,37 @@
       "success_fg": "#166534",
       "info_bg": "#e8edf4",
       "info_fg": "#3d4f6b"
+    },
+    "morning_dispatch": {
+      "$comment": "Phase F-5 Vogue+Bloomberg editorial palette — ivory paper, charcoal ink, oxidized brass. Calibrated for AAA contrast on the body color pairing (#1a1816 on #f4f1e8 = 14.8:1).",
+      "paper": "#f4f1e8",
+      "paper_shadow": "#ede9dd",
+      "ink": "#1a1816",
+      "ink_2": "#3a3530",
+      "ink_3": "#5a5048",
+      "ink_4": "#8a8378",
+      "accent": "#a48a4f",
+      "accent_deep": "#7d6735",
+      "rule": "rgba(26,24,22,0.12)",
+      "rule_strong": "rgba(26,24,22,0.28)",
+      "positive": "#2d6b40",
+      "negative": "#8a3a2a"
+    },
+    "evening_dispatch": {
+      "$comment": "Phase F-5 Vogue+Bloomberg editorial palette — anthracite paper, ash-cream ink, single-malt amber. Calibrated for AAA contrast on the body color pairing (#e8e4d8 on #0d0e10 = 14.6:1).",
+      "paper": "#0d0e10",
+      "paper_shadow": "#15171a",
+      "ink": "#e8e4d8",
+      "ink_2": "#d4cdb8",
+      "ink_3": "#a8a39a",
+      "ink_4": "#7a7468",
+      "accent": "#c89a4a",
+      "accent_deep": "#a87f30",
+      "accent_soft": "rgba(200,154,74,0.10)",
+      "rule": "rgba(212,205,184,0.10)",
+      "rule_strong": "rgba(212,205,184,0.26)",
+      "positive": "#9bbc8e",
+      "negative": "#c47860"
     }
   },
   "dashboard": {

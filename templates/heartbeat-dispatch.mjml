@@ -1,0 +1,233 @@
+<mjml>
+  <mj-head>
+    <mj-title>Career-Ops Dispatch — {{date}}</mj-title>
+    <mj-preview>{{preheaderText}}</mj-preview>
+    <mj-attributes>
+      <!-- ════════════════════════════════════════════════════════════════════
+           Phase F-5 Vogue+Bloomberg editorial Dispatch — defaults wire the
+           ivory-paper / charcoal-ink palette through every mj-text. The
+           outer surface variant (morning vs evening) is supplied via the
+           {{paperBg}}, {{ink}}, {{accent}} interpolation tokens so a single
+           template can serve both dispatches.
+
+           Fonts: Fraunces (display) / Inter (sans) / JetBrains Mono (data).
+           Each ramp has graceful system fallbacks for email clients that
+           strip <link> tags (Gmail web, Outlook). Georgia is the
+           worst-case fallback for the hero date and still reads editorial.
+           ════════════════════════════════════════════════════════════════════ -->
+      <mj-text
+        font-family="'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
+        font-size="14px"
+        line-height="1.55"
+        color="{{ink2}}"
+      />
+      <mj-button
+        font-family="'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
+        font-size="11px"
+        font-weight="700"
+        letter-spacing="0.10em"
+        border-radius="0"
+        inner-padding="11px 18px"
+      />
+      <mj-section padding="0 0 4px 0" />
+    </mj-attributes>
+
+    <mj-style>
+      /* ── Phase F-5 — editorial scaffolding ───────────────────────────────
+         The base palette is interpolated per-surface (morning ivory vs
+         evening anthracite). The shared structural CSS lives here. */
+      body, .body-bg { background: {{paperBg}} !important; color: {{ink2}} !important; }
+      .editorial-display {
+        font-family: 'Fraunces', 'GT Sectra', 'Bodoni 72', Georgia, 'Times New Roman', serif !important;
+        font-style: italic !important;
+      }
+      .editorial-serif {
+        font-family: 'Fraunces', 'GT Sectra', 'Bodoni 72', Georgia, 'Times New Roman', serif !important;
+      }
+      .editorial-grotesk {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif !important;
+      }
+      .editorial-mono {
+        font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important;
+        font-variant-numeric: tabular-nums;
+      }
+      .masthead-rule { border-top: 1px solid {{ruleStrong}}; border-bottom: 1px solid {{ruleStrong}}; }
+      .hairline { border-bottom: 1px solid {{rule}}; }
+      .ticker-row td { padding: 8px 0; border-bottom: 1px solid {{rule}}; }
+      .pullquote-rule { border-top: 1px solid {{ruleStrong}}; border-bottom: 1px solid {{ruleStrong}}; }
+      .ornament { color: {{accent}}; }
+      a { color: {{accent}}; text-decoration: none; border-bottom: 1px solid {{rule}}; }
+      a:hover { color: {{accentDeep}}; border-bottom-color: {{accent}}; }
+    </mj-style>
+
+    <mj-raw>
+      <!-- Editorial fonts via Google Fonts. Apple Mail honors <link>; Gmail web
+           silently strips it; Outlook strips it. The font-family fallback chains
+           guarantee a readable serif/sans/mono regardless. -->
+      <link rel="preconnect" href="https://fonts.googleapis.com">
+      <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+      <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;0,700;1,400;1,600;1,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+      <meta name="color-scheme" content="{{colorScheme}}">
+      <meta name="supported-color-schemes" content="light dark">
+    </mj-raw>
+  </mj-head>
+
+  <mj-body background-color="{{paperBg}}" css-class="body-bg" width="640px">
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         MASTHEAD — Vogue wordmark left + meta caps right, hairline rules
+         above and below. Matches mid-century magazine fold pattern.
+         ════════════════════════════════════════════════════════════════════ -->
+    <mj-section padding="20px 12px 0 12px">
+      <mj-column>
+        <mj-text padding="0">{{mastheadHtml}}</mj-text>
+      </mj-column>
+    </mj-section>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         HERO DATE — large italic serif. Spelled out long form so the
+         date reads as type, not as a system header. e.g.
+         "twentieth of may, two thousand twenty-six".
+         ════════════════════════════════════════════════════════════════════ -->
+    <mj-section padding="6px 12px 6px 12px">
+      <mj-column>
+        <mj-text padding="0">{{heroDateHtml}}</mj-text>
+      </mj-column>
+    </mj-section>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         EDITORIAL LEDE — 1 paragraph in italic serif, anchored to today's
+         hero event.
+         ════════════════════════════════════════════════════════════════════ -->
+    <mj-section padding="2px 12px 14px 12px">
+      <mj-column>
+        <mj-text padding="0">{{ledeHtml}}</mj-text>
+      </mj-column>
+    </mj-section>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         HERO STORY — "Tonight's Apply" or "Today's Result" treated as a
+         magazine article: italic serif headline, italic sans sub, bordered
+         link CTA (NOT a button).
+         ════════════════════════════════════════════════════════════════════ -->
+    <mj-section padding="6px 12px 8px 12px">
+      <mj-column>
+        <mj-text padding="0">{{heroStoryHtml}}</mj-text>
+      </mj-column>
+    </mj-section>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         EARNED IMAGE — one rotation image per email via CID attachment.
+         Centered, brief mono caption below.
+         ════════════════════════════════════════════════════════════════════ -->
+    <mj-section padding="6px 12px 10px 12px">
+      <mj-column>
+        <mj-image
+          src="cid:dispatchHero"
+          alt="{{heroImageAlt}}"
+          width="600px"
+          padding="0"
+        />
+        <mj-text padding="6px 0 0 0" align="center">{{heroCaptionHtml}}</mj-text>
+      </mj-column>
+    </mj-section>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         TICKER — Apply-Now Queue (morning) or Today's Movements (evening).
+         Reuters discipline: tabular-num rows, hairline rules, italic-serif
+         footer summary.
+         ════════════════════════════════════════════════════════════════════ -->
+    <mj-section padding="6px 12px 10px 12px">
+      <mj-column>
+        <mj-text padding="0">{{tickerHtml}}</mj-text>
+      </mj-column>
+    </mj-section>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         TODAY'S FOCUS — italic serif pull-quote, centered, generous
+         tracking, top + bottom hairline rules.
+         ════════════════════════════════════════════════════════════════════ -->
+    <mj-section padding="6px 12px 10px 12px">
+      <mj-column>
+        <mj-text padding="0">{{focusPullquoteHtml}}</mj-text>
+      </mj-column>
+    </mj-section>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         KPI STRIP — 4 horizontal tiles (Ready · Evaluated · Tracked ·
+         Runway), tabular monospace numerals, top + bottom rules.
+         ════════════════════════════════════════════════════════════════════ -->
+    <mj-section padding="10px 12px 8px 12px" border-top="1px solid {{ruleStrong}}" border-bottom="1px solid {{ruleStrong}}" css-class="masthead-rule">
+      <mj-column padding="6px 4px">
+        <mj-text padding="0" align="center"><span class="editorial-grotesk" style="display:block;font-size:9px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:{{ink4}};margin-bottom:4px">Ready</span><span class="editorial-mono" style="display:block;font-size:24px;font-weight:600;color:{{ink}};letter-spacing:-0.02em">{{kpiQueueCount}}</span></mj-text>
+      </mj-column>
+      <mj-column padding="6px 4px">
+        <mj-text padding="0" align="center"><span class="editorial-grotesk" style="display:block;font-size:9px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:{{ink4}};margin-bottom:4px">Evaluated</span><span class="editorial-mono" style="display:block;font-size:24px;font-weight:600;color:{{ink}};letter-spacing:-0.02em">{{kpiEvaluatedToday}}</span></mj-text>
+      </mj-column>
+      <mj-column padding="6px 4px">
+        <mj-text padding="0" align="center"><span class="editorial-grotesk" style="display:block;font-size:9px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:{{ink4}};margin-bottom:4px">Tracked</span><span class="editorial-mono" style="display:block;font-size:24px;font-weight:600;color:{{ink}};letter-spacing:-0.02em">{{kpiTrackedCount}}</span></mj-text>
+      </mj-column>
+      <mj-column padding="6px 4px">
+        <mj-text padding="0" align="center"><span class="editorial-grotesk" style="display:block;font-size:9px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:{{ink4}};margin-bottom:4px">Runway</span><span class="editorial-mono" style="display:block;font-size:24px;font-weight:600;color:{{kpiRunwayColor}};letter-spacing:-0.02em">{{kpiRunwayLabel}}</span></mj-text>
+      </mj-column>
+    </mj-section>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         RUNWAY ALERT / SYSTEM STATUS slot — when relevant, brass
+         left-rule, italic-serif headline, mono stats.
+         ════════════════════════════════════════════════════════════════════ -->
+    <mj-section padding="14px 12px 8px 12px">
+      <mj-column>
+        <mj-text padding="0">{{runwayAlertHtml}}</mj-text>
+      </mj-column>
+    </mj-section>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         FEATURE BLOCKS — BUILDER STANDING (claim · cited stat · context ·
+         source link), ON THE COUNTER (training rec, morning only),
+         IN THE PNW (event), TODAY'S FORECAST (intj-aware directive).
+         Evening replaces ON THE COUNTER with TOMORROW (pre-positioned
+         action). All blocks are rendered as a single HTML blob from
+         heartbeat-dispatch.mjs.
+         ════════════════════════════════════════════════════════════════════ -->
+    <mj-section padding="6px 12px 6px 12px">
+      <mj-column>
+        <mj-text padding="0">{{featureBlocksHtml}}</mj-text>
+      </mj-column>
+    </mj-section>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         PHILOSOPHER QUOTE — italic serif, centered, attribution in
+         eyebrow caps. Deterministic-by-day-of-year with 60-day no-repeat
+         protection.
+         ════════════════════════════════════════════════════════════════════ -->
+    <mj-section padding="14px 12px 6px 12px">
+      <mj-column>
+        <mj-text padding="0">{{quoteHtml}}</mj-text>
+      </mj-column>
+    </mj-section>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         ORNAMENT CLOSER — single brass marker + italic-serif line. The
+         marker is § for evening, ❘ for morning so the two are visually
+         distinct in thread view.
+         ════════════════════════════════════════════════════════════════════ -->
+    <mj-section padding="20px 12px 8px 12px">
+      <mj-column>
+        <mj-text padding="0">{{closerHtml}}</mj-text>
+      </mj-column>
+    </mj-section>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         COLOPHON MASTHEAD — tiny grotesk caps right-gutter:
+         PUBLISHED · DISPATCH · DESK · FILED FROM. Carries the
+         Generated: timestamp (tracking-critical preservation).
+         ════════════════════════════════════════════════════════════════════ -->
+    <mj-section padding="6px 12px 18px 12px" border-top="1px solid {{rule}}" css-class="hairline">
+      <mj-column>
+        <mj-text padding="10px 0 0 0">{{colophonHtml}}</mj-text>
+      </mj-column>
+    </mj-section>
+
+  </mj-body>
+</mjml>

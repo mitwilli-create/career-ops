@@ -732,6 +732,39 @@ async function renderEveningHtmlEmail(markdownBody, meta = {}) {
   return result.html || '';
 }
 
+// ── Phase F-5 dispatch dispatch (2026-05-20) ────────────────────────────────
+// HEARTBEAT_DESIGN=dispatch routes to the Vogue+Bloomberg editorial Dispatch
+// module instead of the Phase E2 emission path. Anything else (including the
+// flag being unset) keeps the existing Phase E2 path byte-identical.
+async function renderDispatchEveningHtml(body, meta) {
+  const { renderDispatchEvening } = await import('./heartbeat-dispatch.mjs');
+  const trackerRows = parseApplicationsTracker(join(ROOT, 'data/applications.md'));
+  const APPLY_NOW_FLOOR = 4.0;
+  const applyNow = trackerRows
+    .filter(r => r.score >= APPLY_NOW_FLOOR && new Set(['Evaluated','Responded']).has(r.status))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 20);
+  return renderDispatchEvening({
+    date: meta.date || TARGET_DATE,
+    queueCount: meta.applyNowCount || applyNow.length,
+    trackedCount: meta.applicationsRows || trackerRows.length,
+    evaluatedToday: meta.reportsToday || 0,
+    outreachDue: 0,
+    runwayState: meta.density?.health || 'healthy',
+    runwayAlert: meta.density?.health && meta.density.health !== 'healthy',
+    newRoles: 0,
+    todaysFocus: meta.todaysFocus || '',
+    applyNow,
+    whatsNew: [],
+    density: meta.density || computeRunwayDensityForEvening(),
+    todaysResult: meta.todaysResult || null,
+    todaysMovements: meta.todaysMovements || [],
+    errorCount: meta.todaysErrorCount || 0,
+    systemStatus: meta.systemStatus || null,
+    markdownBody: body,
+  });
+}
+
 // ── Send the evening email ─────────────────────────────────────────────────
 async function sendEveningEmail({ subject, body, meta }) {
   const secrets = loadSecrets();
@@ -740,7 +773,16 @@ async function sendEveningEmail({ subject, body, meta }) {
     auth: { user: secrets.GMAIL_USER, pass: secrets.GMAIL_APP_PASSWORD },
   });
 
-  const html = await renderEveningHtmlEmail(body, meta);
+  // Phase F-5 dispatch toggle — env-flag-conditional. Default keeps Phase E2 byte-identical.
+  let html, dispatchSubject, dispatchAttachments;
+  if (process.env.HEARTBEAT_DESIGN === 'dispatch') {
+    const r = await renderDispatchEveningHtml(body, meta);
+    html = r.html;
+    dispatchSubject = r.subject;
+    dispatchAttachments = r.attachments;
+  } else {
+    html = await renderEveningHtmlEmail(body, meta);
+  }
 
   // Archive rendered HTML for overnight diff and email-review intake
   const archiveDir = join(ROOT, 'data/heartbeat-archive');
@@ -752,9 +794,10 @@ async function sendEveningEmail({ subject, body, meta }) {
   const info = await transporter.sendMail({
     from: secrets.GMAIL_USER,
     to: secrets.HEARTBEAT_TO,
-    subject,
+    subject: dispatchSubject || subject,
     text: body,
     html,
+    attachments: dispatchAttachments || undefined,
   });
   return { messageId: info.messageId };
 }
@@ -777,8 +820,19 @@ async function main() {
   console.log(`Wrote ${mdPath}`);
 
   if (PREVIEW) {
-    const html = await renderEveningHtmlEmail(body, meta);
-    const previewPath = '/tmp/heartbeat-evening-preview.html';
+    // Phase F-5 dispatch toggle — preview also routes via env flag so the
+    // preview path matches what would actually be sent.
+    let html;
+    if (process.env.HEARTBEAT_DESIGN === 'dispatch') {
+      const r = await renderDispatchEveningHtml(body, meta);
+      html = r.html;
+      console.log(`Subject (dispatch): ${r.subject}  [source: ${r.subjectSource}]`);
+    } else {
+      html = await renderEveningHtmlEmail(body, meta);
+    }
+    const previewPath = process.env.HEARTBEAT_DESIGN === 'dispatch'
+      ? '/tmp/dispatch-evening.html'
+      : '/tmp/heartbeat-evening-preview.html';
     writeFileSync(previewPath, html);
     console.log(`Wrote ${previewPath} (${html.length} chars)`);
 

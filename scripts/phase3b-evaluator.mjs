@@ -126,6 +126,9 @@ function buildReport({ intelPack, council, citation, reportNum }) {
     `**Legitimacy:** ${intelPack.jd.alive ? 'High Confidence (JD live)' : 'Stale (JD returned ' + intelPack.jd.status + ')'}`,
     `**Verification:** council-validated (${head.primary_source} primary)`,
     `**Citations:** ${citation.valid_citations}/${citation.total_citations} valid${citation.broken_citations.length ? ' — see Block H' : ''}`,
+    intelPack.jd.scrape_method
+      ? `**JD-Scrape:** method=${intelPack.jd.scrape_method} · raw=${intelPack.jd.raw_char_count}c · coverage=${intelPack.jd.coverage_score} (${intelPack.jd.coverage_verdict}) · sections=${(intelPack.jd.sections_found || []).join(',') || 'none'} · scraped_at=${intelPack.jd.scraped_at || 'unknown'}`
+      : '',
   ].filter(Boolean).join('  \n');
 
   let body = `# ${intelPack.company} — ${intelPack.role}\n\n${consensusBlock}\n\n---\n\n## Primary evaluation (${head.primary_source})\n\n${head.primary_text}\n`;
@@ -218,7 +221,41 @@ async function evaluateSurvivor({ url, company, role, id }) {
   // Step 1: intel
   console.log('  [1/3] Gathering intel...');
   const intelPack = await gatherIntel({ url, company, role, gates });
-  console.log(`        ✓ ${(intelPack.elapsed_ms/1000).toFixed(1)}s · JD ${intelPack.jd.alive ? 'live' : 'DEAD'} · priors=${intelPack.priors.count} · proof=${intelPack.proof_points.cv_md_lines.length}+${intelPack.proof_points.article_digest_lines.length} · grok=${intelPack.grok.text ? 'ok' : 'skip'}`);
+  // 2026-05-20: surface scrape provenance + coverage on every eval so the
+  // diagnostic line tells you HOW the JD was scraped and HOW MUCH of one
+  // arrived. JD_SCRAPE_FAILED rows fail fast below without spending council.
+  const _scrapeTag = intelPack.jd.scrape_method
+    ? `${intelPack.jd.scrape_method}·${intelPack.jd.raw_char_count || 0}c·cov=${intelPack.jd.coverage_score ?? '?'}·${intelPack.jd.coverage_verdict || '?'}`
+    : 'legacy-fetch';
+  console.log(`        ✓ ${(intelPack.elapsed_ms/1000).toFixed(1)}s · JD ${intelPack.jd.alive ? 'live' : 'DEAD'} · ${_scrapeTag} · priors=${intelPack.priors.count} · proof=${intelPack.proof_points.cv_md_lines.length}+${intelPack.proof_points.article_digest_lines.length} · grok=${intelPack.grok.text ? 'ok' : 'skip'}`);
+
+  if (intelPack.jd.error === 'JD_SCRAPE_FAILED') {
+    console.log(`  ⚠ JD_SCRAPE_FAILED — ${intelPack.jd.coverage_reason}`);
+    console.log('     Queueing for re-scrape (no council spend). Likely SPA shell, Cloudflare challenge, or login wall.');
+    try {
+      const queuePath = join(ROOT, 'data', 'jd-rescrape-queue.json');
+      let queue = [];
+      if (existsSync(queuePath)) {
+        try { queue = JSON.parse(readFileSync(queuePath, 'utf-8')); if (!Array.isArray(queue)) queue = []; } catch { queue = []; }
+      }
+      queue = queue.filter((q) => q.url !== url);
+      queue.push({
+        url, company, role,
+        first_seen:       new Date().toISOString(),
+        last_failure:     new Date().toISOString(),
+        failure_count:    1,
+        coverage_score:   intelPack.jd.coverage_score,
+        coverage_verdict: intelPack.jd.coverage_verdict,
+        coverage_reason:  intelPack.jd.coverage_reason,
+        scrape_method:    intelPack.jd.scrape_method,
+        raw_char_count:   intelPack.jd.raw_char_count,
+      });
+      writeFileSync(queuePath, JSON.stringify(queue, null, 2));
+    } catch (qErr) {
+      console.log(`     ⚠ Could not write re-scrape queue: ${qErr.message}`);
+    }
+    return { skipped: true, reason: 'jd_scrape_failed', intelPack };
+  }
 
   if (!intelPack.jd.alive) {
     console.log('  ⚠ JD is dead — skipping eval');

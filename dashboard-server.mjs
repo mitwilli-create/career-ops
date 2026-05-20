@@ -4555,6 +4555,34 @@ const server = createServer((req, res) => {
     });
     return;
   }
+  // Phase E3 (2026-05-19) — CV re-render endpoint. Backs Phase A · A7's
+  // "Re-render CV →" badge/button in the daily heartbeat email. POSTs to
+  // this endpoint invoke scripts/render-cv-typst.mjs with a 60s timeout
+  // (hang-prevention compliant per AGENTS.md) and return the rendered
+  // PDF path. The output filename includes today's date so re-running
+  // refreshes the master CV without clobbering historical snapshots.
+  // No request body is required — the endpoint always renders cv.md to
+  // output/cv-mitchell-williams-master-<YYYY-MM-DD>.pdf.
+  if (url === '/api/cv/render' && req.method === 'POST') {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const outPath = `output/cv-mitchell-williams-master-${today}.pdf`;
+      const cmd = `node scripts/render-cv-typst.mjs --input cv.md --output ${outPath}`;
+      const result = _execSync(cmd, { encoding: 'utf-8', timeout: 60_000, cwd: ROOT });
+      return json({
+        ok: true,
+        path: outPath,
+        url: `/output/cv-mitchell-williams-master-${today}.pdf`,
+        stdout_tail: result.split('\n').slice(-10).join('\n'),
+      });
+    } catch (err) {
+      return json({
+        ok: false,
+        error: err.message,
+        stderr_tail: (err.stderr || '').toString().split('\n').slice(-10).join('\n'),
+      }, 500);
+    }
+  }
   if (url === '/api/batch/run' && req.method === 'POST') {
     let body = '';
     let total = 0;

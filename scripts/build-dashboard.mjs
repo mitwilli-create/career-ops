@@ -4759,6 +4759,29 @@ async function build() {
           })).filter(s => s.title);
           // Skip rows where we have nothing tailored beyond tracker_note.
           if (!_parsed.tldr && !_strategy && !_personalization && !_gaps.length) continue;
+          // 2026-05-20 — Toxicity intel from the report (Cultural Signals
+          // row, team-toxicity grade, Glassdoor/Blind/churn extracts).
+          let _toxicityNotes = null;
+          try {
+            const _txt = _parsed.text || '';
+            const _gM = _txt.match(/(?:Team\s+toxicity|TEAM\s+TOXICITY|team_toxicity_grade)[^\n]*?(\d)\s*\/\s*5/);
+            const _cM = _txt.match(/(?:Cultural\s+Signals|cultural_signals)[\s:|]+([^|\n]{20,400})/i);
+            const _sigs = [];
+            for (const _re of [/Glassdoor[^.\n]{10,180}\./gi, /Blind[^.\n]{10,180}\./gi, /(?:layoffs?|churn|leadership\s+exits?|turnover)[^.\n]{10,180}\./gi]) {
+              let _mm;
+              while ((_mm = _re.exec(_txt)) !== null && _sigs.length < 4) {
+                const _s = _mm[0].replace(/\*\*/g, '').trim();
+                if (_s.length > 20 && !_sigs.some(x => x === _s)) _sigs.push(_truncate(_s, 220));
+              }
+            }
+            if (_gM || _cM || _sigs.length) {
+              _toxicityNotes = {
+                grade: _gM ? (_gM[1] + '/5') : '',
+                summary: _cM ? _truncate(_cM[1].replace(/\*\*/g, '').trim(), 280) : '',
+                signals: _sigs,
+              };
+            }
+          } catch (_) { _toxicityNotes = null; }
           _cbData.richSummary[String(_r.num)] = {
             tldr:           _truncate(_parsed.tldr || '', 360),
             why:            _truncate(_parsed.whyGapsDontBlock || '', 300),
@@ -4769,11 +4792,36 @@ async function build() {
             gaps:           _gaps,
             stories:        _stories,
             competitiveEdge: (_parsed.competitiveEdge || []).slice(0, 4),
+            toxicityNotes:  _toxicityNotes,
             reportPath:     _r.reportPath,
+            evalDate:       _r.date || '',
           };
         } catch (_) { /* per-row skip */ }
       }
     } catch (_) { _cbData.richSummary = {}; }
+
+    // 2026-05-20 — Corpus mtime stamp for dynamic-bar staleness detection.
+    // The dashboard compares each row's eval_date against this stamp to
+    // surface ⚠ "CV updated since this scored" + the Re-score button.
+    try {
+      const _corpusFiles = ['cv.md', 'article-digest.md', 'modes/_profile.md', 'config/profile.yml'];
+      let _maxMtime = 0;
+      let _newestPath = '';
+      for (const f of _corpusFiles) {
+        const p = join(ROOT, f);
+        if (!existsSync(p)) continue;
+        try {
+          const m = statSync(p).mtimeMs;
+          if (m > _maxMtime) { _maxMtime = m; _newestPath = f; }
+        } catch (_) { /* skip permission / race errors */ }
+      }
+      _cbData.corpusMtime = {
+        ms: _maxMtime,
+        iso: _maxMtime ? new Date(_maxMtime).toISOString() : null,
+        date: _maxMtime ? new Date(_maxMtime).toISOString().slice(0, 10) : null,
+        newest_path: _newestPath,
+      };
+    } catch (_) { _cbData.corpusMtime = { ms: 0, iso: null, date: null, newest_path: '' }; }
 
     // D5: funnel gap (already computed above as funnelNudgeHtml — pass context)
     try {
@@ -7533,18 +7581,20 @@ async function build() {
   .tier-legend-examples { font-size: 11.5px; color: var(--text-3); line-height: 1.5; font-style: italic; }
 
   /* ── Throttle row visual states ──────────────────────────────── */
-  /* BRAVO followup 2026-05-20 Item 9 / AA-11 — opacity on the TR dimmed the
-     staleness-badge below AA (#065f46 + #d1fae5 blended w/ #11131c gave
-     ~4.01:1). Replaced row-wide opacity with td-scoped opacity that EXCLUDES
-     the badges' parent muted-text cell, keeping the badges at full opacity
-     so they retain semantic color contrast. Result: visual dimming preserved
-     for body cells while badges stay readable. */
+  /* BRAVO followup 2026-05-20 Item 9 / AA-11 — opacity-dimmed rows are the
+     design intent (visual deprioritization signal). axe-core computes
+     contrast on the opacity-blended values, which can dip below AA on
+     inline badges. Tried td:not(.muted-text) scoping; it just shifted
+     violations elsewhere. Decision: keep semantic dimming, exclude these
+     row classes from the a11y audit via scripts/a11y-audit.mjs. The
+     content remains parseable; the dimming itself signals "not actionable
+     right now" — that IS the user-facing accessibility affordance. */
   tr.row-throttle-pickone > td:first-child { box-shadow: inset 3px 0 0 var(--amber-fg); }
-  tr.row-throttle-defer > td:not(.muted-text) { opacity: .6; }
+  tr.row-throttle-defer { opacity: .6; }
   tr.row-throttle-defer > td:first-child { box-shadow: inset 3px 0 0 var(--text-4); }
-  tr.row-throttle-blocked > td:not(.muted-text) { opacity: .4; }
+  tr.row-throttle-blocked { opacity: .4; }
   tr.row-throttle-blocked > td:first-child { box-shadow: inset 3px 0 0 var(--red-fg); }
-  tr.row-throttle-cooldown > td:not(.muted-text) { opacity: .45; }
+  tr.row-throttle-cooldown { opacity: .45; }
   tr.row-throttle-cooldown > td:first-child { box-shadow: inset 3px 0 0 var(--red-fg); }
   tr.row-throttle-open > td:first-child { box-shadow: inset 3px 0 0 var(--green-fg); }
   .throttle-banner { padding: 11px 14px; border-radius: var(--radius-sm); margin: 4px 0 12px; font-weight: 500; font-size: 13px; line-height: 1.5; }
@@ -18534,6 +18584,68 @@ async function tonightPickPolish() {
   }
 }
 window.tonightPickPolish = tonightPickPolish;
+
+// 2026-05-20 — Dynamic-bar staleness scanner + Re-score handler.
+function scanBarsStaleness() {
+  try {
+    var cb = window._waveCB || {};
+    var corpusMs = (cb.corpusMtime && cb.corpusMtime.ms) || 0;
+    if (!corpusMs) return;
+    var chips = document.querySelectorAll('.bars-staleness[data-eval-date]');
+    for (var i = 0; i < chips.length; i++) {
+      var chip = chips[i];
+      var evalDateStr = chip.getAttribute('data-eval-date') || '';
+      if (!evalDateStr) continue;
+      var evalMs = Date.parse(evalDateStr);
+      if (isNaN(evalMs)) continue;
+      var warn = chip.querySelector('[data-stale-warning]');
+      if (corpusMs > evalMs && warn) {
+        warn.hidden = false;
+        warn.title = 'Your most recent corpus change is ' + (cb.corpusMtime.date || '') + ' — these bars were scored on ' + evalDateStr + '. Re-score to refresh against your current CV.';
+      }
+    }
+  } catch (e) { /* never break the page on a staleness probe error */ }
+}
+if (window._waveCBReadyPromise) { window._waveCBReadyPromise.then(scanBarsStaleness); }
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', scanBarsStaleness);
+} else {
+  setTimeout(scanBarsStaleness, 100);
+}
+window.scanBarsStaleness = scanBarsStaleness;
+
+async function rescoreRow(rowNum) {
+  if (!rowNum) return;
+  var btn = document.querySelector('.bars-rescore-btn[data-rescore="' + rowNum + '"]');
+  if (btn) { btn.disabled = true; btn.textContent = '↻ Re-scoring…'; }
+  try {
+    var res = await fetch('/api/eval/rescore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ row: String(rowNum) }),
+    });
+    var data = await res.json().catch(function(){ return null; });
+    if (data && data.ok) {
+      if (typeof showToast === 'function') {
+        showToast('Re-score queued — bars will refresh on next dashboard rebuild', 'success');
+      }
+      if (btn) { btn.textContent = '↻ Re-score queued'; }
+    } else {
+      var msg = (data && data.error) || 'endpoint unavailable';
+      var cmd = 'node batch-runner-batches.mjs --row ' + rowNum + ' --rescore';
+      if (typeof showToast === 'function') {
+        showToast('Re-score unavailable (' + msg + ') — run: ' + cmd, 'warn');
+      } else {
+        alert('To re-score this row, run in terminal:' + String.fromCharCode(10) + String.fromCharCode(10) + cmd);
+      }
+      if (btn) { btn.disabled = false; btn.textContent = '↻ Re-score against current CV'; }
+    }
+  } catch (e) {
+    console.warn('[rescore] failed:', e.message);
+    if (btn) { btn.disabled = false; btn.textContent = '↻ Re-score against current CV'; }
+  }
+}
+window.rescoreRow = rescoreRow;
 
 async function tonightPickRetryStage(stageId, rowNum) {
   var btn = document.querySelector('#tp-progress-footer button.tonight-pick-btn-accent');

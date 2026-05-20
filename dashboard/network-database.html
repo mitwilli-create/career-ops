@@ -108,9 +108,14 @@
     /* BRAVO followup 2026-05-20 Item 9 / AA-10 — text-3 on --bg (#f7f8fa) gives
        4.47:1, AA needs 4.5:1. Bumped to text-2 (#334155). */
     .stats { padding: 10px 0; color: var(--text-2); font-size: 12px; }
+    /* BRAVO followup 2026-05-20 Item 9 / AA-11 — pager spans use --text-3 on
+       --bg = 4.47:1; bumped to --text-2. thead th was --text-4 = 2.56:1;
+       bumped to --text-2. */
+    .pager { color: var(--text-2); }
+    .pager span { color: var(--text-2); }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     thead th { position: sticky; top: 0; background: var(--surface);
-      text-align: left; font-size: 10.5px; color: var(--text-4);
+      text-align: left; font-size: 10.5px; color: var(--text-2);
       text-transform: uppercase; letter-spacing: 0.04em; padding: 8px 10px;
       border-bottom: 1px solid var(--border); }
     tbody td { padding: 8px 10px; border-bottom: 1px solid var(--border);
@@ -120,8 +125,10 @@
     .conf-badge { display: inline-block; padding: 1px 7px; border-radius: 999px;
       font-size: 10.5px; font-weight: 600; margin-left: 6px; }
     .conf-high { background: var(--green-bg); color: var(--green-fg); }
+    /* BRAVO followup 2026-05-20 Item 9 / AA-11 — --amber-fg (#b45309) on the
+       muted bg (#f6eae1) gives 4.25:1; #92400e gives ~6.5:1, clears AA 4.5:1. */
     .conf-medium { background: color-mix(in srgb, var(--amber-fg) 12%, var(--surface));
-      color: var(--amber-fg); }
+      color: #92400e; }
     .conf-low { background: var(--surface-2); color: var(--text-4); }
     .pill { display: inline-block; padding: 1px 7px; margin: 1px 4px 1px 0;
       border-radius: 999px; background: var(--surface-2); color: var(--text-2);

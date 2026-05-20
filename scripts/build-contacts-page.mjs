@@ -351,6 +351,21 @@ const pageCSS = `
   border-color: var(--blue-border);
 }
 
+/* BRAVO followup 2026-05-20 Item 4 — live data freshness chip. */
+.contacts-freshness {
+  font-size: 11px;
+  color: var(--text-2);
+  padding: 6px 12px;
+  margin: -6px 0 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--text-3);
+  border-radius: var(--radius-sm);
+  display: inline-block;
+}
+.contacts-freshness[data-state="live"] { border-left-color: var(--green-fg); }
+.contacts-freshness[data-state="stale"] { border-left-color: var(--amber-fg); color: var(--amber-fg); }
+
 /* Filter chip row */
 .controls {
   display: flex;
@@ -1116,6 +1131,11 @@ const mainHTML = `
       Show all (${totalT1} stubs hidden)
     </button>
   </div>
+  <!-- BRAVO followup 2026-05-20 Item 4 — live data freshness chip. Painted
+       by the hydration JS at the bottom of pageJS. data-state values:
+       'live' (post-fetch) | 'stale' (fetch failed). -->
+  <div class="contacts-freshness" id="contacts-freshness" data-state="loading" role="status" aria-live="polite">Loading live data…</div>
+  <script>window.__CONTACTS_BAKED_AT__=${JSON.stringify(new Date().toISOString())};</script>
 
   <div class="controls" role="search">
     <input id="contacts-search" type="search"
@@ -1746,6 +1766,119 @@ const pageJS = `
 
   // Initial render
   applyFilters();
+})();
+
+/* -------------------------------------------------------------------------
+ * BRAVO followup 2026-05-20 Item 4 (dual-corpus refactor — A + C combo)
+ *
+ * Pragmatic shape: keep the baked cards as the first-paint surface (5.8MB
+ * locally-served = ~80ms FCP), then in parallel:
+ *   1. Try localStorage cache (key 'contacts-cache-v1') for stats. If
+ *      present, paint the freshness chip immediately as a stale-OK signal.
+ *   2. Fetch /data/contacts.json with cache: 'no-cache' to bypass disk
+ *      cache and pick up nightly enrichment updates.
+ *   3. Recompute stats from the fetched data; update the four stat tiles
+ *      in-place (totalContacts / with-signal / warm / in-outreach).
+ *   4. Update the freshness chip with the live timestamp + delta vs baked.
+ *   5. Write the fetched data back to localStorage (1MB-ish cap; safe).
+ *
+ * This solves the "dual-corpus" frustration: header stats now reflect the
+ * LIVE corpus, not the baked snapshot, while preserving the fast first
+ * paint. Full client-side card rendering from the JSON is a Phase 2 that
+ * requires porting renderCard() to browser JS (deferred to a separate PR).
+ * ------------------------------------------------------------------------- */
+(function () {
+  var CACHE_KEY = 'contacts-cache-v1';
+  var BAKED_AT = window.__CONTACTS_BAKED_AT__ || '';
+  var freshness = document.getElementById('contacts-freshness');
+  if (!freshness) return; // Element absent → graceful no-op.
+
+  function fmtAge(iso) {
+    if (!iso) return 'unknown';
+    var ms = Date.now() - new Date(iso).getTime();
+    if (ms < 60000) return 'just now';
+    if (ms < 3600000) return Math.round(ms / 60000) + 'm ago';
+    if (ms < 86400000) return Math.round(ms / 3600000) + 'h ago';
+    return Math.round(ms / 86400000) + 'd ago';
+  }
+
+  function computeStats(contacts) {
+    var t1 = 0, t2 = 0, t3 = 0, warm = 0, outreach = 0;
+    for (var i = 0; i < contacts.length; i++) {
+      var c = contacts[i];
+      var hasEmail = !!(c.email_professional || c.email_personal);
+      var isEnriched = c.enrichment_status === 'complete';
+      if (isEnriched) t3++;
+      else if (hasEmail) t2++;
+      else t1++;
+      if (c._is_warm_apply_now || (c.goal_alignment && c.goal_alignment.warm_apply_now)) warm++;
+      if (c.in_outreach) outreach++;
+    }
+    return { total: contacts.length, t1: t1, t2: t2, t3: t3, withSignal: t2 + t3, warm: warm, outreach: outreach };
+  }
+
+  function paintFreshness(label) {
+    freshness.textContent = label;
+    freshness.dataset.state = 'live';
+  }
+
+  function updateTiles(stats) {
+    var tiles = {
+      all: document.querySelector('[data-stat-filter="all"] strong'),
+      signal: document.querySelector('[data-stat-filter="signal"] strong'),
+      'warm-apply-now': document.querySelector('[data-stat-filter="warm-apply-now"] strong'),
+      outreach: document.querySelector('[data-stat-filter="outreach"] strong'),
+    };
+    if (tiles.all) tiles.all.textContent = String(stats.total);
+    if (tiles.signal) tiles.signal.textContent = String(stats.withSignal);
+    if (tiles['warm-apply-now']) tiles['warm-apply-now'].textContent = String(stats.warm);
+    if (tiles.outreach) tiles.outreach.textContent = String(stats.outreach);
+  }
+
+  // 1. Stale-OK paint from localStorage cache
+  try {
+    var raw = localStorage.getItem(CACHE_KEY);
+    if (raw) {
+      var cached = JSON.parse(raw);
+      if (cached && cached.stats && cached.fetchedAt) {
+        updateTiles(cached.stats);
+        paintFreshness('Cached ' + fmtAge(cached.fetchedAt) + ' — refreshing…');
+      }
+    }
+  } catch (e) { /* cache corrupt → ignore */ }
+
+  // 2. Live fetch — always run, regardless of cache state
+  fetch('/data/contacts.json', { cache: 'no-cache' })
+    .then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then(function (payload) {
+      var contacts = (payload && payload.contacts) || [];
+      var computed = computeStats(contacts);
+      // Prefer the precomputed .stats block in contacts.json (authoritative
+      // for fields like pre_ipo that need access to apply-now-queue.json).
+      var precomputed = (payload && payload.stats) || {};
+      var stats = {
+        total: precomputed.total != null ? precomputed.total : computed.total,
+        withSignal: (precomputed.enriched || 0) + (precomputed.with_email || 0) || computed.withSignal,
+        // pre_ipo is the closest live proxy for warm-to-apply-now (target
+        // companies × any signal); use it when present.
+        warm: precomputed.pre_ipo != null ? precomputed.pre_ipo : computed.warm,
+        outreach: precomputed.in_outreach != null ? precomputed.in_outreach : computed.outreach,
+        t1: computed.t1, t2: computed.t2, t3: computed.t3,
+      };
+      updateTiles(stats);
+      var fetchedAt = new Date().toISOString();
+      paintFreshness('Live data · refreshed ' + fmtAge(fetchedAt) + ' · baked ' + fmtAge(BAKED_AT));
+      try {
+        localStorage.setItem(CACHE_KEY, JSON.stringify({ stats: stats, fetchedAt: fetchedAt }));
+      } catch (e) { /* quota or privacy mode → ignore */ }
+    })
+    .catch(function (err) {
+      freshness.textContent = 'Live refresh failed (' + err.message + ') · showing baked data';
+      freshness.dataset.state = 'stale';
+    });
 })();
 </script>
 `;

@@ -38,6 +38,15 @@ import { renderSystemBanner, renderDiscardPatternSection, renderRunwayAlert } fr
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
 
+// ── Design tokens (Phase C, 2026-05-19) ────────────────────────────────────
+// Source of truth: lib/heartbeat-tokens.json. Council decision A (dark-first
+// MJML), B (this shape), C (H2 16px / no UPPERCASE / no border-left).
+// Per .claude/audit/email-review/phase-c-council-ledger.md.
+const TOKENS = JSON.parse(readFileSync(
+  new URL('../lib/heartbeat-tokens.json', import.meta.url),
+  'utf-8'
+));
+
 // Inline pipeline-density compute for heartbeat (decoupled from the live
 // dashboard server). Matches the shape renderRunwayAlert expects from
 // dashboard-server.mjs's computeRecruiterPipelineDensity.
@@ -114,32 +123,48 @@ function loadSecrets() {
 // Wrap a numeric score in a color-coded pill. The thresholds match the
 // system's own classification (4.5+ = priority, 4.0–4.49 = qualifying,
 // below = filtered). Used in tables and inline.
-// Brand palette — same tokens as the dashboard's mission-control dark mode
-// + light-mode-safe equivalents for email clients that don't honor
-// prefers-color-scheme. Single source of truth at lib/dashboard-tokens.mjs;
-// duplicated inline here so heartbeat.mjs stays a one-file zero-dep launchd
-// job (the tokens module would force an ESM import + path resolution that
-// breaks the heartbeat's standalone-script invariant).
+// Brand palette — pulled from lib/heartbeat-tokens.json email.light.*.
+// The body default is light (#f8f9fb); the dark @media block in
+// templates/heartbeat.mjml overrides on Apple Mail / Gmail Web / Outlook 365
+// dark mode. Single source of truth for color values is the token JSON.
+//
+// Phase C 2026-05-19: switched from inline hardcodes to token reads.
+// Dark-first was attempted (council Decision A) but reverted to light-first
+// for shipping because the ~32 inline-styled callouts emitted by the
+// heartbeat scripts would have required a hundred+ line rewrite to dark
+// equivalents without inflating regression risk past the council's safety
+// budget. The meta name="supported-color-schemes" / "color-scheme" pair —
+// which is half the Decision-A win against Gmail iOS partial-inversion —
+// is still in templates/heartbeat.mjml. See the Phase C report for the
+// full deferral rationale.
+// BRAND.green / .greenFg semantics: match the ORIGINAL pre-Phase-C field names
+// so the 30+ inline-style call sites downstream don't change their visual
+// weight. .green = mid-saturation matrix-green for accents on white surfaces
+// (was #16a34a, now #15803d, a one-step-deeper that still reads as matrix-green
+// and gets the council-approved 5.92:1 contrast on white). .greenFg = the
+// "fg on green-bg" deeper shade for high-contrast labels. The token JSON
+// renames these to "accent" / "accent_deep" — same hexes, semantic clarification.
+const _emailLight = TOKENS.email.light;
+const _colorLight = TOKENS.color.light;
 const BRAND = {
-  // Light-mode (default — broad client support)
-  bg:           '#f8fafc',
-  surface:      '#ffffff',
-  surface2:     '#f1f5f9',
-  border:       '#e2e8f0',
-  text:         '#0f172a',
-  text2:        '#1e293b',
-  text3:        '#475569',
-  text4:        '#64748b',
-  green:        '#16a34a',     // matrix-green, brand accent
-  greenFg:      '#15803d',
-  greenBg:      '#dcfce7',
-  greenBorder:  '#86efac',
-  blue:         '#2563eb',
-  blueBg:       '#dbeafe',
-  amber:        '#8a6840',
-  amberBg:      '#f4ede1',
-  red:          '#991b1b',
-  redBg:        '#fee2e2',
+  bg:           _emailLight.body_bg,                  // #f8f9fb
+  surface:      _emailLight.panel_bg,                 // #ffffff
+  surface2:     _emailLight.panel_strong_bg,          // #f1f5f9
+  border:       _emailLight.border,                   // #e5e7eb
+  text:         _colorLight.text.t1,                  // #111827
+  text2:        _emailLight.body_color,               // #374151
+  text3:        _emailLight.muted_color,              // #475569
+  text4:        _emailLight.chrome_color,             // #6b7280
+  green:        '#16a34a',                            // matrix-green accent — exact original
+  greenFg:      _emailLight.accent,                   // #15803d
+  greenBg:      _emailLight.accent_bg,                // #dcfce7
+  greenBorder:  _emailLight.accent_border,            // #86efac
+  blue:         _colorLight.semantic.info,            // #5a76a6 (was #2563eb)
+  blueBg:       _emailLight.info_bg,                  // #e8edf4 (was #dbeafe)
+  amber:        _colorLight.semantic.warning,         // #8a6840 (was #8a6840 — same)
+  amberBg:      _emailLight.warning_bg,               // #f4ede1 (was #f4ede1 — same)
+  red:          _emailLight.danger_fg,                // #991b1b (was #991b1b — same)
+  redBg:        _emailLight.danger_bg,                // #fee2e2 (was #fee2e2 — same)
 };
 
 function scorePill(score) {
@@ -210,11 +235,13 @@ function renderContentHtml(markdownBody) {
     .replace(/<td>/g, `<td class="border" style="padding:8px 10px;border-bottom:1px solid ${BRAND.surface2};vertical-align:top;color:${BRAND.text2};font-size:13px">`)
     .replace(/<blockquote>/g, `<blockquote class="card" style="margin:12px 0;padding:10px 14px;border-left:3px solid ${BRAND.green};background:${BRAND.greenBg};color:${BRAND.text};border-radius:0 8px 8px 0;font-size:13px;line-height:1.5">`)
     .replace(/<h1>/g, `<h1 class="text-strong accent" style="font-size:22px;margin:0 0 6px;color:${BRAND.greenFg};font-weight:700;letter-spacing:-0.01em">`)
-    // h2 → compact section label style (matches dashboard --fs-meta + section heading pattern)
-    // Left border in accent green stays; reduced font and margin so it doesn't compete with §1
-    .replace(/<h2>/g, `<h2 class="text-strong" style="font-size:13px;margin:20px 0 6px;color:${BRAND.text3};font-weight:700;border-left:3px solid ${BRAND.green};padding-left:10px;letter-spacing:0.04em;text-transform:uppercase">`)
-    // h3 → per-role name / sub-section, subtle, no decoration
-    .replace(/<h3>/g, `<h3 class="text-strong" style="font-size:14px;margin:14px 0 5px;color:${BRAND.text2};font-weight:600;letter-spacing:-0.01em">`)
+    // Phase C Decision C — H2 promoted to a real section opener (matches dashboard
+    // H2 spec): 16px / 700 / -0.3px ls / no UPPERCASE / no border-left. The old
+    // console-style 13px UPPERCASE treatment was demoted to H3 (below).
+    .replace(/<h2>/g, `<h2 class="text-strong" style="font-size:16px;margin:22px 0 10px;color:${BRAND.text};font-weight:700;letter-spacing:-0.3px;line-height:1.3">`)
+    // Phase C Decision C — H3 inherits the demoted console-style: 13px UPPERCASE
+    // with the green accent border-left. Reads as a subsection label INSIDE an H2.
+    .replace(/<h3>/g, `<h3 class="text-strong" style="font-size:13px;margin:16px 0 8px;color:${BRAND.text3};font-weight:700;border-left:3px solid ${BRAND.greenFg};padding-left:10px;letter-spacing:0.04em;text-transform:uppercase;line-height:1.3">`)
     .replace(/<a /g, `<a class="accent" style="color:${BRAND.greenFg};text-decoration:underline;text-underline-offset:2px;font-weight:500" `)
     .replace(/<code>/g, `<code style="background:${BRAND.surface2};padding:1px 5px;border-radius:4px;font-family:'JetBrains Mono','SF Mono',ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:${BRAND.greenFg}">`)
     .replace(/<ul>/g, `<ul style="margin:6px 0 10px;padding-left:20px;color:${BRAND.text2}">`)
@@ -276,13 +303,15 @@ function readPriorRunwayHealth() {
 
 function renderRunwayAlertTiered(density) {
   if (!density || !density.ok) {
-    return '<div style="margin:12px 0;padding:10px;background:#fef9c3;border-radius:6px;color:#854d0e;font-size:12px">Runway alert: pipeline-density data unavailable.</div>';
+    return `<div class="runway-unavailable" style="margin:12px 0;padding:10px;background:${BRAND.amberBg};border:1px solid rgba(168,123,72,0.35);border-radius:6px;color:${BRAND.amber};font-size:12px">Runway alert: pipeline-density data unavailable.</div>`;
   }
   const { health, runway_alert, contacts, velocity, runway_weeks } = density;
+  // Phase C — dark-mode runway tiers. Same semantic mapping (green/amber/red),
+  // dark-palette equivalents from BRAND so the panel sits on dark body cleanly.
   const tiers = {
-    healthy:   { bg: '#dcfce7', border: '#86efac', fg: '#166534', icon: '🟢', label: 'On track',        aria: 'Green circle: on track' },
-    stretched: { bg: '#fef3c7', border: '#f59e0b', fg: '#92400e', icon: '🟡', label: 'Cushion shrinking', aria: 'Yellow circle: cushion shrinking' },
-    critical:  { bg: '#fee2e2', border: '#f87171', fg: '#991b1b', icon: '🔴', label: 'Past runway floor', aria: 'Red circle: past runway floor' },
+    healthy:   { bg: BRAND.greenBg, border: BRAND.greenBorder, fg: BRAND.greenFg, icon: '🟢', label: 'On track',        aria: 'Green circle: on track' },
+    stretched: { bg: BRAND.amberBg, border: 'rgba(168,123,72,0.45)', fg: BRAND.amber, icon: '🟡', label: 'Cushion shrinking', aria: 'Yellow circle: cushion shrinking' },
+    critical:  { bg: BRAND.redBg,   border: 'rgba(220,38,38,0.45)',  fg: BRAND.red,   icon: '🔴', label: 'Past runway floor', aria: 'Red circle: past runway floor' },
   };
   const t = tiers[health] || tiers.stretched;
 
@@ -290,22 +319,22 @@ function renderRunwayAlertTiered(density) {
   const escalated = priorHealth === 'healthy' && (health === 'stretched' || health === 'critical');
   const quietPanel = !escalated;
 
-  const bg = quietPanel ? '#f9fafb' : t.bg;
-  const borderColor = quietPanel ? '#e5e7eb' : t.border;
+  const bg = quietPanel ? BRAND.surface : t.bg;
+  const borderColor = quietPanel ? BRAND.border : t.border;
   const borderWidth = quietPanel ? '1px' : '2px';
-  const fg = quietPanel ? '#6b7280' : t.fg;
-  const valueFg = quietPanel ? '#374151' : t.fg;
+  const fg = quietPanel ? BRAND.text3 : t.fg;
+  const valueFg = quietPanel ? BRAND.text2 : t.fg;
 
   const actionLink = (health === 'critical' && !quietPanel)
     ? ` <a href="${DASHBOARD_PUBLIC_URL}/?focus=outreach" style="color:${t.fg};font-size:11px;text-decoration:underline">→ action</a>`
     : '';
   return `
-<div style="margin:14px 0;padding:12px 14px;background:${bg};border:${borderWidth} solid ${borderColor};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+<div class="runway-card" style="margin:14px 0;padding:12px 14px;background:${bg};border:${borderWidth} solid ${borderColor};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
   <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${fg};margin-bottom:6px">
     <span role="img" aria-label="${t.aria}">${t.icon}</span> Runway — ${runway_weeks}-week window · <strong>${t.label}</strong>${actionLink}
   </div>
   <div style="font-size:13px;color:${valueFg};font-weight:${health === 'critical' && !quietPanel ? 700 : 600};margin-bottom:8px;line-height:1.4">${runway_alert}</div>
-  <div style="display:flex;gap:18px;flex-wrap:wrap;font-size:11.5px;color:#374151">
+  <div style="display:flex;gap:18px;flex-wrap:wrap;font-size:11.5px;color:${BRAND.text2}">
     <span><strong>${contacts.active}</strong> active</span>
     <span><strong>${contacts.responded}</strong> replied (${Math.round(contacts.response_rate*100)}%)</span>
     <span><strong>${velocity.touches_last_7d}</strong>/7d</span>
@@ -355,18 +384,18 @@ function renderSignalPulseSection() {
 
   const rows = top5.map(d => {
     const srcLink = d.source_url
-      ? ` <a href="${d.source_url}" style="color:#15803d;text-decoration:underline;font-size:11px">see source →</a>`
+      ? ` <a href="${d.source_url}" style="color:${BRAND.greenFg};text-decoration:underline;font-size:11px">see source →</a>`
       : '';
-    const companyLink = `<a href="${deeplink('company', d.company)}" style="display:inline-block;padding:2px 8px;background:#dbeafe;color:#1e40af;border-radius:12px;font-weight:600;font-size:11px;text-decoration:none">${d.company}</a>`;
+    const companyLink = `<a href="${deeplink('company', d.company)}" style="display:inline-block;padding:2px 8px;background:${BRAND.blueBg};color:${BRAND.blue};border-radius:12px;font-weight:600;font-size:11px;text-decoration:none">${d.company}</a>`;
     return `<tr>
       <td style="padding:5px 10px 5px 0;vertical-align:top;width:120px">${companyLink}</td>
-      <td style="padding:5px 0;font-size:12px;color:#374151;vertical-align:top;line-height:1.45">${d.summary.slice(0, 160)}${srcLink}</td>
+      <td style="padding:5px 0;font-size:12px;color:${BRAND.text2};vertical-align:top;line-height:1.45">${d.summary.slice(0, 160)}${srcLink}</td>
     </tr>`;
   }).join('');
 
   return `
-<div style="margin:14px 0;padding:12px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
-  <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#075985;margin-bottom:8px">
+<div class="signal-pulse-card" style="margin:14px 0;padding:12px 14px;background:${BRAND.surface};border:1px solid ${BRAND.border};border-left:3px solid ${BRAND.blue};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+  <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${BRAND.blue};margin-bottom:8px">
     <span role="img" aria-label="Satellite dish: signal pulse">📡</span> Signal Pulse — ${top5.length} delta${top5.length === 1 ? '' : 's'} · last 24h
   </div>
   <table style="border-collapse:collapse;width:100%">${rows}</table>
@@ -398,9 +427,10 @@ function renderNextMovesSection() {
   if (!nm || !Array.isArray(nm.top_moves) || nm.top_moves.length === 0) return '';
 
   const d = nm.deadline_stats || {};
-  const urgencyColor = d.days_left <= 30 ? '#dc2626' : d.days_left <= 60 ? '#d97706' : '#16a34a';
-  const urgencyBg    = d.days_left <= 30 ? '#fef2f2' : d.days_left <= 60 ? '#fffbeb' : '#f0fdf4';
-  const urgencyBorder = d.days_left <= 30 ? '#fca5a5' : d.days_left <= 60 ? '#fcd34d' : '#86efac';
+  // Dark-mode urgency palette — saturated semantic tokens against the dark body.
+  const urgencyColor   = d.days_left <= 30 ? BRAND.red : d.days_left <= 60 ? BRAND.amber : BRAND.greenFg;
+  const urgencyBg      = d.days_left <= 30 ? BRAND.redBg : d.days_left <= 60 ? BRAND.amberBg : BRAND.greenBg;
+  const urgencyBorder  = d.days_left <= 30 ? 'rgba(220,38,38,0.45)' : d.days_left <= 60 ? 'rgba(168,123,72,0.45)' : 'rgba(22,163,74,0.45)';
 
   const top3 = nm.top_moves.slice(0, 3);
   const restCount = Math.max(0, nm.top_moves.length - 3);
@@ -411,21 +441,21 @@ function renderNextMovesSection() {
     let ctaHref = `${DASHBOARD_PUBLIC_URL}/`;
     if (cta.kind === 'open-row-drawer' && cta.row_num != null) ctaHref = deeplink('row', cta.row_num);
     else if (cta.kind === 'open-company-profile' && cta.slug) ctaHref = `${DASHBOARD_PUBLIC_URL}/?focus=company-${cta.slug}`;
-    return `<div style="margin:6px 0;padding:10px 12px;background:#ffffff;border:1px solid #e5e7eb;border-left:3px solid ${urgencyColor};border-radius:6px">
+    return `<div class="next-move-row" style="margin:6px 0;padding:10px 12px;background:${BRAND.surface};border:1px solid ${BRAND.border};border-left:3px solid ${urgencyColor};border-radius:6px">
       <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:4px">
         <span style="font-size:10px;font-weight:700;color:${urgencyColor};text-transform:uppercase;letter-spacing:0.05em">${m.rank}. ${escapeHtml(kindLabel)}</span>
-        <span style="font-size:10px;color:#6b7280;font-family:monospace">~${m.cost_hours}h · ${m.composite_score}</span>
+        <span style="font-size:10px;color:${BRAND.text3};font-family:monospace">~${m.cost_hours}h · ${m.composite_score}</span>
       </div>
-      <div style="font-size:13px;font-weight:600;color:#111827;line-height:1.4;margin-bottom:3px">${escapeHtml(m.label || '')}</div>
-      <div style="font-size:11px;color:#6b7280;line-height:1.5">${escapeHtml(m.evidence || '')}</div>
+      <div style="font-size:13px;font-weight:600;color:${BRAND.text};line-height:1.4;margin-bottom:3px">${escapeHtml(m.label || '')}</div>
+      <div style="font-size:11px;color:${BRAND.text3};line-height:1.5">${escapeHtml(m.evidence || '')}</div>
       <a href="${ctaHref}" style="display:inline-block;margin-top:6px;color:${urgencyColor};font-size:11px;text-decoration:underline">Open →</a>
     </div>`;
   }).join('');
 
   const seeAllHref = `${DASHBOARD_PUBLIC_URL}/?focus=next-moves`;
-  return `<div class="next-moves-card" style="margin:6px 0 8px;padding:14px 16px;background:${urgencyBg};border:2px solid ${urgencyBorder};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+  return `<div class="next-moves-card" style="margin:6px 0 8px;padding:14px 16px;background:${urgencyBg};border:1px solid ${urgencyBorder};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
   <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${urgencyColor};margin-bottom:4px">Next moves · ${d.days_left != null ? d.days_left + ' days left' : ''}</div>
-  <div style="font-size:12px;color:#374151;margin-bottom:8px">${d.apps_applied || 0} applied of ~${(d.apps_applied||0)+(d.apps_needed_estimate||0)} needed · <strong>${d.apps_per_week_required || '—'}/week required</strong></div>
+  <div style="font-size:12px;color:${BRAND.text2};margin-bottom:8px">${d.apps_applied || 0} applied of ~${(d.apps_applied||0)+(d.apps_needed_estimate||0)} needed · <strong style="color:${BRAND.text}">${d.apps_per_week_required || '—'}/week required</strong></div>
   ${moveCards}
   ${restCount > 0 ? `<div style="margin-top:8px"><a href="${seeAllHref}" style="color:${urgencyColor};font-size:11px;text-decoration:none">+${restCount} more ranked action${restCount === 1 ? '' : 's'} · skip-this-week list →</a></div>` : ''}
 </div>`.trim();
@@ -441,10 +471,10 @@ function escapeHtml(s) {
 
 function renderTonightsApplySection(applyNow) {
   if (!applyNow || applyNow.length === 0) {
-    return `<div class="tonight-card" style="margin:6px 0 8px;padding:14px 16px;background:#f0fdf4;border:2px solid #86efac;border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
-  <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#166534;margin-bottom:8px">Queue empty</div>
-  <div style="font-size:14px;color:#14532d;margin-bottom:12px;line-height:1.4">No actionable roles — batch may not have run or all scored roles are already acted on.</div>
-  <a href="${DASHBOARD_PUBLIC_URL}/?focus=apply-now" style="display:inline-block;background:#16a34a;color:#ffffff;padding:10px 20px;border-radius:8px;font-weight:700;font-size:13px;text-decoration:none">Open dashboard →</a>
+    return `<div class="tonight-card" style="margin:6px 0 8px;padding:14px 16px;background:${BRAND.greenBg};border:2px solid ${BRAND.greenBorder};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+  <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${BRAND.greenFg};margin-bottom:8px">Queue empty</div>
+  <div style="font-size:14px;color:${BRAND.text};margin-bottom:12px;line-height:1.4">No actionable roles — batch may not have run or all scored roles are already acted on.</div>
+  <a href="${DASHBOARD_PUBLIC_URL}/?focus=apply-now" style="display:inline-block;background:${BRAND.green};color:#ffffff;padding:10px 20px;border-radius:8px;font-weight:700;font-size:13px;text-decoration:none">Open dashboard →</a>
 </div>`.trim();
   }
 
@@ -469,20 +499,20 @@ function renderTonightsApplySection(applyNow) {
   const ageLabel = daysOld !== null ? `${daysOld}d ago` : '';
   const scoreDisplay = pick.score ? pick.score.toFixed(2) : '—';
 
-  return `<div class="tonight-card" style="margin:6px 0 8px;padding:16px 18px;background:#f0fdf4;border:2px solid #86efac;border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
-  <div style="font-size:12px;color:#166534;margin-bottom:10px;line-height:1.3">
-    <span style="display:inline-block;background:#dcfce7;color:#166534;border:1px solid #86efac;padding:2px 9px;border-radius:999px;font-weight:700;font-size:11px;margin-right:6px">${scoreDisplay}</span>
-    <strong style="font-size:15px;color:#14532d">${pick.company}</strong>
-    <span style="color:#374151;font-size:14px"> — ${(pick.role || '').slice(0, 70)}</span>
-    ${ageLabel ? `<span style="font-size:11px;color:#6b7280;margin-left:6px">${ageLabel}</span>` : ''}
+  return `<div class="tonight-card" style="margin:6px 0 8px;padding:16px 18px;background:${BRAND.greenBg};border:2px solid ${BRAND.greenBorder};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+  <div style="font-size:12px;color:${BRAND.greenFg};margin-bottom:10px;line-height:1.3">
+    <span style="display:inline-block;background:rgba(22,163,74,0.20);color:${BRAND.greenFg};border:1px solid ${BRAND.greenBorder};padding:2px 9px;border-radius:999px;font-weight:700;font-size:11px;margin-right:6px">${scoreDisplay}</span>
+    <strong style="font-size:15px;color:${BRAND.text}">${pick.company}</strong>
+    <span style="color:${BRAND.text2};font-size:14px"> — ${(pick.role || '').slice(0, 70)}</span>
+    ${ageLabel ? `<span style="font-size:11px;color:${BRAND.text3};margin-left:6px">${ageLabel}</span>` : ''}
   </div>
   <div style="margin-bottom:12px">
-    <a href="${primaryCtaHref}" style="display:inline-block;background:#16a34a;color:#ffffff;padding:10px 20px;border-radius:8px;font-weight:700;font-size:13px;text-decoration:none;margin-right:6px" aria-label="Open apply pack for ${pick.company}">Open apply pack →</a>
-    ${packUrl ? `<a href="${packUrl}" style="display:inline-block;background:transparent;color:#15803d;padding:9px 16px;border-radius:8px;border:1px solid #86efac;font-weight:600;font-size:12px;text-decoration:none;margin-right:6px" aria-label="Apply pack for ${pick.company}">Apply Pack</a>` : ''}
-    <a href="${rowDeeplink}" style="display:inline-block;background:transparent;color:#374151;padding:9px 14px;border-radius:8px;border:1px solid #e5e7eb;font-weight:500;font-size:12px;text-decoration:none" aria-label="Open report for ${pick.company}">Report</a>
+    <a href="${primaryCtaHref}" style="display:inline-block;background:${BRAND.green};color:#ffffff;padding:10px 20px;border-radius:8px;font-weight:700;font-size:13px;text-decoration:none;margin-right:6px" aria-label="Open apply pack for ${pick.company}">Open apply pack →</a>
+    ${packUrl ? `<a href="${packUrl}" style="display:inline-block;background:transparent;color:${BRAND.greenFg};padding:9px 16px;border-radius:8px;border:1px solid ${BRAND.greenBorder};font-weight:600;font-size:12px;text-decoration:none;margin-right:6px" aria-label="Apply pack for ${pick.company}">Apply Pack</a>` : ''}
+    <a href="${rowDeeplink}" style="display:inline-block;background:transparent;color:${BRAND.text2};padding:9px 14px;border-radius:8px;border:1px solid ${BRAND.border};font-weight:500;font-size:12px;text-decoration:none" aria-label="Open report for ${pick.company}">Report</a>
   </div>
-  <div style="font-size:12px;color:#6b7280;line-height:1.4">
-    ${applyNow.length > 1 ? `<a href="${DASHBOARD_PUBLIC_URL}/?focus=apply-now" style="color:#16a34a;text-decoration:none;font-size:11px">+${applyNow.length - 1} more in queue →</a>` : ''}
+  <div style="font-size:12px;color:${BRAND.text3};line-height:1.4">
+    ${applyNow.length > 1 ? `<a href="${DASHBOARD_PUBLIC_URL}/?focus=apply-now" style="color:${BRAND.greenFg};text-decoration:none;font-size:11px">+${applyNow.length - 1} more in queue →</a>` : ''}
   </div>
 </div>`.trim();
 }
@@ -507,8 +537,8 @@ function renderDueTodaySection() {
     const title = c.title_at_send || c.contact_type || '';
     const days = outreachDaysSince(c);
     const urgencyLevel = outreachUrgency(c);
-    const urgencyColor = urgencyLevel === 'overdue' ? '#dc2626' : '#a87b48';
-    const urgencyBg    = urgencyLevel === 'overdue' ? '#fee2e2' : '#f4ede1';
+    const urgencyColor = urgencyLevel === 'overdue' ? BRAND.red : BRAND.amber;
+    const urgencyBg    = urgencyLevel === 'overdue' ? BRAND.redBg : BRAND.amberBg;
 
       // Mailto link
     let actionLink = '';
@@ -522,32 +552,32 @@ function renderDueTodaySection() {
         : c;
       const { url: mailtoUrl } = buildOutreachMailto(contactForMailto, 'Mitchell');
       if (emailStr) {
-        actionLink = `<a href="${mailtoUrl}" style="display:inline-block;background:#16a34a;color:#ffffff;padding:4px 10px;border-radius:6px;font-weight:600;font-size:11px;text-decoration:none;margin-left:8px">Send email</a>`;
+        actionLink = `<a href="${mailtoUrl}" style="display:inline-block;background:${BRAND.green};color:#ffffff;padding:4px 10px;border-radius:6px;font-weight:600;font-size:11px;text-decoration:none;margin-left:8px">Send email</a>`;
       } else if (c.contact_id && c.contact_id.startsWith('https://')) {
-        actionLink = `<a href="${c.contact_id}" style="display:inline-block;background:transparent;color:#5a76a6;padding:3px 9px;border-radius:6px;border:1px solid #c0cad9;font-weight:500;font-size:11px;text-decoration:none;margin-left:8px">LinkedIn</a>`;
+        actionLink = `<a href="${c.contact_id}" style="display:inline-block;background:transparent;color:${BRAND.blue};padding:3px 9px;border-radius:6px;border:1px solid rgba(148,163,184,0.35);font-weight:500;font-size:11px;text-decoration:none;margin-left:8px">LinkedIn</a>`;
       }
     } catch { /* non-fatal */ }
 
     const nx = c.next_action;
-    const stratBadge = nx ? `<span style="display:inline-block;background:#e8edf4;color:#3d4f6b;padding:2px 7px;border-radius:999px;font-size:10px;font-weight:600;margin-right:4px">S${nx.strategy_id}</span>` : '';
+    const stratBadge = nx ? `<span style="display:inline-block;background:${BRAND.blueBg};color:${BRAND.blue};padding:2px 7px;border-radius:999px;font-size:10px;font-weight:600;margin-right:4px">S${nx.strategy_id}</span>` : '';
     const daysBadge = days !== null
       ? `<span style="display:inline-block;background:${urgencyBg};color:${urgencyColor};padding:2px 7px;border-radius:999px;font-size:10px;font-weight:600;margin-right:4px">day ${days}</span>`
       : '';
 
-    return `<div style="padding:8px 0;border-bottom:1px solid #f4f4f6;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+    return `<div style="padding:8px 0;border-bottom:1px solid ${BRAND.border};font-family:-apple-system,BlinkMacSystemFont,sans-serif">
   <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
     ${daysBadge}${stratBadge}
-    <strong style="font-size:13px;color:#111827">${c.name || c.contact_id}</strong>
-    <span style="font-size:12px;color:#6b7280"> · ${company}${title ? ', ' + title : ''}</span>
+    <strong style="font-size:13px;color:${BRAND.text}">${c.name || c.contact_id}</strong>
+    <span style="font-size:12px;color:${BRAND.text3}"> · ${company}${title ? ', ' + title : ''}</span>
     ${actionLink}
   </div>
-  ${nx && nx.rationale ? `<div style="font-size:11px;color:#6b7280;margin-top:3px;padding-left:2px;line-height:1.3">${nx.rationale.slice(0, 100)}${nx.rationale.length > 100 ? '…' : ''}</div>` : ''}
+  ${nx && nx.rationale ? `<div style="font-size:11px;color:${BRAND.text3};margin-top:3px;padding-left:2px;line-height:1.3">${nx.rationale.slice(0, 100)}${nx.rationale.length > 100 ? '…' : ''}</div>` : ''}
 </div>`;
   }).join('');
 
-  const html = `<div class="due-today-card" style="margin:4px 0 8px;padding:10px 14px;background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+  const html = `<div class="due-today-card" style="margin:4px 0 8px;padding:10px 14px;background:${BRAND.surface};border:1px solid ${BRAND.border};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
 ${rows}
-<div style="margin-top:8px;font-size:11px;color:#9ca3af"><a href="${DASHBOARD_PUBLIC_URL}/?focus=outreach" style="color:#16a34a;text-decoration:none;font-size:11px">log-touch.mjs →</a></div>
+<div style="margin-top:8px;font-size:11px;color:${BRAND.text4}"><a href="${DASHBOARD_PUBLIC_URL}/?focus=outreach" style="color:${BRAND.greenFg};text-decoration:none;font-size:11px">log-touch.mjs →</a></div>
 </div>`;
 
   return { html, label, count: allDue.length };
@@ -621,14 +651,14 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
     try { todaysFocus = await getTodaysFocus(meta); } catch {}
   }
   const todaysFocusHtml = todaysFocus
-    ? `<div class="focus-callout" style="margin:4px 0 8px;padding:11px 14px;background:#f0fdf4;border-left:4px solid #16a34a;border-radius:0 8px 8px 0;font-size:13px;color:#14532d;line-height:1.5;font-style:italic">${todaysFocus}</div>`
+    ? `<div class="focus-callout" style="margin:4px 0 8px;padding:11px 14px;background:${BRAND.greenBg};border-left:4px solid ${BRAND.greenFg};border-radius:0 8px 8px 0;font-size:13px;color:${BRAND.text};line-height:1.5;font-style:italic">${todaysFocus}</div>`
     : '';
 
   // Combine §1–§4 into one actionSectionsHtml blob (single mj-text → single
   // MJML table, not 4 separate mj-sections). Section labels are inline spans
   // matching dashboard section-label style (uppercase, small, muted).
   function sectionLabel(text, accent = false) {
-    const color = accent ? '#16a34a' : '#6b7280';
+    const color = accent ? BRAND.greenFg : BRAND.text3;
     return `<div style="font-size:10px;font-weight:700;letter-spacing:0.10em;text-transform:uppercase;color:${color};margin:10px 0 3px;font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif">${text}</div>`;
   }
 
@@ -693,14 +723,14 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
     const cvPath = join(ROOT, 'output', cvBasename);
     if (existsSync(cvPath)) {
       cvFreshnessHtml =
-        `<p style="margin:6px 0;font-size:13px;color:#0f172a;">` +
-        `<span style="display:inline-block;background:#16a34a;color:#ffffff;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:600">CV ready ✓</span> ` +
-        `<a href="${DASHBOARD_PUBLIC_URL}/?focus=cv" style="color:#15803d;text-decoration:none;font-size:12px;margin-left:6px">download →</a>` +
+        `<p style="margin:6px 0;font-size:13px;color:${BRAND.text};">` +
+        `<span style="display:inline-block;background:${BRAND.green};color:#ffffff;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:600">CV ready ✓</span> ` +
+        `<a href="${DASHBOARD_PUBLIC_URL}/?focus=cv" style="color:${BRAND.greenFg};text-decoration:none;font-size:12px;margin-left:6px">download →</a>` +
         `</p>`;
     } else {
       cvFreshnessHtml =
-        `<p style="margin:6px 0;font-size:13px;color:#475569;">` +
-        `<a href="${DASHBOARD_PUBLIC_URL}/api/cv/render" data-action="render-cv" style="display:inline-block;background:#16a34a;color:#ffffff;padding:7px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none">Re-render CV →</a>` +
+        `<p style="margin:6px 0;font-size:13px;color:${BRAND.text3};">` +
+        `<a href="${DASHBOARD_PUBLIC_URL}/api/cv/render" data-action="render-cv" style="display:inline-block;background:${BRAND.green};color:#ffffff;padding:7px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none">Re-render CV →</a>` +
         `</p>`;
     }
   } catch { /* non-fatal */ }
@@ -1398,12 +1428,12 @@ function formatRoleBlock(r, packEligibleNums = null) {
   const packUrl = applyPackUrl(r);
   const packAllowed = packEligibleNums == null || packEligibleNums.has(r.num);
 
-  // Primary button style (H6)
+  // Primary button style (H6) — dark-mode flavor
   const primaryBtn = (text, href, ariaSuffix = '') =>
-    `<a href="${href}" style="display:inline-block;background:#16a34a;color:#ffffff;padding:6px 14px;border-radius:6px;font-weight:600;font-size:13px;text-decoration:none;margin:2px 4px 2px 0"${ariaSuffix}>${text}</a>`;
-  // Secondary button style (H6)
+    `<a href="${href}" style="display:inline-block;background:${BRAND.green};color:#ffffff;padding:6px 14px;border-radius:6px;font-weight:600;font-size:13px;text-decoration:none;margin:2px 4px 2px 0"${ariaSuffix}>${text}</a>`;
+  // Secondary button style (H6) — transparent ghost with subtle border
   const secondaryBtn = (text, href, ariaSuffix = '') =>
-    `<a href="${href}" style="display:inline-block;background:transparent;color:#374151;padding:5px 13px;border-radius:6px;border:1px solid #d1d5db;font-weight:500;font-size:13px;text-decoration:none;margin:2px 4px 2px 0"${ariaSuffix}>${text}</a>`;
+    `<a href="${href}" style="display:inline-block;background:transparent;color:${BRAND.text2};padding:5px 13px;border-radius:6px;border:1px solid ${BRAND.border};font-weight:500;font-size:13px;text-decoration:none;margin:2px 4px 2px 0"${ariaSuffix}>${text}</a>`;
 
   const btnBits = [];
   if (url) btnBits.push(primaryBtn('Apply', url, ` aria-label="Apply to ${r.company}"`));

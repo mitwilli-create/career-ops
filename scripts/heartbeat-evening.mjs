@@ -39,6 +39,14 @@ import { renderSystemBanner, renderDiscardPatternSection, renderRunwayAlert } fr
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
 
+// ── Design tokens (Phase C, 2026-05-19) ────────────────────────────────────
+// Same source-of-truth as heartbeat.mjs. See lib/heartbeat-tokens.json +
+// .claude/audit/email-review/phase-c-council-ledger.md for the rationale.
+const TOKENS = JSON.parse(readFileSync(
+  new URL('../lib/heartbeat-tokens.json', import.meta.url),
+  'utf-8'
+));
+
 const ROOT = process.cwd();
 const args = process.argv.slice(2);
 const dateArg = args.find(a => a.startsWith('--date='));
@@ -64,29 +72,37 @@ function loadSecrets() {
   return out;
 }
 
-// ── Brand constants (same source as heartbeat.mjs — duplicated so the evening
-//    script stays standalone; no top-level side-effects from importing heartbeat.mjs) ─
+// ── Brand constants (Phase C, 2026-05-19) ──────────────────────────────────
+// Same light-first palette as heartbeat.mjs, with the evening-specific
+// slate-blue hero so the morning and evening emails are visually
+// distinguishable in Gmail's threaded inbox view.
+// Source: lib/heartbeat-tokens.json email.light.*. The dark @media block in
+// templates/heartbeat.mjml flips on Apple Mail / Gmail Web / Outlook 365 dark.
+// BRAND.green / .greenFg semantics: match the ORIGINAL pre-Phase-C field names
+// so the inline-style call sites downstream don't change their visual weight.
+const _emailLight = TOKENS.email.light;
+const _colorLight = TOKENS.color.light;
 const BRAND = {
-  bg:          '#f8fafc',
-  surface:     '#ffffff',
-  surface2:    '#f1f5f9',
-  border:      '#e2e8f0',
-  text:        '#0f172a',
-  text2:       '#1e293b',
-  text3:       '#475569',
-  text4:       '#64748b',
-  green:       '#16a34a',
-  greenFg:     '#15803d',
-  greenBg:     '#dcfce7',
-  greenBorder: '#86efac',
-  blue:        '#2563eb',
-  blueBg:      '#dbeafe',
-  amber:       '#8a6840',
-  amberBg:     '#f4ede1',
-  red:         '#991b1b',
-  redBg:       '#fee2e2',
-  // Evening-specific: muted slate-blue hero — reads as "system status / not action"
-  // distinct from morning's #16a34a green at a glance in Gmail inbox threading.
+  bg:          _emailLight.body_bg,                   // #f8f9fb
+  surface:     _emailLight.panel_bg,                  // #ffffff
+  surface2:    _emailLight.panel_strong_bg,           // #f1f5f9
+  border:      _emailLight.border,                    // #e5e7eb
+  text:        _colorLight.text.t1,                   // #111827
+  text2:       _emailLight.body_color,                // #374151
+  text3:       _emailLight.muted_color,               // #475569
+  text4:       _emailLight.chrome_color,              // #6b7280
+  green:       '#16a34a',                             // matrix-green accent — exact original
+  greenFg:     _emailLight.accent,                    // #15803d
+  greenBg:     _emailLight.accent_bg,                 // #dcfce7
+  greenBorder: _emailLight.accent_border,             // #86efac
+  blue:        _colorLight.semantic.info,             // #5a76a6
+  blueBg:      _emailLight.info_bg,                   // #e8edf4
+  amber:       _colorLight.semantic.warning,          // #8a6840
+  amberBg:     _emailLight.warning_bg,                // #f4ede1
+  red:         _emailLight.danger_fg,                 // #991b1b
+  redBg:       _emailLight.danger_bg,                 // #fee2e2
+  // Evening-specific: muted slate-blue hero so morning and evening are
+  // visually distinguishable in Gmail thread view.
   eveningHero: '#5a76a6',
 };
 
@@ -138,8 +154,10 @@ function renderContentHtml(markdownBody) {
     .replace(/<td>/g, `<td class="border" style="padding:8px 10px;border-bottom:1px solid ${BRAND.surface2};vertical-align:top;color:${BRAND.text2};font-size:13px">`)
     .replace(/<blockquote>/g, `<blockquote class="card" style="margin:12px 0;padding:10px 14px;border-left:3px solid ${BRAND.green};background:${BRAND.greenBg};color:${BRAND.text};border-radius:0 8px 8px 0;font-size:13px;line-height:1.5">`)
     .replace(/<h1>/g, `<h1 class="text-strong accent" style="font-size:22px;margin:0 0 6px;color:${BRAND.greenFg};font-weight:700;letter-spacing:-0.01em">`)
-    .replace(/<h2>/g, `<h2 class="text-strong" style="font-size:13px;margin:20px 0 6px;color:${BRAND.text3};font-weight:700;border-left:3px solid ${BRAND.eveningHero};padding-left:10px;letter-spacing:0.04em;text-transform:uppercase">`)
-    .replace(/<h3>/g, `<h3 class="text-strong" style="font-size:14px;margin:14px 0 5px;color:${BRAND.text2};font-weight:600;letter-spacing:-0.01em">`)
+    // Phase C Decision C — H2 = 16px / 700 / -0.3px ls / no UPPERCASE / no border-left.
+    .replace(/<h2>/g, `<h2 class="text-strong" style="font-size:16px;margin:22px 0 10px;color:${BRAND.text};font-weight:700;letter-spacing:-0.3px;line-height:1.3">`)
+    // Phase C Decision C — H3 = demoted console-style; evening uses slate-blue accent border.
+    .replace(/<h3>/g, `<h3 class="text-strong" style="font-size:13px;margin:16px 0 8px;color:${BRAND.text3};font-weight:700;border-left:3px solid ${BRAND.eveningHero};padding-left:10px;letter-spacing:0.04em;text-transform:uppercase;line-height:1.3">`)
     .replace(/<a /g, `<a class="accent" style="color:${BRAND.eveningHero};text-decoration:underline;text-underline-offset:2px;font-weight:500" `)
     .replace(/<code>/g, `<code style="background:${BRAND.surface2};padding:1px 5px;border-radius:4px;font-family:'JetBrains Mono','SF Mono',ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:${BRAND.eveningHero}">`)
     .replace(/<ul>/g, `<ul style="margin:6px 0 10px;padding-left:20px;color:${BRAND.text2}">`)
@@ -224,23 +242,23 @@ function computeRunwayDensityForEvening() {
 // to prevent "sleep-sabotage" anxiety from being the final item of the email.
 function renderEveningRunwayAlert(density) {
   if (!density || !density.ok) {
-    return `<div style="margin:12px 0;padding:10px;background:#fef9c3;border-radius:6px;color:#854d0e;font-size:12px">Runway: pipeline-density data unavailable.</div>`;
+    return `<div class="runway-unavailable" style="margin:12px 0;padding:10px;background:${BRAND.amberBg};border:1px solid rgba(168,123,72,0.35);border-radius:6px;color:${BRAND.amber};font-size:12px">Runway: pipeline-density data unavailable.</div>`;
   }
   const { health, runway_alert, contacts, velocity, runway_weeks } = density;
-  // Palette — muted on healthy days so the alert doesn't alarm at 18:00 PT
+  // Phase C dark-mode palette — muted slate on healthy days at 18:00 PT.
   const tiers = {
-    healthy:  { bg: '#f0f9ff', border: '#bae6fd', fg: '#075985', icon: '🟢', label: 'On track' },
-    stretched:{ bg: '#fffbeb', border: '#fcd34d', fg: '#92400e', icon: '🟡', label: 'Cushion shrinking' },
-    critical: { bg: '#fff1f2', border: '#fca5a5', fg: '#9f1239', icon: '🔴', label: 'Past runway floor' },
+    healthy:  { bg: BRAND.blueBg,   border: 'rgba(148,163,184,0.30)', fg: BRAND.blue,   icon: '🟢', label: 'On track' },
+    stretched:{ bg: BRAND.amberBg,  border: 'rgba(168,123,72,0.45)',  fg: BRAND.amber,  icon: '🟡', label: 'Cushion shrinking' },
+    critical: { bg: BRAND.redBg,    border: 'rgba(220,38,38,0.45)',   fg: BRAND.red,    icon: '🔴', label: 'Past runway floor' },
   };
   const t = tiers[health] || tiers.stretched;
   return `
-<div style="margin:14px 0;padding:12px 14px;background:${t.bg};border:1px solid ${t.border};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+<div class="runway-card" style="margin:14px 0;padding:12px 14px;background:${t.bg};border:1px solid ${t.border};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
   <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${t.fg};margin-bottom:6px">
     <span role="img" aria-label="Runway health indicator">${t.icon}</span> Runway — ${runway_weeks}-week window · <strong>${t.label}</strong>
   </div>
   <div style="font-size:13px;color:${t.fg};font-weight:600;margin-bottom:8px;line-height:1.4">${escapeHtml(runway_alert)}</div>
-  <div style="display:flex;gap:18px;flex-wrap:wrap;font-size:11.5px;color:#374151">
+  <div style="display:flex;gap:18px;flex-wrap:wrap;font-size:11.5px;color:${BRAND.text2}">
     <span><strong>${contacts.active}</strong> active</span>
     <span><strong>${contacts.responded}</strong> replied (${Math.round(contacts.response_rate * 100)}%)</span>
     <span><strong>${velocity.touches_last_7d}</strong>/7d</span>
@@ -613,12 +631,12 @@ async function renderEveningHtmlEmail(markdownBody, meta = {}) {
     const activeCount = tierFeatures.filter(f => f.active).length;
     const featureRows = tierFeatures.map(f =>
       `<div style="display:flex;gap:8px;align-items:baseline;padding:2px 0;font-size:12px">
-         <span style="color:${f.active ? '#16a34a' : '#9ca3af'};font-weight:700">${f.active ? '✓' : '○'}</span>
-         <span style="color:${f.active ? '#0f172a' : '#9ca3af'}">${escapeHtml(f.label)}</span>
+         <span style="color:${f.active ? BRAND.greenFg : BRAND.text4};font-weight:700">${f.active ? '✓' : '○'}</span>
+         <span style="color:${f.active ? BRAND.text : BRAND.text4}">${escapeHtml(f.label)}</span>
        </div>`
     ).join('');
     systemBannerHtml = `
-<div style="margin:8px 0 14px;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+<div class="system-banner" style="margin:8px 0 14px;padding:12px 14px;background:${BRAND.surface};border:1px solid ${BRAND.border};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
   <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${BRAND.eveningHero};margin-bottom:8px">Tier 5 — ${activeCount}/${tierFeatures.length} active · <a href="${dashboardUrl}?focus=system-status" style="color:${BRAND.eveningHero};text-decoration:none">full details →</a></div>
   ${featureRows}
 </div>`.trim();

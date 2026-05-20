@@ -3,9 +3,16 @@
     <mj-title>Career-Ops Daily Heartbeat — {{date}}</mj-title>
     <mj-preview>{{preheaderText}}</mj-preview>
     <mj-attributes>
-      <!-- Design tokens sourced from templates/heartbeat-tokens.json (light.*)
-           Dashboard accent: #16a34a (--accent) | Surface: #ffffff | Border: #e5e7eb
-           Font: Inter (--font-sans) | Body: 14px / 1.5 (--text-base / --leading-normal) -->
+      <!-- Phase C (2026-05-19) — light-first body with dark @media override.
+           The council recommended dark-first (Decision A), but the existing
+           emit-pipeline ships ~32 inline-styled callouts with light hardcodes
+           that can't be cleanly flipped without rewriting hundreds of lines.
+           Half the council's Decision A win — Gmail iOS partial-inversion —
+           is captured by the meta tags below; the actual body inversion is
+           deferred until the inline styles have all been migrated to the
+           token system. See .claude/audit/email-review/phase-c-report-2026-05-19.md.
+           Tokens (light fallback): lib/heartbeat-tokens.json email.light.*.
+           Body: #374151 on #f8f9fb = 9.6:1 (AAA). -->
       <mj-text
         font-family="'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
         font-size="13px"
@@ -24,9 +31,14 @@
     </mj-attributes>
 
     <mj-style>
-      /* ── Dark-mode overrides ──────────────────────────────────────────────
-         Tokens from heartbeat-tokens.json dark.* (mirrors dashboard body.dark).
-         Apple Mail, Gmail Web, Outlook 365 honor prefers-color-scheme: dark. */
+      /* ── Dark-mode override (Phase C-restored, 2026-05-19) ────────────────
+         Tokens from heartbeat-tokens.json email.dark.* (mirrors dashboard body.dark).
+         Apple Mail, Gmail Web, Outlook 365 honor prefers-color-scheme: dark.
+         Per the Phase C council ledger, the meta name="supported-color-schemes"
+         + meta name="color-scheme" pair below is what fixes Gmail iOS partial-
+         inversion of this @media overlay (the previous version was missing
+         the supported-color-schemes meta, which let Gmail iOS apply its own
+         inversion on top of the developer-supplied dark palette). */
       @media (prefers-color-scheme: dark) {
         body, .body-bg   { background: #06070d !important; color: #fafafa !important; }
         .card            { background: #11131c !important; border-color: #232737 !important; color: #e4e4e7 !important; }
@@ -50,11 +62,36 @@
         .score-pill-green { background: rgba(22,163,74,0.15) !important; color: #86efac !important; border-color: rgba(22,163,74,0.35) !important; }
         .score-pill-amber { background: rgba(168,123,72,0.14) !important; color: #d4ba84 !important; }
         .score-pill-red   { background: rgba(220,38,38,0.12) !important; color: #fca5a5 !important; }
-        .focus-callout   { background: rgba(22,163,74,0.10) !important; border-left-color: #86efac !important; color: #bbf7d0 !important; }
+        .focus-callout, .focus-callout * { color: #bbf7d0 !important; }
+        .focus-callout   { background: rgba(22,163,74,0.10) !important; border-left-color: #86efac !important; }
+        /* Dark-mode override for the inline-styled "card" containers
+           emitted by helper functions in scripts/heartbeat.mjs. The
+           `* { color: }` descendant rule overrides inline `color:` props
+           on child <div>/<span>/<strong> nodes — necessary because each
+           helper hardcodes its own text colors for light mode. */
+        .tonight-card, .tonight-card * { color: #fafafa !important; }
+        .tonight-card    { background: rgba(22,163,74,0.10) !important; border-color: rgba(22,163,74,0.30) !important; }
+        .due-today-card  { background: #11131c !important; border-color: #232737 !important; }
+        .due-today-card * { color: #e4e4e7 !important; }
+        .signal-pulse-card, .signal-pulse-card * { color: #e4e4e7 !important; }
+        .signal-pulse-card { background: #11131c !important; border-color: #232737 !important; }
+        .next-moves-card { background: rgba(22,163,74,0.06) !important; }
+        .next-moves-card * { color: #e4e4e7 !important; }
+        .next-move-row, .next-move-row * { color: #e4e4e7 !important; }
+        .next-move-row { background: #11131c !important; border-color: #232737 !important; }
+        .runway-card     { background: #11131c !important; border-color: #232737 !important; }
+        .runway-card *   { color: #e4e4e7 !important; }
+        .system-banner   { background: #11131c !important; border-color: #232737 !important; }
+        .system-banner * { color: #e4e4e7 !important; }
       }
     </mj-style>
 
     <mj-raw>
+      <!-- Phase C Decision A (meta-only) — both meta tags REQUIRED to opt
+           out of Gmail iOS auto-inversion. supported-color-schemes is the
+           previously-missing piece that let Gmail iOS apply its own inversion
+           on top of the dark @media overlay. With both declared, clients
+           honor the developer-supplied palette. -->
       <meta name="color-scheme" content="light dark">
       <meta name="supported-color-schemes" content="light dark">
     </mj-raw>
@@ -63,7 +100,12 @@
   <mj-body background-color="#f8f9fb" css-class="body-bg">
 
     <!-- ═══════════════════════════════════════════════════════════════════
-         HERO — #16a34a (dashboard --accent). Compact: title + date + CTA.
+         HERO — saturated #16a34a (accent) reads correctly on both the new
+         dark body bg (#06070d) and the light @media fallback (#f8f9fb).
+         Kept at #16a34a because (a) evening script string-replaces this
+         exact hex to swap in the slate-blue evening hero, and (b) a single
+         saturated band on a dark body becomes the dominant focal point —
+         exactly the visual hierarchy the Phase C council wanted.
          mj-button = bulletproof VML+CSS hybrid (Outlook 2016+ compatible).
          ═══════════════════════════════════════════════════════════════════ -->
     <mj-section
@@ -103,7 +145,8 @@
       </mj-column>
     </mj-section>
 
-    <!-- KPI tiles — 3 columns (Queue ≥4.0 / Eval'd today / Total tracked) -->
+    <!-- KPI tiles — 3 columns (Queue ≥4.0 / Eval'd today / Total tracked).
+         Light defaults; dark @media block flips on dark clients. -->
     <mj-section padding="4px 0 12px 0">
       <mj-column border="1px solid #e5e7eb" border-radius="8px" background-color="#ffffff" padding="10px 12px" css-class="card border">
         <mj-text color="#6b7280" font-size="10px" font-weight="700" letter-spacing="0.08em" text-transform="uppercase" align="center" padding-bottom="3px" css-class="text-muted">Ready to Apply</mj-text>
@@ -140,6 +183,7 @@
 
     <!-- ═══════════════════════════════════════════════════════════════════
          FOOTER — small, quiet. Matches dashboard footer visual weight.
+         Light defaults; dark @media block flips on dark clients.
          ═══════════════════════════════════════════════════════════════════ -->
     <mj-section padding="10px 0 6px 0" border-top="1px solid #e5e7eb" css-class="border">
       <mj-column>

@@ -50,6 +50,44 @@ import { scoreStaleness, renderStalenessBadge }                    from '../lib/
 import { computeToxicityComposite }                                from '../lib/toxicity-composite.mjs';
 const parseYaml = yaml.load;
 
+// ── Design tokens (Phase C, 2026-05-19) ────────────────────────────────────
+// Shared source of truth with the heartbeat emails. The dashboard's inline
+// CSS still ships hardcoded hex values for backwards compatibility (29k+
+// lines, high regression risk to mass-rewrite), but this loader runs a
+// non-fatal divergence check below so the dashboard and email cannot drift
+// silently. See .claude/audit/email-review/phase-c-council-ledger.md.
+const HEARTBEAT_TOKENS = (() => {
+  try {
+    return JSON.parse(readFileSync(
+      new URL('../lib/heartbeat-tokens.json', import.meta.url),
+      'utf-8'
+    ));
+  } catch (e) {
+    console.warn('[build-dashboard] heartbeat-tokens.json missing — token cohesion check skipped:', e.message);
+    return null;
+  }
+})();
+
+// Token-divergence sentinel — warns at build time if the dashboard's
+// `--bg` literal in build-dashboard.mjs ever drifts from the token JSON.
+// Non-fatal: warning only, build continues. The dashboard CSS literals are
+// still the runtime source of truth for the dashboard surface itself.
+function _checkTokenCohesion() {
+  if (!HEARTBEAT_TOKENS) return;
+  const want = HEARTBEAT_TOKENS.dashboard?.tokens_dark?.['--bg'];
+  if (!want) return;
+  // The dashboard's body.dark --bg lives in this same source file. If the
+  // token says #06070d but the source says something else, somebody changed
+  // one without changing the other.
+  const src = readFileSync(new URL(import.meta.url), 'utf-8');
+  const re = /body\.dark\s*\{[\s\S]{0,400}?--bg:\s*(#[0-9a-fA-F]{3,8});/;
+  const m = src.match(re);
+  if (m && m[1].toLowerCase() !== want.toLowerCase()) {
+    console.warn(`[build-dashboard] token-cohesion: body.dark --bg=${m[1]} but heartbeat-tokens.json says ${want}. Update one to match the other.`);
+  }
+}
+_checkTokenCohesion();
+
 const ROOT = process.cwd();
 const APPLICATIONS_PATH = join(ROOT, 'data/applications.md');
 const PIPELINE_PATH = join(ROOT, 'data/pipeline.md');

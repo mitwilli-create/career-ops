@@ -12,6 +12,17 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/mitchellwilliams/Documents/career-ops/scripts/hooks/commit-ui-verify-gate.sh"
+          }
+        ]
+      }
     ]
   }
 }

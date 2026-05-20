@@ -21,6 +21,39 @@ set -euo pipefail
 REMOTE="$1"
 URL="$2"
 
+# ═══════════════════════════════════════════════════════════════════════════
+# P2.22 santifer-refusal gate (2026-05-20 — see data/decisions-pending /
+# resolution-pass-2026-05-20).
+#
+# This fork's upstream is santifer/career-ops. ALL Mitchell's pushes must
+# target mitwilli-create/career-ops. The 2026-05-20 cross-fork leak (9
+# personal-data files briefly exposed in santifer/career-ops#703) happened
+# because a `gh pr create` defaulted to upstream. A user-level
+# `gh repo set-default mitwilli-create/career-ops` prevents the gh path;
+# this hook prevents the raw `git push` path.
+#
+# Emergency override: `git push --no-verify` — but if you find yourself
+# typing that for an upstream push, STOP and read CLAUDE.md / AGENTS.md.
+# ═══════════════════════════════════════════════════════════════════════════
+if echo "$URL" | grep -qiE 'santifer/career-ops'; then
+  echo "" >&2
+  echo "╔════════════════════════════════════════════════════════════════════╗" >&2
+  echo "║  PUSH ABORTED — target is the SANTIFER upstream                    ║" >&2
+  echo "║                                                                    ║" >&2
+  echo "║  Remote URL: $URL" >&2
+  echo "║                                                                    ║" >&2
+  echo "║  Mitchell's fork lives at mitwilli-create/career-ops. Pushing      ║" >&2
+  echo "║  to santifer would expose personal data (cv.md, applications.md,   ║" >&2
+  echo "║  hm-intel/*) that gitignore protects locally but NOT via PR diff.  ║" >&2
+  echo "║                                                                    ║" >&2
+  echo "║  Fix: git push origin <branch>   (origin = mitwilli-create)        ║" >&2
+  echo "║                                                                    ║" >&2
+  echo "║  See data/decisions-pending-2026-05-20.md + CLAUDE.md for context. ║" >&2
+  echo "╚════════════════════════════════════════════════════════════════════╝" >&2
+  echo "" >&2
+  exit 1
+fi
+
 # ── Resolve repo root from hook location ────────────────────────────────────
 # .git/hooks → .git → repo root
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

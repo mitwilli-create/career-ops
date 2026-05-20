@@ -6,23 +6,31 @@
   <title>Network database · career-ops</title>
   <link rel="manifest" href="/manifest.json">
   <style>
+    /* P0.8 (2026-05-20) — Network DB now defaults to DARK regardless of
+       OS preference per Mitchell's ask. Light mode is opt-in via the
+       prefers-color-scheme: light media query (so a light-mode-preferring
+       user on a different device still gets a usable surface), but the
+       baseline is the dark palette. */
     :root {
-      color-scheme: light dark;
-      --bg: #f7f8fa; --surface: #ffffff; --surface-2: #f0f2f5;
-      --border: #e2e6eb; --text: #0f172a; --text-2: #334155;
-      --text-3: #64748b; --text-4: #94a3b8;
-      --green-fg: #047857; --green-bg: #ecfdf5;
-      --amber-fg: #b45309; --red-fg: #b91c1c;
-      --blue-fg: #2563eb; --blue-bg: #eff6ff;
+      color-scheme: dark;
+      --bg: #0b0f17; --surface: #111827; --surface-2: #1f2937;
+      --border: #1f2937; --text: #f9fafb; --text-2: #e5e7eb;
+      --text-3: #cbd5e1; --text-4: #94a3b8;
+      --green-fg: #6ee7b7; --green-bg: rgba(34,197,94,0.10);
+      --amber-fg: #fcd34d; --red-fg: #fca5a5;
+      --blue-fg: #93c5fd; --blue-bg: rgba(59,130,246,0.12);
     }
-    @media (prefers-color-scheme: dark) {
+    @media (prefers-color-scheme: light) and (not (data-theme: dark)) {
+      /* Opt-out for users who explicitly prefer light AND haven't been
+         force-themed dark. Currently no force-dark toggle, so the @media
+         alone is the opt-out. */
       :root {
-        --bg: #0b0f17; --surface: #111827; --surface-2: #1f2937;
-        --border: #1f2937; --text: #f9fafb; --text-2: #e5e7eb;
-        --text-3: #cbd5e1; --text-4: #94a3b8;
-        --green-fg: #6ee7b7; --green-bg: rgba(34,197,94,0.10);
-        --amber-fg: #fcd34d; --red-fg: #fca5a5;
-        --blue-fg: #93c5fd; --blue-bg: rgba(59,130,246,0.12);
+        --bg: #f7f8fa; --surface: #ffffff; --surface-2: #f0f2f5;
+        --border: #e2e6eb; --text: #0f172a; --text-2: #334155;
+        --text-3: #64748b; --text-4: #94a3b8;
+        --green-fg: #047857; --green-bg: #ecfdf5;
+        --amber-fg: #b45309; --red-fg: #b91c1c;
+        --blue-fg: #2563eb; --blue-bg: #eff6ff;
       }
     }
     * { box-sizing: border-box; }

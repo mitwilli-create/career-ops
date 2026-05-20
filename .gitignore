@@ -31,6 +31,11 @@ data/research-state.json
 data/gmail-history-state.json
 # Health column coverage report (derived from applications.md — personal pipeline state)
 data/health-column-coverage.json
+# Pipeline-health telemetry (P4.37, 2026-05-20) — regenerated every 5 min by
+# the pipeline-health-check launchd plist. build-dashboard.mjs:3825 already
+# handles `existsSync` false → defaults to "health: ?" so the file going
+# missing on a fresh clone is fine.
+data/pipeline-health.json
 # Role-enrichment validator telemetry (per-write JSONL log, soft-fail observation
 # window for symmetric gating wired 2026-05-19). Regenerated on each enrich-apply-now
 # run; references row numbers + companies from personal pipeline state.

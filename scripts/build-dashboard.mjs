@@ -36,6 +36,7 @@ import { getIndustryGapRanking, renderIndustryGapTable }           from '../lib/
 import { assessTravelTradeoff, renderTravelChip }                  from '../lib/travel-cap.mjs';
 import { computeStrategyCeiling, renderStrategyCard }              from '../lib/strategy-ceiling.mjs';
 import { renderEquitySlidersHtml }                                 from '../lib/equity-calculator.mjs';
+import { getDashboardSidebar, getDashboardSidebarInner }            from '../lib/dashboard-shell.mjs';
 import { loadAllPolishStatus }                                     from '../lib/polish-status-loader.mjs';
 import { renderPolishBadge, renderPolishDcard, polishCardStyles }  from '../lib/polish-card-renderer.mjs';
 import { computeNextMoves }                                        from '../lib/next-moves.mjs';
@@ -5492,6 +5493,37 @@ async function build() {
   .sidebar-label {
     flex: 1 1 auto;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+  .sidebar-sublabel {
+    font-size: 10px;
+    font-weight: 400;
+    color: var(--text-4);
+    margin-top: 1px;
+    line-height: 1.1;
+  }
+  .sidebar-nav-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-bottom: 10px;
+  }
+  .sidebar-nav-group-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-4);
+    padding: 4px 12px;
+    margin: 6px 0 2px;
+  }
+  .sidebar-link[aria-current="page"] {
+    background: var(--surface-2);
+    color: var(--text);
+    border-left-color: var(--green-fg);
+    font-weight: 600;
   }
   .sidebar-footer {
     padding: 10px 12px 14px;
@@ -11250,47 +11282,12 @@ async function build() {
        (IntersectionObserver). Cmd-K remains the primary nav for
        power users; this rail is for spatial orientation. -->
   <aside class="sidebar" id="sidebar" aria-label="Primary navigation">
-    <div class="sidebar-brand">
-      <span class="sidebar-favicon" aria-hidden="true">⚡</span>
-      <span class="sidebar-brand-name">Career-Ops</span>
-    </div>
-    <nav class="sidebar-nav" aria-label="Sections">
-      <a href="#overview-section" class="sidebar-link" data-section="overview-section" title="Overview">
-        <span class="sidebar-icon" aria-hidden="true">📊</span><span class="sidebar-label">Overview</span>
-      </a>
-      <a href="#apply-now-section" class="sidebar-link" data-section="apply-now-section" title="Apply-Now Queue">
-        <span class="sidebar-icon" aria-hidden="true">🎯</span><span class="sidebar-label">Apply-Now</span>
-      </a>
-      <a href="#all-evaluations-section" class="sidebar-link" data-section="all-evaluations-section" title="All Evaluations">
-        <span class="sidebar-icon" aria-hidden="true">📋</span><span class="sidebar-label">All Evaluations</span>
-      </a>
-      <a href="#trends-panel" class="sidebar-link" data-section="trends-panel" title="Trends + Analytics">
-        <span class="sidebar-icon" aria-hidden="true">📈</span><span class="sidebar-label">Trends</span>
-      </a>
-      <a href="#companies-panel" class="sidebar-link" data-section="companies-panel" title="Companies">
-        <span class="sidebar-icon" aria-hidden="true">🏢</span><span class="sidebar-label">Companies</span>
-      </a>
-      <!-- A4 (2026-05-18): two new sidebar targets requested in popout audit
-           (inventory verification 2026-05-18). Pipeline-pending opens the
-           existing stat panel; batch-runs opens the existing batch modal. -->
-      <button type="button" class="sidebar-link" onclick="toggleStatPanel('pending');closeSidebar();" title="Pipeline pending — URLs queued for triage">
-        <span class="sidebar-icon" aria-hidden="true">⏳</span><span class="sidebar-label">Pipeline</span>
-      </button>
-      <button type="button" class="sidebar-link" onclick="openBatchStatusModal();closeSidebar();" title="Batch runs — recent eval batches + current run">
-        <span class="sidebar-icon" aria-hidden="true">📦</span><span class="sidebar-label">Batch Runs</span>
-      </button>
-      <!-- 2026-05-19: full-screen relationship-intelligence directory (rich contact cards) -->
-      <a href="contacts.html" class="sidebar-link" title="Contacts directory — full relationship-intelligence cards">
-        <span class="sidebar-icon" aria-hidden="true">👥</span><span class="sidebar-label">Contacts</span>
-      </a>
-      <!-- B2 (2026-05-18): Industry Gap Radar — non-tech high-WTP sectors -->
-      <button type="button" class="sidebar-link" onclick="window.drillIn('industry-gap','',event);closeSidebar();" title="Adjacent Industry Radar — finance/health/legal/insurance non-tech opportunities">
-        <span class="sidebar-icon" aria-hidden="true">🎯</span><span class="sidebar-label">Industries</span>
-      </button>
-      <button type="button" class="sidebar-link" onclick="openMobileSettingsSheet();closeSidebar();" title="Settings">
-        <span class="sidebar-icon" aria-hidden="true">⚙️</span><span class="sidebar-label">Settings</span>
-      </button>
-    </nav>
+    <!-- BRAVO followup 2026-05-20 Item 2 / AAA-2: home sidebar now uses
+         the same getDashboardSidebar() generator as contacts.html and
+         network-database.html, which gives the same Pages / Dashboard
+         sections / Actions grouping cross-page. Scroll-spy is preserved
+         via data-section on dashboard-group items. -->
+    ${getDashboardSidebarInner({ currentPage: 'home' })}
     <!-- Update Drawer + Recent updates relocated 2026-05-18 — pinned directly
          under the Career-Ops nav so the personal-activity feed sits at the
          top of the sidebar (was buried below 6 widgets). -->
@@ -30889,6 +30886,23 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     if (res.status !== 0) {
       // Don't fail the whole build on a contacts-page glitch — log + continue.
       console.warn('⚠ build-dashboard: contacts.html rebuild failed (see above). Dashboard itself is OK.');
+    }
+  }
+
+  // 2026-05-20 — BRAVO followup Item 10 / process learning 4:
+  // also re-inject the shared shell into dashboard/network-database.html.
+  // The injector is idempotent (no-op if shell already present), so this
+  // catches the case where someone hand-edits network-database.html and
+  // strips the sidebar — next build re-injects it. Skip with
+  // DASHBOARD_SKIP_NETWORK_DB_SHELL=1.
+  if (process.env.DASHBOARD_SKIP_NETWORK_DB_SHELL !== '1') {
+    const { spawnSync } = await import('node:child_process');
+    const res = spawnSync('node', [join(ROOT, 'scripts/build-network-database-shell.mjs')], {
+      cwd: ROOT,
+      stdio: 'inherit',
+    });
+    if (res.status !== 0) {
+      console.warn('⚠ build-dashboard: network-database.html shell injection failed (see above). Dashboard itself is OK.');
     }
   }
 }

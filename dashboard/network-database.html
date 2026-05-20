@@ -105,7 +105,9 @@
     }
     .filter-chip-clear:hover { color: var(--text-2); border-color: var(--border); }
     main { padding: 0 24px 80px; max-width: 1500px; }
-    .stats { padding: 10px 0; color: var(--text-3); font-size: 12px; }
+    /* BRAVO followup 2026-05-20 Item 9 / AA-10 — text-3 on --bg (#f7f8fa) gives
+       4.47:1, AA needs 4.5:1. Bumped to text-2 (#334155). */
+    .stats { padding: 10px 0; color: var(--text-2); font-size: 12px; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     thead th { position: sticky; top: 0; background: var(--surface);
       text-align: left; font-size: 10.5px; color: var(--text-4);
@@ -140,9 +142,11 @@
     .empty-state { padding: 60px 20px; text-align: center; color: var(--text-3); }
     .checkbox-cell { width: 28px; text-align: center; }
     .actions-cell { text-align: right; }
-    /* BRAVO followup 2026-05-20 Item 9 / AA-9 — .small was --text-4 (2.56:1).
-       Bumped to --text-3 (4.66:1) to pass AA. */
-    .small { font-size: 11px; color: var(--text-3); }
+    /* BRAVO followup 2026-05-20 Item 9 / AA-10 — .small inside per-target chip
+       buttons renders against --surface-2 (#f0f2f5) not pure white, where
+       --text-3 only gets 4.24:1 (fails AA 4.5:1). Bumped to --text-2 (#334155)
+       which passes both backgrounds (11+:1). */
+    .small { font-size: 11px; color: var(--text-2); }
   </style>
 
 <!-- BRAVO 2026-05-19: shared dashboard shell injection -->
@@ -292,9 +296,9 @@ textarea:focus-visible {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  /* BRAVO followup 2026-05-20 Item 9 / AA-9 — axe-core flagged --text-4
-     (#94a3b8) at 2.56:1 vs white. --text-3 (#64748b) is 4.66:1, passes AA. */
-  color: var(--text-3);
+  /* BRAVO followup 2026-05-20 Item 9 / AA-10 — text-3 passes on white but
+     fails (4.24:1) on --surface-2 backgrounds. Bumped to --text-2. */
+  color: var(--text-2);
   padding: 8px 12px 4px;
   display: block;
 }
@@ -353,8 +357,8 @@ textarea:focus-visible {
 .sidebar-sublabel {
   font-size: 10px;
   font-weight: 400;
-  /* BRAVO followup 2026-05-20 Item 9 / AA-9 — see above. */
-  color: var(--text-3);
+  /* BRAVO followup 2026-05-20 Item 9 / AA-10 — see above. */
+  color: var(--text-2);
   margin-top: 1px;
 }
 

@@ -3833,6 +3833,31 @@ async function build() {
       }
     }
   } catch { /* default to ? */ }
+  // P4.33 (2026-05-20) — initial dispatch chip baked at build time so first
+  // paint reflects pipeline-process-state.json. Runtime updates via
+  // _renderBatchData (every 30s via /api/batch-live). Surfaces process-all
+  // phase / batch-only status / idle. Click → opens batch-status modal
+  // (same target as the sidebar-batch widget).
+  let initialDispatchChip = { label: 'dispatch: ○ idle', cls: 'pipeline-dispatch-chip', title: 'No pipeline run in progress' };
+  try {
+    const psp = join(ROOT, 'data/pipeline-process-state.json');
+    if (existsSync(psp)) {
+      const ps = JSON.parse(readFileSync(psp, 'utf-8'));
+      const jobs = Object.values(ps.jobs || {}).sort((a, b) =>
+        (b.started_at || '').localeCompare(a.started_at || ''));
+      const running = jobs.find(j => j.status === 'running');
+      if (running) {
+        const phase = running.phase || running.status;
+        const icon = running.type === 'process-all' ? '🚀' : '⚡';
+        const typeLabel = running.type === 'process-all' ? 'process-all' : 'batch';
+        initialDispatchChip = {
+          label: 'dispatch: ' + icon + ' ' + typeLabel + (phase ? ' · ' + phase : ''),
+          cls: 'pipeline-dispatch-chip active',
+          title: 'Pipeline ' + typeLabel + ' running · phase ' + (phase || 'unknown') + ' · click for detail',
+        };
+      }
+    }
+  } catch { /* default to idle */ }
   // Builder Evolution log — loaded from data/builder-log.json (regenerated
   // nightly by scripts/agents/builder-log.mjs). Surfaces skills/APIs/bug-classes
   // for the PM-trajectory narrative.
@@ -6971,15 +6996,15 @@ async function build() {
     margin: 6px 8px 8px 8px;
     font-size: 10px;
   }
-  .pipeline-freshness-chip, .pipeline-health-chip {
+  .pipeline-freshness-chip, .pipeline-health-chip, .pipeline-dispatch-chip {
     display: inline-block; padding: 2px 6px; border-radius: 3px;
     background: var(--surface-2); border: 1px solid var(--border);
     color: var(--text-3); line-height: 1.3;
     letter-spacing: 0.02em;
     transition: color 0.2s ease, border-color 0.2s ease;
   }
-  .pipeline-health-chip { cursor: pointer; }
-  .pipeline-health-chip:hover { border-color: var(--text-3); }
+  .pipeline-health-chip, .pipeline-dispatch-chip { cursor: pointer; }
+  .pipeline-health-chip:hover, .pipeline-dispatch-chip:hover { border-color: var(--text-3); }
   .pipeline-freshness-chip.fresh, .pipeline-health-chip.healthy {
     border-color: rgba(16,185,129,0.5); color: #10b981;
   }
@@ -6988,6 +7013,11 @@ async function build() {
   }
   .pipeline-health-chip.critical {
     border-color: rgba(220,38,38,0.55); color: #ef4444;
+  }
+  /* P4.33 (2026-05-20) — dispatch chip active state.
+     Idle = neutral (default). Active = blue (matches in-flight stage bars). */
+  .pipeline-dispatch-chip.active {
+    border-color: rgba(31,111,235,0.55); color: #58a6ff;
   }
 
   .panel-strong {
@@ -11603,6 +11633,7 @@ async function build() {
     <div id="sidebar-pipeline-status" class="sidebar-pipeline-status" aria-label="Pipeline status freshness">
       <span id="pipeline-freshness-chip" class="pipeline-freshness-chip fresh" title="Time since last badge refresh">badges · just now</span>
       <span id="pipeline-health-chip" class="${initialHealthChip.cls}" title="${htmlEscape(initialHealthChip.title)} — click to view full status" onclick="openPipelineHealthModal()">${htmlEscape(initialHealthChip.label)}</span>
+      <span id="pipeline-dispatch-chip" class="${initialDispatchChip.cls}" title="${htmlEscape(initialDispatchChip.title)}" onclick="openBatchStatusModal()">${htmlEscape(initialDispatchChip.label)}</span>
     </div>
     <!-- Recruiter pipeline-density widget (Phase 6, calibration brief 2026-05-16)
          Chevron toggles inline detail. Label click opens full runway modal
@@ -20771,6 +20802,32 @@ let _batchInterval = null;
 //   - Multi-stage (data.pipelineStages present): shows per-stage progress bars
 //   - Legacy (aggregate only): shows single bar with counts
 function _renderBatchData(data) {
+  // P4.33 (2026-05-20) — dispatch chip update.
+  // Runs FIRST so the chip refreshes even when sidebar-batch widget is absent
+  // (e.g., before the widget DOM has been wired by deferred render).
+  try {
+    var dchip = document.getElementById('pipeline-dispatch-chip');
+    if (dchip) {
+      var ps = data.pipelineStages;
+      var batchRunning = (data.running || 0) > 0;
+      if (ps && ps.status === 'running') {
+        var phase = ps.current_phase || 'running';
+        dchip.textContent = 'dispatch: 🚀 process-all · ' + phase;
+        dchip.className = 'pipeline-dispatch-chip active';
+        dchip.title = 'Process-all running · phase ' + phase + ' · click for detail';
+      } else if (batchRunning) {
+        var bpct = data.pct ? Math.round(data.pct) : 0;
+        dchip.textContent = 'dispatch: ⚡ batch · ' + bpct + '%';
+        dchip.className = 'pipeline-dispatch-chip active';
+        dchip.title = 'Batch-only running · ' + (data.completed || 0) + '/' + (data.total || 0) + ' complete · click for detail';
+      } else {
+        dchip.textContent = 'dispatch: ○ idle';
+        dchip.className = 'pipeline-dispatch-chip';
+        dchip.title = 'No pipeline run in progress';
+      }
+    }
+  } catch (_) { /* never block batch render on chip update */ }
+
   const widget = document.getElementById('sidebar-batch');
   if (!widget) return;
 

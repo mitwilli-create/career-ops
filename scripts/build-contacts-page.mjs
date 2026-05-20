@@ -43,26 +43,44 @@ import { renderDashboardShell, esc } from '../lib/dashboard-shell.mjs';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
 
-// Pull the baked _CONTACTS_DATA from the freshly-built dashboard HTML.
+// 2026-05-20 — Pull contacts from the externalized JSON (build-dashboard.mjs
+// emits dashboard/data/contacts.json since the data-pill externalization on
+// 2026-05-20 commit `da92be5`). Fall back to in-HTML regex extraction for
+// older builds where the data was still inlined.
 const dashboardHtmlPath = join(REPO_ROOT, 'dashboard/index.html');
-if (!existsSync(dashboardHtmlPath)) {
-  console.error('[build-contacts-page] dashboard/index.html missing — run `node scripts/build-dashboard.mjs` first');
-  process.exit(1);
-}
-const html = readFileSync(dashboardHtmlPath, 'utf8');
+const contactsJsonPath = join(REPO_ROOT, 'dashboard/data/contacts.json');
+let contacts = [];
+let stats = {};
 
-function extractGlobal(varName) {
-  const re = new RegExp(`var ${varName}\\s*=\\s*(\\[[\\s\\S]*?\\]|\\{[\\s\\S]*?\\});`, 'm');
-  const m = html.match(re);
-  if (!m) return null;
-  try { return JSON.parse(m[1].replace(/<\\\//g, '</')); } catch (e) { return null; }
+if (existsSync(contactsJsonPath)) {
+  try {
+    const payload = JSON.parse(readFileSync(contactsJsonPath, 'utf8'));
+    contacts = Array.isArray(payload.contacts) ? payload.contacts : [];
+    stats = payload.stats || {};
+    console.log(`[build-contacts-page] loaded ${contacts.length} contacts from ${contactsJsonPath}`);
+  } catch (e) {
+    console.warn('[build-contacts-page] contacts.json parse failed:', e.message);
+  }
 }
-
-const contacts = extractGlobal('_CONTACTS_DATA') || [];
-const stats = extractGlobal('_CONTACTS_STATS') || {};
 
 if (contacts.length === 0) {
-  console.error('[build-contacts-page] no contacts extracted from dashboard/index.html — check the bake pipeline in build-dashboard.mjs');
+  if (!existsSync(dashboardHtmlPath)) {
+    console.error('[build-contacts-page] dashboard/index.html missing AND dashboard/data/contacts.json absent — run `node scripts/build-dashboard.mjs` first');
+    process.exit(1);
+  }
+  const html = readFileSync(dashboardHtmlPath, 'utf8');
+  const extract = (varName) => {
+    const re = new RegExp(`var ${varName}\\s*=\\s*(\\[[\\s\\S]*?\\]|\\{[\\s\\S]*?\\});`, 'm');
+    const m = html.match(re);
+    if (!m) return null;
+    try { return JSON.parse(m[1].replace(/<\\\//g, '</')); } catch (e) { return null; }
+  };
+  contacts = extract('_CONTACTS_DATA') || [];
+  stats = extract('_CONTACTS_STATS') || {};
+}
+
+if (contacts.length === 0) {
+  console.error('[build-contacts-page] no contacts extracted — check the bake pipeline in build-dashboard.mjs (expected dashboard/data/contacts.json or inline _CONTACTS_DATA)');
   process.exit(1);
 }
 
@@ -86,18 +104,92 @@ function computeEnrichmentTier(c) {
   return 1;
 }
 
-const TARGET_COMPANY_ALIASES = {
+// ---------------------------------------------------------------------------
+// Target companies — sourced from data/apply-now-queue.json at build time.
+// 2026-05-20 (BRAVO followup, Item 5 / AA-2): previous instance hard-coded a
+// 10-company alias map that didn't reflect Mitchell's live apply-now queue
+// (was missing Databricks, Deepgram, Ema, LangChain, Ramp at score ≥4.0).
+// Now the canonical list IS the queue. Known multi-string variations (cursor
+// → anysphere; eleven → elevenlabs) live in a small static alias map.
+// ---------------------------------------------------------------------------
+
+// Static aliases for companies whose name appears with multiple spellings in
+// the LinkedIn corpus. The KEY is the canonical slug; values are lower-case
+// strings to substring-match against contact.company.
+const KNOWN_ALIASES = {
   openai: ['openai', 'open ai'],
   anthropic: ['anthropic'],
-  sierra: ['sierra'],
   anysphere: ['cursor', 'anysphere'],
-  eleven: ['elevenlabs', 'eleven labs', 'eleven'],
-  mistral: ['mistral ai', 'mistral'],
+  elevenlabs: ['elevenlabs', 'eleven labs', 'eleven'],
+  'mistral ai': ['mistral ai', 'mistral'],
   perplexity: ['perplexity'],
   cohere: ['cohere'],
   cognition: ['cognition'],
   pinecone: ['pinecone'],
+  sierra: ['sierra'],
+  langchain: ['langchain', 'lang chain'],
+  databricks: ['databricks'],
+  deepgram: ['deepgram'],
+  ramp: ['ramp'],
+  ema: ['ema unlimited', 'ema'],
 };
+
+function slugify(s) {
+  return String(s || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^\w\s]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function loadTargetCompanies() {
+  const queuePath = join(REPO_ROOT, 'data/apply-now-queue.json');
+  if (!existsSync(queuePath)) {
+    console.warn('[build-contacts-page] data/apply-now-queue.json missing — falling back to static alias map');
+    return KNOWN_ALIASES;
+  }
+  try {
+    const queue = JSON.parse(readFileSync(queuePath, 'utf8'));
+    const ranked = Array.isArray(queue.ranked) ? queue.ranked : [];
+    // Score threshold 4.0 mirrors what dashboard-server.mjs uses for the apply-now economics
+    // (search "applyNowSize" in dashboard-server.mjs).
+    const companies = new Set();
+    for (const row of ranked) {
+      if (row._dropped) continue;
+      const score = Number(row.eval_score || row.score || 0);
+      if (score < 4.0) continue;
+      const co = String(row.company || '').trim();
+      if (co) companies.add(co.toLowerCase());
+    }
+    if (companies.size === 0) {
+      console.warn('[build-contacts-page] apply-now-queue.json has no rows ≥4.0 — falling back');
+      return KNOWN_ALIASES;
+    }
+    // Merge with alias map. Each entry → { slug: [aliases] }.
+    const out = {};
+    for (const co of companies) {
+      // Find any KNOWN_ALIASES entry whose aliases include this company (or a substring of it).
+      let knownSlug = null;
+      for (const [slug, aliases] of Object.entries(KNOWN_ALIASES)) {
+        if (aliases.some((a) => co.includes(a) || a.includes(co))) {
+          knownSlug = slug;
+          break;
+        }
+      }
+      const slug = knownSlug || slugify(co);
+      if (!out[slug]) out[slug] = knownSlug ? KNOWN_ALIASES[knownSlug].slice() : [];
+      if (!out[slug].includes(co)) out[slug].push(co);
+    }
+    console.log(`[build-contacts-page] target-company list sourced from apply-now-queue.json: ${Object.keys(out).length} companies`);
+    return out;
+  } catch (e) {
+    console.warn('[build-contacts-page] failed to parse apply-now-queue.json:', e.message);
+    return KNOWN_ALIASES;
+  }
+}
+
+const TARGET_COMPANY_ALIASES = loadTargetCompanies();
 
 function isTargetCompany(c) {
   const co = String(c.company || '').toLowerCase().trim();
@@ -147,6 +239,27 @@ annotated.forEach((c) => {
 });
 
 console.log(`[build-contacts-page] tiers: T3=${tierCounts[3]} T2=${tierCounts[2]} T1=${tierCounts[1]}; warm-to-apply-now=${warmToApplyNowCount}; in-outreach=${inOutreachCount}`);
+
+// Emit the resolved target-company list to a runtime JSON file so other
+// surfaces (network-database.html, future filter-harmonization) can consume
+// the same source-of-truth. Keyed by slug, values = { aliases, count }.
+const targetListPath = join(REPO_ROOT, 'dashboard/data/apply-now-targets.json');
+const targetListPayload = {
+  generated_at: new Date().toISOString(),
+  source: 'data/apply-now-queue.json (rows with eval_score|score ≥ 4.0)',
+  targets: Object.fromEntries(
+    Object.entries(TARGET_COMPANY_ALIASES).map(([slug, aliases]) => [
+      slug,
+      { aliases, count: targetCounts[slug] || 0 },
+    ])
+  ),
+};
+try {
+  writeFileSync(targetListPath, JSON.stringify(targetListPayload, null, 2));
+  console.log(`[build-contacts-page] wrote ${targetListPath} (${Object.keys(targetListPayload.targets).length} targets)`);
+} catch (e) {
+  console.warn('[build-contacts-page] failed to write apply-now-targets.json:', e.message);
+}
 
 // ---------------------------------------------------------------------------
 // Page CSS — page-specific styles that complement the shell.
@@ -681,10 +794,99 @@ const pageCSS = `
   font-size: 10.5px;
 }
 
-/* When compact-mode is on, the grid stacks as single-column rows */
+/* ── BRAVO followup Item 6 / AA-7 — enrichment confirmation modal ─── */
+.enrich-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  z-index: 10001;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+.enrich-modal-backdrop.visible { display: flex; }
+.enrich-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 8px);
+  padding: 24px 28px;
+  max-width: 480px;
+  width: 90%;
+  color: var(--text);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+}
+.enrich-modal h2 {
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-weight: 600;
+}
+.enrich-modal-body {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text-2);
+  margin: 0 0 18px;
+}
+.enrich-modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+.enrich-modal-cancel,
+.enrich-modal-confirm {
+  padding: 9px 16px;
+  font-size: 13px;
+  font-family: inherit;
+  font-weight: 600;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+.enrich-modal-cancel {
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.enrich-modal-cancel:hover { background: var(--border); }
+.enrich-modal-confirm {
+  background: var(--blue-bg);
+  color: var(--blue-fg);
+  border-color: var(--blue-fg);
+}
+.enrich-modal-confirm:hover { filter: brightness(1.1); }
+.enrich-modal-cancel:focus-visible,
+.enrich-modal-confirm:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ── BRAVO followup Item 7 / AA-3 — J/K card navigation ───────────── */
+.contact-card[tabindex] { outline: none; }
+.contact-card[tabindex]:focus-visible {
+  outline: 2px solid var(--blue-fg);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(100,116,139,0.18);
+}
+.contact-card.contact-card-jk-active {
+  border-color: var(--blue-fg);
+  background: var(--surface);
+}
+
+/* When compact-mode is on (Show all stubs toggled), STUBS render as
+   single-column dense rows but enriched cards KEEP their multi-col rhythm.
+   2026-05-20 — BRAVO followup Item 3 / AAA-5: the previous instance collapsed
+   the whole grid to 1fr which stretched enriched cards to full width on wide
+   viewports. Now only stub cards span the full row via grid-column: 1 / -1. */
 .grid.compact-stubs {
-  grid-template-columns: 1fr;
-  gap: 4px;
+  /* Keep the auto-fill multi-col grid; gap shrinks slightly so stub rows pack
+     denser, but enriched cards still flow as 2+ columns at 1440px. */
+  gap: 8px;
+}
+.grid.compact-stubs .contact-card.is-stub-compact {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}
+.grid.compact-stubs .contact-card:not(.is-stub-compact) {
+  /* Enriched cards keep their multi-col rhythm — no override needed since
+     the grid container still uses auto-fill minmax(420px, 1fr). */
 }
 
 /* Result meta + empty state */
@@ -786,7 +988,7 @@ function renderCard(c) {
     ? ''
     : `<button type="button" class="contact-act contact-act-photo" onclick="scrapePhoto('${esc(c.id)}','${esc(linkedinUrl)}')">📸 Photo</button>`;
 
-  return `<article class="contact-card" id="contact-card-${esc(c.id)}" data-tier="${c._tier}" data-target="${esc(c._target_slug||'')}" data-warm-apply-now="${c._is_warm_apply_now?1:0}" data-in-outreach="${c.in_outreach?1:0}" data-has-email="${email?1:0}" data-warm-strength="${c.warm_path_strength||0}" data-last-touched-days="${c._last_touched_days===Infinity?9999:c._last_touched_days}">
+  return `<article class="contact-card" id="contact-card-${esc(c.id)}" tabindex="0" aria-label="${esc(name)} — ${esc(position || 'role unknown')} at ${esc(company || 'company unknown')}" data-tier="${c._tier}" data-target="${esc(c._target_slug||'')}" data-warm-apply-now="${c._is_warm_apply_now?1:0}" data-in-outreach="${c.in_outreach?1:0}" data-has-email="${email?1:0}" data-warm-strength="${c.warm_path_strength||0}" data-last-touched-days="${c._last_touched_days===Infinity?9999:c._last_touched_days}">
     <div class="contact-card-head">
       <div class="contact-card-avatar">${photoHtml}</div>
       <div class="contact-card-identity">
@@ -823,16 +1025,33 @@ const enrichedRate = ((totalT3 + totalT2) / totalContacts * 100).toFixed(1);
 
 const cardsHtml = annotated.map(renderCard).join('\n');
 
-// Build the target-companies dropdown options
-const targetCompaniesHtml = Object.keys(TARGET_COMPANY_ALIASES).map((slug) => {
-  const count = targetCounts[slug] || 0;
-  const label = slug.charAt(0).toUpperCase() + slug.slice(1).replace('anysphere', 'Cursor');
-  return `<label class="filter-dropdown-option">
+// Build the target-companies dropdown options — sorted by warm-contact count
+// (descending) so the most useful targets surface first. The label comes from
+// the canonical company name (longest alias entry, title-cased), with a small
+// override map for the known display-name remaps (anysphere → Cursor, etc.).
+const DISPLAY_NAME_OVERRIDES = {
+  anysphere: 'Cursor (Anysphere)',
+  elevenlabs: 'ElevenLabs',
+  'mistral ai': 'Mistral AI',
+  openai: 'OpenAI',
+  langchain: 'LangChain',
+};
+
+const targetCompaniesHtml = Object.entries(TARGET_COMPANY_ALIASES)
+  .map(([slug, aliases]) => ({
+    slug,
+    count: targetCounts[slug] || 0,
+    label: DISPLAY_NAME_OVERRIDES[slug]
+      || aliases.reduce((longest, a) => a.length > longest.length ? a : longest, slug)
+        .replace(/\b\w/g, (c) => c.toUpperCase()),
+  }))
+  .sort((a, b) => (b.count - a.count) || a.label.localeCompare(b.label))
+  .map(({ slug, count, label }) => `<label class="filter-dropdown-option">
     <input type="checkbox" data-target-company="${esc(slug)}" />
     <span>${esc(label)}</span>
     <span class="filter-dropdown-option-count">${count}</span>
-  </label>`;
-}).join('\n');
+  </label>`)
+  .join('\n');
 
 const mainHTML = `
   <div class="contacts-header">
@@ -1234,15 +1453,102 @@ const pageJS = `
     el.classList.add('contact-card-flash');
     setTimeout(function () { el.classList.remove('contact-card-flash'); }, 1600);
   };
+  // ── BRAVO followup Item 6 / AA-7 — styled confirmation modal ───────
+  // Replaces native window.confirm() with a focus-trapped <dialog>-style
+  // modal that lives alongside the shortcuts-modal pattern.
+  function ensureEnrichModal() {
+    if (document.getElementById('enrich-confirm-bd')) return;
+    var bd = document.createElement('div');
+    bd.id = 'enrich-confirm-bd';
+    bd.className = 'enrich-modal-backdrop';
+    bd.setAttribute('aria-hidden', 'true');
+    bd.setAttribute('role', 'dialog');
+    bd.setAttribute('aria-modal', 'true');
+    bd.setAttribute('aria-labelledby', 'enrich-modal-title');
+    bd.setAttribute('aria-describedby', 'enrich-modal-body');
+    bd.innerHTML = [
+      '<div class="enrich-modal" role="document">',
+      '<h2 id="enrich-modal-title">Confirm enrichment</h2>',
+      '<p id="enrich-modal-body" class="enrich-modal-body"></p>',
+      '<div class="enrich-modal-actions">',
+      '<button type="button" class="enrich-modal-cancel" id="enrich-modal-cancel">Cancel</button>',
+      '<button type="button" class="enrich-modal-confirm" id="enrich-modal-confirm">Queue enrichment</button>',
+      '</div>',
+      '</div>'
+    ].join('');
+    document.body.appendChild(bd);
+  }
+  function openEnrichModal(opts) {
+    return new Promise(function (resolve) {
+      ensureEnrichModal();
+      var bd = document.getElementById('enrich-confirm-bd');
+      var body = document.getElementById('enrich-modal-body');
+      var confirmBtn = document.getElementById('enrich-modal-confirm');
+      var cancelBtn = document.getElementById('enrich-modal-cancel');
+      body.textContent = opts.message || 'Confirm action?';
+      confirmBtn.textContent = opts.confirmLabel || 'Confirm';
+      cancelBtn.textContent = opts.cancelLabel || 'Cancel';
+      // Focus trap — capture last-focused element for restore.
+      var lastFocus = document.activeElement;
+      function close(result) {
+        bd.classList.remove('visible');
+        bd.setAttribute('aria-hidden', 'true');
+        document.removeEventListener('keydown', keyHandler);
+        bd.removeEventListener('click', backdropClick);
+        confirmBtn.removeEventListener('click', onConfirm);
+        cancelBtn.removeEventListener('click', onCancel);
+        if (lastFocus && typeof lastFocus.focus === 'function') {
+          try { lastFocus.focus(); } catch (_) {}
+        }
+        resolve(result);
+      }
+      function onConfirm() { close(true); }
+      function onCancel() { close(false); }
+      function keyHandler(e) {
+        if (e.key === 'Escape') { e.preventDefault(); close(false); return; }
+        if (e.key === 'Tab') {
+          // Focus trap between cancel + confirm
+          var focusables = [cancelBtn, confirmBtn];
+          var idx = focusables.indexOf(document.activeElement);
+          if (idx === -1) { focusables[0].focus(); e.preventDefault(); return; }
+          var nextIdx = e.shiftKey ? (idx === 0 ? focusables.length - 1 : idx - 1)
+                                   : (idx === focusables.length - 1 ? 0 : idx + 1);
+          focusables[nextIdx].focus();
+          e.preventDefault();
+        }
+        if (e.key === 'Enter' && document.activeElement === confirmBtn) {
+          e.preventDefault();
+          close(true);
+        }
+      }
+      function backdropClick(e) { if (e.target === bd) close(false); }
+      confirmBtn.addEventListener('click', onConfirm);
+      cancelBtn.addEventListener('click', onCancel);
+      document.addEventListener('keydown', keyHandler);
+      bd.addEventListener('click', backdropClick);
+      bd.classList.add('visible');
+      bd.setAttribute('aria-hidden', 'false');
+      // Initial focus on Cancel (safer default per WAI-ARIA APG dialog pattern)
+      setTimeout(function () { cancelBtn.focus(); }, 0);
+    });
+  }
+  window.openEnrichModal = openEnrichModal;
+
   window.enrichNow = function (id) {
-    if (!confirm('Queue this contact for LLM enrichment (~$0.50)?')) return;
-    fetch('/api/refresh-cache', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ cache: 'contact_enrichment', key: id, priority: 'user-triggered' })
-    })
-      .then(function (r) { return r.ok ? alert('Queued. Reload after ~10 min.') : alert('Failed; check dashboard-server logs.'); })
-      .catch(function (e) { alert('Network error: ' + e.message); });
+    openEnrichModal({
+      message: 'Queue this contact for LLM enrichment? Approximate cost is $0.50 per contact. The contact will be processed in the next batch (~10 min).',
+      confirmLabel: 'Queue enrichment',
+      cancelLabel: 'Cancel'
+    }).then(function (ok) {
+      if (!ok) return;
+      fetch('/api/refresh-cache', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ cache: 'contact_enrichment', key: id, priority: 'user-triggered' })
+      })
+        .then(function (r) { return r.ok ? alert('Queued. Reload after ~10 min.') : alert('Failed; check dashboard-server logs.'); })
+        .catch(function (e) { alert('Network error: ' + e.message); });
+    });
   };
   window.scrapePhoto = function (id, linkedinUrl) {
     if (!linkedinUrl) { alert('No LinkedIn URL.'); return; }
@@ -1272,6 +1578,65 @@ const pageJS = `
       delete btn.dataset.revealed;
     }
   };
+
+  // ── BRAVO followup Item 7 / AA-3 — J/K card navigation ──────────────
+  // j = focus next visible card; k = focus previous; Enter on a focused card
+  // = open the first action button (LinkedIn / email). Bails on form-field
+  // focus so it doesn't interfere with the search input.
+  function getVisibleCards() {
+    return Array.from(document.querySelectorAll('.contact-card'))
+      .filter(function (el) {
+        if (el.style.display === 'none') return false;
+        var r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      });
+  }
+  function focusCard(card) {
+    if (!card) return;
+    document.querySelectorAll('.contact-card.contact-card-jk-active').forEach(function (c) {
+      c.classList.remove('contact-card-jk-active');
+    });
+    card.classList.add('contact-card-jk-active');
+    card.focus({ preventScroll: false });
+    card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    // Aria-live announcement
+    var ann = document.getElementById('_shortcut-announcer');
+    if (ann) {
+      var name = card.getAttribute('aria-label') || 'card';
+      ann.textContent = 'Focused ' + name;
+    }
+  }
+  document.addEventListener('keydown', function (e) {
+    var t = e.target;
+    if (!t) return;
+    var tag = (t.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select' || t.isContentEditable) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === 'j' || e.key === 'k') {
+      var cards = getVisibleCards();
+      if (cards.length === 0) return;
+      var active = document.activeElement && document.activeElement.classList && document.activeElement.classList.contains('contact-card')
+        ? document.activeElement
+        : null;
+      var idx = active ? cards.indexOf(active) : -1;
+      var next;
+      if (e.key === 'j') {
+        next = idx === -1 ? cards[0] : cards[Math.min(cards.length - 1, idx + 1)];
+      } else {
+        next = idx === -1 ? cards[cards.length - 1] : cards[Math.max(0, idx - 1)];
+      }
+      e.preventDefault();
+      focusCard(next);
+    }
+    if (e.key === 'Enter' && t.classList && t.classList.contains('contact-card')) {
+      // Open the first non-disabled action button on the focused card.
+      var act = t.querySelector('.contact-card-actions a.contact-act, .contact-card-actions button.contact-act:not(.contact-act-disabled)');
+      if (act) {
+        e.preventDefault();
+        act.click();
+      }
+    }
+  });
 
   // Initial render
   applyFilters();

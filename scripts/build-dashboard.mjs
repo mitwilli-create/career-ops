@@ -2709,6 +2709,16 @@ function _translateTechnicalToPlain(s) {
   out = out.replace(/\b(\d+)\s+yrs?\b/gi, '$1 years');
   out = out.replace(/\bvs\s+JD\s+(\d+(?:-\d+)?)\s+ask\b/gi, 'against the JD’s $1-year requirement');
 
+  // Audit Tier 5 (2026-05-20): file-path leakage. Swap corpus paths for
+  // plain English so the surface reads as prose, not grep output.
+  out = out.replace(/\bconfig\/profile\.yml\s+target_roles\.primary\b/gi, 'your primary target-role list');
+  out = out.replace(/\bconfig\/profile\.yml\b/gi, 'your profile config');
+  out = out.replace(/\bmodes\/_profile\.md\b/gi, 'your profile narrative');
+  out = out.replace(/\barticle-digest\.md\b/gi, 'your article digest');
+  out = out.replace(/\bcv\.md:(\d+)(?:-(\d+))?\b/gi, function(_, a, b) { return b ? ('your CV (lines ' + a + '–' + b + ')') : ('your CV (line ' + a + ')'); });
+  out = out.replace(/\bcv\.md\b/gi, 'your CV');
+  out = out.replace(/\[(\d{3,4})\]\(reports\/[^)]+\)/g, 'report $1');
+
   // Cleanup extra middots / spaces
   out = out.replace(/\s*·\s*/g, ' · ').replace(/\s{2,}/g, ' ').trim();
   return out;
@@ -3031,6 +3041,16 @@ function renderRow(r, idx) {
   // from it.
   // Wave C-A drill-in: each bullet → story:{num}:{slugified-requirement}
   const _slugifyReq = (s) => String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,60);
+  // Audit Tier 4 #16 + #17 (2026-05-20): footer with Anthropic certs chip
+  // (when company is Anthropic) + always-on link to article-digest.md.
+  const _isAnthropicRow = /^anthropic$/i.test(String(r.company || '').trim());
+  const _matchFooterParts = [];
+  if (_isAnthropicRow) {
+    _matchFooterParts.push('<span class="match-credential-chip" style="display:inline-block;font-size:11px;padding:3px 9px;border-radius:999px;background:rgba(99,102,241,.12);color:var(--blue-fg);border:1px solid rgba(99,102,241,.32);margin-right:6px" title="Mitchell earned 4 Anthropic certifications in March 2026 — directly answers the heavy-Claude-Code-user credibility gate">&#x1f393; Your Anthropic credentials &middot; 4 certs (Mar 2026)</span>');
+  }
+  _matchFooterParts.push('<a href="article-digest.md" target="_blank" rel="noopener" style="display:inline-block;font-size:11px;color:var(--blue-fg);text-decoration:underline dotted" title="Open the full article digest — your accumulated proof points across journalism, comms, and AI-builder work">More proof points: your article digest &rarr;</a>');
+  const _matchFooter = `<div class="match-footer" style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);line-height:1.7">${_matchFooterParts.join('')}</div>`;
+
   const matchCard = edge.length ? `<div class="dcard dcard--match">
     <div class="dcard-label">Fit evidence — what matches your background</div>
     <ul class="match-list">
@@ -3046,6 +3066,7 @@ function renderRow(r, idx) {
       </li>`;
       }).join('')}
     </ul>
+    ${_matchFooter}
   </div>` : '';
 
   // ── Card 2: Gap (amber / WHAT'S MISSING) ─────────────────
@@ -3249,6 +3270,8 @@ function renderRow(r, idx) {
           const _bl  = _src.blind_url      || `https://www.teamblind.com/company/${encodeURIComponent(r.company.replace(/\s+/g,'-'))}/salaries`;
           const _row = (label, val, href) =>
             val ? `<li style="margin-bottom:6px;line-height:1.55"><a href="${htmlEscape(href)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:var(--text-2);font-weight:700;text-decoration:underline dotted;text-decoration-color:var(--text-4)">${htmlEscape(label)}</a> <span style="color:var(--text-3)">→</span> ${htmlEscape(String(val))}</li>` : '';
+          // Audit Tier 5 (2026-05-20): "What to ask the recruiter" footer
+          // turns the comp-intel card from passive data into interview prep.
           return `<div class="dcard dcard--comp rd-comp-intel" style="margin-top:10px">
             <div class="dcard-label">Comp intelligence</div>
             <ul class="dcard-bullets" style="margin:0;padding-left:18px;font-size:12.5px">
@@ -3258,6 +3281,9 @@ function renderRow(r, idx) {
               ${_row('Glassdoor',  _ci.glassdoor,  _gd)}
               ${_row('Blind',      _ci.blind,      _bl)}
             </ul>
+            <div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);font-size:11.5px;color:var(--text-3);line-height:1.55">
+              <strong style="color:var(--text-2)">What to ask the recruiter:</strong> the disclosed base range, the equity grant size in shares + most recent 409A price, vesting schedule (typical: 4-year, 1-year cliff), sign-on bonus or relocation, and whether the band is firm or has top-of-band flex for senior candidates. For pre-IPO equity, ask about the secondary tender cadence so you understand liquidity.
+            </div>
           </div>`;
         } catch (_) { return ''; }
       })()}
@@ -14202,7 +14228,28 @@ function openRightRailForDetail(idx, detailRow) {
   const statusEl = row?.querySelector('td.status-cell .status-pill, .status-pill');
   const statusHtml = statusEl ? statusEl.outerHTML : '';
   const tierEl = row?.querySelector('.tier-tag');
-  const tierHtml = tierEl ? tierEl.outerHTML : '';
+  // Audit Tier 4 #18 (2026-05-20): the bare tier letter ("B") is opaque
+  // in the drawer header. Enrich the cloned tier badge with an explanatory
+  // title attr keyed by the letter so a hover surfaces the archetype name.
+  let tierHtml = tierEl ? tierEl.outerHTML : '';
+  if (tierHtml && tierEl) {
+    const tierLetter = (tierEl.textContent || '').trim().toUpperCase();
+    const tierLabelMap = {
+      'A1': 'Tier A1 — AI Residency (research-leaning, time-bounded program)',
+      'A2': 'Tier A2 — AI Builder (production builder, FDE, Applied AI, SA)',
+      'B':  'Tier B — Comms / Editorial (writing, editing, narrative + agent fluency)',
+      'C':  'Tier C — Adjacent (interesting but off the bullseye archetypes)',
+      'D':  'Tier D — Stretch (high-equity / high-fit but lower probability)',
+    };
+    const tierTitle = tierLabelMap[tierLetter];
+    if (tierTitle) {
+      if (/\btitle=/.test(tierHtml)) {
+        tierHtml = tierHtml.replace(/\btitle="[^"]*"/, 'title="' + _drawerEscape(tierTitle) + '"');
+      } else {
+        tierHtml = tierHtml.replace(/^<(\w+)/, '<$1 title="' + _drawerEscape(tierTitle) + '"');
+      }
+    }
+  }
 
   // Favicon: prefer the role-title link (now the canonical JD URL since
   // we dropped the Apply column). Fall back to the company /careers link
@@ -14304,20 +14351,24 @@ function openRightRailForDetail(idx, detailRow) {
         var _whyToggleId = 'drawer-why-toggle-' + num;
         var _reportHref = row ? (row.querySelector('a[href^="reports/"]') || {}).href : '';
 
-        // Gates chips (passed ✅, failed ⚠️)
-        var _gateChips = '';
+        // Audit Tier 3 #13 (2026-05-20): split gate chips. PASSED chips
+        // render ABOVE the "Why N.N?" disclosure — always visible. FAILED
+        // + soft gaps stay inside the collapsible.
+        var _passedChips = '';
         if (_ps5.gatesPassed && _ps5.gatesPassed.length) {
-          _gateChips += _ps5.gatesPassed.map(function(g) { return '<span class="why-chip why-chip-pass">✅ ' + g + '</span>'; }).join('');
+          _passedChips = _ps5.gatesPassed.map(function(g) { return '<span class="why-chip why-chip-pass" title="JD must-have you cleanly hit">✅ ' + g + '</span>'; }).join('');
         }
+        var _gateChips = '';
         if (_ps5.gatesFailed && _ps5.gatesFailed.length) {
-          _gateChips += _ps5.gatesFailed.map(function(g) { return '<span class="why-chip why-chip-fail">⚠️ ' + g + '</span>'; }).join('');
+          _gateChips += _ps5.gatesFailed.map(function(g) { return '<span class="why-chip why-chip-fail" title="JD must-have your CV does not cleanly hit">⚠️ ' + g + '</span>'; }).join('');
         }
         if (_ps5.softGaps && _ps5.softGaps.length) {
-          _gateChips += _ps5.softGaps.slice(0, 3).map(function(g) { return '<span class="why-chip why-chip-soft">⚠ ' + g.slice(0, 40) + '</span>'; }).join('');
+          _gateChips += _ps5.softGaps.slice(0, 3).map(function(g) { return '<span class="why-chip why-chip-soft" title="Soft gap — addressable in your cover letter or interview">⚠ ' + g.slice(0, 40) + '</span>'; }).join('');
         }
 
         _whyDisclosure.innerHTML =
-          '<button type="button" class="why-summary-btn" aria-expanded="false" aria-controls="' + _whyToggleId + '">'
+          (_passedChips ? '<div class="why-chips why-chips--passed-preview" style="margin-bottom:6px"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-4);margin-bottom:4px">JD must-haves you cleanly hit</div>' + _passedChips + '</div>' : '')
+          + '<button type="button" class="why-summary-btn" aria-expanded="false" aria-controls="' + _whyToggleId + '">'
           + (scoreStr ? 'Why ' + scoreStr + '?' : 'Score rationale')
           + '<span class="why-summary-text">' + (_ps5.summary || '') + '</span>'
           + '</button>'
@@ -17833,6 +17884,11 @@ function _injectPrevNextRibbon(currentIdx) {
   // Remove old ribbon if present
   var old = bodyEl.querySelector('.prev-next-ribbon');
   if (old) old.remove();
+  // Audit Tier 5 (2026-05-20): the body-mounted prev/next strip duplicated
+  // the richer footer #right-rail-ribbon ("NEXT Perplexity — Executiv..."
+  // with company + role). Two nav strips for the same purpose. Drop the
+  // body strip; the footer ribbon is the canonical surface.
+  return;
   // Audit Tier 5 (2026-05-20): the body-mounted prev/next strip duplicated
   // the richer footer #right-rail-ribbon ("NEXT Perplexity — Executiv..."
   // with company + role) — two nav strips for the same purpose. Drop the

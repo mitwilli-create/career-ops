@@ -57,6 +57,10 @@ reports/**/*.md
 
 # Generated dashboard HTML (contains user job-search data)
 dashboard/index.html
+# Generated contacts page (P4.37 pattern, 2026-05-20) — built by
+# scripts/build-contacts-page.mjs (invoked from build-dashboard.mjs:31539).
+# Contains user contact data; rebuilt on every dashboard build.
+dashboard/contacts.html
 output/*
 !output/.gitkeep
 batch/logs/*
@@ -248,3 +252,9 @@ data/launchd-wrapper-state.json.tmp
 dashboard/data/contacts.json
 dashboard/data/wave-cb.json
 dashboard/data/pill-data.json
+# P4.37 pattern (2026-05-20) — build outputs of scripts/build-contacts-page.mjs,
+# regenerated on every dashboard build. contacts-annotated.json is ~2.6 MB of
+# personal contact annotations; apply-now-targets.json lists user's target
+# companies. Both are personal data — never commit.
+dashboard/data/contacts-annotated.json
+dashboard/data/apply-now-targets.json

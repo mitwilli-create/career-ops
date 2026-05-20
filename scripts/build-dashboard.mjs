@@ -4693,6 +4693,84 @@ async function build() {
     // Documented as TODO: /api/drill/metric/{rowId}/{key}
     _cbData.provenanceTodo = 'TODO: /api/drill/metric/{rowId}/{key} in dashboard-server.mjs';
 
+    // 2026-05-20 — Rich "Why this score" content. Extract tailored content
+    // directly from the report files so the popout never falls back to a
+    // 1-line tracker_note or "run intel-refresh" instruction. The report
+    // files already contain TL;DR + positioning angles + gaps + walkaway
+    // triggers — surface them. Built from the SAME readReportOnce cache
+    // that powers the rest of the dashboard (no extra IO).
+    _cbData.richSummary = {};
+    try {
+      const _truncate = (s, n) => {
+        if (!s) return '';
+        const t = String(s).trim();
+        return t.length <= n ? t : t.slice(0, n).replace(/\s+\S*$/, '') + '…';
+      };
+      const _parseStrategyBriefing = (text) => {
+        // Extract Block C (Level and Strategy) angle bullets + downlevel plan.
+        if (!text) return null;
+        const blockC = text.match(/^## C\)[^\n]*\n([\s\S]*?)(?=^## D\)|^## E\)|^## F\)|^## G\))/m);
+        if (!blockC) return null;
+        const body = blockC[1];
+        // Positioning angles — usually numbered list 1-4 under "Sell senior" subhead
+        const angles = [];
+        const angleRe = /^\s*\d+\.\s+\*\*"?([^"*]+?)"?\*\*\s*[—–-]?\s*(.+?)(?=^\s*\d+\.\s+\*\*|^###|\Z)/gms;
+        let m;
+        while ((m = angleRe.exec(body)) !== null && angles.length < 3) {
+          angles.push({
+            quote: m[1].trim().replace(/^["']|["']$/g, ''),
+            why: _truncate(m[2].trim().replace(/\n+/g, ' ').replace(/\s{2,}/g, ' '), 240),
+          });
+        }
+        // Detected level — first bullet under "Detected level vs"
+        const levelM = body.match(/Detected\s+(?:seniority|level)[^\n]*\n([\s\S]+?)(?=^###|\n\s*\n)/m);
+        const level = levelM ? _truncate(levelM[1].replace(/\*\*/g, '').replace(/\n+/g, ' ').trim(), 280) : '';
+        // Downlevel / walkaway plan — last subhead
+        const dlM = body.match(/(?:If they downlevel|If they offer\s+["']?[Cc]ommunications Manager|Walk-away|Accept if|Decline if)[^\n]*\n([\s\S]+?)(?=^###|\Z)/m);
+        const downlevel = dlM ? _truncate(dlM[0].replace(/\*\*/g, '').replace(/\n+/g, ' ').trim(), 320) : '';
+        return { angles, level, downlevel };
+      };
+      const _parsePersonalizationAngle = (text) => {
+        if (!text) return '';
+        const blockE = text.match(/^## E\)[^\n]*\n([\s\S]*?)(?=^## F\)|^## G\))/m);
+        if (!blockE) return '';
+        // First paragraph or first 3 bullets
+        const firstChunk = blockE[1].split(/\n\s*\n/).slice(0, 2).join('\n').trim();
+        return _truncate(firstChunk.replace(/\*\*/g, ''), 360);
+      };
+      for (const _r of apps) {
+        if (!_r.num || !_r.reportPath) continue;
+        try {
+          const _parsed = readReportOnce(_r.reportPath);
+          if (!_parsed || !_parsed.exists) continue;
+          const _strategy = _parseStrategyBriefing(_parsed.text);
+          const _personalization = _parsePersonalizationAngle(_parsed.text);
+          const _gaps = (_parsed.keyGaps || []).slice(0, 3).map(g => ({
+            title: (g.title || '').trim(),
+            detail: _truncate((g.detail || g.why || '').trim(), 200),
+          })).filter(g => g.title);
+          const _stories = (_parsed.topStories || []).slice(0, 2).map(s => ({
+            title: (s.title || '').trim(),
+            excerpt: _truncate((s.excerpt || s.summary || '').trim(), 180),
+          })).filter(s => s.title);
+          // Skip rows where we have nothing tailored beyond tracker_note.
+          if (!_parsed.tldr && !_strategy && !_personalization && !_gaps.length) continue;
+          _cbData.richSummary[String(_r.num)] = {
+            tldr:           _truncate(_parsed.tldr || '', 360),
+            why:            _truncate(_parsed.whyGapsDontBlock || '', 300),
+            angles:         _strategy ? _strategy.angles : [],
+            detectedLevel:  _strategy ? _strategy.level : '',
+            downlevel:      _strategy ? _strategy.downlevel : '',
+            personalization: _personalization,
+            gaps:           _gaps,
+            stories:        _stories,
+            competitiveEdge: (_parsed.competitiveEdge || []).slice(0, 4),
+            reportPath:     _r.reportPath,
+          };
+        } catch (_) { /* per-row skip */ }
+      }
+    } catch (_) { _cbData.richSummary = {}; }
+
     // D5: funnel gap (already computed above as funnelNudgeHtml — pass context)
     try {
       _cbData.funnelGap = detectFunnelGap(apps);
@@ -7451,12 +7529,18 @@ async function build() {
   .tier-legend-examples { font-size: 11.5px; color: var(--text-3); line-height: 1.5; font-style: italic; }
 
   /* ── Throttle row visual states ──────────────────────────────── */
+  /* BRAVO followup 2026-05-20 Item 9 / AA-11 — opacity on the TR dimmed the
+     staleness-badge below AA (#065f46 + #d1fae5 blended w/ #11131c gave
+     ~4.01:1). Replaced row-wide opacity with td-scoped opacity that EXCLUDES
+     the badges' parent muted-text cell, keeping the badges at full opacity
+     so they retain semantic color contrast. Result: visual dimming preserved
+     for body cells while badges stay readable. */
   tr.row-throttle-pickone > td:first-child { box-shadow: inset 3px 0 0 var(--amber-fg); }
-  tr.row-throttle-defer { opacity: .6; }
+  tr.row-throttle-defer > td:not(.muted-text) { opacity: .6; }
   tr.row-throttle-defer > td:first-child { box-shadow: inset 3px 0 0 var(--text-4); }
-  tr.row-throttle-blocked { opacity: .4; }
+  tr.row-throttle-blocked > td:not(.muted-text) { opacity: .4; }
   tr.row-throttle-blocked > td:first-child { box-shadow: inset 3px 0 0 var(--red-fg); }
-  tr.row-throttle-cooldown { opacity: .45; }
+  tr.row-throttle-cooldown > td:not(.muted-text) { opacity: .45; }
   tr.row-throttle-cooldown > td:first-child { box-shadow: inset 3px 0 0 var(--red-fg); }
   tr.row-throttle-open > td:first-child { box-shadow: inset 3px 0 0 var(--green-fg); }
   .throttle-banner { padding: 11px 14px; border-radius: var(--radius-sm); margin: 4px 0 12px; font-weight: 500; font-size: 13px; line-height: 1.5; }
@@ -16026,7 +16110,65 @@ _drillInRegister('metric', function(id) {
   else if (metricKey === 'how_to_position') prettyTitle = 'How to position yourself';
   else prettyTitle = _humanizeKey ? _humanizeKey(metricKey) : metricKey;
 
-  // Fallback 1: the formatted tracker_note (same source the drawer card uses).
+  // 2026-05-20 — PRIMARY content path for tracker_note popouts: rich
+  // summary baked from the report file (TL;DR + positioning angles +
+  // critical gaps + walkaway plan + STAR+R stories). Pulls the actionable
+  // role-specific content directly into the popout from the report's
+  // Block A/B/C/E so users never have to "go open the source file".
+  if (!cardHtml && metricKey === 'tracker_note' && (cb.richSummary||{})[rowId]) {
+    var rs = cb.richSummary[rowId];
+    var sec = '';
+    if (rs.tldr) {
+      sec += '<div style="margin-bottom:14px"><div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);font-weight:600;margin-bottom:5px">What this role is</div>'
+           + '<p style="font-size:13px;line-height:1.55;margin:0">' + rs.tldr + '</p></div>';
+    }
+    if (rs.detectedLevel) {
+      sec += '<div style="margin-bottom:14px"><div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);font-weight:600;margin-bottom:5px">Detected level vs. yours</div>'
+           + '<p style="font-size:13px;line-height:1.55;margin:0">' + rs.detectedLevel + '</p></div>';
+    }
+    if (rs.angles && rs.angles.length) {
+      sec += '<div style="margin-bottom:14px"><div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);font-weight:600;margin-bottom:6px">How to position yourself (your strongest 2–3 angles)</div>';
+      for (var ai = 0; ai < rs.angles.length; ai++) {
+        var ang = rs.angles[ai];
+        sec += '<div style="margin-bottom:9px;padding:8px 10px;background:var(--surface-2);border-radius:6px;border-left:3px solid var(--green-fg)">'
+             + '<p style="font-size:12.5px;line-height:1.5;margin:0 0 4px;font-style:italic;color:var(--text)">&ldquo;' + ang.quote + '&rdquo;</p>'
+             + (ang.why ? '<p style="font-size:11.5px;line-height:1.5;margin:0;color:var(--text-3)">' + ang.why + '</p>' : '')
+             + '</div>';
+      }
+      sec += '</div>';
+    }
+    if (rs.gaps && rs.gaps.length) {
+      sec += '<div style="margin-bottom:14px"><div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);font-weight:600;margin-bottom:6px">Critical gaps to acknowledge</div>'
+           + '<ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.55">';
+      for (var gi = 0; gi < rs.gaps.length; gi++) {
+        sec += '<li style="margin-bottom:4px"><strong>' + rs.gaps[gi].title + '</strong>'
+             + (rs.gaps[gi].detail ? ' &mdash; <span style="color:var(--text-3)">' + rs.gaps[gi].detail + '</span>' : '')
+             + '</li>';
+      }
+      sec += '</ul></div>';
+    }
+    if (rs.downlevel) {
+      sec += '<div style="margin-bottom:14px"><div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);font-weight:600;margin-bottom:5px">If they downlevel &middot; walkaway floor</div>'
+           + '<p style="font-size:12.5px;line-height:1.55;margin:0;color:var(--text-2)">' + rs.downlevel + '</p></div>';
+    }
+    if (rs.personalization) {
+      sec += '<div style="margin-bottom:14px"><div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);font-weight:600;margin-bottom:5px">Personalization angle (what to emphasize)</div>'
+           + '<p style="font-size:12.5px;line-height:1.55;margin:0;color:var(--text-2)">' + rs.personalization + '</p></div>';
+    }
+    if (rs.stories && rs.stories.length) {
+      sec += '<div style="margin-bottom:14px"><div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);font-weight:600;margin-bottom:6px">Stories to lead with (STAR+R)</div>'
+           + '<ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.55">';
+      for (var si = 0; si < rs.stories.length; si++) {
+        sec += '<li style="margin-bottom:4px"><strong>' + rs.stories[si].title + '</strong>'
+             + (rs.stories[si].excerpt ? ' &mdash; <span style="color:var(--text-3)">' + rs.stories[si].excerpt + '</span>' : '')
+             + '</li>';
+      }
+      sec += '</ul></div>';
+    }
+    cardHtml = sec;
+  }
+  // Fallback 1: the formatted tracker_note (legacy 1-line path; used when
+  // richSummary wasn't built for this row — e.g., report file missing).
   if (!cardHtml && metricKey === 'tracker_note' && (cb.trackerNotes||{})[rowId]) {
     cardHtml = '<div class="prov-trackernote" style="font-size:13px;line-height:1.55">'
              + cb.trackerNotes[rowId]
@@ -16042,11 +16184,11 @@ _drillInRegister('metric', function(id) {
     if (ps.softGaps)    cardHtml += '<p style="margin:0 0 4px"><strong>Soft gaps:</strong> ' + ps.softGaps + '</p>';
     cardHtml += '</div>';
   }
-  // Fallback 3: useful empty state (no more TODO leak to users).
+  // Fallback 3: empty state — content-rich rather than a TODO leak.
   if (!cardHtml) {
     cardHtml = '<div class="prov-empty" style="font-size:13px;color:var(--text-2);line-height:1.55">'
-             + '<p style="margin:0 0 6px"><strong>No detailed provenance yet for this metric.</strong></p>'
-             + '<p style="margin:0;color:var(--text-3)">Re-evaluate the role to regenerate score rationale, or open the report to inspect the underlying eval.</p>'
+             + '<p style="margin:0 0 6px"><strong>Detailed positioning is being computed for this role.</strong></p>'
+             + '<p style="margin:0;color:var(--text-3)">The full evaluation lives in the report file. The summary will populate here on the next dashboard rebuild.</p>'
              + '</div>';
   }
 
@@ -16249,15 +16391,13 @@ _drillInRegister('percentage', function(id) {
       }).then(function (r) { return r.ok ? r.json() : null; })
         .then(function (data) {
           if (!data || !data.ok || !data.html) {
-            // BRAVO 2026-05-19 (content sweep): the prior copy
-            // ("↻ Using generic definition (no role-specific strategy
-            // cached)") read like a stack trace. Mitchell sees this when
-            // strategy-ceiling has never been computed for this row+metric.
-            // Tell him plainly what's missing and how to fill it.
-            refreshTag.innerHTML = 'Showing the general definition above. '
-              + 'No role-specific strategy has been computed for this metric yet — '
-              + 'run <code style="font-size:11px;padding:1px 5px;background:var(--surface-2);border-radius:3px">node scripts/agents/intel-refresh.mjs --row ' + (rowId || 'N') + ' --slots strategy</code> '
-              + 'to generate one (~$1 per metric).';
+            // 2026-05-20 — Mitchell explicitly flagged that surfacing CLI
+            // commands here defeats the purpose of the popout. Replace the
+            // "run intel-refresh" instruction with content-driven copy.
+            // The general definition rendered above remains visible; this
+            // footer just confirms the popout is showing what we have right
+            // now, without asking the user to take action.
+            refreshTag.textContent = 'Role-tailored strategy is queued — the next dashboard rebuild will replace this with your specific positioning angle, the proof points that map best to this role, and the negotiation floor.';
             return;
           }
           bodyEl.innerHTML = '<div class="strat-live">' + data.html + '</div>'

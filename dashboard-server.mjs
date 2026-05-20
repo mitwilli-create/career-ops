@@ -4145,6 +4145,39 @@ const server = createServer((req, res) => {
   if (url === '/api/pipeline/preview') {
     return json(buildPipelinePreview());
   }
+  // 2026-05-20 — Single-row re-eval triggered by the ↻ Re-score button on
+  // a row's alignment bars. Spawns batch-runner-batches.mjs --row N
+  // --rescore as a detached child + returns immediately. Logs to
+  // batch/logs/rescore-<row>-<ts>.log.
+  if (url === '/api/eval/rescore' && req.method === 'POST') {
+    let body = '';
+    let total = 0;
+    req.on('data', c => { total += c.length; if (total > 4 * 1024) { req.destroy(); return; } body += c; });
+    req.on('end', async () => {
+      let parsed;
+      try { parsed = JSON.parse(body || '{}'); }
+      catch { return json({ ok: false, error: 'Invalid JSON' }, 400); }
+      const row = String(parsed.row || '').trim();
+      if (!/^\d+$/.test(row)) return json({ ok: false, error: 'row must be a positive integer' }, 400);
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      const logPath = join(ROOT, 'batch/logs/rescore-' + row + '-' + ts + '.log');
+      try {
+        const { spawn } = await import('node:child_process');
+        const { openSync } = await import('node:fs');
+        const child = spawn('node', [join(ROOT, 'batch-runner-batches.mjs'), '--row', row, '--rescore'], {
+          cwd: ROOT,
+          detached: true,
+          stdio: ['ignore', openSync(logPath, 'a'), openSync(logPath, 'a')],
+          env: { ...process.env, RESCORE_TRIGGER: 'dashboard-ui' },
+        });
+        child.unref();
+        return json({ ok: true, row, job_id: 'rescore-' + row + '-' + ts, log_path: logPath.replace(ROOT + '/', '') });
+      } catch (e) {
+        return json({ ok: false, error: 'spawn failed: ' + e.message }, 500);
+      }
+    });
+    return;
+  }
   if (url === '/api/pipeline/per-company-preview') {
     // Task 2 (2026-05-16): per-company breakdown for the 2-phase Process All
     // modal. Returns one row per unique company in the Apply-Now queue with

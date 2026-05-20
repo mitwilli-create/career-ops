@@ -4759,6 +4759,29 @@ async function build() {
           })).filter(s => s.title);
           // Skip rows where we have nothing tailored beyond tracker_note.
           if (!_parsed.tldr && !_strategy && !_personalization && !_gaps.length) continue;
+          // 2026-05-20 — Toxicity intel from the report (Cultural Signals
+          // row, team-toxicity grade, Glassdoor/Blind/churn extracts).
+          let _toxicityNotes = null;
+          try {
+            const _txt = _parsed.text || '';
+            const _gM = _txt.match(/(?:Team\s+toxicity|TEAM\s+TOXICITY|team_toxicity_grade)[^\n]*?(\d)\s*\/\s*5/);
+            const _cM = _txt.match(/(?:Cultural\s+Signals|cultural_signals)[\s:|]+([^|\n]{20,400})/i);
+            const _sigs = [];
+            for (const _re of [/Glassdoor[^.\n]{10,180}\./gi, /Blind[^.\n]{10,180}\./gi, /(?:layoffs?|churn|leadership\s+exits?|turnover)[^.\n]{10,180}\./gi]) {
+              let _mm;
+              while ((_mm = _re.exec(_txt)) !== null && _sigs.length < 4) {
+                const _s = _mm[0].replace(/\*\*/g, '').trim();
+                if (_s.length > 20 && !_sigs.some(x => x === _s)) _sigs.push(_truncate(_s, 220));
+              }
+            }
+            if (_gM || _cM || _sigs.length) {
+              _toxicityNotes = {
+                grade: _gM ? (_gM[1] + '/5') : '',
+                summary: _cM ? _truncate(_cM[1].replace(/\*\*/g, '').trim(), 280) : '',
+                signals: _sigs,
+              };
+            }
+          } catch (_) { _toxicityNotes = null; }
           _cbData.richSummary[String(_r.num)] = {
             tldr:           _truncate(_parsed.tldr || '', 360),
             why:            _truncate(_parsed.whyGapsDontBlock || '', 300),
@@ -4769,11 +4792,36 @@ async function build() {
             gaps:           _gaps,
             stories:        _stories,
             competitiveEdge: (_parsed.competitiveEdge || []).slice(0, 4),
+            toxicityNotes:  _toxicityNotes,
             reportPath:     _r.reportPath,
+            evalDate:       _r.date || '',
           };
         } catch (_) { /* per-row skip */ }
       }
     } catch (_) { _cbData.richSummary = {}; }
+
+    // 2026-05-20 — Corpus mtime stamp for dynamic-bar staleness detection.
+    // The dashboard compares each row's eval_date against this stamp to
+    // surface ⚠ "CV updated since this scored" + the Re-score button.
+    try {
+      const _corpusFiles = ['cv.md', 'article-digest.md', 'modes/_profile.md', 'config/profile.yml'];
+      let _maxMtime = 0;
+      let _newestPath = '';
+      for (const f of _corpusFiles) {
+        const p = join(ROOT, f);
+        if (!existsSync(p)) continue;
+        try {
+          const m = statSync(p).mtimeMs;
+          if (m > _maxMtime) { _maxMtime = m; _newestPath = f; }
+        } catch (_) { /* skip permission / race errors */ }
+      }
+      _cbData.corpusMtime = {
+        ms: _maxMtime,
+        iso: _maxMtime ? new Date(_maxMtime).toISOString() : null,
+        date: _maxMtime ? new Date(_maxMtime).toISOString().slice(0, 10) : null,
+        newest_path: _newestPath,
+      };
+    } catch (_) { _cbData.corpusMtime = { ms: 0, iso: null, date: null, newest_path: '' }; }
 
     // D5: funnel gap (already computed above as funnelNudgeHtml — pass context)
     try {

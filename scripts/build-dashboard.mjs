@@ -31509,6 +31509,30 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   console.log(`  Reports rendered:  ${renderedCount} → dashboard/reports/`);
   console.log(`  Reports parsed:    ${_reportCache.size} (cache hits: ${_reportCacheHits})`);
   console.log(`  Page weight:       ${rawBytes.toLocaleString()} bytes raw → ${minBytes.toLocaleString()} bytes (−${(rawBytes - minBytes).toLocaleString()} bytes, ${Math.round((rawBytes - minBytes) / rawBytes * 100)}%)`);
+
+  // P2.16 (2026-05-20) — build-weight gate. The inline-payload-bloat bug
+  // class (bug-class-catalog.md entry 3) ate the dashboard's first-paint
+  // budget when contacts + per-row payloads got inlined; the 2026-05-20
+  // P0.1 refactor brought it back. This gate keeps the regression visible:
+  // soft warn over WARN_BYTES, hard fail over FAIL_BYTES. Tunable via env.
+  // Skip with DASHBOARD_SKIP_WEIGHT_GATE=1 (emergency escape hatch only).
+  if (process.env.DASHBOARD_SKIP_WEIGHT_GATE !== '1') {
+    const WARN_BYTES = parseInt(process.env.DASHBOARD_WEIGHT_WARN_BYTES || String(12 * 1024 * 1024), 10);
+    const FAIL_BYTES = parseInt(process.env.DASHBOARD_WEIGHT_FAIL_BYTES || String(15 * 1024 * 1024), 10);
+    if (minBytes > FAIL_BYTES) {
+      console.error('');
+      console.error(`✗ build-dashboard: minified weight ${minBytes.toLocaleString()} bytes EXCEEDS the ${FAIL_BYTES.toLocaleString()}-byte hard ceiling.`);
+      console.error(`  Likely cause: an inline-payload regression (see ~/.claude/knowledge/brain/bug-class-catalog.md § inline-payload-bloat).`);
+      console.error(`  Check externalization paths: contacts.json, pill-data.json, wave-cb.json — those should be served from /data, not baked.`);
+      console.error(`  Bypass via DASHBOARD_SKIP_WEIGHT_GATE=1 (emergency only).`);
+      process.exit(1);
+    } else if (minBytes > WARN_BYTES) {
+      console.warn('');
+      console.warn(`⚠ build-dashboard: minified weight ${minBytes.toLocaleString()} bytes is over the ${WARN_BYTES.toLocaleString()}-byte soft warning ceiling.`);
+      console.warn(`  Action: investigate before the next build pushes it past ${FAIL_BYTES.toLocaleString()} bytes.`);
+    }
+  }
+
   console.log(`Open with: open dashboard/index.html`);
 
   // 2026-05-19 Mitchell post-bug-class-audit — post-build sanity check.

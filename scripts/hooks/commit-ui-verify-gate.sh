@@ -51,9 +51,35 @@ if echo "$command_str" | grep -q '\[skip-ui-verify\]'; then
   exit 0
 fi
 
-# Get staged files. If none, nothing to block.
-staged="$(git -C "$REPO" diff --cached --name-only 2>/dev/null || true)"
-if [ -z "$staged" ]; then
+# Get staged files WITH status codes so we can distinguish add/modify/rename
+# (which can change rendering) from delete (which cannot — the file is just
+# removed from the index, on-disk content and the running build are untouched).
+#
+# `git diff --cached --name-status` output shapes:
+#   A\tpath              — added
+#   M\tpath              — modified
+#   T\tpath              — type changed
+#   D\tpath              — deleted   ← skip; index-only removal can't change render
+#   R{score}\told\tnew   — renamed   ← check the NEW path (treated as modify)
+#   C{score}\tsrc\tdst   — copied    ← check the destination
+#
+# Test cases (see .claude/audit/hook-patch-deletion-skip-*/notes.md):
+#   1. `git rm --cached dashboard/contacts.html && git commit`        → SKIP (deletion only)
+#   2. `Edit dashboard/contacts.html && git add && git commit`        → BLOCK (modification)
+#   3. Mixed: edit one UI file + rm --cached another UI file          → BLOCK (M wins)
+staged_status="$(git -C "$REPO" diff --cached --name-status 2>/dev/null || true)"
+if [ -z "$staged_status" ]; then
+  exit 0
+fi
+
+# Extract destination paths only for statuses that can change rendering.
+staged_render_paths=$(echo "$staged_status" | awk -F'\t' '
+  $1 == "A" || $1 == "M" || $1 == "T" { print $2 }
+  $1 ~ /^R/ || $1 ~ /^C/ { print $3 }
+')
+
+if [ -z "$staged_render_paths" ]; then
+  # Only deletions (or non-render-affecting statuses) staged. Allow.
   exit 0
 fi
 
@@ -64,10 +90,10 @@ fi
 #   - *.html / *.css
 #   - render-time lib/*.mjs files (the ones that produce DOM)
 #   - templates/*.mjml (heartbeat email render path)
-ui_affecting=$(echo "$staged" | grep -E '^(scripts/build-dashboard\.mjs|scripts/build-contacts-page\.mjs|dashboard-server\.mjs|dashboard/|.*\.html$|.*\.css$|templates/.*\.mjml$|lib/dashboard-shell\.mjs|lib/.*-renderer\.mjs)' || true)
+ui_affecting=$(echo "$staged_render_paths" | grep -E '^(scripts/build-dashboard\.mjs|scripts/build-contacts-page\.mjs|dashboard-server\.mjs|dashboard/|.*\.html$|.*\.css$|templates/.*\.mjml$|lib/dashboard-shell\.mjs|lib/.*-renderer\.mjs)' || true)
 
 if [ -z "$ui_affecting" ]; then
-  # No UI-affecting files staged — allow.
+  # No UI-affecting files staged with add/modify/rename status — allow.
   exit 0
 fi
 

@@ -20990,10 +20990,11 @@ function _bsRenderBody(data, changed) {
           '<span class="batch-status-current-eta">' + _bsEsc(etaTxt) + '</span>' +
         '</div>' +
         '<div class="batch-status-counts">' +
-          '<div class="batch-status-count-cell"><span class="batch-status-count-num ' + ch('cs:completed') + '">' + (cs.completed || 0) + '</span><span class="batch-status-count-lbl">Completed</span></div>' +
-          '<div class="batch-status-count-cell"><span class="batch-status-count-num ' + ch('cs:failed') + '">' + (cs.failed || 0) + '</span><span class="batch-status-count-lbl">Failed</span></div>' +
-          '<div class="batch-status-count-cell"><span class="batch-status-count-num ' + ch('cs:running') + '">' + (cs.running || 0) + '</span><span class="batch-status-count-lbl">Running</span></div>' +
-          '<div class="batch-status-count-cell"><span class="batch-status-count-num ' + ch('cs:pending') + '">' + (cs.pending || 0) + '</span><span class="batch-status-count-lbl">Pending</span></div>' +
+          // BRAVO followup 2026-05-20 — stat tiles clickable; open drill-in panel.
+          '<button type="button" class="batch-status-count-cell batch-status-count-cell-clickable" onclick="openBatchDrillIn(\\'completed\\')" aria-label="Show completed items"><span class="batch-status-count-num ' + ch('cs:completed') + '">' + (cs.completed || 0) + '</span><span class="batch-status-count-lbl">Completed</span></button>' +
+          '<button type="button" class="batch-status-count-cell batch-status-count-cell-clickable" onclick="openBatchDrillIn(\\'failed\\')" aria-label="Show failed items + error categories"><span class="batch-status-count-num ' + ch('cs:failed') + '">' + (cs.failed || 0) + '</span><span class="batch-status-count-lbl">Failed</span></button>' +
+          '<button type="button" class="batch-status-count-cell batch-status-count-cell-clickable" onclick="openBatchDrillIn(\\'running\\')" aria-label="Show items currently running"><span class="batch-status-count-num ' + ch('cs:running') + '">' + (cs.running || 0) + '</span><span class="batch-status-count-lbl">Running</span></button>' +
+          '<button type="button" class="batch-status-count-cell batch-status-count-cell-clickable" onclick="openBatchDrillIn(\\'pending\\')" aria-label="Show pending items in queue order"><span class="batch-status-count-num ' + ch('cs:pending') + '">' + (cs.pending || 0) + '</span><span class="batch-status-count-lbl">Pending</span></button>' +
         '</div>' +
         '<div class="batch-status-meta">' +
           '<span title="Model used by batch-runner-batches.mjs">Model: <strong>' + _bsEsc(cs.model || '—') + '</strong></span>' +
@@ -21050,14 +21051,14 @@ function _bsRenderBody(data, changed) {
           '<div class="batch-status-queue-num ' + ch('q:triage_advance') + '">' + (q.triage_advance || 0) + '</div>' +
           '<div class="batch-status-queue-lbl">Triage advance</div>' +
         '</div>' +
-        '<div class="batch-status-queue-cell" title="Items pending in data/pipeline.md (countPipelinePending)">' +
+        '<button type="button" class="batch-status-queue-cell batch-status-queue-cell-clickable" onclick="openBatchDrillIn(\\'pipeline_pending\\')" title="Items pending in data/pipeline.md — click to see the URL list" aria-label="Show pipeline pending items">' +
           '<div class="batch-status-queue-num ' + ch('q:pipeline_pending') + '">' + (q.pipeline_pending || 0) + '</div>' +
           '<div class="batch-status-queue-lbl">Pipeline pending</div>' +
-        '</div>' +
-        '<div class="batch-status-queue-cell" title="Items in batch/batch-input.tsv (current batch input file)">' +
+        '</button>' +
+        '<button type="button" class="batch-status-queue-cell batch-status-queue-cell-clickable" onclick="openBatchDrillIn(\\'batch_input\\')" title="Items in batch/batch-input.tsv — click to see the queued list" aria-label="Show batch input items">' +
           '<div class="batch-status-queue-num ' + ch('q:batch_input') + '">' + (q.batch_input || 0) + '</div>' +
           '<div class="batch-status-queue-lbl">Batch input</div>' +
-        '</div>' +
+        '</button>' +
       '</div>' +
       '<div class="batch-status-cost-row">' +
         '<span title="Sum of data/cost-log.tsv rows for today">Cost today: <strong class="' + ch('cost_today') + '">' + _bsFmtCost(data.cost_today_usd) + '</strong></span>' +

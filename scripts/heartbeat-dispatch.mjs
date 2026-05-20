@@ -537,8 +537,9 @@ function renderImageCaption(image, palette) {
   const subject = (image.subject || '').toLowerCase();
   const dn = (image.day || '').toLowerCase();
   const dayLabel = { mon: 'monday\'s', tue: 'tuesday\'s', wed: 'wednesday\'s', thu: 'thursday\'s', fri: 'friday\'s', sat: 'saturday\'s', sun: 'sunday\'s' }[dn] || 'today\'s';
-  const caption = `${dayLabel} still &middot; ${subject}`;
-  return `<span class="editorial-grotesk" style="font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;font-size:9px;font-weight:600;letter-spacing:0.18em;text-transform:uppercase;color:${palette.ink_4}">${escapeHtml(caption)}</span>`;
+  // Render the separator as a literal HTML entity AFTER escaping the user
+  // content so the &middot; is not double-escaped to &amp;middot;.
+  return `<span class="editorial-grotesk" style="font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;font-size:9px;font-weight:600;letter-spacing:0.18em;text-transform:uppercase;color:${palette.ink_4}">${escapeHtml(dayLabel + ' still')} &middot; ${escapeHtml(subject)}</span>`;
 }
 
 // ── Render: ticker (Reuters discipline) ───────────────────────────────────

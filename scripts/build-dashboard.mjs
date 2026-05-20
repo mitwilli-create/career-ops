@@ -12458,13 +12458,17 @@ async function build() {
   // 2026-05-20 — Drill-in data for chip-level navigation (Mitchell ask).
   // Inlined here so commit/demo/gap/week drill-ins don't need extra fetches.
   window.__BE_DRILL_DATA__ = ${(() => {
-    // Demo + gap entries — keyed by skill slug
+    // Demo + gap entries — keyed by skill slug.
+    // P1.9 (2026-05-20): filter lifted from Tier-A only to ALL tiers — surfaces
+    // all 13 demonstrated narratives + every tier-B/C/D entry to downstream
+    // drill-ins (commits filter, demo modal, gap modal). Chip render still
+    // governed by the tier-A list in the APIs payload above.
     const entries = (tApi && tApi.entries) || {};
     const tierAEntries = {};
     for (const [k, v] of Object.entries(entries)) {
-      if (v.tier !== 'A') continue;
       tierAEntries[k] = {
         name: k,
+        tier: v.tier || '',
         category: v.category || '',
         demonstrated: v.demonstrated === 'yes',
         evidence: v.evidence || '',
@@ -24169,7 +24173,7 @@ function _beRenderDemo(skillKey) {
   const _hostStripRe = new RegExp('^https?://');
   const citations = (e.citations || []).map(u => '<a href="' + esc(u) + '" target="_blank" rel="noopener" style="display:inline-block;margin-right:8px;font-size:11.5px;color:var(--blue-fg);text-decoration:underline">' + esc(u.replace(_hostStripRe, '').slice(0, 60)) + '</a>').join('');
   return {
-    label: 'Tier-A demonstrated · ' + skillKey,
+    label: 'Tier-' + (e.tier || 'A') + ' demonstrated · ' + skillKey,
     headline: skillKey,
     subhead: e.category ? ('Category: ' + e.category + ' · demonstrated in career-ops fork') : 'Demonstrated in career-ops fork',
     bodyHtml:
@@ -24203,7 +24207,7 @@ function _beRenderGap(skillKey) {
   };
   const opp = opportunityMap[e.category] || { personal: 'Pick an existing career-ops surface (dashboard, heartbeat email, or apply-pack pipeline) and wire this dependency in. Public surface counts as proof.', work: 'xGE: identify an internal-comms surface that would benefit from this technology and ship a small POC.' };
   return {
-    label: 'Tier-A gap · ' + skillKey,
+    label: 'Tier-' + (e.tier || 'A') + ' gap · ' + skillKey,
     headline: skillKey,
     subhead: e.category ? ('Category: ' + e.category + ' · gap (30-day reachable)') : 'Gap (30-day reachable)',
     bodyHtml:

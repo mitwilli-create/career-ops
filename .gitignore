@@ -230,3 +230,4 @@ data/launchd-wrapper-state.json.tmp
 # 2026-05-20 — externalized dashboard data (build artifacts)
 dashboard/data/contacts.json
 dashboard/data/wave-cb.json
+dashboard/data/pill-data.json

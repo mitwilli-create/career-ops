@@ -23750,6 +23750,21 @@ function closeEmailPopover() {
 // ── Pill popover (Equity / Base / Location detail) ─────────────
 let _pillOutsideHandler = null;
 let _pillActiveEl = null;
+// 2026-05-20 — externalized pill payload map. Build-time externalizer in
+// scripts/build-dashboard.mjs replaces inline data-pill='...' attributes
+// with a compact data-pill-key="..." reference, then writes the payload map
+// to dashboard/data/pill-data.json. Cuts ~3.66MB from the inline HTML.
+function _resolvePillDetail(el) {
+  const inline = el.getAttribute('data-pill');
+  if (inline) {
+    try { return JSON.parse(inline); } catch (_) { return null; }
+  }
+  const key = el.getAttribute('data-pill-key');
+  if (!key) return {};
+  const map = window._PILL_DATA;
+  if (map && Object.prototype.hasOwnProperty.call(map, key)) return map[key];
+  return null;
+}
 function openPillPopover(el) {
   const pop = document.getElementById('pill-popover');
   if (!pop || !el) return;
@@ -23757,8 +23772,27 @@ function openPillPopover(el) {
     closePillPopover();
     return;
   }
-  let detail = {};
-  try { detail = JSON.parse(el.getAttribute('data-pill') || '{}'); } catch (e) { return; }
+  const detail = _resolvePillDetail(el);
+  if (detail === null) {
+    if (window._pillDataReadyPromise) {
+      pop.innerHTML = '<div style="padding:12px;color:var(--text-3,#94a3b8);font-size:12px">Loading…</div>';
+      pop.classList.add('is-open');
+      pop.setAttribute('aria-hidden', 'false');
+      _positionFloater(pop, el);
+      _pillActiveEl = el;
+      window._pillDataReadyPromise.then(function () {
+        if (_pillActiveEl === el) {
+          const d = _resolvePillDetail(el);
+          if (d) {
+            pop.innerHTML = _renderPillPopover(d);
+            _positionFloater(pop, el);
+          }
+        }
+      });
+      return;
+    }
+    return;
+  }
   pop.innerHTML = _renderPillPopover(detail);
   pop.classList.add('is-open');
   pop.setAttribute('aria-hidden', 'false');
@@ -25818,6 +25852,23 @@ window._contactsReadyPromise = fetch('/data/contacts.json', { cache: 'force-cach
     if (typeof _updateContactsChip === 'function') _updateContactsChip();
   })
   .catch(function(err){ console.warn('[contacts] fetch failed:', err.message); });
+
+// 2026-05-20 — Pill payload map. Build-time externalizer extracts
+// data-pill='...' JSON blobs from every chip (equity / base / location /
+// benefits / people — 216 rows × 5 = 1,080 chips, ~3.66MB inline) and
+// writes them to dashboard/data/pill-data.json keyed by SHA1 hash.
+// openPillPopover() looks up payloads from window._PILL_DATA on click.
+// If a chip is clicked before this fetch resolves, openPillPopover()
+// shows a Loading… state and replaces it once the promise resolves.
+window._PILL_DATA = window._PILL_DATA || {};
+window._pillDataReadyPromise = fetch('/data/pill-data.json', { cache: 'force-cache' })
+  .then(function(r){ return r.ok ? r.json() : null; })
+  .then(function(payload){
+    if (payload && typeof payload === 'object') {
+      window._PILL_DATA = payload;
+    }
+  })
+  .catch(function(err){ console.warn('[pill-data] fetch failed:', err.message); });
 // 2026-05-18 — defensive multi-shot update: synchronous IIFE first (works
 // when script runs after the sidebar HTML — typical case), then a
 // DOMContentLoaded re-fire (covers the case where script ran before the
@@ -30649,11 +30700,57 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   }
 
   const rawBytes = Buffer.byteLength(html, 'utf8');
-  const minifiedHtml = _minifyHtmlOutput(html);
+
+  // 2026-05-20 — Externalize data-pill='...' payloads (~3.66MB across 1,080
+  // chips) to dashboard/data/pill-data.json. Replace each inline blob with a
+  // compact data-pill-key="<hash>" reference. Decoder runs in openPillPopover().
+  const { createHash } = await import('node:crypto');
+  const pillMap = {};                   // encoded-string → key
+  const pillData = {};                  // key → decoded payload object
+  let pillReplacements = 0;
+  let pillInlineBytes = 0;
+  const _decodeHtmlEntities = (s) => s
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+  const externalizedHtml = html.replace(/data-pill='([^']+)'/g, (full, encoded) => {
+    pillReplacements++;
+    pillInlineBytes += full.length;
+    let key = pillMap[encoded];
+    if (!key) {
+      key = createHash('sha1').update(encoded).digest('hex').slice(0, 16);
+      pillMap[encoded] = key;
+      try {
+        pillData[key] = JSON.parse(_decodeHtmlEntities(encoded));
+      } catch (e) {
+        pillData[key] = { _raw: encoded, _parseError: e.message };
+      }
+    }
+    return `data-pill-key="${key}"`;
+  });
+
+  const minifiedHtml = _minifyHtmlOutput(externalizedHtml);
   const minBytes = Buffer.byteLength(minifiedHtml, 'utf8');
 
   writeFileSync(OUT_PATH, minifiedHtml);
   console.log(`Wrote ${OUT_PATH}`);
+
+  // Write the externalized pill data alongside contacts.json. Lazy-fetched
+  // at runtime via window._pillDataReadyPromise. Empty object is safe — the
+  // openPillPopover fallback path simply shows nothing.
+  try {
+    const pillOutDir = join(ROOT, 'dashboard/data');
+    mkdirSync(pillOutDir, { recursive: true });
+    const pillJson = JSON.stringify(pillData);
+    writeFileSync(join(pillOutDir, 'pill-data.json'), pillJson);
+    const uniqueKeys = Object.keys(pillData).length;
+    const savedBytes = pillInlineBytes - pillReplacements * 25; // ~25 bytes per data-pill-key="..." reference
+    console.log(`  Externalized:      pill-data.json (${Buffer.byteLength(pillJson, 'utf8').toLocaleString()} bytes, ${uniqueKeys} unique payloads, ${pillReplacements} chips, saved ~${savedBytes.toLocaleString()} bytes inline)`);
+  } catch (writeErr) {
+    console.warn('[build] failed to write dashboard/data/pill-data.json:', writeErr.message);
+  }
 
   // 2026-05-20 — Write the contacts directory as a separate JSON file so
   // the dashboard can lazy-fetch it instead of inlining 2.36MB into block

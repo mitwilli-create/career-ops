@@ -3536,7 +3536,7 @@ function renderCompAnalytics(analytics, floors) {
   }).join('');
   return `
   <div class="panel" id="comp-analytics-panel">
-    <h2 class="panel-title collapsible" onclick="togglePanel('comp-analytics-panel',event)">Comp Analytics <span class="pill" style="background:var(--blue-fg);color:#fff">${total} parseable</span> <span class="panel-chevron">▾</span></h2>
+    <h2 class="panel-title collapsible" onclick="togglePanel('comp-analytics-panel',event)">Comp Analytics <span class="pill" style="background:#0969da;color:#fff">${total} parseable</span> <span class="panel-chevron">▾</span></h2>
     <p class="comp-subnote">Parsed from each report's Block A Comp row. Seattle floor: <strong>$${floors.seattleFloor}K</strong> · Target: <strong>$${floors.targetMin}K–$${floors.targetMax}K</strong>. 4-yr est. = midpoint × 4 (× 1.5 if equity mentioned) — directional, not a quote.</p>
     <div class="comp-grid">
       <div class="comp-sub">
@@ -4528,6 +4528,11 @@ async function build() {
       // 2026-05-19: include the live JD url so tonightPickStart() can open
       // it directly in a new tab instead of falling through to the drawer.
       const _pickUrl = _pr.reportPath ? getReportUrl(_pr.reportPath) : '';
+      // 2026-05-20 — surface polish status so the callout can show a
+      // conditional Polish button when an apply-pack exists but is
+      // never polished / stale. Null = never polished, treat as alert.
+      const _polishStat = _polishStatusMap.byRowId.get(Number(_pr.num)) || null;
+      const _polishState = _polishStat ? (_polishStat.status || 'unknown') : 'never_polished';
       _tonightPick = {
         num: _pr.num,
         company: _pr.company,
@@ -4542,6 +4547,8 @@ async function build() {
         location: _loc || '',
         gapCount: _gapCount,
         notes: _pr.notes || '',
+        polishState: _polishState,
+        polishAlert: (_polishState === 'never_polished' || _polishState === 'stale' || _polishState === 'failed'),
       };
     }
   } catch (_) { _tonightPick = null; }
@@ -6922,13 +6929,41 @@ async function build() {
   }
   .tp-sig-clickable:hover { background: color-mix(in srgb, #d97706 22%, var(--surface)); transform: translateY(-1px); }
   .tp-sig-clickable:focus-visible { outline: 2px solid #d97706; outline-offset: 2px; }
-  /* Why-this-one paragraph */
+  /* Why-this-one paragraph — full text, no truncation (2026-05-20 fix: was
+     clipping mid-sentence on the sell-positioning copy. Removed any inherited
+     line-clamp; uses max-height + overflow-y for very long entries instead. */
   .tonight-pick-why {
     font-size: 12px; color: var(--text-2); line-height: 1.5;
     max-width: 680px;
+    max-height: 240px;
+    overflow-y: auto;
+    -webkit-line-clamp: unset;
+    display: block;
+    white-space: normal;
+    word-break: normal;
   }
   /* Action buttons row */
-  .tonight-pick-actions { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 2px; }
+  .tonight-pick-actions { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 2px; align-items: center; }
+  /* 2026-05-20: Polish button (conditional) and "polished" indicator. */
+  .tonight-pick-btn-polish {
+    background: color-mix(in srgb, #d97706 14%, transparent);
+    border-color: #d97706;
+    color: #d97706;
+  }
+  .tonight-pick-btn-polish:hover {
+    background: color-mix(in srgb, #d97706 24%, transparent);
+  }
+  .tonight-pick-polish-done {
+    display: inline-flex; align-items: center;
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid color-mix(in srgb, var(--green-fg) 30%, transparent);
+    background: color-mix(in srgb, var(--green-fg) 10%, transparent);
+    color: var(--green-fg);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1;
+  }
   /* P0-4: --action token (Tailwind green-700 light / Primer green-emphasis dark)
      replaces --green-fg as the filled-CTA background. White text now meets WCAG
      AA (5.92:1 light, 4.63:1 dark). The previous --green-fg (#16a34a/#86efac)
@@ -7551,14 +7586,20 @@ async function build() {
      violation when a row used --red-bg=#fee2e2 in light mode while the
      body.dark class was set on the audit pass (mixed-mode rendering). */
   body.dark .age-amber { color: #fbbf24; }
-  /* BRAVO followup 2026-05-20 Item 9 / AA-11 — real fix for the .age-red
-     dark-mode contrast violation. Per the impl-report NEEDS_HUMAN: override
-     --red-bg in dark mode so the muted-text row uses a dark-tinted surface
-     instead of inheriting the light --red-bg (#fee2e2). The previous attempt
-     overrode only the foreground (.age-red) which created a mixed-mode
-     contradiction. This version pairs a dark-tinted bg with a light-red
-     foreground so contrast clears AA across both surface contexts. */
+  /* BRAVO followup 2026-05-20 Item 9 / AA-11 — dark-mode --red-bg fix.
+     Dark-tinted red surface (vs the light #fee2e2 in light mode) lets
+     .age-red and other red-on-red-tinted-bg text clear AA in dark mode.
+     NOTE: the per-rule body.dark .age-red foreground override was reverted
+     after it created a mixed-mode 1.55:1 contradiction on the audit pass
+     (light-mode bg + dark-mode fg). The deeper fix (eliminate the
+     hardcoded #fee2e2 row bg in favor of var(--red-bg)) is logged in
+     NEEDS_HUMAN; this --red-bg override is the minimal correct step. */
   body.dark { --red-bg: rgba(220, 38, 38, 0.18); }
+  /* BRAVO followup 2026-05-20 — with --red-bg now dark-mode-overridden, the
+     .age-red foreground override is safe: dark text (#991b1b) is unreadable
+     on the dark surface (#11131c, 2.22:1). Light red (#fca5a5) on the dark
+     surface gives ~9.5:1 AAA, and on the dark-mode --red-bg row tint also
+     passes AA. */
   body.dark .age-red { color: #fca5a5; }
 
   /* ── Filters bar ─────────────────────────────────────────────── */
@@ -12315,18 +12356,23 @@ async function build() {
         ${_tonightPick.location ? `<span class="tp-sig tp-sig-loc">${htmlEscape(_tonightPick.location)}</span>` : ''}
       </div>
       <div class="tonight-pick-why">${htmlEscape(_tonightPick.whyPick)}</div>
-      <!-- β.3 (2026-05-19): Row-action workflow restructured — 3 buttons in priority order.
-           PRIMARY  "Apply now"       → opens JD in new tab (= former "Start tonight's apply")
-           SECONDARY "Learn more"     → opens right drawer (unchanged)
-           TERTIARY "Create materials"→ invokes apply-pack creation flow
-           Polish pack ✨ removed — polish is now a STAGE in the pipeline, surfaced on the
-           review surface after materials are created + reviewed. Polish fires only after
-           Mitchell has reviewed and edited the drafted materials.
-           Review materials → accessible via the Create materials success footer (review btn). -->
+      <!-- 2026-05-20 redesign: 4-5 buttons. The 4th (Polish materials) is
+           CONDITIONAL — only renders when the polish-status alert surfaces
+           (never_polished / stale / failed). When already polished, that
+           slot shows a small "✓ Polished" indicator instead so the user
+           knows the state without an action prompt.
+           PRIMARY  "Apply now"                    → opens JD in new tab
+           SECONDARY "Learn more"                  → opens right drawer
+           ACCENT   "Generate application materials" → creates apply-pack (cv/cover/dm/forms)
+           CONDITIONAL "Polish materials"          → fires apply-pack-polish skill (only if alert)
+           GHOST    "Pick another"                 → cycles to next ranked role -->
       <div class="tonight-pick-actions">
         <button type="button" class="tonight-pick-btn-primary" onclick="tonightPickStart()" aria-label="Open ${htmlEscape(_tonightPick.company)} live job posting in a new tab">Apply now &rarr;</button>
         <button type="button" class="tonight-pick-btn-secondary" onclick="tonightPickLearnMore()" aria-label="Open role detail in right drawer">Learn more</button>
-        <button type="button" id="tonight-pick-create-btn" class="tonight-pick-btn-accent" onclick="tonightPickCreateMaterials()" aria-label="Build apply-pack artifacts (CV, cover letter, LinkedIn DM, form fields)">Create materials</button>
+        <button type="button" id="tonight-pick-create-btn" class="tonight-pick-btn-accent" onclick="tonightPickCreateMaterials()" aria-label="Generate apply-pack (CV, cover letter, LinkedIn DM, form fields)">Generate application materials</button>
+        ${_tonightPick.polishAlert
+          ? `<button type="button" id="tonight-pick-polish-btn" class="tonight-pick-btn-accent tonight-pick-btn-polish" onclick="tonightPickPolish()" aria-label="Run apply-pack polish (4-round critic/author/adjudicator loop) on the generated materials" title="Polish alert surfaced — materials never polished or stale">✨ Polish materials</button>`
+          : `<span class="tonight-pick-polish-done" title="Materials are polished + current">✓ Polished</span>`}
         <button type="button" class="tonight-pick-btn-ghost" onclick="tonightPickCycle()" aria-label="Pick a different role">Pick another</button>
       </div>
     </div>` : '<!-- tonight-pick: no candidate met criteria -->'}
@@ -17699,10 +17745,13 @@ function initTopOfPipe() {
     // single-quote nesting issues in inline onclick strings).
     var rowEl = document.querySelector('tr.row[data-num="' + it.num + '"]');
     var rowId = rowEl ? (rowEl.dataset.rowId || '') : '';
+    // BRAVO followup 2026-05-20 Item 9 / AA-11 — outer role=button + tabindex=0
+    // creates nested-interactive (inner .top-of-pipe-dismiss is a focusable
+    // <button>). Mouse onclick still fires on the div; keyboard users tab to
+    // the dismiss button (and can drill in via the row's data-kbd-open handler).
     return '<div class="top-of-pipe-item" data-item-num="' + it.num + '" data-row-id="' + _escHtmlInline(rowId) + '"'
       + ' onclick="topOfPipeOpenEl(this)"'
       + ' title="Click to open detail for row #' + it.num + '"'
-      + ' role="button" tabindex="0"'
       + ' data-kbd-open="1">'
       + '<div class="top-of-pipe-item-body">'
       +   '<span class="top-of-pipe-company">' + _escHtmlInline(it.company || '') + '</span>'
@@ -18238,6 +18287,44 @@ async function tonightPickCreateMaterials() {
   }
 }
 window.tonightPickCreateMaterials = tonightPickCreateMaterials;
+
+// 2026-05-20 — Polish CTA. Surfaces only when the apply-pack exists but
+// polishState ∈ {never_polished, stale, failed}. Fires the apply-pack-polish
+// skill via the existing /api/polish/start endpoint. Falls back to a toast
+// with the manual CLI command if the API isn't available.
+async function tonightPickPolish() {
+  var pick = window._tonightPickData;
+  if (!pick) { try { pick = JSON.parse(document.getElementById('tonight-pick-data').textContent); } catch (_) {} }
+  if (!pick || !pick.num) { console.warn('[tp-polish] no pick'); return; }
+  var btn = document.getElementById('tonight-pick-polish-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '✨ Polishing…'; }
+  try {
+    var res = await fetch('/api/polish/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ row: pick.num })
+    });
+    var data = await res.json().catch(function(){ return null; });
+    if (data && data.ok) {
+      if (typeof showToast === 'function') {
+        showToast('Polish started — see Batch Runs for live progress', 'success');
+      }
+      if (btn) { btn.textContent = '✨ Polishing in progress…'; }
+    } else {
+      var cmd = 'node scripts/agents/apply-pack-polish.mjs --row ' + pick.num;
+      if (typeof showToast === 'function') {
+        showToast('Polish endpoint unavailable — run: ' + cmd, 'warn');
+      } else {
+        alert('To polish this pack, run in terminal:' + String.fromCharCode(10) + String.fromCharCode(10) + cmd);
+      }
+      if (btn) { btn.disabled = false; btn.textContent = '✨ Polish materials'; }
+    }
+  } catch (e) {
+    console.warn('[tp-polish] failed:', e.message);
+    if (btn) { btn.disabled = false; btn.textContent = '✨ Polish materials'; }
+  }
+}
+window.tonightPickPolish = tonightPickPolish;
 
 async function tonightPickRetryStage(stageId, rowNum) {
   var btn = document.querySelector('#tp-progress-footer button.tonight-pick-btn-accent');
@@ -20747,7 +20834,23 @@ async function _bsFetchAndRender() {
   _batchStatusPrev = data;
   _batchStatusLastFetchMs = Date.now();
   _bsUpdateStamp();
+  // 2026-05-20 — adaptive polling: when an active run is detected (Process
+  // All running OR batch in-flight), tick every 2s so the progress bar
+  // animates visibly. When idle, fall back to 10s to avoid wasting cycles.
+  try {
+    var active = !!(
+      (data && data.process_all_active) ||
+      (data && data.current_run && (data.current_run.running > 0 || data.current_run.pending > 0))
+    );
+    var desired = active ? 2000 : 10000;
+    if (_batchStatusPollIntervalMs !== desired && _batchStatusPollInterval) {
+      clearInterval(_batchStatusPollInterval);
+      _batchStatusPollInterval = setInterval(_bsFetchAndRender, desired);
+      _batchStatusPollIntervalMs = desired;
+    }
+  } catch (_) { /* adaptive cadence is best-effort */ }
 }
+var _batchStatusPollIntervalMs = 10000;
 
 function openBatchStatusModal() {
   const bd = document.getElementById('batch-status-backdrop');
@@ -20760,7 +20863,10 @@ function openBatchStatusModal() {
   _batchStatusPrev = null; // skip flash on first paint
   _bsFetchAndRender();
   if (_batchStatusPollInterval) clearInterval(_batchStatusPollInterval);
-  _batchStatusPollInterval = setInterval(_bsFetchAndRender, 10000);
+  // Start at 2s — _bsFetchAndRender will adapt up to 10s if it sees no
+  // active run, so the user gets fast feedback on initial open.
+  _batchStatusPollInterval = setInterval(_bsFetchAndRender, 2000);
+  _batchStatusPollIntervalMs = 2000;
   if (_batchStatusStampInterval) clearInterval(_batchStatusStampInterval);
   _batchStatusStampInterval = setInterval(_bsUpdateStamp, 1000);
   const closeBtn = md.querySelector('.batch-status-close');

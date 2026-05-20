@@ -7574,6 +7574,36 @@ async function build() {
   }
   .tier-legend-btn:focus-visible { box-shadow: var(--ring-blue); }
 
+  /* P4.30 — persistent tier-glossary strip (visible without click).
+     Sits beneath panel-subtitle on Apply-Now Queue so the A1/A2/B/C/D
+     labels decode on first read instead of every time a user sees
+     a new badge in the Company column. */
+  .tier-glossary-strip {
+    display: flex; align-items: center; flex-wrap: wrap;
+    gap: 6px; margin: 8px 0 12px; padding: 6px 0;
+    font-size: 11.5px; line-height: 1.4;
+    border-top: 1px solid var(--border-faint, var(--border));
+    border-bottom: 1px solid var(--border-faint, var(--border));
+  }
+  .tg-strip-label { font-weight: 600; color: var(--text-2); margin-right: 4px; }
+  .tg-strip-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 9px; border-radius: 999px;
+    background: var(--surface-2); color: var(--text-2);
+    border: 1px solid var(--border);
+    cursor: pointer; transition: background .12s, color .12s, border-color .12s;
+  }
+  .tg-strip-chip:hover { background: var(--blue-bg); border-color: var(--blue-border); color: var(--blue-fg); }
+  .tg-strip-chip strong { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .tg-strip-A1 strong, .tg-strip-A2 strong { color: var(--green-fg, #2da44e); }
+  .tg-strip-B strong { color: var(--blue-fg, #0969da); }
+  .tg-strip-C strong { color: var(--amber-fg, #9a6700); }
+  .tg-strip-D strong { color: var(--text-3, #6e7781); }
+  @media (max-width: 720px) {
+    .tier-glossary-strip { font-size: 10.5px; }
+    .tg-strip-chip { padding: 2px 7px; }
+  }
+
   /* Tier-legend modal — same shape as gap modal for consistency. */
   #tier-legend-backdrop, #equity-legend-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 2000; backdrop-filter: blur(2px); }
   #tier-legend-backdrop.visible, #equity-legend-backdrop.visible { display: block; }
@@ -12504,6 +12534,15 @@ async function build() {
       <span class="panel-chevron">▾</span>
     </h2>
     <p class="panel-subtitle" title="Drag a row's ⋮⋮ handle to prioritize. Click any row to expand.">Score ≥ 4.0 · Evaluated / Responded / Interview only</p>
+    <!-- P4.30 (2026-05-20): persistent tier-letter glossary strip so labels decode without click -->
+    <div class="tier-glossary-strip" role="note" aria-label="Tier archetype legend">
+      <span class="tg-strip-label">Tiers:</span>
+      <span class="tg-strip-chip tg-strip-A1" title="Tier A1 — AI Residency (research-leaning, time-bounded program). Click for full legend." onclick="openTierLegend('A1')"><strong>A1</strong> Residency</span>
+      <span class="tg-strip-chip tg-strip-A2" title="Tier A2 — AI Builder (production builder, FDE, Applied AI, SA). Click for full legend." onclick="openTierLegend('A2')"><strong>A2</strong> Builder</span>
+      <span class="tg-strip-chip tg-strip-B" title="Tier B — Comms / Editorial (writing, editing, narrative + agent fluency). Click for full legend." onclick="openTierLegend('B')"><strong>B</strong> Comms/Editorial</span>
+      <span class="tg-strip-chip tg-strip-C" title="Tier C — Adjacent (interesting but off the bullseye archetypes). Click for full legend." onclick="openTierLegend('C')"><strong>C</strong> Adjacent</span>
+      <span class="tg-strip-chip tg-strip-D" title="Tier D — Stretch (high-equity / high-fit but lower probability). Click for full legend." onclick="openTierLegend('D')"><strong>D</strong> Stretch</span>
+    </div>
     ${_tonightPick ? `<!-- Tonight's pick callout — enriched 2026-05-17: full title, comp, gates, 4 actions -->
     <div id="tonight-pick-callout" class="tonight-pick-callout" hidden aria-label="Tonight's pick suggestion" role="region">
       <div class="tonight-pick-header">

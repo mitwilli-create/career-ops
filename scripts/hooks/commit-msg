@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# scripts/hooks/commit-msg — audit-ref check for UI-affecting commits.
+#
+# Migrated from pre-commit hook 2026-05-20 (P3.23 iter5) because pre-commit
+# cannot read the in-progress commit message: .git/COMMIT_EDITMSG holds the
+# PREVIOUS commit's message at pre-commit time, not the current one. See:
+#   data/bug-reports/pre-commit-hook-stale-message-2026-05-20.md
+#
+# commit-msg receives the in-progress message file as $1, AFTER the message
+# is finalized but BEFORE the commit is made. This is the correct stage for
+# message-content checks. Both `git commit -m "..."` and `git commit -F file`
+# write to that path before commit-msg fires.
+#
+# Behavior matches the old pre-commit gate exactly:
+#   - if NO UI-affecting file is staged → exit 0 (allow)
+#   - if UI files are staged + commit message references .claude/audit/ → exit 0
+#   - if UI files are staged + no audit reference → exit 1 (block + banner)
+#
+# Skip mechanisms (any one is sufficient):
+#   - `--no-verify` flag on git commit (standard git skip — bypasses ALL hooks)
+#   - `[skip-ui-verify]` token in the commit message
+#   - `SKIP_UI_VERIFY=1` environment variable
+#
+# Exit codes:
+#   0   allow the commit
+#   1   block the commit (git will abort with the printed message)
+
+set -euo pipefail
+
+REPO="$(git rev-parse --show-toplevel 2>/dev/null)"
+[ -z "$REPO" ] && exit 0  # not in a git repo? do nothing.
+cd "$REPO"
+
+# Environment escape hatch.
+if [ "${SKIP_UI_VERIFY:-}" = "1" ]; then
+  exit 0
+fi
+
+# Message file path is the first argument git passes to commit-msg.
+msg_file="${1:-}"
+[ -z "$msg_file" ] && exit 0
+[ ! -f "$msg_file" ] && exit 0
+
+commit_msg="$(cat "$msg_file" 2>/dev/null || true)"
+
+# Skip if the message has the override token.
+if echo "$commit_msg" | grep -q '\[skip-ui-verify\]'; then
+  exit 0
+fi
+
+# Staged files WITH status codes so we can distinguish add/modify/rename
+# (which can change rendering) from delete (which cannot — the file is just
+# removed from the index, on-disk content and the running build are untouched).
+#
+# `git diff --cached --name-status` output shapes:
+#   A\tpath              — added
+#   M\tpath              — modified
+#   T\tpath              — type changed
+#   D\tpath              — deleted   ← skip; index-only removal can't change render
+#   R{score}\told\tnew   — renamed   ← check the NEW path (treated as modify)
+#   C{score}\tsrc\tdst   — copied    ← check the destination
+staged_status="$(git diff --cached --name-status 2>/dev/null || true)"
+[ -z "$staged_status" ] && exit 0
+
+# Extract destination paths only for statuses that can change rendering.
+staged_render_paths=$(echo "$staged_status" | awk -F'\t' '
+  $1 == "A" || $1 == "M" || $1 == "T" { print $2 }
+  $1 ~ /^R/ || $1 ~ /^C/ { print $3 }
+')
+
+[ -z "$staged_render_paths" ] && exit 0
+
+# UI-affecting file patterns. Mirrors the PreToolUse gate.
+ui_affecting=$(echo "$staged_render_paths" | grep -E '^(scripts/build-dashboard\.mjs|scripts/build-contacts-page\.mjs|dashboard-server\.mjs|dashboard/|.*\.html$|.*\.css$|templates/.*\.mjml$|lib/dashboard-shell\.mjs|lib/.*-renderer\.mjs)' || true)
+
+[ -z "$ui_affecting" ] && exit 0
+
+# UI files staged. Look for `.claude/audit/` reference in the commit message.
+if echo "$commit_msg" | grep -qE '\.claude/audit/'; then
+  exit 0
+fi
+
+# BLOCK.
+{
+  echo ""
+  echo "╔══════════════════════════════════════════════════════════════════════╗"
+  echo "║  COMMIT BLOCKED — UI-affecting files staged without audit reference  ║"
+  echo "║  (commit-msg hook — fires for terminal + harness commits, both -m and -F) ║"
+  echo "╚══════════════════════════════════════════════════════════════════════╝"
+  echo ""
+  echo "Staged UI-affecting files:"
+  echo "$ui_affecting" | sed 's/^/  - /'
+  echo ""
+  echo "Required: a .claude/audit/<task>-<date>/ path referenced in the commit"
+  echo "message (e.g., 'Audit: .claude/audit/<slug>/notes.md')."
+  echo ""
+  echo "Why: CLAUDE.md UI-Change Verification rule. The 2026-05-19 role-column-"
+  echo "collapse incident shipped three CSS fixes that 'looked right in source'"
+  echo "but rendered as 0-width columns. Chrome MCP screenshots at two widths"
+  echo "are the ship gate."
+  echo ""
+  echo "Fixes:"
+  echo "  1. Take Chrome MCP screenshots at 1440×900 + 375×812 of the surface."
+  echo "  2. Save to .claude/audit/<task>-<date>/notes.md."
+  echo "  3. Reference that path in the commit message."
+  echo ""
+  echo "Emergency bypass (any one):"
+  echo "  - Add [skip-ui-verify] to the commit message"
+  echo "  - Pass --no-verify to git commit"
+  echo "  - Set SKIP_UI_VERIFY=1 in the environment"
+} >&2
+
+exit 1

@@ -4324,9 +4324,10 @@ const server = createServer((req, res) => {
     return json(buildPipelinePreview());
   }
   // 2026-05-20 — Single-row re-eval triggered by the ↻ Re-score button on
-  // a row's alignment bars. Spawns batch-runner-batches.mjs --row N
-  // --rescore as a detached child + returns immediately. Logs to
-  // batch/logs/rescore-<row>-<ts>.log.
+  // a row's alignment bars. P1.12 wiring: dispatch to scripts/rescore-row.mjs
+  // (resolves row → url + company + role + id from applications.md, then
+  // delegates to phase3b-evaluator.mjs) as a detached child + returns
+  // immediately. Logs to batch/logs/rescore-<row>-<ts>.log.
   if (url === '/api/eval/rescore' && req.method === 'POST') {
     let body = '';
     let total = 0;
@@ -4341,8 +4342,10 @@ const server = createServer((req, res) => {
       const logPath = join(ROOT, 'batch/logs/rescore-' + row + '-' + ts + '.log');
       try {
         const { spawn } = await import('node:child_process');
-        const { openSync } = await import('node:fs');
-        const child = spawn('node', [join(ROOT, 'batch-runner-batches.mjs'), '--row', row, '--rescore'], {
+        const { openSync, mkdirSync, existsSync } = await import('node:fs');
+        const logDir = join(ROOT, 'batch/logs');
+        if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
+        const child = spawn('node', [join(ROOT, 'scripts/rescore-row.mjs'), '--row', row], {
           cwd: ROOT,
           detached: true,
           stdio: ['ignore', openSync(logPath, 'a'), openSync(logPath, 'a')],

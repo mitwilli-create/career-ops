@@ -7136,6 +7136,37 @@ async function generatePack(){
     return _alphaSSEStream(req, res, logPath);
   }
 
+  // ── POST /api/apply-pack/jobs/:jobId/cancel — cancel an in-flight alpha-spawned job ──
+  // P0.6 (2026-05-20) — per dealbreaker-adjudicated researcher report at
+  // data/p06-popout-actions-ux-FINAL-2026-05-20.md. SIGTERM the child; if
+  // still alive after 5s, SIGKILL. The popout's "Stopping…" disabled-button
+  // state covers the 5s window. Returns the cancel state for the client to
+  // surface in the error/abort panel.
+  //   body: (none required)
+  //   returns: { ok, jobId, signalSent, exitState }
+  const polishCancelMatch = url.match(/^\/api\/apply-pack\/jobs\/([\w-]+)\/cancel$/);
+  if (polishCancelMatch && req.method === 'POST') {
+    const jobId = polishCancelMatch[1];
+    const job = alphaJobs[jobId];
+    if (!job) return json({ ok: false, error: 'unknown job' }, 404);
+    if (job.exitCode != null) return json({ ok: true, jobId, signalSent: null, exitState: 'already-exited', exitCode: job.exitCode });
+    const pid = job.pid;
+    if (!pid) return json({ ok: false, error: 'job has no pid (race condition; retry in 1s)' }, 409);
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch (e) {
+      return json({ ok: false, error: 'SIGTERM failed: ' + (e?.message || 'unknown') }, 500);
+    }
+    // Schedule a SIGKILL fallback after 5s in case the child ignores SIGTERM.
+    setTimeout(() => {
+      const j = alphaJobs[jobId];
+      if (j && j.exitCode == null) {
+        try { process.kill(pid, 'SIGKILL'); } catch (_) { /* already gone */ }
+      }
+    }, 5000);
+    return json({ ok: true, jobId, signalSent: 'SIGTERM', exitState: 'cancel-requested' });
+  }
+
   // ── POST /api/intel-refresh — refresh cached intel slots for a row ──
   //   body: { rowId: 044, slots?: ['hm-intel','toxicity','strategy','positioning','all'] }
   if (url === '/api/intel-refresh' && req.method === 'POST') {

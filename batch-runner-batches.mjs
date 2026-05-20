@@ -876,6 +876,24 @@ async function phaseProcess(apiKey) {
       const cleanReport = rawText.replace(/\{[^{}]*"batch_status"\s*:\s*"completed"[^{}]*\}/, '').trim();
       writeFileSync(filepath, cleanReport);
 
+      // Extract the report's TL;DR row so the tracker's note column
+      // surfaces the actual one-line verdict instead of the placeholder
+      // "Batches API eval | ..." that used to be written here. The drawer
+      // "Why this score" card renders from this note string (see
+      // build-dashboard.mjs:3179) — so the note text IS the user-facing
+      // verdict, not just a metadata header.
+      let tldr = '';
+      try {
+        const tldrMatch = /^\|\s*\*\*TL;DR\*\*\s*\|\s*(.+?)\s*\|\s*$/m.exec(cleanReport);
+        if (tldrMatch) {
+          tldr = tldrMatch[1].trim().replace(/\s+/g, ' ');
+          if (tldr.length > 200) tldr = tldr.slice(0, 197).trimEnd() + '…';
+        }
+      } catch {}
+      const noteText = tldr
+        ? `${tldr} | triage ${meta.triageScore}/5`
+        : `Evaluated | ${archetype} | ${legitimacy} | triage ${meta.triageScore}/5`;
+
       // Write tracker TSV
       trackerNum++;
       const tsvLine = [
@@ -887,7 +905,7 @@ async function phaseProcess(apiKey) {
         `${score.toFixed(1)}/5`,
         '❌',
         `[${numStr}](reports/${filename})`,
-        `Batches API eval | ${archetype} | ${legitimacy} | triage ${meta.triageScore}/5`,
+        noteText,
       ].join('\t');
       appendFileSync(join(TRACKER_DIR, `${numStr}-${slug}.tsv`), tsvLine + '\n');
 

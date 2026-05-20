@@ -6771,6 +6771,37 @@ async function generatePack(){
     }
   }
 
+  // ── Phase D (2026-05-19) — evening-digest health endpoint ─────────────────
+  // Surfaces the last evening archive's mtime so the dashboard widget can show
+  // "last evening digest sent: <ts>" — exposes the 18:00 PT silent-failure mode.
+  if (url === '/api/evening-digest/last-sent') {
+    try {
+      const archiveDir = join(ROOT, 'data', 'heartbeat-archive');
+      let files = [];
+      if (existsSync(archiveDir)) {
+        files = readdirSync(archiveDir)
+          .filter(f => f.startsWith('heartbeat-evening-') && f.endsWith('.html'))
+          .sort((a, b) => b.localeCompare(a));
+      }
+      if (!files.length) {
+        return json({ ok: true, present: false, message: 'No evening digest archives yet' });
+      }
+      const latest = files[0];
+      const stat = statSync(join(archiveDir, latest));
+      const dateMatch = latest.match(/(\d{4}-\d{2}-\d{2})/);
+      return json({
+        ok: true,
+        present: true,
+        filename: latest,
+        date: dateMatch ? dateMatch[1] : null,
+        mtime_iso: stat.mtime.toISOString(),
+        open_url: `/data/heartbeat-archive/${latest}`,
+      });
+    } catch (err) {
+      return json({ ok: false, error: err.message }, 500);
+    }
+  }
+
   // Static files from dashboard/
   // Normalize: /dashboard/ and /dashboard are aliases for /
   const normalUrl = (url === '/dashboard' || url === '/dashboard/') ? '/' : url;

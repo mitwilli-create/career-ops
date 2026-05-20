@@ -11126,6 +11126,44 @@ async function build() {
       <!-- Mini-ticker removed 2026-05-10: same scan activity already lives in
            the mission-control strip at the top of the page (#live-text).
            Sidebar duplicate added clutter without new info. -->
+
+      <!-- Phase D (2026-05-19) — evening-digest health widget. ─────────────
+           Shows "last evening digest sent: <date> (<N>h ago)" so the 18:00 PT
+           plist failure mode is visible. Falls back to "not configured yet"
+           when no evening archives exist (expected until plist installs).
+           Outer-template-unescape-safe: no bare \\n or \\r inside the inline
+           script; uses String.fromCharCode where any escape is needed. -->
+      <div id="evening-digest-widget" style="font-size:11px;color:var(--text-3,#a3a3a3);padding:4px 0 2px;border-top:1px solid var(--border,#232737);margin-top:6px">
+        <span id="evening-digest-status">Evening digest: checking…</span>
+      </div>
+      <script>
+(function() {
+  function _initEveningWidget() {
+    var el = document.getElementById('evening-digest-status');
+    if (!el) return;
+    fetch('/api/evening-digest/last-sent')
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(data) {
+        if (!data) { el.textContent = 'Evening digest: error'; return; }
+        if (!data.ok) { el.textContent = 'Evening digest: error'; return; }
+        if (!data.present) { el.textContent = 'Evening digest: not configured yet'; return; }
+        var sent = new Date(data.mtime_iso);
+        var ago = Math.round((Date.now() - sent.getTime()) / 3600000);
+        el.innerHTML = 'Evening digest: ' + data.date + ' (' + ago + 'h ago)' +
+          ' · <a href="' + data.open_url + '" style="color:var(--color-accent,#86efac);text-decoration:none">open →</a>';
+      })
+      .catch(function(e) { el.textContent = 'Evening digest: ' + e.message; });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _initEveningWidget);
+  } else {
+    setTimeout(_initEveningWidget, 0);
+  }
+  // Refresh every 10 minutes so the widget updates after a 18:00 PT send.
+  setInterval(_initEveningWidget, 600000);
+})();
+      </script>
+
       <div class="sidebar-version" title="Career-Ops version">v${htmlEscape(appVersion || '?')}</div>
     </div>
   </aside>

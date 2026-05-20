@@ -57,6 +57,16 @@ const TARGET_DATE = dateArg
   ? dateArg.split('=')[1]
   : new Date().toISOString().slice(0, 10);
 
+// ── HEARTBEAT_EVENING_ENABLED gate (Phase D, 2026-05-19) ───────────────────
+// Lets Mitchell kill the evening email without uninstalling the launchd plist.
+// Set HEARTBEAT_EVENING_ENABLED=false in .env to disable. Default when unset: enabled (true).
+// --preview still works even when the gate is closed (preview is read-only, not a send action).
+const EVENING_ENABLED = (process.env.HEARTBEAT_EVENING_ENABLED || 'true').toLowerCase() !== 'false';
+if (!EVENING_ENABLED && (SEND || TEST)) {
+  console.log('[heartbeat-evening] HEARTBEAT_EVENING_ENABLED=false — skipping send.');
+  process.exit(0);
+}
+
 // ── Secrets loader ─────────────────────────────────────────────────────────
 function loadSecrets() {
   const path = join(homedir(), '.career-ops-secrets');

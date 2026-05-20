@@ -28286,6 +28286,16 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   <div class="batch-status-body" id="batch-status-body">
     <div style="text-align:center; padding: 40px 16px; color: var(--text-3); font-size: 13px;">Loading…</div>
   </div>
+  <!-- BRAVO followup 2026-05-20 — drill-in side panel. -->
+  <aside id="batch-status-drillin" class="batch-status-drillin" aria-hidden="true" aria-labelledby="batch-status-drillin-title">
+    <div class="batch-status-drillin-header">
+      <h4 id="batch-status-drillin-title">Detail</h4>
+      <button type="button" class="batch-status-drillin-close" onclick="closeBatchDrillIn()" aria-label="Close detail panel">&times;</button>
+    </div>
+    <div class="batch-status-drillin-body" id="batch-status-drillin-body">
+      <div style="text-align:center; padding: 40px 16px; color: var(--text-3); font-size: 13px;">Loading…</div>
+    </div>
+  </aside>
 </div>
 
 <!-- ──────────────────────────────────────────────────────────────

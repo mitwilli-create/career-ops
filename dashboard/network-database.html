@@ -84,7 +84,9 @@
     }
     .filter-chip-row-label {
       font-size: 10.5px;
-      color: var(--text-4);
+      /* BRAVO followup 2026-05-20 Item 9 / AA-9 — axe-core flagged var(--text-4)
+         at 2.56:1 vs white. var(--text-3) (#64748b) is 4.66:1 — passes AA. */
+      color: var(--text-3);
       text-transform: uppercase;
       letter-spacing: 0.06em;
       margin-right: 4px;
@@ -93,7 +95,8 @@
       margin-left: auto;
       background: transparent;
       border: 1px solid transparent;
-      color: var(--text-4);
+      /* BRAVO followup 2026-05-20 Item 9 / AA-9 — see above. */
+      color: var(--text-3);
       font-size: 11.5px;
       padding: 5px 10px;
       border-radius: 999px;
@@ -618,7 +621,7 @@ textarea:focus-visible {
   <table id="netDbTable">
     <thead>
       <tr>
-        <th class="checkbox-cell"><input type="checkbox" id="select-all"></th>
+        <th class="checkbox-cell"><input type="checkbox" id="select-all" aria-label="Select all rows on this page"></th>
         <th>Name</th>
         <th>Company · Role</th>
         <th>Degree</th>
@@ -633,12 +636,18 @@ textarea:focus-visible {
   <div class="pager" id="pager"></div>
 </main>
 
-<aside id="detail-pane" aria-hidden="true">
+<!-- BRAVO followup 2026-05-20 Item 9 / AA-9 — `aria-hidden="true"` on an
+     element that contains a focusable button violates aria-hidden-focus
+     (WCAG 2.1 Level A). Using `inert` instead, which removes the subtree
+     from tab order AND assistive-tech access when the pane is closed. JS
+     toggles `inert` in concert with the .open class. Default is closed
+     so `inert` starts present. -->
+<aside id="detail-pane" inert>
   <button class="close-btn" id="detail-close" aria-label="Close">✕</button>
   <div id="detail-body">Select a row.</div>
 </aside>
 
-<script src="/network-database.js?v=20260520-bravo-item1"></script>
+<script src="/network-database.js?v=20260520-bravo-item9-a11y"></script>
 
   </main>
 </div>

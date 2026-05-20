@@ -69,8 +69,10 @@
       : '<span class="small">—</span>';
     const name = `<a href="${esc(p.linkedin_url || '#')}" target="_blank" rel="noopener" data-stop>${esc(p.full_name)}</a>${p.x_url ? ` <a href="${esc(p.x_url)}" target="_blank" rel="noopener" data-stop class="small">𝕏</a>` : ''}`;
     const company = esc(p.current_company || '') + (p.current_role ? `<br><span class="small">${esc(p.current_role)}</span>` : '');
+    // BRAVO followup 2026-05-20 Item 9 / AA-9 — every checkbox needs a
+     // label per WCAG 2.1 Level A (form-elements-must-have-labels).
     return `<tr data-id="${esc(p.id)}">
-      <td class="checkbox-cell"><input type="checkbox" data-sel="${esc(p.id)}" ${sel ? 'checked' : ''}></td>
+      <td class="checkbox-cell"><input type="checkbox" data-sel="${esc(p.id)}" aria-label="Select ${esc(p.full_name || p.id)}" ${sel ? 'checked' : ''}></td>
       <td>${name}</td>
       <td>${company}</td>
       <td class="small">${deg}</td>
@@ -187,11 +189,16 @@
   }
 
   // ── Person detail panel ──────────────────────────────────────────────────
+  // BRAVO followup 2026-05-20 Item 9 / AA-9 — toggle `inert` instead of
+  // `aria-hidden` (axe-core flagged aria-hidden-focus on the pane because
+  // the close button is focusable; `inert` is the correct attribute for a
+  // visually-hidden subtree that should be removed from a11y tree + tab
+  // order until reopened).
   async function openDetail(id) {
     const pane = $('#detail-pane');
     const body = $('#detail-body');
     pane.classList.add('open');
-    pane.setAttribute('aria-hidden', 'false');
+    pane.removeAttribute('inert');
     body.innerHTML = 'Loading…';
     try {
       const r = await fetch(`/api/network/person/${encodeURIComponent(id)}`);
@@ -455,7 +462,8 @@
   $('#detail-close').addEventListener('click', () => {
     const pane = $('#detail-pane');
     pane.classList.remove('open');
-    pane.setAttribute('aria-hidden', 'true');
+    // BRAVO followup 2026-05-20 Item 9 / AA-9 — re-`inert` on close.
+    pane.setAttribute('inert', '');
   });
 
   // ── Boot ────────────────────────────────────────────────────────────────

@@ -11606,8 +11606,16 @@ async function build() {
   <!-- D14 Wave G1: Right-click context menu -->
   <div id="row-context-menu" role="menu" aria-label="Row context menu"></div>
 
-  <!-- Mobile bottom sheet (slide-up drawer) for row detail on <720px -->
-  <div id="mobile-sheet-backdrop" onclick="closeMobileSheet()" role="dialog" aria-modal="true" aria-labelledby="mobile-sheet-title" aria-hidden="true">
+  <!-- Mobile bottom sheet (slide-up drawer) for row detail on <720px.
+       BRAVO followup 2026-05-20 Item 9 / AA-9 — switched from
+       aria-hidden=true to inert to fix the aria-hidden-focus violation
+       (focusable close button inside an aria-hidden dialog is WCAG 2.1
+       Level A). JS handlers in closeMobileSheet / openMobileSheetFor*
+       toggle the inert attribute instead. Backtick chars avoided in
+       this comment because the outer template-literal in build() would
+       parse them and break the script (see CLAUDE.md bug class
+       outer-template-unescape). -->
+  <div id="mobile-sheet-backdrop" onclick="closeMobileSheet()" role="dialog" aria-modal="true" aria-labelledby="mobile-sheet-title" inert>
     <div id="mobile-sheet" onclick="event.stopPropagation()">
       <div class="mobile-sheet-handle-grip" id="mobile-sheet-handle-grip" aria-hidden="true">
         <div class="mobile-sheet-handle"></div>
@@ -18599,7 +18607,7 @@ function openMobileSheetForDetail(detailRow) {
   bodyEl.scrollTop = 0;
   const bd = document.getElementById('mobile-sheet-backdrop');
   bd.classList.add('visible');
-  bd.removeAttribute('aria-hidden');
+  bd.removeAttribute('inert');
   document.body.style.overflow = 'hidden';
 }
 
@@ -18607,7 +18615,10 @@ function closeMobileSheet() {
   const bd = document.getElementById('mobile-sheet-backdrop');
   if (bd) {
     bd.classList.remove('visible');
-    bd.setAttribute('aria-hidden', 'true');
+    // BRAVO followup 2026-05-20 Item 9 / AA-9 — switched from
+    // aria-hidden=true to inert to fix aria-hidden-focus violation
+    // (focusable close button inside an aria-hidden container).
+    bd.setAttribute('inert', '');
   }
   document.body.style.overflow = '';
 }
@@ -18641,7 +18652,7 @@ function openMobileSheetForReport(rowNum) {
   bodyEl.scrollTop = 0;
   const bd = document.getElementById('mobile-sheet-backdrop');
   bd.classList.add('visible');
-  bd.removeAttribute('aria-hidden');
+  bd.removeAttribute('inert');
   document.body.style.overflow = 'hidden';
 }
 window.openMobileSheetForReport = openMobileSheetForReport;
@@ -26751,7 +26762,7 @@ function openMobileSettingsSheet(btn) {
   };
   bodyEl.scrollTop = 0;
   bd.classList.add('visible');
-  bd.removeAttribute('aria-hidden');
+  bd.removeAttribute('inert');
   document.body.style.overflow = 'hidden';
 }
 window.openMobileSettingsSheet = openMobileSettingsSheet;

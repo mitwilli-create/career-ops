@@ -140,7 +140,9 @@
     .empty-state { padding: 60px 20px; text-align: center; color: var(--text-3); }
     .checkbox-cell { width: 28px; text-align: center; }
     .actions-cell { text-align: right; }
-    .small { font-size: 11px; color: var(--text-4); }
+    /* BRAVO followup 2026-05-20 Item 9 / AA-9 — .small was --text-4 (2.56:1).
+       Bumped to --text-3 (4.66:1) to pass AA. */
+    .small { font-size: 11px; color: var(--text-3); }
   </style>
 
 <!-- BRAVO 2026-05-19: shared dashboard shell injection -->
@@ -290,7 +292,9 @@ textarea:focus-visible {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--text-4);
+  /* BRAVO followup 2026-05-20 Item 9 / AA-9 — axe-core flagged --text-4
+     (#94a3b8) at 2.56:1 vs white. --text-3 (#64748b) is 4.66:1, passes AA. */
+  color: var(--text-3);
   padding: 8px 12px 4px;
   display: block;
 }
@@ -349,7 +353,8 @@ textarea:focus-visible {
 .sidebar-sublabel {
   font-size: 10px;
   font-weight: 400;
-  color: var(--text-4);
+  /* BRAVO followup 2026-05-20 Item 9 / AA-9 — see above. */
+  color: var(--text-3);
   margin-top: 1px;
 }
 

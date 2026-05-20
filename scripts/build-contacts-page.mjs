@@ -2158,7 +2158,10 @@ function initContactsPage() {
 // ---------------------------------------------------------------------------
 
 const out = renderDashboardShell({
-  pageId: 'contacts',
+  // P0.8 (2026-05-20) — pageId='network' (was 'contacts') so the unified
+  // sidebar entry highlights when this page is open. The page is still
+  // served from /contacts.html (no URL migration).
+  pageId: 'network',
   title: 'Network',
   headExtra: `<style>${pageCSS}</style>`,
   mainHTML: mainHTML,

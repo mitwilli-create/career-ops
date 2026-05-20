@@ -43,6 +43,23 @@
     header .head-meta { color: var(--text-3); font-size: 12px; }
     .toolbar { padding: 12px 24px; background: var(--surface); border-bottom: 1px solid var(--border);
       display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    /* P0.8 (2026-05-20) — Table|Cards segmented control. Parallels the
+       .view-switcher in contacts.html so users have one consistent way
+       to flip between the two surfaces of the same Network data. */
+    .view-switcher { display: inline-flex; gap: 0; border: 1px solid var(--border);
+      border-radius: 6px; overflow: hidden; flex-shrink: 0; }
+    .view-switcher .vs-tab { padding: 6px 14px; font-size: 12px; font-weight: 500;
+      text-decoration: none; color: var(--text-2); background: var(--surface-2);
+      border: none; cursor: pointer; }
+    .view-switcher .vs-tab + .vs-tab { border-left: 1px solid var(--border); }
+    .view-switcher .vs-tab:hover { background: var(--border); color: var(--text); }
+    .view-switcher .vs-tab[aria-pressed="true"],
+    .view-switcher .vs-tab-active {
+      background: var(--blue-bg); color: var(--blue-fg); font-weight: 600;
+    }
+    .view-switcher .vs-tab:focus-visible {
+      outline: none; box-shadow: inset 0 0 0 2px var(--blue-fg);
+    }
     .toolbar input[type="search"] { flex: 1; min-width: 280px; padding: 8px 12px;
       border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2);
       color: var(--text); font-size: 13px; }
@@ -534,13 +551,14 @@ textarea:focus-visible {
         <span class="sidebar-icon" aria-hidden="true">⚡</span>
         <span class="sidebar-label">Dashboard</span>
       </a>
-      <a href="/contacts.html" class="sidebar-link" title="Network">
+      <!-- P0.8 (2026-05-20) — single unified Network entry per researcher
+           convergence. Sidebar shows ONE Network link; Table|Cards is an
+           in-page segmented control. /contacts.html still resolves and
+           highlights this same entry (build-contacts-page.mjs sets
+           pageId='network'). -->
+      <a href="/network-database.html" class="sidebar-link sidebar-link-active" title="Network" aria-current="page">
         <span class="sidebar-icon" aria-hidden="true">👥</span>
         <span class="sidebar-label">Network</span>
-      </a>
-      <a href="/network-database.html" class="sidebar-link sidebar-link-active" title="Network DB" aria-current="page">
-        <span class="sidebar-icon" aria-hidden="true">🗄</span>
-        <span class="sidebar-label">Network DB<span class="sidebar-sublabel" aria-hidden="true">table view</span></span>
       </a>
       </div>
 
@@ -600,6 +618,14 @@ textarea:focus-visible {
 </header>
 
 <div class="toolbar">
+  <!-- P0.8 (2026-05-20) — in-page Table|Cards switcher per researcher
+       convergence. Table is the active sub-surface here; Cards links to
+       /contacts.html. aria-pressed (NOT aria-current — that lives on the
+       sidebar's unified Network entry). -->
+  <div class="view-switcher" role="group" aria-label="Network view">
+    <a href="/network-database.html" class="vs-tab vs-tab-active" aria-pressed="true">Table</a>
+    <a href="/contacts.html" class="vs-tab" aria-pressed="false">Cards</a>
+  </div>
   <input id="search" type="search" placeholder="Search name, company, role, email…   /  to focus" autocomplete="off" aria-label="Search the network database">
   <select id="sort" aria-label="Sort order">
     <option value="warm_path_strength">Sort: Warm-path strength</option>

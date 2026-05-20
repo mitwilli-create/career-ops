@@ -35,7 +35,9 @@ if (html.includes('class="sidebar" id="sidebar"')) {
   process.exit(0);
 }
 
-const sidebar = getDashboardSidebar({ currentPage: 'network-db' });
+// P0.8 (2026-05-20) — currentPage='network' (was 'network-db') to highlight
+// the unified Network sidebar entry. See lib/dashboard-shell.mjs:67.
+const sidebar = getDashboardSidebar({ currentPage: 'network' });
 const shellCSS = getDashboardShellCSS({ scopeForStandalonePage: false });
 const shellJS = getDashboardShellScripts({ pageId: 'network-db' });
 

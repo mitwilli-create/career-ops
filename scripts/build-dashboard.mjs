@@ -21207,6 +21207,133 @@ function closeBatchStatusModal() {
 window.openBatchStatusModal  = openBatchStatusModal;
 window.closeBatchStatusModal = closeBatchStatusModal;
 
+/* BRAVO followup 2026-05-20 — Batch Status drill-in side panel.
+ * UX: side panel (NOT sub-modal), main view live-polls underneath.
+ * Content hierarchy leads with what is actionable. */
+var _bsDrillInLastTrigger = null;
+
+async function openBatchDrillIn(state) {
+  var panel = document.getElementById('batch-status-drillin');
+  var titleEl = document.getElementById('batch-status-drillin-title');
+  var bodyEl = document.getElementById('batch-status-drillin-body');
+  if (!panel || !bodyEl) return;
+  try { _bsDrillInLastTrigger = document.activeElement; } catch (_) { _bsDrillInLastTrigger = null; }
+  var TITLES = {
+    completed: 'Completed in current run',
+    failed: 'Failed in current run',
+    running: 'Running right now',
+    pending: 'Pending in current run',
+    pipeline_pending: 'Pipeline pending (awaiting next batch)',
+    batch_input: 'Batch input (queued for next run)'
+  };
+  if (titleEl) titleEl.textContent = TITLES[state] || 'Detail';
+  bodyEl.innerHTML = '<div style="text-align:center;padding:40px 16px;color:var(--text-3);font-size:13px">Loading' + String.fromCharCode(8230) + '</div>';
+  panel.setAttribute('aria-hidden', 'false');
+  panel.classList.add('open');
+  var closeBtn = panel.querySelector('.batch-status-drillin-close');
+  if (closeBtn && typeof closeBtn.focus === 'function') {
+    try { closeBtn.focus({ preventScroll: true }); } catch (_) { closeBtn.focus(); }
+  }
+  try {
+    var r = await fetch('/api/batch/items?state=' + encodeURIComponent(state), { cache: 'no-cache' });
+    var data = await r.json();
+    bodyEl.innerHTML = _renderBatchDrillInBody(state, data);
+  } catch (e) {
+    bodyEl.innerHTML = '<div class="bs-drillin-empty" style="color:var(--red-fg-dark, #991b1b)">Could not load detail.</div>';
+  }
+}
+
+function closeBatchDrillIn() {
+  var panel = document.getElementById('batch-status-drillin');
+  if (!panel) return;
+  panel.classList.remove('open');
+  panel.setAttribute('aria-hidden', 'true');
+  try {
+    if (_bsDrillInLastTrigger && typeof _bsDrillInLastTrigger.focus === 'function') {
+      _bsDrillInLastTrigger.focus({ preventScroll: true });
+    }
+  } catch (_) { /* graceful */ }
+}
+
+function _renderBatchDrillInBody(state, data) {
+  if (!data || data.ok === false) {
+    return '<div class="bs-drillin-empty" style="color:var(--red-fg-dark, #991b1b)">Server error: ' + ((data && data.error) || 'unknown') + '</div>';
+  }
+  var items = (data && data.items) || [];
+  var total = (data && data.total) || 0;
+  var esc = function (s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  };
+  var COPY = {
+    completed: '<strong>' + total + '</strong> items evaluated. Click a row to open the report.',
+    failed: '<strong>' + total + '</strong> items failed in this run.',
+    running: '<strong>' + total + '</strong> in flight. Longest-running surfaces first.',
+    pending: '<strong>' + total + '</strong> queued. Order = position in batch-state.tsv.',
+    pipeline_pending: '<strong>' + total + '</strong> URLs awaiting the next batch.',
+    batch_input: '<strong>' + total + '</strong> items staged for the next batch run.'
+  };
+  var headline = '<div class="bs-drillin-callout">' + (COPY[state] || ('<strong>' + total + '</strong> items.')) + '</div>';
+  if (!items.length) {
+    return headline + '<div class="bs-drillin-empty">No items in this state right now.</div>';
+  }
+  var categoryPills = '';
+  if (state === 'failed' && data.error_categories) {
+    var cats = Object.keys(data.error_categories).sort(function (a, b) {
+      return (data.error_categories[b] || 0) - (data.error_categories[a] || 0);
+    });
+    if (cats.length) {
+      categoryPills = '<div class="bs-drillin-categories" role="group" aria-label="Failure categories">' +
+        cats.map(function (c) {
+          return '<span class="bs-drillin-cat-pill" title="' + esc(c) + ' failures">' + esc(c) + ' ' + String.fromCharCode(183) + ' ' + (data.error_categories[c] || 0) + '</span>';
+        }).join('') + '</div>';
+    }
+  }
+  var sorted = items.slice();
+  if (state === 'running') sorted.sort(function (a, b) { return (b.elapsed_seconds || 0) - (a.elapsed_seconds || 0); });
+  if (state === 'completed') sorted.sort(function (a, b) { return (b.score || 0) - (a.score || 0); });
+  var rows = sorted.map(function (it) {
+    var label = esc(it.label || it.url || '?');
+    var urlAttr = it.url ? (' title="' + esc(it.url) + '"') : '';
+    var head = '<div class="bs-drillin-item-head">' +
+      (it.position != null ? '<span class="bs-drillin-item-pos">' + it.position + '.</span>' : '') +
+      '<span class="bs-drillin-item-label"' + urlAttr + '>' + label + '</span>' +
+      '</div>';
+    var meta = '';
+    if (state === 'completed') {
+      var scoreTxt = it.score != null ? (it.score.toFixed ? it.score.toFixed(1) : it.score) : '?';
+      var link = it.report_num ? ('<a class="bs-drillin-item-link" href="/reports/' + esc(it.report_num) + '" target="_blank" rel="noopener noreferrer">Report ' + esc(it.report_num) + '</a>') : '<span class="bs-drillin-item-meta">No report</span>';
+      meta = '<div class="bs-drillin-item-meta">Score <strong>' + scoreTxt + '/5</strong> ' + String.fromCharCode(183) + ' ' + link + '</div>';
+    } else if (state === 'failed') {
+      var cat = it.error_category ? ('<span class="bs-drillin-item-cat">' + esc(it.error_category) + '</span>') : '';
+      var err = it.error ? ('<div class="bs-drillin-item-error">' + esc(it.error) + '</div>') : '';
+      var retries = it.retries ? (' ' + String.fromCharCode(183) + ' retried ' + it.retries + 'x') : '';
+      meta = '<div class="bs-drillin-item-meta">' + cat + retries + '</div>' + err;
+    } else if (state === 'running') {
+      var sec = it.elapsed_seconds || 0;
+      var elapsed = sec < 60 ? (sec + 's') : (Math.floor(sec / 60) + 'm ' + (sec % 60) + 's');
+      meta = '<div class="bs-drillin-item-meta">Elapsed <strong>' + elapsed + '</strong></div>';
+    } else if (state === 'pending' || state === 'pipeline_pending' || state === 'batch_input') {
+      meta = it.url ? '<div class="bs-drillin-item-meta">' + esc(it.url) + '</div>' : '';
+    }
+    return '<div class="bs-drillin-item">' + head + meta + '</div>';
+  }).join('');
+  var truncated = data.truncated ? ('<div class="bs-drillin-truncated">Showing first ' + items.length + ' of ' + total + '. Use the source file directly for the full list.</div>') : '';
+  return headline + categoryPills + rows + truncated;
+}
+
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'Escape') return;
+  var panel = document.getElementById('batch-status-drillin');
+  if (panel && panel.classList.contains('open')) {
+    e.preventDefault();
+    e.stopPropagation();
+    closeBatchDrillIn();
+  }
+}, true);
+
+window.openBatchDrillIn = openBatchDrillIn;
+window.closeBatchDrillIn = closeBatchDrillIn;
+
 // ── Verify claims modal ─────────────────────────────────────────
 async function openVerify(slug) {
   const data = await apiFetch('/api/verify/' + slug);

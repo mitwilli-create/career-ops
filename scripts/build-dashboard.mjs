@@ -18537,6 +18537,68 @@ async function tonightPickPolish() {
 }
 window.tonightPickPolish = tonightPickPolish;
 
+// 2026-05-20 — Dynamic-bar staleness scanner + Re-score handler.
+function scanBarsStaleness() {
+  try {
+    var cb = window._waveCB || {};
+    var corpusMs = (cb.corpusMtime && cb.corpusMtime.ms) || 0;
+    if (!corpusMs) return;
+    var chips = document.querySelectorAll('.bars-staleness[data-eval-date]');
+    for (var i = 0; i < chips.length; i++) {
+      var chip = chips[i];
+      var evalDateStr = chip.getAttribute('data-eval-date') || '';
+      if (!evalDateStr) continue;
+      var evalMs = Date.parse(evalDateStr);
+      if (isNaN(evalMs)) continue;
+      var warn = chip.querySelector('[data-stale-warning]');
+      if (corpusMs > evalMs && warn) {
+        warn.hidden = false;
+        warn.title = 'Your most recent corpus change is ' + (cb.corpusMtime.date || '') + ' — these bars were scored on ' + evalDateStr + '. Re-score to refresh against your current CV.';
+      }
+    }
+  } catch (e) { /* never break the page on a staleness probe error */ }
+}
+if (window._waveCBReadyPromise) { window._waveCBReadyPromise.then(scanBarsStaleness); }
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', scanBarsStaleness);
+} else {
+  setTimeout(scanBarsStaleness, 100);
+}
+window.scanBarsStaleness = scanBarsStaleness;
+
+async function rescoreRow(rowNum) {
+  if (!rowNum) return;
+  var btn = document.querySelector('.bars-rescore-btn[data-rescore="' + rowNum + '"]');
+  if (btn) { btn.disabled = true; btn.textContent = '↻ Re-scoring…'; }
+  try {
+    var res = await fetch('/api/eval/rescore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ row: String(rowNum) }),
+    });
+    var data = await res.json().catch(function(){ return null; });
+    if (data && data.ok) {
+      if (typeof showToast === 'function') {
+        showToast('Re-score queued — bars will refresh on next dashboard rebuild', 'success');
+      }
+      if (btn) { btn.textContent = '↻ Re-score queued'; }
+    } else {
+      var msg = (data && data.error) || 'endpoint unavailable';
+      var cmd = 'node batch-runner-batches.mjs --row ' + rowNum + ' --rescore';
+      if (typeof showToast === 'function') {
+        showToast('Re-score unavailable (' + msg + ') — run: ' + cmd, 'warn');
+      } else {
+        alert('To re-score this row, run in terminal:' + String.fromCharCode(10) + String.fromCharCode(10) + cmd);
+      }
+      if (btn) { btn.disabled = false; btn.textContent = '↻ Re-score against current CV'; }
+    }
+  } catch (e) {
+    console.warn('[rescore] failed:', e.message);
+    if (btn) { btn.disabled = false; btn.textContent = '↻ Re-score against current CV'; }
+  }
+}
+window.rescoreRow = rescoreRow;
+
 async function tonightPickRetryStage(stageId, rowNum) {
   var btn = document.querySelector('#tp-progress-footer button.tonight-pick-btn-accent');
   if (btn) { btn.disabled = true; btn.textContent = '…'; }

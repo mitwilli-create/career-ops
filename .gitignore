@@ -148,6 +148,10 @@ data/linkedin-*.md
 data/linkedin-*.json
 data/pipeline-triage-*.md
 
+# Disclosure logs — contain incident details, sometimes including leaked
+# file lists and contact-info templates. Local-only.
+data/disclosure-log-*.md
+
 # Outreach state — per-contact message history + intel cache, personal
 data/outreach-state.json
 

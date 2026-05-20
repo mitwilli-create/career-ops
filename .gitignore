@@ -139,6 +139,14 @@ data/row-notes.json
 
 # LinkedIn export — personal contact data, never commit
 data/linkedin/
+# LinkedIn strategy / liveness / red-team / optimization sibling files —
+# these sit at data/linkedin-*.{md,json} (not data/linkedin/*) and slipped
+# through the directory gitignore until the 2026-05-20 santifer/career-ops#703
+# cross-fork leak. Cover them explicitly now. Pipeline triage notes also
+# contain personal application state.
+data/linkedin-*.md
+data/linkedin-*.json
+data/pipeline-triage-*.md
 
 # Outreach state — per-contact message history + intel cache, personal
 data/outreach-state.json

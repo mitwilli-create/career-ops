@@ -67,7 +67,7 @@ const ACTIVE_STATUSES = new Set(['Evaluated', 'Applied', 'Interview']);
 
 const STATE_PATH = join(ROOT, 'data/liveness-state.json');
 const LOG_DIR = join(ROOT, 'data/logs');
-const LOG_PATH = join(LOG_DIR, `liveness-sweep-${new Date().toISOString().slice(0, 10)}.log`);
+const LOG_PATH = join(LOG_DIR, `liveness-sweep-${new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' })}.log`);
 
 function ensureLogDir() {
   if (!existsSync(LOG_DIR)) mkdirSync(LOG_DIR, { recursive: true });

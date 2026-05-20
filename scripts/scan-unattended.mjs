@@ -15,7 +15,7 @@ import { startRun, finishRun } from '../lib/job-runs-ledger.mjs';
 const PROJECT_DIR = process.env.CAREER_OPS_DIR || '/Users/mitchellwilliams/Documents/career-ops';
 const NODE_BIN = process.env.CAREER_OPS_NODE || '/Users/mitchellwilliams/.nvm/versions/node/v24.14.0/bin/node';
 const LOG_DIR = join(PROJECT_DIR, 'data/logs');
-const DATE = new Date().toISOString().slice(0, 10);
+const DATE = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
 const LOG_PATH = join(LOG_DIR, `scan-${DATE}.log`);
 
 if (!existsSync(LOG_DIR)) mkdirSync(LOG_DIR, { recursive: true });

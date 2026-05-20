@@ -57,7 +57,7 @@ const TEST    = args.includes('--test');
 const PREVIEW = args.includes('--preview');
 const TARGET_DATE = dateArg
   ? dateArg.split('=')[1]
-  : new Date().toISOString().slice(0, 10);
+  : new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
 
 // ── HEARTBEAT_EVENING_ENABLED gate (Phase D, 2026-05-19) ───────────────────
 // Lets Mitchell kill the evening email without uninstalling the launchd plist.

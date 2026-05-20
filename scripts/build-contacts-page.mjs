@@ -262,6 +262,36 @@ try {
 }
 
 // ---------------------------------------------------------------------------
+// 2026-05-20 — P0.1 dual-corpus refactor (Phase 2 of the "deferred to a
+// separate PR" Phase 2 from the freshness IIFE comment). Emit a companion
+// JSON file with the four computed annotation fields baked in, so the
+// browser can render cards client-side without re-doing tier/target/warm
+// computation that depends on Node-only data (apply-now-queue.json,
+// TARGET_COMPANY_ALIASES). Browser fetches this instead of contacts.json
+// so it gets the same data the build-time renderCard saw.
+// ---------------------------------------------------------------------------
+const annotatedPath = join(REPO_ROOT, 'dashboard/data/contacts-annotated.json');
+const annotatedPayload = {
+  generated_at: new Date().toISOString(),
+  contacts: annotated,
+  stats: {
+    total: contacts.length,
+    tier1: tierCounts[1],
+    tier2: tierCounts[2],
+    tier3: tierCounts[3],
+    warm_to_apply_now: warmToApplyNowCount,
+    in_outreach: inOutreachCount,
+    target_counts: targetCounts,
+  },
+};
+try {
+  writeFileSync(annotatedPath, JSON.stringify(annotatedPayload));
+  console.log(`[build-contacts-page] wrote ${annotatedPath} (${annotated.length} annotated contacts)`);
+} catch (e) {
+  console.warn('[build-contacts-page] failed to write contacts-annotated.json:', e.message);
+}
+
+// ---------------------------------------------------------------------------
 // Page CSS — page-specific styles that complement the shell.
 // ---------------------------------------------------------------------------
 
@@ -942,6 +972,61 @@ const pageCSS = `
 }
 .result-empty strong { color: var(--text); }
 
+/* ── P0.1 dual-corpus refactor 2026-05-20 — skeleton + shimmer ─────── */
+.contact-card-skel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 10px);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 132px;
+}
+.skel-row-head { display: flex; gap: 12px; align-items: center; }
+.skel-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--border);
+  flex-shrink: 0;
+}
+.skel-identity { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.skel-line {
+  height: 12px;
+  border-radius: 4px;
+  background: linear-gradient(90deg,
+    var(--border) 0%,
+    var(--surface-2, var(--border)) 50%,
+    var(--border) 100%);
+  background-size: 200% 100%;
+  animation: contacts-skel-shimmer 1.4s ease-in-out infinite;
+}
+.skel-line-name { width: 60%; height: 14px; }
+.skel-line-role { width: 80%; }
+.skel-line-detail { width: 95%; }
+.skel-line-detail.short { width: 55%; }
+@keyframes contacts-skel-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skel-line { animation: none; }
+}
+/* Hide skeletons once real cards render. */
+.grid[data-render-state="ready"] .contact-card-skel { display: none; }
+/* Render-state chip on the freshness banner */
+.contacts-render-chip {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm, 6px);
+  font-size: 11px;
+  background: var(--surface);
+  color: var(--text-3);
+  border: 1px solid var(--border);
+}
+
 @media (max-width: 720px) {
   .grid { grid-template-columns: 1fr; }
   .controls-trailing { width: 100%; justify-content: flex-end; flex-wrap: wrap; }
@@ -1067,7 +1152,14 @@ const totalT1 = tierCounts[1];
 const totalContacts = annotated.length;
 const enrichedRate = ((totalT3 + totalT2) / totalContacts * 100).toFixed(1);
 
-const cardsHtml = annotated.map(renderCard).join('\n');
+// 2026-05-20 — P0.1 dual-corpus refactor. Cards are now rendered CLIENT-SIDE
+// from /data/contacts-annotated.json. The initial bake has been replaced with
+// 50 skeleton placeholders that shimmer until the fetch resolves. This drops
+// contacts.html from ~5.66 MB to a thin shell (~110-180 KB).
+const SKELETON_COUNT = 50;
+const skeletonHtml = Array.from({ length: SKELETON_COUNT }, () =>
+  '<article class="contact-card-skel" aria-hidden="true"><div class="skel-row-head"><div class="skel-avatar"></div><div class="skel-identity"><div class="skel-line skel-line-name"></div><div class="skel-line skel-line-role"></div></div></div><div class="skel-line skel-line-detail"></div><div class="skel-line skel-line-detail short"></div></article>'
+).join('');
 
 // Build the target-companies dropdown options — sorted by warm-contact count
 // (descending) so the most useful targets surface first. The label comes from
@@ -1205,8 +1297,8 @@ const mainHTML = `
 
   <div class="meta-line" id="result-meta" aria-live="polite"></div>
 
-  <div class="grid" id="grid">
-    ${cardsHtml}
+  <div class="grid" id="grid" data-render-state="skeleton">
+    ${skeletonHtml}
   </div>
 
   <div class="result-empty" id="result-empty" hidden>
@@ -1221,7 +1313,173 @@ const mainHTML = `
 
 const pageJS = `
 <script>
-(function () {
+/* ════════════════════════════════════════════════════════════════════
+ * P0.1 — Dual-corpus client-side rendering (2026-05-20)
+ *
+ * Skeleton placeholders ship in the initial HTML; this script fetches
+ * /data/contacts-annotated.json, hydrates the grid, and only THEN
+ * calls initContactsPage() to bind filter/sort/keyboard handlers.
+ * localStorage cache (TTL 1h, keyed by generated_at) makes the warm
+ * load instant.
+ *
+ * Browser renderCard uses string concatenation (NOT template literals)
+ * because the entire pageJS lives inside an outer template-literal in
+ * build-contacts-page.mjs — inner dollar-brace would interpolate at
+ * build time and inner backticks would close the outer template (see
+ * CLAUDE.md outer-template-unescape bug class).
+ * ════════════════════════════════════════════════════════════════════ */
+function _esBC(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+function _giBC(name) {
+  var chars = Array.from(name == null ? '' : String(name));
+  return (chars[0] || '?').toUpperCase();
+}
+
+// Browser-side renderCard — mirror of Node renderCard at scripts/build-contacts-page.mjs:961
+// Maintain byte-for-byte structural parity with the Node version so all
+// downstream selectors (filter chips, sort dropdown, J/K nav) keep working.
+function _rcBC(c) {
+  var name = c.name || '';
+  var company = c.company || '';
+  var position = c.position || '';
+  var email = c.email_professional || '';
+  var personalEmail = c.email_personal || '';
+  var linkedinUrl = c.linkedin_url || '';
+  var xHandle = c.x_handle || '';
+  var initials = _giBC(c.first_name) + _giBC(c.last_name);
+  var initialsTrimmed = initials.length === 2 ? initials : (initials.length === 1 ? initials : '?');
+
+  var tierBadge = c.tier ? ('<span class="pill-tiny">' + _esBC(c.tier) + '</span>') : '';
+  var outreachBadge = c.in_outreach ? '<span class="pill-tiny pill-outreach">in outreach</span>' : '';
+  var tierIndicator = c._tier
+    ? ('<span class="pill-tiny pill-tier-' + c._tier + '" title="Enrichment tier ' + c._tier + '">T' + c._tier + '</span>')
+    : '';
+
+  var photoHtml;
+  if (c.photo_path) {
+    photoHtml = '<img class="contact-card-photo" src="' + _esBC(c.photo_path) + '" alt="' + _esBC(name) + '" loading="lazy" onerror="this.style.display=\\'none\\';this.nextElementSibling.style.display=\\'flex\\'" /><div class="contact-card-photo-fallback" style="display:none">' + _esBC(initialsTrimmed) + '</div>';
+  } else {
+    photoHtml = '<div class="contact-card-photo-fallback">' + _esBC(initialsTrimmed) + '</div>';
+  }
+
+  var overlapHtml = '';
+  if (c.overlap_with_mitchell && c.overlap_with_mitchell.length) {
+    var oItems = c.overlap_with_mitchell.map(function (o) {
+      return '<span class="contact-card-overlap-item">' + _esBC(o.company) + ' <span class="muted-text">(' + _esBC(o.mitchell_years) + ')</span></span>';
+    }).join('');
+    overlapHtml = '<div class="contact-card-overlap"><span class="contact-card-section-label">↗ Shared employer</span>' + oItems + '</div>';
+  }
+
+  var othersHtml = '';
+  if (c.others_at_company && c.others_at_company.length) {
+    var oList = c.others_at_company.slice(0, 6).map(function (o) {
+      var pill = o.in_outreach ? '<span class="pill-tiny pill-outreach">in outreach</span>' : '';
+      var aMatch = o.archetype_match ? '<span class="pill-tiny pill-archetype">★</span>' : '';
+      return '<button type="button" class="contact-card-other-btn" onclick="focusById(\\'' + _esBC(o.id) + '\\')">' + _esBC(o.name) + ' <span class="muted-text">' + _esBC((o.position || '').slice(0, 28)) + '</span> ' + aMatch + pill + '</button>';
+    }).join('');
+    var more = c.others_at_company.length > 6 ? ('<span class="muted-text">+' + (c.others_at_company.length - 6) + ' more</span>') : '';
+    othersHtml = '<div class="contact-card-others"><span class="contact-card-section-label">Other contacts at ' + _esBC(company) + ' (' + c.others_at_company.length + ')</span><div class="contact-card-others-list">' + oList + more + '</div></div>';
+  }
+
+  var twoDegHtml = '';
+  if (c.two_degree_path && c.two_degree_path.candidate_count > 0) {
+    twoDegHtml = '<div class="contact-card-twodeg"><span class="contact-card-section-label">2nd-degree paths at ' + _esBC(company) + '</span><span class="contact-card-twodeg-count">' + c.two_degree_path.candidate_count + ' warm-intro candidates</span></div>';
+  }
+
+  var goalHtml = '';
+  if (c.goal_alignment) {
+    var ga = c.goal_alignment;
+    var marks = [];
+    if (ga.pre_ipo_match) marks.push('<span class="pill-tiny pill-preipo">pre-IPO</span>');
+    if (ga.archetype_match) marks.push('<span class="pill-tiny pill-archetype">archetype-match</span>');
+    if (marks.length) {
+      goalHtml = '<div class="contact-card-goals">' + marks.join('') + ' <span class="muted-text">alignment ' + ga.composite_score + '</span></div>';
+    }
+  }
+
+  var connectedHtml = '';
+  if (c.connected_on || c.position_at_connection) {
+    connectedHtml = '<div class="contact-card-connected muted-text">Connected ' + (c.connected_on ? _esBC(c.connected_on) : 'date unknown') + (c.position_at_connection ? ' as ' + _esBC(c.position_at_connection) : '') + '</div>';
+  }
+
+  var enrichHtml;
+  if (c.enrichment_status === 'complete' && c.outreach_recommendation) {
+    var rec = c.outreach_recommendation;
+    var parts = [];
+    if (rec.positioning) parts.push('<div><span class="contact-card-section-label">Positioning recommendation</span><p>' + _esBC(rec.positioning) + '</p></div>');
+    if (rec.best_channel) parts.push('<div><span class="contact-card-section-label">Best channel</span> ' + _esBC(rec.best_channel) + '</div>');
+    if (c.engagement && c.engagement.linkedin_topics) {
+      var topics = (c.engagement.linkedin_topics || []).map(function (t) {
+        return '<span class="pill-tiny">' + _esBC(t) + '</span>';
+      }).join('');
+      parts.push('<div><span class="contact-card-section-label">Engages with</span> ' + topics + '</div>');
+    }
+    if (c.inferred_relationship && c.inferred_relationship.arc) {
+      parts.push('<div><span class="contact-card-section-label">Relationship context</span><p class="muted-text">' + _esBC(c.inferred_relationship.arc) + '</p></div>');
+    }
+    enrichHtml = '<div class="contact-card-enriched">' + parts.join('') + '</div>';
+  } else {
+    enrichHtml = '<div class="contact-card-enrich-pending"><span class="muted-text">Engagement topics, outreach positioning, and inferred relationship context pending LLM enrichment.</span> <button type="button" class="contact-act contact-act-enrich" onclick="enrichNow(\\'' + _esBC(c.id) + '\\')">↻ Enrich now</button></div>';
+  }
+
+  function _emailAction(addr, type) {
+    if (!addr) return '<button class="contact-act contact-act-disabled" disabled>' + _esBC(type) + ' ✉︎</button>';
+    return '<button class="contact-act" onclick="revealEmail(this, \\'' + _esBC(addr) + '\\')">' + _esBC(type) + ' →</button>';
+  }
+  var linkedinAction = linkedinUrl
+    ? '<a class="contact-act" href="' + _esBC(linkedinUrl) + '" target="_blank" rel="noopener noreferrer">LinkedIn →</a>'
+    : '<button class="contact-act contact-act-disabled" disabled>LinkedIn</button>';
+  var xClean = String(xHandle || '').replace(/^@/, '');
+  var xAction = xHandle
+    ? '<a class="contact-act" href="https://x.com/' + _esBC(xClean) + '" target="_blank" rel="noopener noreferrer">X →</a>'
+    : '<button class="contact-act contact-act-disabled" disabled>X</button>';
+  var photoBtn = c.photo_path
+    ? ''
+    : '<button type="button" class="contact-act contact-act-photo" onclick="scrapePhoto(\\'' + _esBC(c.id) + '\\',\\'' + _esBC(linkedinUrl) + '\\')">📸 Photo</button>';
+
+  var emailsLine = '';
+  if (email || personalEmail) {
+    emailsLine = '<div class="contact-card-emails">' + (email ? '<span class="contact-card-email-label">Pro:</span> <code>' + _esBC(email) + '</code>' : '') + (personalEmail ? ' <span class="contact-card-email-label">Personal:</span> <code>' + _esBC(personalEmail) + '</code>' : '') + '</div>';
+  }
+
+  var head = '<div class="contact-card-head"><div class="contact-card-avatar">' + photoHtml + '</div><div class="contact-card-identity"><div class="contact-card-name">' + _esBC(name) + ' ' + tierIndicator + ' ' + tierBadge + ' ' + outreachBadge + '</div><div class="contact-card-role">' + _esBC(position || '—') + (company ? ' · <span class="contact-card-company">' + _esBC(company) + '</span>' : '') + '</div>' + connectedHtml + goalHtml + '</div></div>';
+  var actions = '<div class="contact-card-actions">' + _emailAction(email, 'Pro') + _emailAction(personalEmail, 'Personal') + linkedinAction + xAction + photoBtn + '</div>';
+
+  var dsTier = c._tier == null ? '' : String(c._tier);
+  var dsTarget = c._target_slug || '';
+  var dsWarmApply = c._is_warm_apply_now ? '1' : '0';
+  var dsInOutreach = c.in_outreach ? '1' : '0';
+  var dsHasEmail = email ? '1' : '0';
+  var dsWarmStrength = String(c.warm_path_strength || 0);
+  var dsLastTouched = (c._last_touched_days === null || c._last_touched_days === undefined || c._last_touched_days === Infinity || c._last_touched_days === 9999) ? '9999' : String(c._last_touched_days);
+
+  return '<article class="contact-card" id="contact-card-' + _esBC(c.id) + '" tabindex="0" aria-label="' + _esBC(name) + ' — ' + _esBC(position || 'role unknown') + ' at ' + _esBC(company || 'company unknown') + '" data-tier="' + dsTier + '" data-target="' + _esBC(dsTarget) + '" data-warm-apply-now="' + dsWarmApply + '" data-in-outreach="' + dsInOutreach + '" data-has-email="' + dsHasEmail + '" data-warm-strength="' + dsWarmStrength + '" data-last-touched-days="' + dsLastTouched + '">' + head + overlapHtml + othersHtml + twoDegHtml + enrichHtml + emailsLine + actions + '</article>';
+}
+
+function _renderAllCards(contacts) {
+  var grid = document.getElementById('grid');
+  if (!grid) return;
+  var html = '';
+  for (var i = 0; i < contacts.length; i++) {
+    html += _rcBC(contacts[i]);
+  }
+  grid.innerHTML = html;
+  grid.setAttribute('data-render-state', 'ready');
+}
+
+function initContactsPage() {
+  // Idempotent guard — render orchestrator may try to call us twice
+  // (cache hit + fetch fingerprint diff). Once is enough.
+  if (window.__contactsInitDone) return;
+  window.__contactsInitDone = true;
+
   // State
   var activeFilters = new Set();
   var selectedTargets = new Set();
@@ -1766,32 +2024,27 @@ const pageJS = `
 
   // Initial render
   applyFilters();
-})();
+}
 
-/* -------------------------------------------------------------------------
- * BRAVO followup 2026-05-20 Item 4 (dual-corpus refactor — A + C combo)
+/* ════════════════════════════════════════════════════════════════════
+ * 2026-05-20 — P0.1 dual-corpus refactor (Phase 2 — the deferred PR).
  *
- * Pragmatic shape: keep the baked cards as the first-paint surface (5.8MB
- * locally-served = ~80ms FCP), then in parallel:
- *   1. Try localStorage cache (key 'contacts-cache-v1') for stats. If
- *      present, paint the freshness chip immediately as a stale-OK signal.
- *   2. Fetch /data/contacts.json with cache: 'no-cache' to bypass disk
- *      cache and pick up nightly enrichment updates.
- *   3. Recompute stats from the fetched data; update the four stat tiles
- *      in-place (totalContacts / with-signal / warm / in-outreach).
- *   4. Update the freshness chip with the live timestamp + delta vs baked.
- *   5. Write the fetched data back to localStorage (1MB-ish cap; safe).
+ * Replaces the prior freshness-only IIFE. Now the orchestrator BOTH
+ * fetches /data/contacts-annotated.json AND renders the cards client-
+ * side, lifting the initial bake from contacts.html. localStorage
+ * cache (1h TTL keyed by generated_at fingerprint) makes warm load
+ * paint near-instantly; cold load shows skeletons while fetching.
  *
- * This solves the "dual-corpus" frustration: header stats now reflect the
- * LIVE corpus, not the baked snapshot, while preserving the fast first
- * paint. Full client-side card rendering from the JSON is a Phase 2 that
- * requires porting renderCard() to browser JS (deferred to a separate PR).
- * ------------------------------------------------------------------------- */
+ * After render, initContactsPage() binds all filter/sort/J-K handlers
+ * to the freshly-rendered cards. The guard inside initContactsPage()
+ * prevents double-init if both cache hit and fetch fire.
+ * ════════════════════════════════════════════════════════════════════ */
 (function () {
-  var CACHE_KEY = 'contacts-cache-v1';
+  var CACHE_KEY = 'contacts-cache-v2';
+  var CACHE_TTL_MS = 60 * 60 * 1000; // 1h
   var BAKED_AT = window.__CONTACTS_BAKED_AT__ || '';
+  var grid = document.getElementById('grid');
   var freshness = document.getElementById('contacts-freshness');
-  if (!freshness) return; // Element absent → graceful no-op.
 
   function fmtAge(iso) {
     if (!iso) return 'unknown';
@@ -1801,83 +2054,100 @@ const pageJS = `
     if (ms < 86400000) return Math.round(ms / 3600000) + 'h ago';
     return Math.round(ms / 86400000) + 'd ago';
   }
-
-  function computeStats(contacts) {
-    var t1 = 0, t2 = 0, t3 = 0, warm = 0, outreach = 0;
-    for (var i = 0; i < contacts.length; i++) {
-      var c = contacts[i];
-      var hasEmail = !!(c.email_professional || c.email_personal);
-      var isEnriched = c.enrichment_status === 'complete';
-      if (isEnriched) t3++;
-      else if (hasEmail) t2++;
-      else t1++;
-      if (c._is_warm_apply_now || (c.goal_alignment && c.goal_alignment.warm_apply_now)) warm++;
-      if (c.in_outreach) outreach++;
-    }
-    return { total: contacts.length, t1: t1, t2: t2, t3: t3, withSignal: t2 + t3, warm: warm, outreach: outreach };
-  }
-
-  function paintFreshness(label) {
+  function paintFreshness(label, state) {
+    if (!freshness) return;
     freshness.textContent = label;
-    freshness.dataset.state = 'live';
+    freshness.dataset.state = state || 'live';
   }
-
-  function updateTiles(stats) {
+  function updateTilesFromAnnotatedStats(stats) {
     var tiles = {
       all: document.querySelector('[data-stat-filter="all"] strong'),
       signal: document.querySelector('[data-stat-filter="signal"] strong'),
-      'warm-apply-now': document.querySelector('[data-stat-filter="warm-apply-now"] strong'),
+      warm: document.querySelector('[data-stat-filter="warm-apply-now"] strong'),
       outreach: document.querySelector('[data-stat-filter="outreach"] strong'),
     };
-    if (tiles.all) tiles.all.textContent = String(stats.total);
-    if (tiles.signal) tiles.signal.textContent = String(stats.withSignal);
-    if (tiles['warm-apply-now']) tiles['warm-apply-now'].textContent = String(stats.warm);
-    if (tiles.outreach) tiles.outreach.textContent = String(stats.outreach);
+    if (!stats) return;
+    if (tiles.all && stats.total != null) tiles.all.textContent = String(stats.total);
+    if (tiles.signal && (stats.tier2 != null || stats.tier3 != null)) {
+      tiles.signal.textContent = String((stats.tier2 || 0) + (stats.tier3 || 0));
+    }
+    if (tiles.warm && stats.warm_to_apply_now != null) tiles.warm.textContent = String(stats.warm_to_apply_now);
+    if (tiles.outreach && stats.in_outreach != null) tiles.outreach.textContent = String(stats.in_outreach);
   }
 
-  // 1. Stale-OK paint from localStorage cache
+  // 1. Try cache (warm load)
+  var cached = null;
   try {
     var raw = localStorage.getItem(CACHE_KEY);
     if (raw) {
-      var cached = JSON.parse(raw);
-      if (cached && cached.stats && cached.fetchedAt) {
-        updateTiles(cached.stats);
-        paintFreshness('Cached ' + fmtAge(cached.fetchedAt) + ' — refreshing…');
+      var parsed = JSON.parse(raw);
+      if (parsed && parsed.fetchedAt && (Date.now() - parsed.fetchedAt) < CACHE_TTL_MS) {
+        cached = parsed;
       }
     }
-  } catch (e) { /* cache corrupt → ignore */ }
+  } catch (e) { /* corrupt cache → ignore */ }
 
-  // 2. Live fetch — always run, regardless of cache state
-  fetch('/data/contacts.json', { cache: 'no-cache' })
+  if (cached && cached.contacts && cached.contacts.length) {
+    _renderAllCards(cached.contacts);
+    if (cached.stats) updateTilesFromAnnotatedStats(cached.stats);
+    paintFreshness('Cached · ' + cached.contacts.length + ' contacts · refreshing…', 'live');
+    initContactsPage();
+  }
+
+  // 2. Always fetch live — refresh cache, surface drift
+  fetch('/data/contacts-annotated.json', { cache: 'no-cache' })
     .then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     })
     .then(function (payload) {
       var contacts = (payload && payload.contacts) || [];
-      var computed = computeStats(contacts);
-      // Prefer the precomputed .stats block in contacts.json (authoritative
-      // for fields like pre_ipo that need access to apply-now-queue.json).
-      var precomputed = (payload && payload.stats) || {};
-      var stats = {
-        total: precomputed.total != null ? precomputed.total : computed.total,
-        withSignal: (precomputed.enriched || 0) + (precomputed.with_email || 0) || computed.withSignal,
-        // pre_ipo is the closest live proxy for warm-to-apply-now (target
-        // companies × any signal); use it when present.
-        warm: precomputed.pre_ipo != null ? precomputed.pre_ipo : computed.warm,
-        outreach: precomputed.in_outreach != null ? precomputed.in_outreach : computed.outreach,
-        t1: computed.t1, t2: computed.t2, t3: computed.t3,
-      };
-      updateTiles(stats);
-      var fetchedAt = new Date().toISOString();
-      paintFreshness('Live data · refreshed ' + fmtAge(fetchedAt) + ' · baked ' + fmtAge(BAKED_AT));
+      var stats = (payload && payload.stats) || {};
+      var fingerprint = contacts.length + ':' + (payload.generated_at || '');
+      var hadCache = !!(cached && cached.contacts);
+      var changed = !hadCache || cached.fingerprint !== fingerprint;
+
+      if (!hadCache) {
+        // Cold load — render + init now
+        _renderAllCards(contacts);
+        updateTilesFromAnnotatedStats(stats);
+        initContactsPage();
+        paintFreshness('Live · ' + contacts.length + ' contacts · refreshed ' + fmtAge(new Date().toISOString()), 'live');
+      } else if (changed) {
+        // Warm load with drift — show a notice instead of silently re-rendering
+        paintFreshness('Live data updated · refresh the page to see ' + contacts.length + ' contacts', 'stale');
+      } else {
+        paintFreshness('Live · ' + contacts.length + ' contacts · cache current', 'live');
+      }
+
+      // Cache for next visit
       try {
-        localStorage.setItem(CACHE_KEY, JSON.stringify({ stats: stats, fetchedAt: fetchedAt }));
-      } catch (e) { /* quota or privacy mode → ignore */ }
+        localStorage.setItem(CACHE_KEY, JSON.stringify({
+          fetchedAt: Date.now(),
+          fingerprint: fingerprint,
+          contacts: contacts,
+          stats: stats,
+        }));
+      } catch (e) {
+        // Quota exceeded — keep stats only as a fallback
+        try {
+          localStorage.setItem(CACHE_KEY, JSON.stringify({
+            fetchedAt: Date.now(),
+            fingerprint: fingerprint,
+            stats: stats,
+          }));
+        } catch (_) { /* still over → silent */ }
+      }
     })
     .catch(function (err) {
-      freshness.textContent = 'Live refresh failed (' + err.message + ') · showing baked data';
-      freshness.dataset.state = 'stale';
+      if (!cached || !cached.contacts || !cached.contacts.length) {
+        // No cache fallback and fetch failed → render empty-state into the grid
+        if (grid) {
+          grid.innerHTML = '<div class="result-empty"><strong>Failed to load contacts.</strong><div class="muted-text" style="margin-top:6px">' + _esBC(err.message || 'fetch failed') + '</div><div class="muted-text" style="margin-top:6px">Refresh the page to retry.</div></div>';
+          grid.setAttribute('data-render-state', 'error');
+        }
+      }
+      paintFreshness('Live fetch failed · ' + (err.message || 'unknown') + (cached ? ' · showing cache' : ''), 'stale');
     });
 })();
 </script>

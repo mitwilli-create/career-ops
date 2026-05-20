@@ -2952,7 +2952,7 @@ function renderRow(r, idx) {
         // dead end. Aligning to camelCase resolves the lookup so the rich
         // definition + close-actions render.
         alignmentBars = `<div class="alignment-bars">
-          ${bar(align.alignment, 'Profile alignment', alignTooltip, 'profile', 'alignment', dc.alignment)}
+          ${bar(align.alignment, 'How well your background fits this role', alignTooltip, 'profile', 'alignment', dc.alignment)}
           ${bar(align.interview, 'Interview likelihood', intvTooltip, 'interview', 'interview', dc.interview)}
           ${bar(align.hmNoticing, 'Chance a hiring manager will see you', hmTooltip, 'hm', 'hmNoticing', dc.hmNoticing)}
         </div>`;
@@ -2964,8 +2964,12 @@ function renderRow(r, idx) {
   // (from the Function row in Bloque A) between TL;DR and the alignment bars
   // per Mitchell's mega-list. Compact one-line label + value; hidden when
   // the report doesn't disclose function/responsibilities.
+  // Audit Tier 2 #6 (2026-05-20): the raw value here often comes through
+  // as a syntactic abbreviation ("Manage + coach + publish (editorial
+  // strategy, ...)") parsed from Block A's Function row. Wrapping with
+  // "Day-to-day:" makes it read as a sentence, not a compressed JD fragment.
   const respLine = roleFunction ? `<div class="dcard-resp-line">
-    <span class="dcard-resp-label">Likely responsibilities:</span>
+    <span class="dcard-resp-label">Day-to-day:</span>
     <span class="dcard-resp-value">${htmlEscape(roleFunction)}</span>
   </div>` : '';
 
@@ -2986,8 +2990,8 @@ function renderRow(r, idx) {
       // 2026-05-20 — make the toxicity row clickable. Drills into the
       // role-enrichment sentiment payload (Glassdoor / Blind / leadership
       // exits / churn signals — the inputs that produced the X/5 grade).
-      toxLine = `<div class="dcard-resp-line drill-trigger" data-drill="metric:${htmlEscape(String(r.num||''))}:team_toxicity" role="button" tabindex="0" style="cursor:pointer;border-radius:4px;padding:2px 4px;margin:0 -4px;transition:background .12s" title="Click for the toxicity-grade source breakdown — Glassdoor signals, Blind threads, leadership exits, churn patterns" onclick="event.stopPropagation();window.drillIn('metric','${htmlEscape(String(r.num||''))}:team_toxicity',event)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();window.drillIn('metric','${htmlEscape(String(r.num||''))}:team_toxicity',event)}" onmouseover="this.style.background='var(--surface-hover,rgba(255,255,255,.04))'" onmouseout="this.style.background=''">
-        <span class="dcard-resp-label">Team toxicity:</span>
+      toxLine = `<div class="dcard-resp-line drill-trigger" data-drill="metric:${htmlEscape(String(r.num||''))}:team_toxicity" role="button" tabindex="0" style="cursor:pointer;border-radius:4px;padding:2px 4px;margin:0 -4px;transition:background .12s" title="Click for the team-health source breakdown — Glassdoor signals, Blind threads, leadership exits, churn patterns" onclick="event.stopPropagation();window.drillIn('metric','${htmlEscape(String(r.num||''))}:team_toxicity',event)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();window.drillIn('metric','${htmlEscape(String(r.num||''))}:team_toxicity',event)}" onmouseover="this.style.background='var(--surface-hover,rgba(255,255,255,.04))'" onmouseout="this.style.background=''">
+        <span class="dcard-resp-label">Team health:</span>
         <span class="dcard-resp-value">${_toxIcon} ${_tox}/5 (${htmlEscape(_toxWord)}, 1=healthy · 5=avoid) <span style="font-size:10px;color:var(--text-4);opacity:.6">▸</span></span>
       </div>`;
     }
@@ -3064,7 +3068,7 @@ function renderRow(r, idx) {
     }
   } catch (_) { _honestGaps = []; }
   const gapCard = (gaps.length || _honestGaps.length) ? `<div class="dcard dcard--gap">
-    <div class="dcard-label">Gaps to address <span style="font-size:9px;font-weight:400;color:var(--text-4);margin-left:4px">click any chip for the close action</span></div>
+    <div class="dcard-label">Gaps to address <span style="font-size:9px;font-weight:400;color:var(--text-4);margin-left:4px">click any chip for what to fix before applying</span></div>
     ${gaps.length ? `<div class="dcard-gaps">${gaps.map(g => {
       const strategy = getGapStrategy(r.reportPath, g.title);
       const detailHtml = g.detail ? marked.parse(g.detail) : '';
@@ -3729,7 +3733,7 @@ async function build() {
       r._throttle = {
         status: 'cooldown',
         label: `🛑 Cooldown until ${endStr} — ${priorWord}. Override if you have a recruiter ask or internal referral.`,
-        note: `Driver: ${driver.role} (${driver.date}, stage: ${driver.stage}). Re-apply window cleared on ${endStr} per stage-aware heuristic.`,
+        note: `Most recent rejection was for "${driver.role}" on ${driver.date} at the ${driver.stage.replace(/_/g, ' ')} stage. The rule: after 3+ rejections at the same stage with the same company, wait until the cooldown window clears before applying to a similar role. This cooldown clears on ${endStr}.`,
       };
     } else if (policy && active >= policy.cap) {
       r._throttle = { status: 'blocked', label: `🛑 ${policy.cap} active app${policy.cap === 1 ? '' : 's'} at ${r.company} — defer until resolved`, note: policy.note };
@@ -12463,18 +12467,18 @@ async function build() {
     <div class="table-scroll" tabindex="0"><table>
       <thead><tr>
         <th class="bulk-th"><input type="checkbox" class="bulk-header-checkbox" data-tbody="apply-now-tbody" aria-label="Select all visible rows in Apply-Now" onclick="handleHeaderCheckbox(this)"></th>
-        <th class="sortable" aria-sort="none" data-col-key="score" data-col-type="numeric" onclick="sortTable('apply-now-tbody', 1, 'num', this, event)">Score<span class="sort-indicator" aria-hidden="true">↕</span></th>
-        <th class="sortable" aria-sort="none" data-col-key="base" data-col-type="numeric" onclick="sortTable('apply-now-tbody', 2, 'num', this, event)" title="Lower-bound base salary parsed from Block A Comp row">Base<span class="sort-indicator" aria-hidden="true">↕</span></th>
-        <th class="sortable" aria-sort="none" data-col-key="company" data-col-type="string" onclick="sortTable('apply-now-tbody', 3, 'str', this, event)">Company <button type="button" class="tier-legend-btn" title="Tier badge legend" aria-label="Show tier badge legend" onclick="event.stopPropagation();openTierLegend()">?</button><span class="sort-indicator" aria-hidden="true">↕</span></th>
-        <th class="sortable" aria-sort="none" data-col-key="role" data-col-type="string" onclick="sortTable('apply-now-tbody', 4, 'str', this, event)">Role<span class="sort-indicator" aria-hidden="true">↕</span></th>
-        <th class="sortable" aria-sort="none" data-col-key="status" data-col-type="status" onclick="sortTable('apply-now-tbody', 5, 'status', this, event)">Status<span class="sort-indicator" aria-hidden="true">↕</span></th>
-        <th class="sortable" aria-sort="none" data-col-key="equity" data-col-type="string" onclick="sortTable('apply-now-tbody', 6, 'str', this, event)">Equity <button type="button" class="tier-legend-btn" title="Equity stage legend" aria-label="Show equity stage legend" onclick="event.stopPropagation();openEquityLegend()">?</button><span class="sort-indicator" aria-hidden="true">↕</span></th>
-        <th class="sortable" aria-sort="none" data-col-key="location" data-col-type="string" onclick="sortTable('apply-now-tbody', 7, 'str', this, event)" title="Location / remote posture parsed from Block A">Location<span class="sort-indicator" aria-hidden="true">↕</span></th>
-        <th class="sortable" aria-sort="none" data-col-key="health" data-col-type="numeric" onclick="sortTable('apply-now-tbody', 8, 'num', this, event)" title="Team health + benefits grade (1=healthy → 5=avoid). Click any chip for the full benefits + sentiment breakdown.">Health<span class="sort-indicator" aria-hidden="true">↕</span></th>
-        <th onclick="event.stopPropagation()" title="Recruiter + hiring-manager LinkedIn lookups">People</th>
-        <th class="sortable mobile-hide" aria-sort="none" data-col-key="evalDate" data-col-type="date" onclick="sortTable('apply-now-tbody', 10, 'date', this, event)">Eval Date<span class="sort-indicator" aria-hidden="true">↕</span></th>
-        <th class="sortable" aria-sort="none" data-col-key="age" data-col-type="numeric" data-default-dir="asc" onclick="sortTable('apply-now-tbody', 11, 'num', this, event)">Age<span class="sort-indicator" aria-hidden="true">↕</span></th>
-        <th>Action</th>
+        <th class="sortable" aria-sort="none" data-col-key="score" data-col-type="numeric" onclick="sortTable('apply-now-tbody', 1, 'num', this, event)" title="Composite fit score, 0–5 scale. ≥4.0 means apply-ready by base-fit + comp + freshness. Below 4.0, drill in to see which factor pulled it down.">Score<span class="sort-indicator" aria-hidden="true">↕</span></th>
+        <th class="sortable" aria-sort="none" data-col-key="base" data-col-type="numeric" onclick="sortTable('apply-now-tbody', 2, 'num', this, event)" title="Lower-bound base salary parsed from Block A Comp row. Red pill = below Seattle $120K floor; green = meets target $130K+. Hover the cell for the full disclosed range.">Base<span class="sort-indicator" aria-hidden="true">↕</span></th>
+        <th class="sortable" aria-sort="none" data-col-key="company" data-col-type="string" onclick="sortTable('apply-now-tbody', 3, 'str', this, event)" title="Company name + role archetype tier (A1 / A2 / B / C / D). Click the ? for the full tier legend.">Company <button type="button" class="tier-legend-btn" title="Open tier-letter legend (A1 Residency · A2 Builder · B Comms/Editorial · C Adjacent · D Stretch)" aria-label="Show tier badge legend" onclick="event.stopPropagation();openTierLegend()">?</button><span class="sort-indicator" aria-hidden="true">↕</span></th>
+        <th class="sortable" aria-sort="none" data-col-key="role" data-col-type="string" onclick="sortTable('apply-now-tbody', 4, 'str', this, event)" title="Posted job title. Click the row to open the JD link + full evaluation drawer.">Role<span class="sort-indicator" aria-hidden="true">↕</span></th>
+        <th class="sortable" aria-sort="none" data-col-key="status" data-col-type="status" onclick="sortTable('apply-now-tbody', 5, 'status', this, event)" title="Application state: Evaluated (eval done, not yet applied) · Applied · Responded · Interview · Offer · Rejected · Discarded · SKIP">Status<span class="sort-indicator" aria-hidden="true">↕</span></th>
+        <th class="sortable" aria-sort="none" data-col-key="equity" data-col-type="string" onclick="sortTable('apply-now-tbody', 6, 'str', this, event)" title="Equity stage (Pre-IPO Seed/A → Late → Public). Hover the cell for valuation when known. Click the ? for the full equity-stage legend.">Equity <button type="button" class="tier-legend-btn" title="Open equity-stage legend (Pre-IPO Seed/A · B · C/D · Late · Public)" aria-label="Show equity stage legend" onclick="event.stopPropagation();openEquityLegend()">?</button><span class="sort-indicator" aria-hidden="true">↕</span></th>
+        <th class="sortable" aria-sort="none" data-col-key="location" data-col-type="string" onclick="sortTable('apply-now-tbody', 7, 'str', this, event)" title="Location and remote posture parsed from Block A. Icons: 🏠 Remote · 🌐 Hybrid · 🏢 On-site · 📍 Unspecified · ✈ relocation candidate.">Location<span class="sort-indicator" aria-hidden="true">↕</span></th>
+        <th class="sortable" aria-sort="none" data-col-key="health" data-col-type="numeric" onclick="sortTable('apply-now-tbody', 8, 'num', this, event)" title="Team health grade (1=healthy → 5=avoid) from Glassdoor signals, Blind threads, leadership exits, churn patterns. Click any chip for the full breakdown.">Health<span class="sort-indicator" aria-hidden="true">↕</span></th>
+        <th onclick="event.stopPropagation()" title="Recruiter + hiring-manager LinkedIn lookups. Number shows warm contacts at the company (1st-degree) and shortest 2nd-degree intro paths.">People</th>
+        <th class="sortable mobile-hide" aria-sort="none" data-col-key="evalDate" data-col-type="date" onclick="sortTable('apply-now-tbody', 10, 'date', this, event)" title="Date this role was last evaluated. Re-evals happen on demand or via batch refresh.">Eval Date<span class="sort-indicator" aria-hidden="true">↕</span></th>
+        <th class="sortable" aria-sort="none" data-col-key="age" data-col-type="numeric" data-default-dir="asc" onclick="sortTable('apply-now-tbody', 11, 'num', this, event)" title="Days since last eval. Fresh (0–7d) · Cooling (8–14d) · Stale (15d+) · ⚠ icon = re-verify before applying.">Age<span class="sort-indicator" aria-hidden="true">↕</span></th>
+        <th title="Quick actions: Apply (open JD), Report (open eval), Email (find email), Verify (re-check listing is live). Kebab ⋮ for more.">Action</th>
       </tr></thead>
       <tbody id="apply-now-tbody">
         ${applyNowRows}
@@ -12546,18 +12550,18 @@ async function build() {
     <div class="table-scroll" tabindex="0"><table>
       <thead><tr>
         <th class="bulk-th"><input type="checkbox" class="bulk-header-checkbox" data-tbody="all-tbody" aria-label="Select all visible rows in All Evaluations" onclick="handleHeaderCheckbox(this)"></th>
-        <th class="sortable" aria-sort="none" data-col-key="score" data-col-type="numeric" onclick="sortTable('all-tbody', 1, 'num', this, event)">Score<span class="sort-indicator" aria-hidden="true">↕</span></th>
-        <th class="sortable" aria-sort="none" data-col-key="base" data-col-type="numeric" onclick="sortTable('all-tbody', 2, 'num', this, event)" title="Lower-bound base salary parsed from Block A Comp row">Base<span class="sort-indicator" aria-hidden="true">↕</span></th>
-        <th class="sortable" aria-sort="none" data-col-key="company" data-col-type="string" onclick="sortTable('all-tbody', 3, 'str', this, event)">Company <button type="button" class="tier-legend-btn" title="Tier badge legend" aria-label="Show tier badge legend" onclick="event.stopPropagation();openTierLegend()">?</button><span class="sort-indicator" aria-hidden="true">↕</span></th>
-        <th class="sortable" aria-sort="none" data-col-key="role" data-col-type="string" onclick="sortTable('all-tbody', 4, 'str', this, event)">Role<span class="sort-indicator" aria-hidden="true">↕</span></th>
-        <th class="sortable" aria-sort="none" data-col-key="status" data-col-type="status" onclick="sortTable('all-tbody', 5, 'status', this, event)">Status<span class="sort-indicator" aria-hidden="true">↕</span></th>
-        <th class="sortable" aria-sort="none" data-col-key="equity" data-col-type="string" onclick="sortTable('all-tbody', 6, 'str', this, event)">Equity <button type="button" class="tier-legend-btn" title="Equity stage legend" aria-label="Show equity stage legend" onclick="event.stopPropagation();openEquityLegend()">?</button><span class="sort-indicator" aria-hidden="true">↕</span></th>
-        <th class="sortable" aria-sort="none" data-col-key="location" data-col-type="string" onclick="sortTable('all-tbody', 7, 'str', this, event)" title="Location / remote posture parsed from Block A">Location<span class="sort-indicator" aria-hidden="true">↕</span></th>
-        <th class="sortable" aria-sort="none" data-col-key="health" data-col-type="numeric" onclick="sortTable('all-tbody', 8, 'num', this, event)" title="Team health + benefits grade (1=healthy → 5=avoid). Click any chip for the full benefits breakdown.">Health<span class="sort-indicator" aria-hidden="true">↕</span></th>
-        <th onclick="event.stopPropagation()" title="Recruiter + hiring-manager LinkedIn lookups">People</th>
-        <th class="sortable mobile-hide" aria-sort="none" data-col-key="evalDate" data-col-type="date" onclick="sortTable('all-tbody', 10, 'date', this, event)">Eval Date<span class="sort-indicator" aria-hidden="true">↕</span></th>
-        <th class="sortable" aria-sort="none" data-col-key="age" data-col-type="numeric" data-default-dir="asc" onclick="sortTable('all-tbody', 11, 'num', this, event)">Age<span class="sort-indicator" aria-hidden="true">↕</span></th>
-        <th>Action</th>
+        <th class="sortable" aria-sort="none" data-col-key="score" data-col-type="numeric" onclick="sortTable('all-tbody', 1, 'num', this, event)" title="Composite fit score, 0–5 scale. ≥4.0 means apply-ready by base-fit + comp + freshness. Below 4.0, drill in to see which factor pulled it down.">Score<span class="sort-indicator" aria-hidden="true">↕</span></th>
+        <th class="sortable" aria-sort="none" data-col-key="base" data-col-type="numeric" onclick="sortTable('all-tbody', 2, 'num', this, event)" title="Lower-bound base salary parsed from Block A Comp row. Red pill = below Seattle $120K floor; green = meets target $130K+. Hover the cell for the full disclosed range.">Base<span class="sort-indicator" aria-hidden="true">↕</span></th>
+        <th class="sortable" aria-sort="none" data-col-key="company" data-col-type="string" onclick="sortTable('all-tbody', 3, 'str', this, event)" title="Company name + role archetype tier (A1 / A2 / B / C / D). Click the ? for the full tier legend.">Company <button type="button" class="tier-legend-btn" title="Open tier-letter legend (A1 Residency · A2 Builder · B Comms/Editorial · C Adjacent · D Stretch)" aria-label="Show tier badge legend" onclick="event.stopPropagation();openTierLegend()">?</button><span class="sort-indicator" aria-hidden="true">↕</span></th>
+        <th class="sortable" aria-sort="none" data-col-key="role" data-col-type="string" onclick="sortTable('all-tbody', 4, 'str', this, event)" title="Posted job title. Click the row to open the JD link + full evaluation drawer.">Role<span class="sort-indicator" aria-hidden="true">↕</span></th>
+        <th class="sortable" aria-sort="none" data-col-key="status" data-col-type="status" onclick="sortTable('all-tbody', 5, 'status', this, event)" title="Application state: Evaluated (eval done, not yet applied) · Applied · Responded · Interview · Offer · Rejected · Discarded · SKIP">Status<span class="sort-indicator" aria-hidden="true">↕</span></th>
+        <th class="sortable" aria-sort="none" data-col-key="equity" data-col-type="string" onclick="sortTable('all-tbody', 6, 'str', this, event)" title="Equity stage (Pre-IPO Seed/A → Late → Public). Hover the cell for valuation when known. Click the ? for the full equity-stage legend.">Equity <button type="button" class="tier-legend-btn" title="Open equity-stage legend (Pre-IPO Seed/A · B · C/D · Late · Public)" aria-label="Show equity stage legend" onclick="event.stopPropagation();openEquityLegend()">?</button><span class="sort-indicator" aria-hidden="true">↕</span></th>
+        <th class="sortable" aria-sort="none" data-col-key="location" data-col-type="string" onclick="sortTable('all-tbody', 7, 'str', this, event)" title="Location and remote posture parsed from Block A. Icons: 🏠 Remote · 🌐 Hybrid · 🏢 On-site · 📍 Unspecified · ✈ relocation candidate.">Location<span class="sort-indicator" aria-hidden="true">↕</span></th>
+        <th class="sortable" aria-sort="none" data-col-key="health" data-col-type="numeric" onclick="sortTable('all-tbody', 8, 'num', this, event)" title="Team health grade (1=healthy → 5=avoid) from Glassdoor signals, Blind threads, leadership exits, churn patterns. Click any chip for the full breakdown.">Health<span class="sort-indicator" aria-hidden="true">↕</span></th>
+        <th onclick="event.stopPropagation()" title="Recruiter + hiring-manager LinkedIn lookups. Number shows warm contacts at the company (1st-degree) and shortest 2nd-degree intro paths.">People</th>
+        <th class="sortable mobile-hide" aria-sort="none" data-col-key="evalDate" data-col-type="date" onclick="sortTable('all-tbody', 10, 'date', this, event)" title="Date this role was last evaluated. Re-evals happen on demand or via batch refresh.">Eval Date<span class="sort-indicator" aria-hidden="true">↕</span></th>
+        <th class="sortable" aria-sort="none" data-col-key="age" data-col-type="numeric" data-default-dir="asc" onclick="sortTable('all-tbody', 11, 'num', this, event)" title="Days since last eval. Fresh (0–7d) · Cooling (8–14d) · Stale (15d+) · ⚠ icon = re-verify before applying.">Age<span class="sort-indicator" aria-hidden="true">↕</span></th>
+        <th title="Quick actions: Apply (open JD), Report (open eval), Email (find email), Verify (re-check listing is live). Kebab ⋮ for more.">Action</th>
       </tr></thead>
       <tbody id="all-tbody" data-virtualize="on">
         ${allRows}
@@ -15215,7 +15219,11 @@ window.setUseInlineExpand = setUseInlineExpand;
 // (with empty-object fallback), so empty default during the fetch window
 // is safe.
 window._waveCB = {};
-window._waveCBReadyPromise = fetch('/data/wave-cb.json', { cache: 'force-cache' })
+// 2026-05-20 — cache:'force-cache' was serving stale JSON when the build
+// added new keys (richSummary). Switched to no-cache so consumers always
+// see the freshest payload. Subsequent loads still revalidate via
+// Last-Modified / ETag — typically a fast 304 round-trip.
+window._waveCBReadyPromise = fetch('/data/wave-cb.json', { cache: 'no-cache' })
   .then(function(r){ return r.ok ? r.json() : {}; })
   .then(function(d){ window._waveCB = d || {}; return d; })
   .catch(function(e){ console.warn('[wave-cb] fetch failed:', e.message); return {}; });
@@ -16319,7 +16327,7 @@ _drillInRegister('percentage', function(id) {
     var pct = barEl ? barEl.textContent.trim() : '';
     var defs = {
       'alignment': {
-        title: 'Profile alignment',
+        title: 'How well your background fits this role',
         definition: 'How well your CV + portfolio match the job description, scored by the eval pipeline. 100% = every must-have requirement is hit with a documented metric or proof point.',
         closeActions: [
           'Open the role report and look at Honest gaps — these are the requirements your CV does not cleanly hit.',
@@ -16352,14 +16360,70 @@ _drillInRegister('percentage', function(id) {
     // for it yet — say that, and tell them where to look.
     var d = defs[key] || {
       title: _humanizeKey(key),
-      definition: 'This number was computed from your evaluation pipeline, but a plain-language definition has not been written for it yet. The compute logic lives in lib/strategy-ceiling.mjs and lib/alignment-scorer.mjs — read those if you need the math today; the definition will be added on the next content pass.',
+      definition: 'This number was computed from your evaluation pipeline. The compute logic lives in lib/strategy-ceiling.mjs and lib/alignment-scorer.mjs.',
       closeActions: [],
     };
+    // 2026-05-20 — Personalize the popout using richSummary baked from the
+    // role's report file. Replaces the generic "how to raise this" with
+    // content tailored to Mitchell's corpus + this specific role.
+    //   alignment → positioning angles + critical gaps
+    //   interview → personalization angle + comp/level + walkaway floor
+    //   hmNoticing → competitive edge + STAR+R stories
+    var rs = (cb.richSummary || {})[rowId];
+    var tailoredHtml = '';
+    if (rs) {
+      if (key === 'alignment' && ((rs.angles && rs.angles.length) || (rs.gaps && rs.gaps.length))) {
+        tailoredHtml = '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-top:14px;margin-bottom:6px">Your alignment &mdash; what backs this score</div>';
+        if (rs.angles && rs.angles.length) {
+          tailoredHtml += '<p style="margin:0 0 6px;color:var(--text-2);font-size:12.5px">Lead with these angles when applying:</p>';
+          for (var ai = 0; ai < rs.angles.length; ai++) {
+            tailoredHtml += '<div style="margin-bottom:7px;padding:7px 10px;background:var(--surface-2);border-radius:6px;border-left:3px solid var(--green-fg);font-size:12px;line-height:1.45"><span style="font-style:italic;color:var(--text)">&ldquo;' + rs.angles[ai].quote + '&rdquo;</span></div>';
+          }
+        }
+        if (rs.gaps && rs.gaps.length) {
+          tailoredHtml += '<p style="margin:10px 0 4px;color:var(--text-2);font-size:12.5px"><strong>Gaps dragging this score down:</strong></p>'
+            + '<ul style="margin:0;padding-left:18px;font-size:12px;line-height:1.5;color:var(--text-3)">';
+          for (var gi = 0; gi < rs.gaps.length; gi++) {
+            tailoredHtml += '<li style="margin-bottom:3px"><strong style="color:var(--text-2)">' + rs.gaps[gi].title + '</strong>'
+              + (rs.gaps[gi].detail ? ' &mdash; ' + rs.gaps[gi].detail : '') + '</li>';
+          }
+          tailoredHtml += '</ul>';
+        }
+      } else if (key === 'interview') {
+        var parts = [];
+        if (rs.personalization) parts.push({label: 'What to emphasize for this team', text: rs.personalization});
+        if (rs.detectedLevel)   parts.push({label: 'Detected level vs. yours',        text: rs.detectedLevel});
+        if (rs.downlevel)       parts.push({label: 'If they downlevel &middot; walkaway floor', text: rs.downlevel});
+        if (parts.length) {
+          tailoredHtml = '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-top:14px;margin-bottom:6px">Your interview-likelihood factors (tailored)</div>';
+          for (var pi = 0; pi < parts.length; pi++) {
+            tailoredHtml += '<div style="margin-bottom:8px"><p style="margin:0 0 3px;font-size:11.5px;color:var(--text-3);font-weight:600">' + parts[pi].label + '</p>'
+              + '<p style="margin:0;font-size:12px;line-height:1.5;color:var(--text-2)">' + parts[pi].text + '</p></div>';
+          }
+        }
+      } else if (key === 'hmNoticing') {
+        var hmParts = [];
+        if (rs.competitiveEdge && rs.competitiveEdge.length) hmParts.push({label: 'Competitive edge to lead with', items: rs.competitiveEdge.slice(0, 3).map(String)});
+        if (rs.stories && rs.stories.length) hmParts.push({label: 'Stories that stop an HM', items: rs.stories.map(function(s){ return s.title + (s.excerpt ? ' &mdash; ' + s.excerpt : ''); })});
+        if (hmParts.length) {
+          tailoredHtml = '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-top:14px;margin-bottom:6px">Your HM-noticing levers (tailored)</div>';
+          for (var hi = 0; hi < hmParts.length; hi++) {
+            tailoredHtml += '<p style="margin:6px 0 4px;font-size:11.5px;color:var(--text-3);font-weight:600">' + hmParts[hi].label + '</p>'
+              + '<ul style="margin:0 0 8px;padding-left:18px;font-size:12px;line-height:1.5;color:var(--text-2)">';
+            for (var ii = 0; ii < hmParts[hi].items.length; ii++) {
+              tailoredHtml += '<li style="margin-bottom:3px">' + hmParts[hi].items[ii] + '</li>';
+            }
+            tailoredHtml += '</ul>';
+          }
+        }
+      }
+    }
     cardHtml = '<div style="font-size:13px;line-height:1.55">'
       + (pct ? '<div style="display:inline-block;background:var(--surface-2);padding:4px 12px;border-radius:999px;font-weight:700;color:var(--text);margin-bottom:10px">Current: ' + pct + '</div>' : '')
-      + '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-bottom:4px">Definition</div>'
+      + '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-bottom:4px">What this number means</div>'
       + '<p style="margin:0 0 12px;color:var(--text-2)">' + d.definition + '</p>'
-      + (d.closeActions.length
+      + tailoredHtml
+      + (!tailoredHtml && d.closeActions.length
           ? '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-bottom:6px">How to raise this</div>'
             + '<ol style="margin:0;padding-left:20px;color:var(--text-2)">'
             + d.closeActions.map(function(a) { return '<li style="margin-bottom:6px">' + a + '</li>'; }).join('')
@@ -16370,7 +16434,7 @@ _drillInRegister('percentage', function(id) {
   // BRAVO 2026-05-19 (content sweep): use the humanizer so unknown keys
   // (snake_case or otherwise) never leak their raw form into the popout
   // title. "profile_alignment" → "Profile alignment", never "Profile_alignment".
-  var defTitle = ({alignment:'Profile alignment',interview:'Interview likelihood',hmNoticing:'Chance a hiring manager will see you'})[key] || _humanizeKey(key);
+  var defTitle = ({alignment:'How well your background fits this role',interview:'Interview likelihood',hmNoticing:'Chance a hiring manager will see you'})[key] || _humanizeKey(key);
   return {
     title: defTitle,
     html: cardHtml,
@@ -17719,6 +17783,11 @@ function _injectPrevNextRibbon(currentIdx) {
   // Remove old ribbon if present
   var old = bodyEl.querySelector('.prev-next-ribbon');
   if (old) old.remove();
+  // Audit Tier 5 (2026-05-20): the body-mounted prev/next strip duplicated
+  // the richer footer #right-rail-ribbon ("NEXT Perplexity — Executiv..."
+  // with company + role) — two nav strips for the same purpose. Drop the
+  // body strip; footer ribbon is the canonical surface.
+  return;
 
   var allRows = _buildAllDrillRows();
   var pos = allRows.indexOf(String(currentIdx));
@@ -18822,7 +18891,7 @@ function _renderHMIntel(d, slug) {
   if (!d) return '';
   const succeeded = (d.providers_succeeded || []).length;
   const called    = (d.providers_called    || []).length || 7;
-  const provFootline = succeeded + '/' + called + ' providers · ' + (d.sources_cited_count || '?') + ' sources';
+  const provFootline = 'Synthesized from ' + succeeded + ' of ' + called + ' LLM providers (council research) · ' + (d.sources_cited_count || '?') + ' distinct sources cited';
   // FIX 3 (2026-05-17) — surface only HIGH-confidence contacts. Filter at the
   // render layer (data untouched). Confidence schema is HIGH/MEDIUM/LOW
   // (see _hmConfChip). Numeric confidence_score (>=0.8) is a defensive
@@ -18878,7 +18947,7 @@ function _renderHMIntel(d, slug) {
     // single source of truth is now the in-drawer #rd-comp-intel card at
     // the bottom of the right rail. Chip + drawer scroll there.
 
-    + (d.provider_disagreements ? '<section class="hm-section hm-disagreement"><h4>Provider disagreements</h4>' + _hmProseBullets(d.provider_disagreements) + '</section>' : '')
+    + (d.provider_disagreements ? '<section class="hm-section hm-disagreement"><h4>Provider disagreements <span style="font-size:11px;font-weight:400;color:var(--text-4);margin-left:6px">where the LLMs we polled disagreed about this role</span></h4>' + _hmProseBullets(d.provider_disagreements) + '</section>' : '')
 
     + '</div>';
 }
@@ -20154,13 +20223,13 @@ function buildTable(rows, panelId) {
   // Reuses the legacy sortTable() path at :18454+ (non-all-tbody branch).
   return \`<div class="table-scroll" tabindex="0"><table>
     <thead><tr>
-      <th class="sortable" aria-sort="none" data-col-key="score" data-col-type="numeric" onclick="sortTable('\${tbodyId}', 0, 'num', this, event)">Score<span class="sort-indicator" aria-hidden="true">↕</span></th>
-      <th class="sortable" aria-sort="none" data-col-key="company" data-col-type="string" onclick="sortTable('\${tbodyId}', 1, 'str', this, event)">Company<span class="sort-indicator" aria-hidden="true">↕</span></th>
-      <th class="sortable" aria-sort="none" data-col-key="role" data-col-type="string" onclick="sortTable('\${tbodyId}', 2, 'str', this, event)">Role<span class="sort-indicator" aria-hidden="true">↕</span></th>
-      <th class="sortable" aria-sort="none" data-col-key="status" data-col-type="status" onclick="sortTable('\${tbodyId}', 3, 'status', this, event)">Status<span class="sort-indicator" aria-hidden="true">↕</span></th>
-      <th class="sortable" aria-sort="descending" data-col-key="evalDate" data-col-type="date" onclick="sortTable('\${tbodyId}', 4, 'date', this, event)">Eval Date<span class="sort-indicator" aria-hidden="true">↕</span></th>
-      <th class="sortable" aria-sort="none" data-col-key="age" data-col-type="numeric" data-default-dir="asc" onclick="sortTable('\${tbodyId}', 5, 'num', this, event)">Age<span class="sort-indicator" aria-hidden="true">↕</span></th>
-      <th>Action</th>
+      <th class="sortable" aria-sort="none" data-col-key="score" data-col-type="numeric" onclick="sortTable('\${tbodyId}', 0, 'num', this, event)" title="Composite fit score, 0–5 scale. ≥4.0 means apply-ready by base-fit + comp + freshness. Below 4.0, drill in to see which factor pulled it down.">Score<span class="sort-indicator" aria-hidden="true">↕</span></th>
+      <th class="sortable" aria-sort="none" data-col-key="company" data-col-type="string" onclick="sortTable('\${tbodyId}', 1, 'str', this, event)" title="Company name. Click the row to open the JD link + full evaluation drawer.">Company<span class="sort-indicator" aria-hidden="true">↕</span></th>
+      <th class="sortable" aria-sort="none" data-col-key="role" data-col-type="string" onclick="sortTable('\${tbodyId}', 2, 'str', this, event)" title="Posted job title. Click the row to open the JD link + full evaluation drawer.">Role<span class="sort-indicator" aria-hidden="true">↕</span></th>
+      <th class="sortable" aria-sort="none" data-col-key="status" data-col-type="status" onclick="sortTable('\${tbodyId}', 3, 'status', this, event)" title="Application state: Evaluated (eval done, not yet applied) · Applied · Responded · Interview · Offer · Rejected · Discarded · SKIP">Status<span class="sort-indicator" aria-hidden="true">↕</span></th>
+      <th class="sortable" aria-sort="descending" data-col-key="evalDate" data-col-type="date" onclick="sortTable('\${tbodyId}', 4, 'date', this, event)" title="Date this role was last evaluated. Re-evals happen on demand or via batch refresh.">Eval Date<span class="sort-indicator" aria-hidden="true">↕</span></th>
+      <th class="sortable" aria-sort="none" data-col-key="age" data-col-type="numeric" data-default-dir="asc" onclick="sortTable('\${tbodyId}', 5, 'num', this, event)" title="Days since last eval. Fresh (0–7d) · Cooling (8–14d) · Stale (15d+) · ⚠ icon = re-verify before applying.">Age<span class="sort-indicator" aria-hidden="true">↕</span></th>
+      <th title="Quick actions: Apply (open JD), Report (open eval), Email (find email), Verify (re-check listing is live). Kebab ⋮ for more.">Action</th>
     </tr></thead>
     <tbody id="\${tbodyId}">\${trows}</tbody>
   </table></div>\`;
@@ -26195,7 +26264,7 @@ window._onContactsReady = function(cb) {
   if (window._CONTACTS_DATA && window._CONTACTS_DATA.length) { try { cb(); } catch(_){} return; }
   window._contactsReadyCallbacks.push(cb);
 };
-window._contactsReadyPromise = fetch('/data/contacts.json', { cache: 'force-cache' })
+window._contactsReadyPromise = fetch('/data/contacts.json', { cache: 'no-cache' })
   .then(function(r){ return r.ok ? r.json() : null; })
   .then(function(payload){
     if (!payload) return;
@@ -26218,7 +26287,7 @@ window._contactsReadyPromise = fetch('/data/contacts.json', { cache: 'force-cach
 // If a chip is clicked before this fetch resolves, openPillPopover()
 // shows a Loading… state and replaces it once the promise resolves.
 window._PILL_DATA = window._PILL_DATA || {};
-window._pillDataReadyPromise = fetch('/data/pill-data.json', { cache: 'force-cache' })
+window._pillDataReadyPromise = fetch('/data/pill-data.json', { cache: 'no-cache' })
   .then(function(r){ return r.ok ? r.json() : null; })
   .then(function(payload){
     if (payload && typeof payload === 'object') {

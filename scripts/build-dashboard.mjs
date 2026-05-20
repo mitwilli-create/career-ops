@@ -27746,6 +27746,48 @@ _bulkUpdateBar();
   } catch (e) { /* never block dashboard load on deeplink parse error */ }
 })();
 
+// ── ?open= sidebar-deeplink handler (2026-05-20) ─────────────────
+// The sidebar Actions group on contacts.html + network-database.html links
+// to /?open=pending|batch-runs|industries|settings to open the matching
+// modal/panel on the home dashboard. Without this handler, clicking those
+// links navigates here and silently does nothing.
+(function _consumeOpenDeeplink() {
+  try {
+    var params = new URLSearchParams(location.search);
+    var open = params.get('open');
+    if (!open) return;
+    var run = function () {
+      try {
+        if (open === 'pending' && typeof toggleStatPanel === 'function') {
+          var panel = document.getElementById('stat-panel-pending');
+          if (panel) {
+            toggleStatPanel('pending');
+            panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+          return;
+        }
+        if (open === 'batch-runs' && typeof openBatchStatusModal === 'function') {
+          openBatchStatusModal();
+          return;
+        }
+        if (open === 'settings' && typeof openMobileSettingsSheet === 'function') {
+          openMobileSettingsSheet();
+          return;
+        }
+        if (open === 'industries' && typeof window.drillIn === 'function') {
+          window.drillIn('industry-gap', '', null);
+          return;
+        }
+      } catch (e) { /* missing handler — silently no-op */ }
+    };
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function () { setTimeout(run, 60); });
+    } else {
+      setTimeout(run, 60);
+    }
+  } catch (e) { /* never block dashboard load on deeplink parse error */ }
+})();
+
 // ── PWA service worker ─────────────────────────────────────────
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   window.addEventListener('load', () => {

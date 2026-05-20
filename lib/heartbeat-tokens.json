@@ -258,6 +258,7 @@
     "size": {
       "h1": "22px",
       "h2_email": "16px",
+      "_note_h2_email": "intentionally smaller than h2_dashboard_large (18px); compensates for mobile WebKit text autosize that scales email font-size ~0.5-1px larger than desktop browser. See docs/adr/0007-email-h2-divergence.md. DO NOT 'fix' this back to 18px without consulting the ADR.",
       "h2_dashboard": "16px",
       "h2_dashboard_large": "18px",
       "h3": "13px",

@@ -3,21 +3,22 @@
     <mj-title>Career-Ops Daily Heartbeat — {{date}}</mj-title>
     <mj-preview>{{preheaderText}}</mj-preview>
     <mj-attributes>
-      <!-- Phase C (2026-05-19) — light-first body with dark @media override.
-           The council recommended dark-first (Decision A), but the existing
-           emit-pipeline ships ~32 inline-styled callouts with light hardcodes
-           that can't be cleanly flipped without rewriting hundreds of lines.
-           Half the council's Decision A win — Gmail iOS partial-inversion —
-           is captured by the meta tags below; the actual body inversion is
-           deferred until the inline styles have all been migrated to the
-           token system. See .claude/audit/email-review/phase-c-report-2026-05-19.md.
-           Tokens (light fallback): lib/heartbeat-tokens.json email.light.*.
-           Body: #374151 on #f8f9fb = 9.6:1 (AAA). -->
+      <!-- Phase E2 (2026-05-19) — DARK-FIRST body with light @media overlay.
+           Closes the Phase C deferral. Real-council ratified 7/7 universal
+           in Phase E1 — see .claude/audit/email-review/council-divergence-
+           analysis.md finding-014. The BRAND tokens in
+           scripts/heartbeat.mjs + scripts/heartbeat-evening.mjs now source
+           from lib/heartbeat-tokens.json email.dark.*. The @media
+           (prefers-color-scheme: light) block below flips on light-opt-in
+           clients (Apple Mail / Gmail Web / Outlook 365) so the prior
+           light-mode appearance is preserved for users who have opted out
+           of dark mode at the OS level.
+           Body: #e4e4e7 on #06070d = 13.3:1 (AAA). -->
       <mj-text
         font-family="'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
         font-size="13px"
         line-height="1.45"
-        color="#374151"
+        color="#e4e4e7"
       />
       <mj-button
         font-family="'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
@@ -31,81 +32,83 @@
     </mj-attributes>
 
     <mj-style>
-      /* ── Dark-mode override (Phase C-restored, 2026-05-19) ────────────────
-         Tokens from heartbeat-tokens.json email.dark.* (mirrors dashboard body.dark).
-         Apple Mail, Gmail Web, Outlook 365 honor prefers-color-scheme: dark.
-         Per the Phase C council ledger, the meta name="supported-color-schemes"
-         + meta name="color-scheme" pair below is what fixes Gmail iOS partial-
-         inversion of this @media overlay (the previous version was missing
-         the supported-color-schemes meta, which let Gmail iOS apply its own
-         inversion on top of the developer-supplied dark palette). */
-      @media (prefers-color-scheme: dark) {
-        body, .body-bg   { background: #06070d !important; color: #fafafa !important; }
-        .card            { background: #11131c !important; border-color: #232737 !important; color: #e4e4e7 !important; }
-        .text-strong     { color: #fafafa !important; }
-        .text-muted      { color: #b8b8c0 !important; }
-        .text-subtle     { color: #9a9aa6 !important; }
-        .border          { border-color: #232737 !important; }
-        .accent          { color: #86efac !important; }
-        table            { border-color: #232737 !important; background: #11131c !important; }
-        thead, th        { background: #181b27 !important; color: #b8b8c0 !important; border-color: #232737 !important; }
-        td               { color: #e4e4e7 !important; border-color: #232737 !important; }
-        blockquote       { background: rgba(22,163,74,0.10) !important; color: #fafafa !important; border-left-color: #86efac !important; }
-        code             { background: #181b27 !important; color: #86efac !important; }
-        hr               { background: linear-gradient(90deg, transparent 0%, #232737 50%, transparent 100%) !important; }
-        a                { color: #86efac !important; }
+      /* ── Light-mode overlay (Phase E2, 2026-05-19) ───────────────────────
+         Dark-first is the default; this block flips on clients where the
+         user has opted into light mode at the OS level (prefers-color-scheme:
+         light). Token sources: lib/heartbeat-tokens.json email.light.*.
+         Apple Mail, Gmail Web, Outlook 365 honor prefers-color-scheme.
+         The meta name="supported-color-schemes" + meta name="color-scheme"
+         pair below is still load-bearing — it tells Gmail iOS not to apply
+         its own auto-inversion on top of the developer-supplied palette. */
+      @media (prefers-color-scheme: light) {
+        body, .body-bg   { background: #f8f9fb !important; color: #374151 !important; }
+        .card            { background: #ffffff !important; border-color: #e5e7eb !important; color: #374151 !important; }
+        .text-strong     { color: #111827 !important; }
+        .text-muted      { color: #475569 !important; }
+        .text-subtle     { color: #6b7280 !important; }
+        .border          { border-color: #e5e7eb !important; }
+        .accent          { color: #15803d !important; }
+        table            { border-color: #e5e7eb !important; background: #ffffff !important; }
+        thead, th        { background: #f1f5f9 !important; color: #475569 !important; border-color: #e5e7eb !important; }
+        td               { color: #374151 !important; border-color: #e5e7eb !important; }
+        blockquote       { background: #dcfce7 !important; color: #111827 !important; border-left-color: #15803d !important; }
+        code             { background: #f1f5f9 !important; color: #15803d !important; }
+        hr               { background: linear-gradient(90deg, transparent 0%, #e5e7eb 50%, transparent 100%) !important; }
+        a                { color: #15803d !important; }
         .header-banner   {
-          background: linear-gradient(135deg, rgba(0,255,157,0.10) 0%, rgba(22,163,74,0.04) 50%, #11131c 100%) !important;
-          border: 1px solid #232737 !important; color: #fafafa !important;
+          background: linear-gradient(135deg, rgba(22,163,74,0.10) 0%, rgba(22,163,74,0.04) 50%, #ffffff 100%) !important;
+          border: 1px solid #e5e7eb !important; color: #111827 !important;
         }
-        .cta-button      { background: #86efac !important; color: #06070d !important; }
-        .score-pill-green { background: rgba(22,163,74,0.15) !important; color: #86efac !important; border-color: rgba(22,163,74,0.35) !important; }
-        .score-pill-amber { background: rgba(168,123,72,0.14) !important; color: #d4ba84 !important; }
-        .score-pill-red   { background: rgba(220,38,38,0.12) !important; color: #fca5a5 !important; }
-        .focus-callout, .focus-callout * { color: #bbf7d0 !important; }
-        .focus-callout   { background: rgba(22,163,74,0.10) !important; border-left-color: #86efac !important; }
-        /* Dark-mode override for the inline-styled "card" containers
+        .cta-button      { background: #ffffff !important; color: #15803d !important; }
+        .score-pill-green { background: #dcfce7 !important; color: #15803d !important; border-color: #86efac !important; }
+        .score-pill-amber { background: #f4ede1 !important; color: #8a6840 !important; }
+        .score-pill-red   { background: #fee2e2 !important; color: #991b1b !important; }
+        .focus-callout, .focus-callout * { color: #111827 !important; }
+        .focus-callout   { background: #dcfce7 !important; border-left-color: #15803d !important; }
+        /* Light-mode override for the inline-styled "card" containers
            emitted by helper functions in scripts/heartbeat.mjs. The
            `* { color: }` descendant rule overrides inline `color:` props
            on child <div>/<span>/<strong> nodes — necessary because each
-           helper hardcodes its own text colors for light mode. */
-        .tonight-card, .tonight-card * { color: #fafafa !important; }
-        .tonight-card    { background: rgba(22,163,74,0.10) !important; border-color: rgba(22,163,74,0.30) !important; }
-        .due-today-card  { background: #11131c !important; border-color: #232737 !important; }
-        .due-today-card * { color: #e4e4e7 !important; }
-        .signal-pulse-card, .signal-pulse-card * { color: #e4e4e7 !important; }
-        .signal-pulse-card { background: #11131c !important; border-color: #232737 !important; }
-        .next-moves-card { background: rgba(22,163,74,0.06) !important; }
-        .next-moves-card * { color: #e4e4e7 !important; }
-        .next-move-row, .next-move-row * { color: #e4e4e7 !important; }
-        .next-move-row { background: #11131c !important; border-color: #232737 !important; }
-        .runway-card     { background: #11131c !important; border-color: #232737 !important; }
-        .runway-card *   { color: #e4e4e7 !important; }
-        .system-banner   { background: #11131c !important; border-color: #232737 !important; }
-        .system-banner * { color: #e4e4e7 !important; }
+           helper now hardcodes dark text colors for dark mode (Phase E2). */
+        .tonight-card, .tonight-card * { color: #111827 !important; }
+        .tonight-card    { background: #dcfce7 !important; border-color: #86efac !important; }
+        .due-today-card  { background: #ffffff !important; border-color: #e5e7eb !important; }
+        .due-today-card * { color: #374151 !important; }
+        .signal-pulse-card, .signal-pulse-card * { color: #374151 !important; }
+        .signal-pulse-card { background: #ffffff !important; border-color: #e5e7eb !important; }
+        .next-moves-card { background: #dcfce7 !important; }
+        .next-moves-card * { color: #374151 !important; }
+        .next-move-row, .next-move-row * { color: #374151 !important; }
+        .next-move-row { background: #ffffff !important; border-color: #e5e7eb !important; }
+        .runway-card     { background: #ffffff !important; border-color: #e5e7eb !important; }
+        .runway-card *   { color: #374151 !important; }
+        .system-banner   { background: #ffffff !important; border-color: #e5e7eb !important; }
+        .system-banner * { color: #374151 !important; }
       }
     </mj-style>
 
     <mj-raw>
-      <!-- Phase C Decision A (meta-only) — both meta tags REQUIRED to opt
-           out of Gmail iOS auto-inversion. supported-color-schemes is the
-           previously-missing piece that let Gmail iOS apply its own inversion
-           on top of the dark @media overlay. With both declared, clients
-           honor the developer-supplied palette. -->
+      <!-- Phase E2 dark-first — both meta tags REQUIRED to opt out of
+           Gmail iOS auto-inversion. supported-color-schemes tells Gmail iOS
+           that the developer-supplied palette IS the design intent, so
+           Gmail's auto-inversion logic stays off. With both declared, every
+           color-scheme-aware client renders the dark default + light @media
+           overlay as intended. -->
       <meta name="color-scheme" content="light dark">
       <meta name="supported-color-schemes" content="light dark">
     </mj-raw>
   </mj-head>
 
-  <mj-body background-color="#f8f9fb" css-class="body-bg">
+  <mj-body background-color="#06070d" css-class="body-bg">
 
     <!-- ═══════════════════════════════════════════════════════════════════
-         HERO — saturated #16a34a (accent) reads correctly on both the new
-         dark body bg (#06070d) and the light @media fallback (#f8f9fb).
-         Kept at #16a34a because (a) evening script string-replaces this
-         exact hex to swap in the slate-blue evening hero, and (b) a single
-         saturated band on a dark body becomes the dominant focal point —
-         exactly the visual hierarchy the Phase C council wanted.
+         HERO — saturated #16a34a (accent) reads correctly on both the
+         dark body bg (#06070d, default) and the light @media overlay
+         (#f8f9fb). Kept at #16a34a because (a) evening script string-
+         replaces this exact hex to swap in the slate-blue evening hero
+         (#5a76a6), and (b) a single saturated band on a dark body becomes
+         the dominant focal point — exactly the visual hierarchy the Phase
+         E1 real-council wanted for the 09:00 PT email.
          mj-button = bulletproof VML+CSS hybrid (Outlook 2016+ compatible).
          ═══════════════════════════════════════════════════════════════════ -->
     <mj-section
@@ -146,19 +149,19 @@
     </mj-section>
 
     <!-- KPI tiles — 3 columns (Queue ≥4.0 / Eval'd today / Total tracked).
-         Light defaults; dark @media block flips on dark clients. -->
+         Dark defaults (Phase E2); light @media block flips on light-opt-in clients. -->
     <mj-section padding="4px 0 12px 0">
-      <mj-column border="1px solid #e5e7eb" border-radius="8px" background-color="#ffffff" padding="10px 12px" css-class="card border">
-        <mj-text color="#6b7280" font-size="10px" font-weight="700" letter-spacing="0.08em" text-transform="uppercase" align="center" padding-bottom="3px" css-class="text-muted">Ready to Apply</mj-text>
-        <mj-text color="#16a34a" font-size="21px" font-weight="700" align="center" font-family="'JetBrains Mono', 'SF Mono', ui-monospace, monospace" padding="0" css-class="text-strong accent">{{kpiQueueCount}}</mj-text>
+      <mj-column border="1px solid #232737" border-radius="8px" background-color="#11131c" padding="10px 12px" css-class="card border">
+        <mj-text color="#9a9aa6" font-size="10px" font-weight="700" letter-spacing="0.08em" text-transform="uppercase" align="center" padding-bottom="3px" css-class="text-muted">Ready to Apply</mj-text>
+        <mj-text color="#4ade80" font-size="21px" font-weight="700" align="center" font-family="'JetBrains Mono', 'SF Mono', ui-monospace, monospace" padding="0" css-class="text-strong accent">{{kpiQueueCount}}</mj-text>
       </mj-column>
-      <mj-column border="1px solid #e5e7eb" border-radius="8px" background-color="#ffffff" padding="10px 12px" css-class="card border">
-        <mj-text color="#6b7280" font-size="10px" font-weight="700" letter-spacing="0.08em" text-transform="uppercase" align="center" padding-bottom="3px" css-class="text-muted">Evaluated Today</mj-text>
-        <mj-text color="#5a76a6" font-size="21px" font-weight="700" align="center" font-family="'JetBrains Mono', 'SF Mono', ui-monospace, monospace" padding="0" css-class="text-strong">{{kpiEvaluatedToday}}</mj-text>
+      <mj-column border="1px solid #232737" border-radius="8px" background-color="#11131c" padding="10px 12px" css-class="card border">
+        <mj-text color="#9a9aa6" font-size="10px" font-weight="700" letter-spacing="0.08em" text-transform="uppercase" align="center" padding-bottom="3px" css-class="text-muted">Evaluated Today</mj-text>
+        <mj-text color="#94a3b8" font-size="21px" font-weight="700" align="center" font-family="'JetBrains Mono', 'SF Mono', ui-monospace, monospace" padding="0" css-class="text-strong">{{kpiEvaluatedToday}}</mj-text>
       </mj-column>
-      <mj-column border="1px solid #e5e7eb" border-radius="8px" background-color="#ffffff" padding="10px 12px" css-class="card border">
-        <mj-text color="#6b7280" font-size="10px" font-weight="700" letter-spacing="0.08em" text-transform="uppercase" align="center" padding-bottom="3px" css-class="text-muted">Total Tracked</mj-text>
-        <mj-text color="#374151" font-size="21px" font-weight="700" align="center" font-family="'JetBrains Mono', 'SF Mono', ui-monospace, monospace" padding="0" css-class="text-strong">{{kpiTrackedCount}}</mj-text>
+      <mj-column border="1px solid #232737" border-radius="8px" background-color="#11131c" padding="10px 12px" css-class="card border">
+        <mj-text color="#9a9aa6" font-size="10px" font-weight="700" letter-spacing="0.08em" text-transform="uppercase" align="center" padding-bottom="3px" css-class="text-muted">Total Tracked</mj-text>
+        <mj-text color="#e4e4e7" font-size="21px" font-weight="700" align="center" font-family="'JetBrains Mono', 'SF Mono', ui-monospace, monospace" padding="0" css-class="text-strong">{{kpiTrackedCount}}</mj-text>
       </mj-column>
     </mj-section>
 
@@ -183,12 +186,12 @@
 
     <!-- ═══════════════════════════════════════════════════════════════════
          FOOTER — small, quiet. Matches dashboard footer visual weight.
-         Light defaults; dark @media block flips on dark clients.
+         Dark defaults (Phase E2); light @media block flips on light-opt-in clients.
          ═══════════════════════════════════════════════════════════════════ -->
-    <mj-section padding="10px 0 6px 0" border-top="1px solid #e5e7eb" css-class="border">
+    <mj-section padding="10px 0 6px 0" border-top="1px solid #232737" css-class="border">
       <mj-column>
-        <mj-text align="center" font-size="11px" color="#9ca3af" css-class="text-subtle" line-height="1.4">
-          <a href="{{dashboardUrl}}" style="color:#16a34a;text-decoration:none" class="accent">dashboard</a> · 09:00 PT
+        <mj-text align="center" font-size="11px" color="#9a9aa6" css-class="text-subtle" line-height="1.4">
+          <a href="{{dashboardUrl}}" style="color:#86efac;text-decoration:none" class="accent">dashboard</a> · 09:00 PT
         </mj-text>
       </mj-column>
     </mj-section>

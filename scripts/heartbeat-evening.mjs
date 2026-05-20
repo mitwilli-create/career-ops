@@ -39,9 +39,11 @@ import { renderSystemBanner, renderDiscardPatternSection, renderRunwayAlert } fr
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
 
-// ── Design tokens (Phase C, 2026-05-19) ────────────────────────────────────
-// Same source-of-truth as heartbeat.mjs. See lib/heartbeat-tokens.json +
-// .claude/audit/email-review/phase-c-council-ledger.md for the rationale.
+// ── Design tokens (Phase E2 dark-first, 2026-05-19) ────────────────────────
+// Same source-of-truth as heartbeat.mjs. Phase E2 closes the Phase C
+// deferral and ships dark-first body per the 7/7 universal real-council
+// ratification of Decision A (.claude/audit/email-review/
+// council-divergence-analysis.md finding-014).
 const TOKENS = JSON.parse(readFileSync(
   new URL('../lib/heartbeat-tokens.json', import.meta.url),
   'utf-8'
@@ -82,37 +84,42 @@ function loadSecrets() {
   return out;
 }
 
-// ── Brand constants (Phase C, 2026-05-19) ──────────────────────────────────
-// Same light-first palette as heartbeat.mjs, with the evening-specific
-// slate-blue hero so the morning and evening emails are visually
-// distinguishable in Gmail's threaded inbox view.
-// Source: lib/heartbeat-tokens.json email.light.*. The dark @media block in
-// templates/heartbeat.mjml flips on Apple Mail / Gmail Web / Outlook 365 dark.
-// BRAND.green / .greenFg semantics: match the ORIGINAL pre-Phase-C field names
-// so the inline-style call sites downstream don't change their visual weight.
-const _emailLight = TOKENS.email.light;
-const _colorLight = TOKENS.color.light;
+// ── Brand constants (Phase E2 dark-first, 2026-05-19) ──────────────────────
+// Mirrors heartbeat.mjs's dark BRAND, plus an evening-specific slate-blue
+// hero literal so morning and evening are visually distinguishable in
+// Gmail's threaded inbox view.
+//
+// Phase E2 closes the Phase C deferral. Real-council ratified 7/7 universal
+// in Phase E1 (see council-divergence-analysis.md finding-014). The body
+// default is dark (#06070d); the @media (prefers-color-scheme: light) overlay
+// in templates/heartbeat.mjml flips on light-opt-in clients.
+//
+// BRAND.green / .greenFg semantics preserved across the inversion —
+// .green = #4ade80 (matrix-green on dark), .greenFg = #86efac (link/accent).
+const _emailDark = TOKENS.email.dark;
+const _colorDark = TOKENS.color.dark;
 const BRAND = {
-  bg:          _emailLight.body_bg,                   // #f8f9fb
-  surface:     _emailLight.panel_bg,                  // #ffffff
-  surface2:    _emailLight.panel_strong_bg,           // #f1f5f9
-  border:      _emailLight.border,                    // #e5e7eb
-  text:        _colorLight.text.t1,                   // #111827
-  text2:       _emailLight.body_color,                // #374151
-  text3:       _emailLight.muted_color,               // #475569
-  text4:       _emailLight.chrome_color,              // #6b7280
-  green:       '#16a34a',                             // matrix-green accent — exact original
-  greenFg:     _emailLight.accent,                    // #15803d
-  greenBg:     _emailLight.accent_bg,                 // #dcfce7
-  greenBorder: _emailLight.accent_border,             // #86efac
-  blue:        _colorLight.semantic.info,             // #5a76a6
-  blueBg:      _emailLight.info_bg,                   // #e8edf4
-  amber:       _colorLight.semantic.warning,          // #8a6840
-  amberBg:     _emailLight.warning_bg,                // #f4ede1
-  red:         _emailLight.danger_fg,                 // #991b1b
-  redBg:       _emailLight.danger_bg,                 // #fee2e2
-  // Evening-specific: muted slate-blue hero so morning and evening are
-  // visually distinguishable in Gmail thread view.
+  bg:          _emailDark.body_bg,                    // #06070d
+  surface:     _emailDark.panel_bg,                   // #11131c
+  surface2:    _emailDark.panel_strong_bg,            // #181b27
+  border:      _emailDark.border,                     // #232737
+  text:        _colorDark.text.t1,                    // #fafafa
+  text2:       _emailDark.body_color,                 // #e4e4e7
+  text3:       _emailDark.muted_color,                // #b8b8c0
+  text4:       _emailDark.chrome_color,               // #9a9aa6
+  green:       _emailDark.accent_deep,                // #4ade80 — matrix-green on dark
+  greenFg:     _emailDark.accent,                     // #86efac — high-contrast green-fg
+  greenBg:     _emailDark.accent_bg,                  // rgba(22,163,74,0.12)
+  greenBorder: _emailDark.accent_border,              // rgba(22,163,74,0.30)
+  blue:        _colorDark.semantic.info,              // #94a3b8
+  blueBg:      _emailDark.info_bg,                    // rgba(100,116,139,0.22)
+  amber:       _colorDark.semantic.warning,           // #c2a571
+  amberBg:     _emailDark.warning_bg,                 // rgba(168,123,72,0.22)
+  red:         _emailDark.danger_fg,                  // #fca5a5
+  redBg:       _emailDark.danger_bg,                  // rgba(220,38,38,0.18)
+  // Evening-specific slate-blue hero so morning (solid green at 09:00 PT)
+  // and evening (slate-blue at 18:00 PT) are visually distinguishable in
+  // Gmail thread view. #5a76a6 reads as mid-slate on dark body.
   eveningHero: '#5a76a6',
 };
 
@@ -255,7 +262,8 @@ function renderEveningRunwayAlert(density) {
     return `<div class="runway-unavailable" style="margin:12px 0;padding:10px;background:${BRAND.amberBg};border:1px solid rgba(168,123,72,0.35);border-radius:6px;color:${BRAND.amber};font-size:12px">Runway: pipeline-density data unavailable.</div>`;
   }
   const { health, runway_alert, contacts, velocity, runway_weeks } = density;
-  // Phase C dark-mode palette — muted slate on healthy days at 18:00 PT.
+  // Phase E2 (2026-05-19) dark-first palette — muted slate on healthy days
+  // at 18:00 PT. Saturated amber/red only when escalated.
   const tiers = {
     healthy:  { bg: BRAND.blueBg,   border: 'rgba(148,163,184,0.30)', fg: BRAND.blue,   icon: '🟢', label: 'On track' },
     stretched:{ bg: BRAND.amberBg,  border: 'rgba(168,123,72,0.45)',  fg: BRAND.amber,  icon: '🟡', label: 'Cushion shrinking' },
@@ -541,8 +549,13 @@ function generateEveningMarkdownBody() {
     lines.push('');
   }
 
-  // ── SECTION 5: ERRORS / WARNINGS + ACTION REQUIRED ──────────────────────
-  // ACTION REQUIRED is suppressed when no errors (existing behavior, preserved).
+  // ── SECTION 5: ACTION REQUIRED → ERRORS / WARNINGS ──────────────────────
+  // Phase E2 finding-003 (council-divergence-analysis.md) — invert positions
+  // 5 and 6 so the intervention (action) precedes the raw error stream
+  // (diagnosis). This is the standard a11y pattern (action before diagnosis)
+  // and prevents the EF "freeze on red text" reaction. ACTION REQUIRED is
+  // only rendered when relevant (errors exist). Both blocks have explicit
+  // quiet-state copy when nothing's wrong.
   const errorLog = join(ROOT, 'data/errors.log');
   let todaysErrors = [];
   if (existsSync(errorLog)) {
@@ -551,34 +564,49 @@ function generateEveningMarkdownBody() {
   if (todaysErrors.length === 0) {
     lines.push('## Errors / Warnings');
     lines.push('');
-    lines.push('_No errors today — system running unattended. ✅_');
+    lines.push('_No errors · system running unattended._');
     lines.push('');
   } else {
+    // ACTION REQUIRED first (intervention precedes diagnosis)
+    lines.push('## Action Required');
+    lines.push('');
+    lines.push('- [ ] Review the errors below before acting on the queue.');
+    lines.push('');
+    // Then ERRORS / WARNINGS (the raw diagnostic stream)
     lines.push('## Errors / Warnings');
     lines.push('');
     lines.push('```');
     todaysErrors.slice(-20).forEach(e => lines.push(e));
     lines.push('```');
     lines.push('');
-    lines.push('## Action Required');
-    lines.push('');
-    lines.push('- [ ] Review the errors above before acting on the queue.');
-    lines.push('');
   }
 
   // ── SECTION 6: REJECTED PATTERN OF WEEK (Fridays only) ──────────────────
   const _targetDateLocal = new Date(TARGET_DATE + 'T12:00:00');
   const _isFriday = _targetDateLocal.getDay() === 5;
+  let renderedRejectedPattern = false;
   if (_isFriday) {
     try {
       const discardMd = renderDiscardPatternSection({ format: 'markdown', days: 7 });
       if (discardMd) {
         for (const line of discardMd.split('\n')) lines.push(line);
         lines.push('');
+        renderedRejectedPattern = true;
       }
     } catch (e) {
       console.warn(`[heartbeat-evening] discard pattern section unavailable: ${e.message}`);
     }
+  }
+
+  // ── SECTION 7: Calm closer (Mon-Thu + weekends, non-Friday only) ────────
+  // Phase E2 finding-004 (council-divergence-analysis.md) — Mon-Thu the
+  // REJECTED PATTERN section doesn't render, so without this line the
+  // email closes on ERRORS or ACTION REQUIRED pressure 4-of-5 weekdays.
+  // The closer appears in the muted chrome color so it reads as a system
+  // outro, not as content.
+  if (!renderedRejectedPattern) {
+    lines.push(`_— end of digest · all systems running unattended ·_`);
+    lines.push('');
   }
 
   lines.push('---');
@@ -753,6 +781,24 @@ async function main() {
     const previewPath = '/tmp/heartbeat-evening-preview.html';
     writeFileSync(previewPath, html);
     console.log(`Wrote ${previewPath} (${html.length} chars)`);
+
+    // Phase E2 finding-009 — post-render lint hook. Gated by HEARTBEAT_LINT.
+    if ((process.env.HEARTBEAT_LINT || 'on') !== 'off') {
+      try {
+        const { spawnSync } = await import('node:child_process');
+        const r = spawnSync(
+          process.execPath,
+          [join(__dirname, 'lint-heartbeat-mjml.mjs'), '--file', previewPath],
+          { stdio: 'inherit', timeout: 15000 }
+        );
+        if (r.status !== 0) {
+          console.warn('[heartbeat-evening] post-render lint violations — see above. Not blocking preview.');
+        }
+      } catch (e) {
+        console.warn(`[heartbeat-evening] lint hook failed: ${e.message}`);
+      }
+    }
+
     try {
       execSync(`open "${previewPath}"`, { stdio: 'ignore', timeout: 5000 });
       console.log('Opened in default browser');

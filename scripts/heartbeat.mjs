@@ -38,10 +38,13 @@ import { renderSystemBanner, renderDiscardPatternSection, renderRunwayAlert } fr
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
 
-// ── Design tokens (Phase C, 2026-05-19) ────────────────────────────────────
-// Source of truth: lib/heartbeat-tokens.json. Council decision A (dark-first
-// MJML), B (this shape), C (H2 16px / no UPPERCASE / no border-left).
-// Per .claude/audit/email-review/phase-c-council-ledger.md.
+// ── Design tokens (Phase E2 dark-first, 2026-05-19) ────────────────────────
+// Source of truth: lib/heartbeat-tokens.json. Phase E2 closes the Phase C
+// deferral and ships dark-first per the 7/7 universal real-council
+// ratification of Decision A (.claude/audit/email-review/
+// council-divergence-analysis.md finding-014). Decision B (token shape)
+// and Decision C (H2 = 16px / 700 / no UPPERCASE / no border-left) carry
+// over unchanged.
 const TOKENS = JSON.parse(readFileSync(
   new URL('../lib/heartbeat-tokens.json', import.meta.url),
   'utf-8'
@@ -123,48 +126,46 @@ function loadSecrets() {
 // Wrap a numeric score in a color-coded pill. The thresholds match the
 // system's own classification (4.5+ = priority, 4.0–4.49 = qualifying,
 // below = filtered). Used in tables and inline.
-// Brand palette — pulled from lib/heartbeat-tokens.json email.light.*.
-// The body default is light (#f8f9fb); the dark @media block in
-// templates/heartbeat.mjml overrides on Apple Mail / Gmail Web / Outlook 365
-// dark mode. Single source of truth for color values is the token JSON.
+// Brand palette — pulled from lib/heartbeat-tokens.json email.dark.*.
 //
-// Phase C 2026-05-19: switched from inline hardcodes to token reads.
-// Dark-first was attempted (council Decision A) but reverted to light-first
-// for shipping because the ~32 inline-styled callouts emitted by the
-// heartbeat scripts would have required a hundred+ line rewrite to dark
-// equivalents without inflating regression risk past the council's safety
-// budget. The meta name="supported-color-schemes" / "color-scheme" pair —
-// which is half the Decision-A win against Gmail iOS partial-inversion —
-// is still in templates/heartbeat.mjml. See the Phase C report for the
-// full deferral rationale.
-// BRAND.green / .greenFg semantics: match the ORIGINAL pre-Phase-C field names
-// so the 30+ inline-style call sites downstream don't change their visual
-// weight. .green = mid-saturation matrix-green for accents on white surfaces
-// (was #16a34a, now #15803d, a one-step-deeper that still reads as matrix-green
-// and gets the council-approved 5.92:1 contrast on white). .greenFg = the
-// "fg on green-bg" deeper shade for high-contrast labels. The token JSON
-// renames these to "accent" / "accent_deep" — same hexes, semantic clarification.
-const _emailLight = TOKENS.email.light;
-const _colorLight = TOKENS.color.light;
+// Phase E2 (2026-05-19) — DARK-FIRST. The Phase C deferral is closed.
+// Council Decision A (dark-first MJML body) was ratified 7/7 universal in
+// the real-council Phase E1 fan-out — see
+// .claude/audit/email-review/council-divergence-analysis.md finding 014.
+//
+// Body default is now dark (#06070d). The @media (prefers-color-scheme: light)
+// overlay in templates/heartbeat.mjml flips on clients where the user has
+// explicitly opted into light. The meta name="supported-color-schemes" /
+// "color-scheme" pair (Decision-A Gmail iOS fix) remains in the template
+// head and is still load-bearing for partial-inversion prevention.
+//
+// BRAND.green / .greenFg semantics intentionally preserved across the
+// inversion — the ~30 inline-style call sites downstream still reference
+// these fields by name and would not benefit from a renaming pass. The
+// hexes shift to the dark-mode equivalents:
+//   .green   = #4ade80 (matrix-green on dark, accent_deep in tokens)
+//   .greenFg = #86efac (high-contrast green-fg / link color)
+const _emailDark = TOKENS.email.dark;
+const _colorDark = TOKENS.color.dark;
 const BRAND = {
-  bg:           _emailLight.body_bg,                  // #f8f9fb
-  surface:      _emailLight.panel_bg,                 // #ffffff
-  surface2:     _emailLight.panel_strong_bg,          // #f1f5f9
-  border:       _emailLight.border,                   // #e5e7eb
-  text:         _colorLight.text.t1,                  // #111827
-  text2:        _emailLight.body_color,               // #374151
-  text3:        _emailLight.muted_color,              // #475569
-  text4:        _emailLight.chrome_color,             // #6b7280
-  green:        '#16a34a',                            // matrix-green accent — exact original
-  greenFg:      _emailLight.accent,                   // #15803d
-  greenBg:      _emailLight.accent_bg,                // #dcfce7
-  greenBorder:  _emailLight.accent_border,            // #86efac
-  blue:         _colorLight.semantic.info,            // #5a76a6 (was #2563eb)
-  blueBg:       _emailLight.info_bg,                  // #e8edf4 (was #dbeafe)
-  amber:        _colorLight.semantic.warning,         // #8a6840 (was #8a6840 — same)
-  amberBg:      _emailLight.warning_bg,               // #f4ede1 (was #f4ede1 — same)
-  red:          _emailLight.danger_fg,                // #991b1b (was #991b1b — same)
-  redBg:        _emailLight.danger_bg,                // #fee2e2 (was #fee2e2 — same)
+  bg:           _emailDark.body_bg,                  // #06070d
+  surface:      _emailDark.panel_bg,                 // #11131c
+  surface2:     _emailDark.panel_strong_bg,          // #181b27
+  border:       _emailDark.border,                   // #232737
+  text:         _colorDark.text.t1,                  // #fafafa
+  text2:        _emailDark.body_color,               // #e4e4e7
+  text3:        _emailDark.muted_color,              // #b8b8c0
+  text4:        _emailDark.chrome_color,             // #9a9aa6
+  green:        _emailDark.accent_deep,              // #4ade80 — matrix-green on dark
+  greenFg:      _emailDark.accent,                   // #86efac — high-contrast green-fg
+  greenBg:      _emailDark.accent_bg,                // rgba(22,163,74,0.12)
+  greenBorder:  _emailDark.accent_border,            // rgba(22,163,74,0.30)
+  blue:         _colorDark.semantic.info,            // #94a3b8
+  blueBg:       _emailDark.info_bg,                  // rgba(100,116,139,0.22)
+  amber:        _colorDark.semantic.warning,         // #c2a571
+  amberBg:      _emailDark.warning_bg,               // rgba(168,123,72,0.22)
+  red:          _emailDark.danger_fg,                // #fca5a5
+  redBg:        _emailDark.danger_bg,                // rgba(220,38,38,0.18)
 };
 
 function scorePill(score) {
@@ -469,6 +470,53 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
+// ── WHAT'S NEW OVERNIGHT (slot 5) ───────────────────────────────────────────
+// Phase E2 finding-002 (council-divergence-analysis.md): render as triage-only
+// discovery — NO Apply CTAs (those live in TONIGHT'S APPLY / NEXT MOVES),
+// cap to 3 inline role-lines, "+N more" link for overflow, collapsed-by-default
+// via <details><summary>, imperative-fragment copy (no editorializing).
+//
+// The role lines preserve byte-identical tracking-critical patterns: role num,
+// score (X.XX/5), company name, role title — exactly the same substrings the
+// markdown body emits, so regex audits across morning + dashboard stay aligned.
+function renderWhatsNewSection(whatsNew) {
+  if (!whatsNew || whatsNew.length === 0) {
+    // Quiet-state: nothing new overnight. Render a single muted line.
+    return `<details class="whats-new-card" style="margin:6px 0 8px;padding:8px 14px;background:${BRAND.surface};border:1px solid ${BRAND.border};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+  <summary style="cursor:pointer;list-style:none;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${BRAND.text4};outline:none">What's New Overnight — 0 above ${APPLY_NOW_FLOOR.toFixed(1)}</summary>
+  <div style="font-size:12px;color:${BRAND.text3};margin-top:8px;line-height:1.45">Batch ran — nothing new scored ≥ ${APPLY_NOW_FLOOR.toFixed(1)}. Queue unchanged.</div>
+</details>`.trim();
+  }
+
+  const top = whatsNew.slice(0, 3);
+  const overflow = Math.max(0, whatsNew.length - top.length);
+
+  const rows = top.map(r => {
+    const num = r.num;
+    const score = r.score ? r.score.toFixed(2) : '—';
+    const company = (r.company || '').slice(0, 40);
+    const role = (r.role || '').slice(0, 70);
+    // Triage-only role-line — imperative fragment. The score + role num are
+    // tracking-critical and preserved byte-identical from applications.md.
+    return `<div style="margin:4px 0;font-size:12px;color:${BRAND.text2};line-height:1.45;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+      <span style="color:${BRAND.text4};font-family:'JetBrains Mono','SF Mono',ui-monospace,monospace">#${num}</span>
+      <strong style="color:${BRAND.text}">${escapeHtml(company)}</strong>
+      <span style="color:${BRAND.text3}"> · ${escapeHtml(role)}</span>
+      <span style="color:${BRAND.greenFg};font-variant-numeric:tabular-nums;margin-left:6px">${score}/5</span>
+      <span style="color:${BRAND.text4};margin-left:6px">· evaluated today</span>
+    </div>`;
+  }).join('');
+
+  const overflowLine = overflow > 0
+    ? `<div style="margin:8px 0 0;font-size:11px;color:${BRAND.text3}">+${overflow} more — <a href="${DASHBOARD_PUBLIC_URL}/?focus=apply-now" style="color:${BRAND.greenFg};text-decoration:none">see dashboard →</a></div>`
+    : '';
+
+  return `<details class="whats-new-card" style="margin:6px 0 8px;padding:10px 14px;background:${BRAND.surface};border:1px solid ${BRAND.border};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+  <summary style="cursor:pointer;list-style:none;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${BRAND.text3};outline:none">What's New Overnight — ${whatsNew.length} above ${APPLY_NOW_FLOOR.toFixed(1)} <span style="color:${BRAND.text4};font-weight:500;text-transform:none;letter-spacing:0;margin-left:4px">· tap to expand</span></summary>
+  <div style="margin-top:8px">${rows}${overflowLine}</div>
+</details>`.trim();
+}
+
 function renderTonightsApplySection(applyNow) {
   if (!applyNow || applyNow.length === 0) {
     return `<div class="tonight-card" style="margin:6px 0 8px;padding:14px 16px;background:${BRAND.greenBg};border:2px solid ${BRAND.greenBorder};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
@@ -625,6 +673,7 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
   const runwayState    = meta.runwayState || 'healthy';
   const outreachDue    = meta.outreachDue || 0;
   const applyNow       = meta.applyNow    || [];
+  const whatsNew       = meta.whatsNew    || [];
 
   // H3 — no-news early-exit check
   const deltaScore    = meta.deltaScore   || 0;
@@ -663,18 +712,23 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
   }
 
   let actionSectionsHtml = '';
+  // Phase E2 (2026-05-19) section order, per real-council finding-001:
+  //   1. TONIGHT'S APPLY → 2. NEXT MOVES → 3. DUE TODAY →
+  //   4. TODAY'S FOCUS → 5. WHAT'S NEW OVERNIGHT → (DELTAS conditional)
+  // Slot 5 (not slot 4) preserves the single-CTA dominance hierarchy: action
+  // surfaces come first, then the coaching directive, THEN the discovery surface
+  // (triage-only, no CTAs — see renderWhatsNewSection finding-002).
+  //
   // §1 TONIGHT'S APPLY — accent label (leads the email)
-  // Reordered 2026-05-19 (Phase A · A1 · CRITICAL-1) — single primary action
-  // card now sits ABOVE NEXT MOVES so it is the first thing visible at 09:01 PT.
   actionSectionsHtml += sectionLabel("Tonight's Apply", true);
   actionSectionsHtml += tonightsApplyHtml;
-  // §1b NEXT MOVES — ranked queue underneath the primary card
+  // §2 NEXT MOVES — ranked queue underneath the primary card
   const nextMovesHtml = renderNextMovesSection();
   if (nextMovesHtml) {
     actionSectionsHtml += sectionLabel('Next 3 actions queued', false);
     actionSectionsHtml += nextMovesHtml;
   }
-  // §2 DUE TODAY — show label even when empty (shows "Outreach — clear")
+  // §3 DUE TODAY — show label even when empty (shows "Outreach — clear")
   if (dueTodayHtml) {
     const dueTodayLabelText = dueTodayCount > 0
       ? `Due Today — ${dueTodayCount}`
@@ -682,15 +736,20 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
     actionSectionsHtml += sectionLabel(dueTodayLabelText);
     actionSectionsHtml += dueTodayHtml;
   }
-  // §3 DELTAS — only show when there are actual deltas
-  if (signalPulseHtml) {
-    actionSectionsHtml += sectionLabel('Deltas — Last 24h');
-    actionSectionsHtml += signalPulseHtml;
-  }
-  // §4 TODAY'S FOCUS — show only when content present
+  // §4 TODAY'S FOCUS — Haiku coaching directive (anchored to TONIGHT'S APPLY
+  // pack per finding-005 — see getTodaysFocus prompt construction below).
   if (todaysFocusHtml) {
     actionSectionsHtml += sectionLabel("Today's Focus");
     actionSectionsHtml += todaysFocusHtml;
+  }
+  // §5 WHAT'S NEW OVERNIGHT — triage-only discovery (finding-001 + finding-002).
+  // Always rendered (collapsed-by-default), so the 0-state quiet line is visible.
+  actionSectionsHtml += renderWhatsNewSection(whatsNew);
+  // (§ DELTAS — only show when there are actual signal-pulse deltas; this is
+  //  optional 24h-delta surface, not part of the main action chain.)
+  if (signalPulseHtml) {
+    actionSectionsHtml += sectionLabel('Deltas — Last 24h');
+    actionSectionsHtml += signalPulseHtml;
   }
 
   // H2 — day-over-day diff badges on KPI tiles
@@ -801,7 +860,17 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
   }
 
   // Render markdown body to styled HTML (§7 content area)
-  const contentHtml = renderContentHtml(markdownBody);
+  // Phase E2 finding-001 — strip the "What's New Overnight" section from the
+  // markdown body before HTML rendering. WHAT'S NEW OVERNIGHT now lives at
+  // slot 5 in actionSectionsHtml (renderWhatsNewSection, triage-only). The
+  // markdown body retains the section so the persisted .md archive trail is
+  // complete. Strip pattern: `## What's New Overnight` + everything until
+  // the next top-level `## ` heading.
+  const bodyForHtml = markdownBody.replace(
+    /## What's New Overnight[\s\S]*?(?=\n## |$)/,
+    ''
+  );
+  const contentHtml = renderContentHtml(bodyForHtml);
 
   // Interpolate data into the MJML template. Pre-rendered HTML blobs pass
   // through verbatim (no escapeForMjml). Scalar strings are escaped.
@@ -1078,13 +1147,58 @@ async function getTodaysFocus(metaState) {
   }
 
   const { newRoles = 0, runwayAlert = false, runwayState = 'healthy',
-          outreachDue = 0, queueCount = 0 } = metaState;
+          outreachDue = 0, queueCount = 0, applyNow = [] } = metaState;
   // Compute rough runway days from weeks env (same as computeRunwayDensityForHeartbeat)
   const runwayWeeks = parseInt(process.env.RUNWAY_WEEKS || '12');
   const runwayDays = runwayWeeks * 7;
 
   const stateStr = `{newRoles=${newRoles}, applyNowReady=${queueCount}, outreachDue=${outreachDue}, runwayDays=${runwayDays}, runwayAlert=${runwayAlert}, runwayState=${runwayState}}`;
-  const prompt = `You are Mitchell Williams's executive coach. Given today's pipeline state, in EXACTLY 1-2 sentences, what should Mitchell prioritize right now? Tone: terse, action-paired, no hedging. State: ${stateStr}. Output: plain text, no markdown, max 240 chars.`;
+
+  // Phase E2 finding-005 (council-divergence-analysis.md) — anchor the focus
+  // to the TONIGHT'S APPLY pack rather than free-form coaching. Without this
+  // anchor, the model emits assistant-cheerleader phrasing ("you've got this",
+  // "momentum is what matters") that reads as a non-sequitur after the action
+  // sections. The anchor turns it into "today, ship the OpenAI FDE pack —
+  // it's the highest-leverage move" — concrete, imperative, single-target.
+  //
+  // Fallback when queue is empty: anchor the directive to the apps-per-week
+  // runway target (recalibration), not motivational fluff.
+  const tonightsApplyPick = (applyNow && applyNow.length > 0) ? applyNow[0] : null;
+  const tonightsApplyStr = tonightsApplyPick
+    ? `{company="${tonightsApplyPick.company}", role="${(tonightsApplyPick.role || '').slice(0, 60)}", score=${tonightsApplyPick.score ? tonightsApplyPick.score.toFixed(2) : '—'}, daysSinceEval=${tonightsApplyPick.date ? Math.round((Date.now() - new Date(tonightsApplyPick.date + 'T12:00:00').getTime()) / 86400000) : '?'}}`
+    : 'EMPTY';
+
+  const prompt = tonightsApplyPick
+    ? [
+        'You are Mitchell Williams\'s executive coach writing a single-sentence directive.',
+        '',
+        `TONIGHT'S APPLY (the target you MUST anchor the directive to): ${tonightsApplyStr}`,
+        `Pipeline state: ${stateStr}`,
+        '',
+        'Write ONE imperative sentence (max 200 chars, plain text, no markdown) that tells Mitchell exactly what to do tonight, anchored to the TONIGHT\'S APPLY pack above.',
+        '',
+        'EXAMPLE GOOD: "Today, ship the OpenAI FDE pack — it\'s the highest-leverage move."',
+        'EXAMPLE GOOD: "Tonight, send the Anthropic Editorial Lead apply pack — overdue 9d, score 4.65."',
+        '',
+        'FORBIDDEN PHRASES (do NOT use): "you\'ve got this", "trust the process", "momentum is what matters", "stay focused", "keep going", "you can do this", "believe in yourself".',
+        '',
+        'Tone: terse, action-paired, no hedging, no cheerleading. The sentence must reference the specific company or role from TONIGHT\'S APPLY.',
+      ].join('\n')
+    : [
+        'You are Mitchell Williams\'s executive coach writing a single-sentence calibration message.',
+        '',
+        `Pipeline state: ${stateStr}`,
+        `Apps-per-week required to hit runway target: derive from queueCount=${queueCount}, outreachDue=${outreachDue}, runwayDays=${runwayDays}.`,
+        '',
+        'TONIGHT\'S APPLY is empty (no actionable role in the queue).',
+        '',
+        'Write ONE imperative sentence (max 200 chars, plain text, no markdown) calibrating Mitchell to the apps-per-week required to hit his runway target. Reference the empty-queue state explicitly.',
+        '',
+        'EXAMPLE GOOD: "Queue is dry — push a triage pass on the pipeline before EOD to keep the 12-week runway intact."',
+        '',
+        'FORBIDDEN PHRASES: "you\'ve got this", "trust the process", "momentum is what matters".',
+        'Tone: terse, action-paired, no hedging, no cheerleading.',
+      ].join('\n');
 
   try {
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
@@ -1133,11 +1247,19 @@ async function getTodaysFocus(metaState) {
 }
 
 function buildFocusFallback(metaState) {
-  const { newRoles = 0, runwayAlert = false, outreachDue = 0, queueCount = 0 } = metaState;
-  if (runwayAlert) return `Outreach is below your runway floor — push to 10+ touches this week to stay on track. ${queueCount} role${queueCount === 1 ? '' : 's'} are ready to apply.`;
+  // Phase E2 finding-005 — fallback also anchored to TONIGHT'S APPLY when
+  // a pick exists, so the no-LLM path mirrors the anchored-LLM path.
+  const { newRoles = 0, runwayAlert = false, outreachDue = 0, queueCount = 0, applyNow = [] } = metaState;
+  const pick = (applyNow && applyNow.length > 0) ? applyNow[0] : null;
+  if (pick) {
+    const co = pick.company || 'top role';
+    const scoreStr = pick.score ? pick.score.toFixed(2) : '—';
+    return `Tonight, ship the ${co} apply pack — ${scoreStr}/5, highest-leverage move in your queue.`;
+  }
+  if (runwayAlert) return `Queue dry + runway tight — push outreach to 10+ touches this week and run a triage pass tonight.`;
   if (newRoles > 0) return `${newRoles} new role${newRoles === 1 ? '' : 's'} scored 4.0 or above — open the top one, build your apply pack, and submit tonight.`;
   if (outreachDue > 0) return `${outreachDue} follow-up${outreachDue === 1 ? '' : 's'} due today — send them before noon so nothing stalls.`;
-  return `${queueCount} role${queueCount === 1 ? '' : 's'} ready to apply — pick the highest-scoring one and get an application out today.`;
+  return `Queue empty — run a triage pass on the pipeline before EOD to keep the runway window intact.`;
 }
 
 // ── Wave D: Day-over-day KPI diff (H2) ──────────────────────────────────────
@@ -1177,15 +1299,17 @@ function loadYesterdayKpis() {
 // delta === 0 → gray → (neutral)
 // `invert` = true for metrics where increase is bad (e.g., if any were inverted)
 function deltaBadge(current, yesterday, { invert = false } = {}) {
+  // Phase E2 (2026-05-19) — tracks BRAND so the badge inverts cleanly with
+  // the dark/light flip rather than freezing literal hexes from one mode.
   if (yesterday === null || yesterday === undefined || isNaN(current) || isNaN(yesterday)) {
-    return '<span style="font-size:10px;color:#94a3b8;margin-left:4px">—</span>';
+    return `<span style="font-size:10px;color:${BRAND.text3};margin-left:4px">—</span>`;
   }
   const delta = current - yesterday;
   if (delta === 0) {
-    return '<span style="font-size:10px;color:#94a3b8;margin-left:4px">±0</span>';
+    return `<span style="font-size:10px;color:${BRAND.text3};margin-left:4px">±0</span>`;
   }
   const positive = invert ? delta < 0 : delta > 0;
-  const color = positive ? '#16a34a' : '#dc2626';
+  const color = positive ? BRAND.green : BRAND.red;
   const arrow = delta > 0 ? '↑' : '↓';
   return `<span style="font-size:10px;font-weight:600;color:${color};margin-left:4px">${arrow}${Math.abs(delta)} vs yday</span>`;
 }
@@ -1910,7 +2034,13 @@ async function generateHeartbeat() {
   const calibrationLines = renderCalibrationPromptSection();
   for (const line of calibrationLines) lines.push(line);
 
-  // What's New Overnight (freshly surfaced roles)
+  // What's New Overnight (freshly surfaced roles) — Phase E2 finding-001:
+  // emitted into the .md file (audit trail) and into the HTML email body via
+  // renderHtmlEmail's stripWhatsNewFromMarkdown() helper, which removes it
+  // before marked() runs so the HTML email shows it ONCE at slot 5 (via
+  // renderWhatsNewSection, triage-only, cap 3, collapsed). Keeping it in
+  // the .md preserves the audit-trail expectation that the persisted file
+  // reflects everything that was surfaced today.
   for (const line of formatWhatsNewSection(whatsNew, packEligibleNums)) lines.push(line);
   lines.push('');
 
@@ -1998,6 +2128,10 @@ async function generateHeartbeat() {
     // of the markdown body. This avoids coupling the HTML email to the markdown
     // content structure for the §1 action card.
     applyNow,
+    // Phase E2 finding-001 — whatsNew passed through so renderHtmlEmail can
+    // render WHAT'S NEW OVERNIGHT at slot 5 (BELOW TODAY'S FOCUS) instead of
+    // having it sit at slot 7+ inside the markdown content body.
+    whatsNew,
   };
   return { body: lines.join('\n'), meta };
 }
@@ -2096,6 +2230,27 @@ async function main() {
     const previewPath = '/tmp/heartbeat-preview.html';
     writeFileSync(previewPath, html);
     console.log(`Wrote ${previewPath} (${html.length} chars)`);
+
+    // Phase E2 finding-009 — post-render lint hook. Gated by HEARTBEAT_LINT.
+    // Default behavior: run the lint, log violations, but DO NOT exit non-zero
+    // (the preview is for human review, the .md was already written, and the
+    // lint script's own CI use case is in npm test / pre-commit, not here).
+    if ((process.env.HEARTBEAT_LINT || 'on') !== 'off') {
+      try {
+        const { spawnSync } = await import('node:child_process');
+        const r = spawnSync(
+          process.execPath,
+          [join(__dirname, 'lint-heartbeat-mjml.mjs'), '--file', previewPath],
+          { stdio: 'inherit', timeout: 15000 }
+        );
+        if (r.status !== 0) {
+          console.warn('[heartbeat] post-render lint violations — see above. Not blocking preview.');
+        }
+      } catch (e) {
+        console.warn(`[heartbeat] lint hook failed: ${e.message}`);
+      }
+    }
+
     // Open in default browser via macOS `open` (silent fail on non-mac)
     try {
       const { execSync } = await import('child_process');

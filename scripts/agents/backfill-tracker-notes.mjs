@@ -43,11 +43,19 @@ const VERBOSE = args.has('--verbose');
 const limitArg = process.argv.find(a => a.startsWith('--limit='));
 const LIMIT = limitArg ? parseInt(limitArg.split('=')[1], 10) : Infinity;
 
-// Match row note. Captures the optional Re-eval prefix and the placeholder.
-//   group 1: optional "Re-eval YYYY-MM-DD (X→Y). " prefix (may be empty)
+// Match row note. Captures the optional prefix and the placeholder.
+// Five recognized prefix shapes (any one OR none can lead):
+//   "Re-eval YYYY-MM-DD (X→Y). "
+//   "RE-EVAL YYYY-MM-DD (Phase E): A/5→B/5 (ΔN) · ... Previous notes: "
+//   "⚠️ LINK EXPIRED on YYYY-MM-DD (...). Original notes: "
+//   "DUPE of #N · " (optionally followed by another prefix)
+// Then "Batches API eval" (sometimes with trailing " | <arch> | <legit> | triage N/5")
+//   group 1: full prefix text (may be empty)
 //   group 2: optional triage score (kept appended after TL;DR)
-const PLACEHOLDER_RE = /^(Re-eval\s+\d{4}-\d{2}-\d{2}\s*\([^)]+\)\.\s+)?Batches API eval(?:\s*\|\s*[^|]*\s*\|\s*[^|]*\s*\|\s*triage\s+([\d.]+)\/5)?\s*$/;
-const TLDR_RE = /^\|\s*\*\*TL;DR\*\*\s*\|\s*(.+?)\s*\|\s*$/m;
+const PREFIX = '(?:(?:DUPE of #\\d+ · )?(?:⚠️ LINK EXPIRED on \\d{4}-\\d{2}-\\d{2}[^.]*\\.\\s+Original notes:\\s+)?(?:Re-eval\\s+\\d{4}-\\d{2}-\\d{2}\\s*\\([^)]+\\)\\.\\s+)?(?:RE-EVAL\\s+\\d{4}-\\d{2}-\\d{2}[^:]*:[^·]*·[^·]*·[^.]*\\.\\s+Previous notes:\\s+(?:Re-eval\\s+\\d{4}-\\d{2}-\\d{2}\\s*\\([^)]+\\)\\.\\s+)?)?)';
+const PLACEHOLDER_RE = new RegExp('^(' + PREFIX + ')Batches API eval(?:\\s*\\|\\s*[^|]*\\s*\\|\\s*[^|]*\\s*\\|\\s*triage\\s+([\\d.]+)\\/5)?\\s*$');
+// Match "| **TL;DR** |" OR "| TL;DR |" (some reports omit the bold).
+const TLDR_RE = /^\|\s*(?:\*\*)?TL;DR(?:\*\*)?\s*\|\s*(.+?)\s*\|\s*$/m;
 // Row line. Pipe-delimited markdown table row. We use a verbose regex that
 // captures: leading pipe + num + " | " ... " | <notes> | " ... trailing pipe.
 const ROW_RE = /^(\|\s*(\d+)\s*\|[^|]*\|[^|]*\|[^|]*\|[^|]*\|[^|]*\|[^|]*\|\s*\[([^\]]+)\]\(([^)]+\.md)\)\s*\|\s*)([^|]+?)(\s*\|.*?)$/;

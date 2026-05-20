@@ -115,11 +115,30 @@
     }).join('') + ` <button class="chip" data-chip="">all targets</button>`;
   }
 
+  // 2026-05-20 BRAVO followup Item 1 — Filter chips replaced checkboxes.
+  // Active chips live in STATE.chips (Set) and apply to STATE.filters at
+  // read time. The chip set is the same mental model as contacts.html.
+  STATE.chips = STATE.chips || new Set();
+
   function readUi() {
     STATE.query = ($('#search') && $('#search').value) || '';
     STATE.sort = ($('#sort') && $('#sort').value) || 'warm_path_strength';
-    if ($('#flt-has-email').checked) STATE.filters.has_email = 'true'; else delete STATE.filters.has_email;
-    if ($('#flt-1st').checked) STATE.filters.degree = 1; else delete STATE.filters.degree;
+    // Reset filter keys we manage from chips; preserve target_company (set
+    // from per-target chip row).
+    delete STATE.filters.has_email;
+    delete STATE.filters.degree;
+    delete STATE.filters.warm_apply_now;
+    delete STATE.filters.warm_path_min;
+    delete STATE.filters.connected_after;
+    if (STATE.chips.has('has-email'))      STATE.filters.has_email = 'true';
+    if (STATE.chips.has('degree-1'))       STATE.filters.degree = 1;
+    if (STATE.chips.has('warm-apply-now')) STATE.filters.warm_apply_now = 'true';
+    if (STATE.chips.has('warm-strong'))    STATE.filters.warm_path_min = 3;
+    if (STATE.chips.has('recent-connect')) {
+      const d = new Date();
+      d.setMonth(d.getMonth() - 12);
+      STATE.filters.connected_after = d.toISOString().slice(0, 10);
+    }
   }
 
   async function fetchSearch() {
@@ -315,12 +334,26 @@
       const s = saved[idx - 1];
       $('#search').value = s.query || '';
       $('#sort').value = s.sort || 'warm_path_strength';
-      $('#flt-has-email').checked = s.filters?.has_email === 'true';
-      $('#flt-1st').checked = !!s.filters?.degree;
+      // BRAVO followup 2026-05-20 Item 1 — restore chip state from saved filters.
+      STATE.chips = new Set();
+      if (s.filters?.has_email === 'true') STATE.chips.add('has-email');
+      if (s.filters?.degree)               STATE.chips.add('degree-1');
+      if (s.filters?.warm_apply_now)       STATE.chips.add('warm-apply-now');
+      if (s.filters?.warm_path_min)        STATE.chips.add('warm-strong');
+      if (s.filters?.connected_after)      STATE.chips.add('recent-connect');
+      syncChipUi();
       STATE.filters = { ...(s.filters || {}) };
       STATE.page = 1;
       fetchSearch();
     }
+  }
+
+  // BRAVO followup 2026-05-20 Item 1 — reflect STATE.chips into DOM aria-pressed.
+  function syncChipUi() {
+    document.querySelectorAll('[data-netdb-filter]').forEach(btn => {
+      const key = btn.getAttribute('data-netdb-filter');
+      btn.setAttribute('aria-pressed', STATE.chips.has(key) ? 'true' : 'false');
+    });
   }
 
   // ── Bulk actions ────────────────────────────────────────────────────────
@@ -345,9 +378,33 @@
     clearTimeout(debounce);
     debounce = setTimeout(() => { STATE.page = 1; fetchSearch(); }, 200);
   });
-  ['sort', 'flt-has-email', 'flt-1st'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.addEventListener('change', () => { STATE.page = 1; fetchSearch(); });
+  // Sort dropdown.
+  const sortEl = document.getElementById('sort');
+  if (sortEl) sortEl.addEventListener('change', () => { STATE.page = 1; fetchSearch(); });
+
+  // BRAVO followup 2026-05-20 Item 1 — filter chip click handlers (replace
+  // legacy `flt-has-email` + `flt-1st` checkboxes). Click toggles the chip
+  // membership in STATE.chips, syncs DOM aria-pressed, and refetches.
+  document.querySelectorAll('[data-netdb-filter]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.getAttribute('data-netdb-filter');
+      if (STATE.chips.has(key)) STATE.chips.delete(key);
+      else STATE.chips.add(key);
+      syncChipUi();
+      STATE.page = 1;
+      fetchSearch();
+    });
+  });
+  const clearBtn = document.getElementById('netdb-clear-filters');
+  if (clearBtn) clearBtn.addEventListener('click', () => {
+    STATE.chips = new Set();
+    delete STATE.filters.target_company;
+    syncChipUi();
+    // Also clear per-target chip visual state.
+    document.querySelectorAll('#chip-row [data-chip]').forEach(c => c.classList.remove('active'));
+    STATE.page = 1;
+    renderHeadline();
+    fetchSearch();
   });
   $('#chip-row').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-chip]');

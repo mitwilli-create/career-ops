@@ -50,6 +50,57 @@
       background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border);
       font-size: 11.5px; cursor: pointer; font-weight: 500; }
     .chip.active { background: var(--blue-bg); color: var(--blue-fg); border-color: var(--blue-fg); }
+    /* BRAVO followup 2026-05-20 Item 1 / AAA-1 — harmonized filter chips
+       to match contacts.html mental model: top row of stackable AND
+       semantic-equivalent chips; below are the existing per-target
+       chips that act as a target_company facet. */
+    .filter-chip-row {
+      padding: 10px 24px 0; background: var(--surface);
+      display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+      border-bottom: 1px solid transparent;
+    }
+    .filter-chip-row .filter-chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 5px 11px;
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--text-2);
+      border: 1px solid var(--border);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background 120ms ease, border-color 120ms ease;
+    }
+    .filter-chip-row .filter-chip:hover { background: var(--border); }
+    .filter-chip-row .filter-chip[aria-pressed="true"] {
+      background: var(--blue-bg);
+      color: var(--blue-fg);
+      border-color: var(--blue-fg);
+    }
+    .filter-chip-row .filter-chip:focus-visible {
+      outline: none;
+      box-shadow: var(--focus-ring);
+    }
+    .filter-chip-row-label {
+      font-size: 10.5px;
+      color: var(--text-4);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-right: 4px;
+    }
+    .filter-chip-clear {
+      margin-left: auto;
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-4);
+      font-size: 11.5px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .filter-chip-clear:hover { color: var(--text-2); border-color: var(--border); }
     main { padding: 0 24px 80px; max-width: 1500px; }
     .stats { padding: 10px 0; color: var(--text-3); font-size: 12px; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -522,22 +573,45 @@ textarea:focus-visible {
 </header>
 
 <div class="toolbar">
-  <input id="search" type="search" placeholder="Search name, company, role, email…" autocomplete="off">
-  <select id="sort">
-    <option value="warm_path_strength">Warm-path strength</option>
-    <option value="relevance">Relevance (search)</option>
-    <option value="recently_connected">Recently connected</option>
-    <option value="engagement_score">Engagement</option>
+  <input id="search" type="search" placeholder="Search name, company, role, email…   /  to focus" autocomplete="off" aria-label="Search the network database">
+  <select id="sort" aria-label="Sort order">
+    <option value="warm_path_strength">Sort: Warm-path strength</option>
+    <option value="relevance">Sort: Relevance (search)</option>
+    <option value="recently_connected">Sort: Recently connected</option>
+    <option value="engagement_score">Sort: Engagement</option>
   </select>
-  <label class="small"><input type="checkbox" id="flt-has-email"> Only with email</label>
-  <label class="small"><input type="checkbox" id="flt-1st"> 1st-degree only</label>
   <button id="bulk-enrich" disabled>Enrich selected</button>
   <button id="bulk-email" disabled>Find email selected</button>
   <button id="export-csv">Export CSV</button>
-  <button id="open-saved" title="Saved searches">★</button>
+  <button id="open-saved" title="Saved searches">★ Saved</button>
 </div>
 
-<div class="chips" id="chip-row"></div>
+<!-- BRAVO followup 2026-05-20 Item 1 / AAA-1 — harmonized filter chip
+     row, mirrors contacts.html chip taxonomy. The per-target chips
+     directly below act as the multi-select target-company facet. -->
+<div class="filter-chip-row" role="group" aria-label="Filter chips — stackable, AND semantics">
+  <span class="filter-chip-row-label">Filters:</span>
+  <button type="button" class="filter-chip" data-netdb-filter="warm-apply-now" aria-pressed="false" title="Warm path to a company in the apply-now queue">
+    🎯 Warm to Apply-Now
+  </button>
+  <button type="button" class="filter-chip" data-netdb-filter="has-email" aria-pressed="false" title="Has professional email">
+    ✉ Has email
+  </button>
+  <button type="button" class="filter-chip" data-netdb-filter="degree-1" aria-pressed="false" title="1st-degree LinkedIn connection">
+    1️⃣ 1st-deg
+  </button>
+  <button type="button" class="filter-chip" data-netdb-filter="warm-strong" aria-pressed="false" title="Warm path strength ≥ 3">
+    🔥 Warm ≥3
+  </button>
+  <button type="button" class="filter-chip" data-netdb-filter="recent-connect" aria-pressed="false" title="Connected within last 12 months">
+    ⏱ Recent
+  </button>
+  <button type="button" class="filter-chip-clear" id="netdb-clear-filters" title="Clear all filter chips and target selection">
+    ✕ Clear
+  </button>
+</div>
+
+<div class="chips" id="chip-row" role="group" aria-label="Target companies — click to filter by warm path to a target"></div>
 
 <main>
   <div class="stats" id="stats">—</div>

@@ -11,6 +11,11 @@ data/triage-batch.tsv
 data/curator-mentions.md
 data/rejection-history.*
 data/grok-spend.log
+# P1-6 ledger: SQLite job_runs history is per-host runtime telemetry,
+# not data to share across machines. WAL + SHM are sqlite write-ahead files.
+data/job-runs.sqlite
+data/job-runs.sqlite-shm
+data/job-runs.sqlite-wal
 data/ingestion-report-*.md
 data/dry-run-state.md
 data/apply-workflow.md
@@ -20,6 +25,10 @@ data/logs/
 data/pending-diffs/*.md
 !data/pending-diffs/.gitkeep
 data/research-state.json
+# Gmail-poll history state (P0-3) — persists lastHistoryId + rolling
+# message-id cache for scripts/scan-email-poll.mjs. Regenerated on each
+# poll; safe to delete (triggers a bootstrap on next run).
+data/gmail-history-state.json
 # Health column coverage report (derived from applications.md — personal pipeline state)
 data/health-column-coverage.json
 # Role-enrichment validator telemetry (per-write JSONL log, soft-fail observation
@@ -134,6 +143,9 @@ data/linkedin/
 # Outreach state — per-contact message history + intel cache, personal
 data/outreach-state.json
 
+# VC portfolio scanner state — last_seen_created_at per firm; per-run trace
+data/vc-portfolios-state.json
+
 # Outreach drafts — recipient-facing content not yet sent; personal
 data/outreach-drafts/
 
@@ -209,3 +221,12 @@ data/contact-enrichment-paused.md
 data/contact-enrichment-month-1-audit.md
 data/contact-enrichment-weights.diff
 data/builder-evolution-popovers/
+
+# launchd-wrapper (P1-8) runtime state — per-host rolling history, regenerated
+# on every run; would be a constant-diff committable mess.
+data/launchd-wrapper-state.json
+data/launchd-wrapper-state.json.tmp
+
+# 2026-05-20 — externalized dashboard data (build artifacts)
+dashboard/data/contacts.json
+dashboard/data/wave-cb.json

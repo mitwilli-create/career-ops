@@ -18,6 +18,10 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
 import { homedir } from 'os';
+import { installRunRecord } from '../lib/job-runs-ledger.mjs';
+
+const __jobRun = installRunRecord('heartbeat');
+
 import nodemailer from 'nodemailer';
 import { marked } from 'marked';
 import mjml2html from 'mjml';
@@ -33,7 +37,7 @@ import { buildOutreachMailto } from '../lib/mailto-helpers.mjs';
 // 2026-05-17 — inline compute below (mirrors dashboard-server.mjs's
 // computeRecruiterPipelineDensity so heartbeat doesn't depend on the
 // dashboard server being running).
-import { renderSystemBanner, renderDiscardPatternSection, renderRunwayAlert } from '../lib/heartbeat-system-banner.mjs';
+import { renderSystemBanner, renderDiscardPatternSection, renderRunwayAlert, renderCdpAuthHealthSection, renderPolishSummarySection, renderCronHealthBanner } from '../lib/heartbeat-system-banner.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
@@ -765,9 +769,30 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
     runwayAlertHtml = renderRunwayAlertTiered(density);
   } catch {}
 
-  // Tier 5 system-status banner — Phase B (2026-05-19): removed from morning.
-  // Full feature table moved to evening digest (heartbeat-evening.mjs, 18:00 PT).
-  const systemBannerHtml = '';  // Phase B: evening only
+  // Tier 5 system-status banner (calibration brief 2026-05-16)
+  // Phase A · A3 · HIGH-1 (2026-05-19) — banner now renders as a one-liner with
+  // a "details →" link pointing at the dashboard, not the 7-row table.
+  // Note: Phase B planned to remove this from morning + move to evening digest.
+  // Kept here for the legacy Phase E2 emission path; Phase F's dispatch design
+  // does NOT call this code (dispatch has its own status treatment in evening).
+  let systemBannerHtml = '';
+  try { systemBannerHtml = renderSystemBanner({ format: 'html', dashboardUrl: DASHBOARD_PUBLIC_URL }) || ''; } catch {}
+
+  // Cron-health watchdog (added 2026-05-19). Auto-suppresses when all
+  // tracked jobs (scan / scan-rss / scan-email) are healthy; lights up
+  // a red/amber banner when one is failing or stale.
+  let cronHealthHtml = '';
+  try { cronHealthHtml = renderCronHealthBanner({ format: 'html' }) || ''; } catch {}
+
+  // CDP-attached Chrome auth-health banner — only renders if CDP is down OR
+  // LinkedIn auth has broken. Self-suppresses when healthy.
+  let cdpAuthBannerHtml = '';
+  try { cdpAuthBannerHtml = renderCdpAuthHealthSection({ format: 'html' }) || ''; } catch {}
+
+  // Polish summary — last 24h of apply-pack-polish runs (added 2026-05-19).
+  // Self-suppresses on zero runs.
+  let polishSummaryHtml = '';
+  try { polishSummaryHtml = (await renderPolishSummarySection({ format: 'html', sinceHours: 24 })) || ''; } catch {}
 
   // Master CV freshness banner (audit Item L 2026-05-18) — surfaces today's
   // master PDF path or a re-render reminder. Renders inline so it stacks with
@@ -831,10 +856,15 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
   }
 
   // Combine §6b context signals into one contextSectionsHtml blob
-  // (runway alert + system banner + discard pattern — all in one mj-text slot)
+  // (cdp-auth banner FIRST — if it renders, it's an alarm that demands action
+  // ahead of normal context; runway alert + polish summary + system banner +
+  // discard pattern follow)
   let contextSectionsHtml = '';
+  if (cdpAuthBannerHtml) contextSectionsHtml += cdpAuthBannerHtml;
   if (runwayAlertHtml) contextSectionsHtml += runwayAlertHtml;
+  if (polishSummaryHtml) contextSectionsHtml += polishSummaryHtml;
   if (systemBannerHtml) contextSectionsHtml += systemBannerHtml;
+  if (cronHealthHtml) contextSectionsHtml += cronHealthHtml;
   if (cvFreshnessHtml) contextSectionsHtml += cvFreshnessHtml;
   if (discardSectionHtml) contextSectionsHtml += discardSectionHtml;
 
@@ -2108,6 +2138,58 @@ async function generateHeartbeat() {
   lines.push(`**Tracked:** ${applicationsRows} (+${todayNew} today) · **Apply-Now:** ${applyNow.length} · **Evaluated today:** ${reportsToday} · [full system digest 18:00 →](${DASHBOARD_PUBLIC_URL}/?focus=funnel)`);
   lines.push('');
 
+  const pipelinePending = countPipelinePending(join(ROOT, 'data/pipeline.md'));
+  const triageRows = countTriageRows(join(ROOT, 'data/triage-batch.tsv'));
+  const triageModified = fileModifiedRecently(join(ROOT, 'data/triage-batch.tsv'));
+  const scanRows = countScanHistoryRows(join(ROOT, 'data/scan-history.tsv'));
+  // Detect via the scan log, not scan-history.tsv: the history file only updates
+  // when new URLs are added, so a successful scan that finds zero new offers
+  // (everything is a duplicate) leaves history mtime stale. Window is 12h so the
+  // signal survives manual reruns through late morning PT after the 02:00 PT
+  // scheduled fire, while still excluding prior-evening tests (~13h gap).
+  const scanRanToday = fileModifiedRecently(join(ROOT, `data/logs/scan-${TARGET_DATE}.log`), 12);
+  const grok = grokStatus(TARGET_DATE);
+
+  lines.push('| Component | Status | Detail |');
+  lines.push('|-----------|--------|--------|');
+  lines.push(`| Portal scan (\`scan.mjs\`) | ${scanRanToday ? '✅ ran today' : '❌ did not run'} | ${scanRows} URLs tracked all-time |`);
+  lines.push(`| Triage refresh | ${triageModified ? '✅ refreshed today' : '❌ stale'} | ${triageRows} candidates queued |`);
+  lines.push(`| Pipeline depth | ${pipelinePending > 0 ? '✅' : '⚠️'} ${pipelinePending} pending | feeds tomorrow's batch |`);
+  lines.push(`| Batch eval | ${reportsToday > 0 ? `✅ ${reportsToday} reports` : '❌ 0 reports'} | A–G evaluations written today |`);
+  lines.push(`| Tracker | ✅ ${applicationsRows} rows | every role ever evaluated |`);
+  lines.push(`| Grok #1 (social-intel) | ${grok.queries > 0 ? '✅ active' : '⏸ idle'} | $${grok.spent.toFixed(2)} / $5.00 daily cap · ${grok.queries} queries |`);
+  // 6L: Additional status rows — voice calibration, error health, quota schedule
+  lines.push(`| Voice calibration | ${existsSync(join(ROOT, 'writing-samples/voice-reference.md')) ? '✅ active' : '⚠️ not configured'} | writing-samples/voice-reference.md |`);
+  lines.push(`| Errors today | ${existsSync(join(ROOT, 'data/errors.log')) && readFileSync(join(ROOT, 'data/errors.log'),'utf-8').includes(TARGET_DATE) ? '⚠️ see errors.log' : '✅ clean'} | data/errors.log |`);
+  lines.push(`| Quota schedule | ✅ 08:05 PT | batch fires after Claude Max reset |`);
+  lines.push('');
+
+  // Phase A · A2 · CRITICAL-3 (2026-05-19) — collapse the two empty-state H2
+  // sections (Errors / Warnings + Action Required) into one quiet footer line
+  // on no-error days. Both sections still render as H2s when something needs
+  // attention so the signal isn't buried.
+  const errorLog = join(ROOT, 'data/errors.log');
+  let todaysErrors = [];
+  if (existsSync(errorLog)) {
+    todaysErrors = readFileSync(errorLog, 'utf-8')
+      .split('\n')
+      .filter(l => l.includes(TARGET_DATE));
+  }
+  if (todaysErrors.length === 0) {
+    lines.push('<small style="color:#9ca3af">No errors · no action required · system running unattended.</small>');
+    lines.push('');
+  } else {
+    lines.push('## Errors / Warnings');
+    lines.push('');
+    lines.push('```');
+    todaysErrors.slice(-20).forEach(e => lines.push(e));
+    lines.push('```');
+    lines.push('');
+    lines.push('## Action Required');
+    lines.push('');
+    lines.push('- [ ] Review the errors above before acting on the queue.');
+    lines.push('');
+  }
   lines.push('---');
   lines.push('');
 

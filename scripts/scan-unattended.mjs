@@ -6,9 +6,14 @@
 import { spawnSync } from 'child_process';
 import { existsSync, mkdirSync, openSync, writeSync, closeSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { hc } from '../lib/healthchecks-ping.mjs';
+import { startRun, finishRun } from '../lib/job-runs-ledger.mjs';
 
-const PROJECT_DIR = '/Users/mitchellwilliams/Documents/career-ops';
-const NODE_BIN = '/Users/mitchellwilliams/.nvm/versions/node/v24.14.0/bin/node';
+// P1-12 portability: env overrides let GH Actions Linux runners reuse this
+// script without forking it. Local launchd plists leave the env unset →
+// macOS defaults below apply (status quo).
+const PROJECT_DIR = process.env.CAREER_OPS_DIR || '/Users/mitchellwilliams/Documents/career-ops';
+const NODE_BIN = process.env.CAREER_OPS_NODE || '/Users/mitchellwilliams/.nvm/versions/node/v24.14.0/bin/node';
 const LOG_DIR = join(PROJECT_DIR, 'data/logs');
 const DATE = new Date().toISOString().slice(0, 10);
 const LOG_PATH = join(LOG_DIR, `scan-${DATE}.log`);
@@ -17,7 +22,11 @@ if (!existsSync(LOG_DIR)) mkdirSync(LOG_DIR, { recursive: true });
 const logFd = openSync(LOG_PATH, 'a');
 const log = (msg) => writeSync(logFd, msg + '\n');
 
-log(`=== scan-unattended starting ${new Date().toISOString()} ===`);
+const ping = hc('PORTAL_SCAN');
+const runId = startRun('portal-scan');
+await ping.start();
+
+log(`=== scan-unattended starting ${new Date().toISOString()} (hc=${ping.enabled ? 'on' : 'off'} ledger=${runId ? 'on' : 'off'}) ===`);
 process.chdir(PROJECT_DIR);
 
 function run(label, args) {
@@ -25,7 +34,7 @@ function run(label, args) {
   const result = spawnSync(NODE_BIN, args, {
     cwd: PROJECT_DIR,
     encoding: 'utf-8',
-    env: { ...process.env, PATH: `/Users/mitchellwilliams/.nvm/versions/node/v24.14.0/bin:${process.env.PATH || ''}` },
+    env: { ...process.env, PATH: `${process.env.CAREER_OPS_NODE_BIN_DIR || '/Users/mitchellwilliams/.nvm/versions/node/v24.14.0/bin'}:${process.env.PATH || ''}` },
   });
   if (result.stdout) log(result.stdout.trimEnd());
   if (result.stderr) log('STDERR: ' + result.stderr.trimEnd());
@@ -49,6 +58,7 @@ run('triage-pipeline.mjs', ['scripts/triage-pipeline.mjs', '--limit=30']);
 const TRIAGE_TSV = join(PROJECT_DIR, 'data/triage-batch.tsv');
 const BATCH_INPUT = join(PROJECT_DIR, 'batch/batch-input.tsv');
 log('--- bridge: triage-batch.tsv → batch-input.tsv ---');
+let bridgeCount = 0;
 if (existsSync(TRIAGE_TSV)) {
   const lines = readFileSync(TRIAGE_TSV, 'utf-8').split('\n').filter(Boolean);
   const dataRows = lines.slice(1); // skip header
@@ -62,7 +72,8 @@ if (existsSync(TRIAGE_TSV)) {
     out.push(`${id}\t${url}\ttriage\t${noteParts.join(' ')}`);
   }
   writeFileSync(BATCH_INPUT, out.join('\n') + '\n');
-  log(`Wrote ${out.length - 1} rows to batch/batch-input.tsv`);
+  bridgeCount = out.length - 1;
+  log(`Wrote ${bridgeCount} rows to batch/batch-input.tsv`);
 } else {
   log('No triage-batch.tsv found — skipping bridge');
 }
@@ -70,4 +81,6 @@ if (existsSync(TRIAGE_TSV)) {
 log(`=== scan-unattended completed ${new Date().toISOString()} ===`);
 log('');
 closeSync(logFd);
+finishRun(runId, { status: 'ok', urls_found: bridgeCount });
+await ping.success(`bridged ${bridgeCount} rows`);
 process.exit(0);

@@ -36,6 +36,8 @@ import { getIndustryGapRanking, renderIndustryGapTable }           from '../lib/
 import { assessTravelTradeoff, renderTravelChip }                  from '../lib/travel-cap.mjs';
 import { computeStrategyCeiling, renderStrategyCard }              from '../lib/strategy-ceiling.mjs';
 import { renderEquitySlidersHtml }                                 from '../lib/equity-calculator.mjs';
+import { loadAllPolishStatus }                                     from '../lib/polish-status-loader.mjs';
+import { renderPolishBadge, renderPolishDcard, polishCardStyles }  from '../lib/polish-card-renderer.mjs';
 import { computeNextMoves }                                        from '../lib/next-moves.mjs';
 import { loadNextMovesInputs }                                     from '../lib/next-moves-inputs.mjs';
 import { getNegotiationPlaybook, renderPlaybookHtml }              from '../lib/negotiation-playbook.mjs';
@@ -453,7 +455,32 @@ function _findRichSiblingReport(reportPath) {
 function _parseUrl(text) {
   const head = text.slice(0, 3000);
   const m = head.match(/\*\*URL:\*\*\s*(\S+)/);
-  return m ? m[1] : '';
+  if (!m) return '';
+  // 2026-05-20 — Strip tracking params before surfacing to UI. The eval
+  // pipeline writes whatever URL it ingested (often with utm_source=…,
+  // gh_jid=…, lever_source=…, ref=…, trk=…). The dashboard shouldn't
+  // propagate those — they pollute the visible Apply link, leak source
+  // info in click-tracking systems, and (per Mitchell 2026-05-20) make
+  // the queue feel "noisy with tracker garbage."
+  return _stripTrackingParams(m[1]);
+}
+
+function _stripTrackingParams(rawUrl) {
+  if (!rawUrl) return '';
+  try {
+    const u = new URL(rawUrl);
+    for (const k of [...u.searchParams.keys()]) {
+      if (/^utm_/i.test(k) || /^gh_/i.test(k) || /^lever_/i.test(k)
+          || k === 'ref' || k === 'source' || k === 'src'
+          || k === 'mkt_tok' || k === '_hsenc' || k === '_hsmi'
+          || k === 'trk' || k === 'trkCampaign' || k === 'refId'
+          || k === 'fbclid' || k === 'gclid') {
+        u.searchParams.delete(k);
+      }
+    }
+    u.hash = '';
+    return u.toString().replace(/\?$/, '');
+  } catch { return rawUrl; }
 }
 
 function _parseArchetype(text) {
@@ -735,7 +762,7 @@ function equityBadge(company) {
       confidence: '', updated: updated || '', empty: true, hint: tip,
       populateCmd: 'node scripts/overpay-signals.mjs',
     });
-    return `<span class="equity-badge equity-badge-empty pill-popover-trigger" title="${htmlEscape(tip)}" aria-label="${htmlEscape(tip)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">—</span>`;
+    return `<span class="equity-badge equity-badge-empty pill-popover-trigger" aria-label="${htmlEscape(tip)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">—</span>`;
   }
   const meta = EQUITY_STAGE_META[data.stage] || EQUITY_STAGE_META.unknown;
   const tipParts = [data.posture];
@@ -905,7 +932,7 @@ function renderBaseCell(reportPath, floors, locationRaw, company, role) {
     const detail = JSON.stringify({
       kind: 'base', empty: true, raw: compRaw || '', hint: tip,
     });
-    return `<span class="base-chip base-chip-empty pill-popover-trigger" title="${htmlEscape(tip)}" aria-label="${htmlEscape(tip)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">—</span>`;
+    return `<span class="base-chip base-chip-empty pill-popover-trigger" aria-label="${htmlEscape(tip)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">—</span>`;
   }
   const { min, max, currency, isTotalComp } = parsed;
   let cls = 'base-chip-unknown';
@@ -937,7 +964,7 @@ function renderBaseCell(reportPath, floors, locationRaw, company, role) {
   const researchedBadge = researchedTag
     ? `<sup class="base-researched-badge" title="Researched band (${researchedTag} confidence) — not posted in JD">R</sup>`
     : '';
-  const chip = `<span class="base-chip ${cls} pill-popover-trigger" data-base-min="${min}" title="${htmlEscape(tipWithSource)}" aria-label="${htmlEscape(tipWithSource)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">${htmlEscape(label)}${researchedBadge}</span>`;
+  const chip = `<span class="base-chip ${cls} pill-popover-trigger" data-base-min="${min}" aria-label="${htmlEscape(tipWithSource)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">${htmlEscape(label)}${researchedBadge}</span>`;
   const badge = serverColBadge(parsed, locationRaw || '');
   return badge ? `<span class="base-fx-wrap">${chip}${badge}</span>` : chip;
 }
@@ -1036,7 +1063,7 @@ function renderLocationCell(reportPath, company, role) {
     // BRAVO 2026-05-19 (content sweep): friendlier empty-state copy.
     const emptyTip = 'I couldn\'t find a location in the role report\'s Block A — open the full report for the source line.';
     const detail = JSON.stringify({ kind: 'location', empty: true, raw: '', hint: emptyTip, relocation: reloc });
-    return `<span class="location-chip location-chip-empty pill-popover-trigger" title="${htmlEscape(emptyTip)}" aria-label="${htmlEscape(emptyTip)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">—</span>`;
+    return `<span class="location-chip location-chip-empty pill-popover-trigger" aria-label="${htmlEscape(emptyTip)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">—</span>`;
   }
   const cls = classifyLocation(rawField, '');
   let icon = '';
@@ -1084,7 +1111,7 @@ function renderBenefitsCell(company, role) {
       hint: emptyTip,
       populateCmd: 'node scripts/enrich-roles.mjs --top=5',
     });
-    return `<span class="benefits-chip benefits-chip-empty pill-popover-trigger" title="${htmlEscape(emptyTip)}" aria-label="${htmlEscape(emptyTip)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">—</span>`;
+    return `<span class="benefits-chip benefits-chip-empty pill-popover-trigger" aria-label="${htmlEscape(emptyTip)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">—</span>`;
   }
   const tox = parseInt(enrich.sentiment?.team_toxicity_grade, 10);
   const toxValid = Number.isFinite(tox) && tox >= 1 && tox <= 5;
@@ -1112,7 +1139,7 @@ function renderBenefitsCell(company, role) {
     biweekly_math: enrich.biweekly_math || null,
     confidence: enrich.confidence || '',
   });
-  return `<span class="benefits-chip ${toxCls} pill-popover-trigger" data-tox-grade="${toxValid ? tox : ''}" title="${htmlEscape(tip)}" aria-label="${htmlEscape(tip)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">${htmlEscape(label)}</span>`;
+  return `<span class="benefits-chip ${toxCls} pill-popover-trigger" data-tox-grade="${toxValid ? tox : ''}" aria-label="${htmlEscape(tip)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">${htmlEscape(label)}</span>`;
 }
 
 // People cell: shows recruiter + hiring-manager LinkedIn links. Compact chip
@@ -1139,7 +1166,7 @@ function renderPeopleCell(company, role) {
       hint: emptyTip,
       populateCmd: 'node scripts/enrich-roles.mjs --top=5',
     });
-    return `<span class="people-chip people-chip-empty pill-popover-trigger" title="${htmlEscape(emptyTip)}" aria-label="${htmlEscape(emptyTip)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">—</span>`;
+    return `<span class="people-chip people-chip-empty pill-popover-trigger" aria-label="${htmlEscape(emptyTip)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">—</span>`;
   }
   const rec = people?.likely_recruiter?.name && people.likely_recruiter.name !== 'unknown' ? '👤' : '';
   const hm  = people?.likely_hiring_manager?.name && people.likely_hiring_manager.name !== 'unknown' ? '👔' : '';
@@ -1162,7 +1189,7 @@ function renderPeopleCell(company, role) {
     network: network || null,
     confidence: enrich?.confidence || '',
   });
-  return `<span class="people-chip pill-popover-trigger" title="${htmlEscape(tip)}" aria-label="${htmlEscape(tip)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">${htmlEscape(labelMark)}</span>`;
+  return `<span class="people-chip pill-popover-trigger" aria-label="${htmlEscape(tip)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">${htmlEscape(labelMark)}</span>`;
 }
 
 // Safe wrapper — returns null if the CSV is absent so the dashboard
@@ -2554,7 +2581,12 @@ function companyCareersUrl(company) {
   for (const [k, v] of Object.entries(CAREERS_URLS)) {
     if (key.startsWith(k + ' ') || key === k) return v;
   }
-  return `https://www.google.com/search?q=${encodeURIComponent(company + ' careers jobs')}`;
+  // 2026-05-20 — DO NOT fall back to a Google search. Mitchell reported
+  // clicking an Ema row took him to "Ema careers jobs" on google.com,
+  // which is the kind of dead-end UX we want to avoid on the apply
+  // surface. Return null and let the caller decide what to render
+  // (typically: a non-clickable company name).
+  return null;
 }
 
 // ── Tracker note formatter ──────────────────────────────────────────
@@ -2743,11 +2775,18 @@ function formatTrackerNote(text) {
   return html;
 }
 
+// Module-level polish-status map, set by build() before renderRow is invoked.
+// Pre-loaded from data/apply-packs/<slug>/polish-orchestrator-summary.json files.
+let _polishStatusMap = { byRowId: new Map(), bySlug: new Map(), all: [] };
+
 function renderRow(r, idx) {
   const archetype = getReportArchetype(r.reportPath);
   const url = getReportUrl(r.reportPath);
   const finalRec = getReportFinalRecommendation(r.reportPath);
   const edge = getCompetitiveEdge(r.reportPath);
+  // Polish badge — small icon next to the score. Looks up by row.num.
+  const polishStat = _polishStatusMap.byRowId.get(Number(r.num)) || null;
+  const polishBadge = renderPolishBadge(polishStat);
   // Action cell: Apply (JD URL) + Report (formatted .html) + Email (compose draft) + Verify.
   // Phase G — Mitchell flagged that "no apply or verify options" were visible.
   // Apply button was previously implicit (clicking the role title opens the JD),
@@ -2886,10 +2925,17 @@ function renderRow(r, idx) {
               <span class="alignbar-pct" style="color:var(--text-4);font-style:italic;font-size:11px">bar suppressed</span>
             </div>`;
           }
-          return `<div class="alignbar-row" title="${htmlEscape(hint)}">
-            <span class="alignbar-label">${htmlEscape(label)}</span>
+          // 2026-05-20 — Mitchell asked: "I should be able to click into
+          // each of these areas of this cell or hover over it to reveal
+          // additional information or summarization of what led the system
+          // to reach those conclusions." Previously only the percentage
+          // cell was clickable; the label + bar were inert. Now the entire
+          // row (label, bar, pct) opens the drill-in modal, and the row
+          // has a hover affordance.
+          return `<div class="alignbar-row alignbar-row-clickable drill-trigger" data-drill="percentage:${dk}" role="button" tabindex="0" title="${htmlEscape(hint)} — click for the full source breakdown" style="cursor:pointer" onclick="event.stopPropagation();window.drillIn('percentage','${dk}',event)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();window.drillIn('percentage','${dk}',event)}">
+            <span class="alignbar-label">${htmlEscape(label)} <span class="alignbar-explore-hint" aria-hidden="true">▸</span></span>
             <div class="alignbar-track"><div class="alignbar-fill ${colorClass}" style="width:${pctClamped}%"></div></div>
-            <span class="alignbar-pct drill-trigger" data-drill="percentage:${dk}" role="button" tabindex="0" title="Click for strategy ceiling — how to improve this metric" onclick="event.stopPropagation();window.drillIn('percentage','${dk}',event)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();window.drillIn('percentage','${dk}',event)}">${pctClamped}%</span>
+            <span class="alignbar-pct">${pctClamped}%</span>
           </div>`;
         };
         const alignTooltip = 'How well my CV + portfolio match this JD (Block B requirements + competitive edges + overall score).';
@@ -2936,9 +2982,12 @@ function renderRow(r, idx) {
     if (Number.isFinite(_tox) && _tox >= 1 && _tox <= 5) {
       const _toxIcon = _tox <= 1 ? '🟢' : _tox <= 2 ? '🟢' : _tox <= 3 ? '🟡' : _tox <= 4 ? '🟠' : '🔴';
       const _toxWord = _tox <= 1 ? 'healthy' : _tox <= 2 ? 'good' : _tox <= 3 ? 'neutral' : _tox <= 4 ? 'concerning' : 'avoid';
-      toxLine = `<div class="dcard-resp-line">
+      // 2026-05-20 — make the toxicity row clickable. Drills into the
+      // role-enrichment sentiment payload (Glassdoor / Blind / leadership
+      // exits / churn signals — the inputs that produced the X/5 grade).
+      toxLine = `<div class="dcard-resp-line drill-trigger" data-drill="metric:${htmlEscape(String(r.num||''))}:team_toxicity" role="button" tabindex="0" style="cursor:pointer;border-radius:4px;padding:2px 4px;margin:0 -4px;transition:background .12s" title="Click for the toxicity-grade source breakdown — Glassdoor signals, Blind threads, leadership exits, churn patterns" onclick="event.stopPropagation();window.drillIn('metric','${htmlEscape(String(r.num||''))}:team_toxicity',event)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();window.drillIn('metric','${htmlEscape(String(r.num||''))}:team_toxicity',event)}" onmouseover="this.style.background='var(--surface-hover,rgba(255,255,255,.04))'" onmouseout="this.style.background=''">
         <span class="dcard-resp-label">Team toxicity:</span>
-        <span class="dcard-resp-value">${_toxIcon} ${_tox}/5 (${htmlEscape(_toxWord)}, 1=healthy · 5=avoid)</span>
+        <span class="dcard-resp-value">${_toxIcon} ${_tox}/5 (${htmlEscape(_toxWord)}, 1=healthy · 5=avoid) <span style="font-size:10px;color:var(--text-4);opacity:.6">▸</span></span>
       </div>`;
     }
   } catch (_) { /* never break drawer */ }
@@ -3126,9 +3175,11 @@ function renderRow(r, idx) {
   return `
 <tr class="row ${throttleClass}" data-num="${r.num}" data-row-id="${htmlEscape(idx)}" data-score="${r.score}" data-archetype="${htmlEscape(archetype)}" data-company="${htmlEscape(r.company.toLowerCase())}" data-status="${htmlEscape(r.status.toLowerCase())}" data-role="${htmlEscape(r.role.toLowerCase())}" data-equity="${htmlEscape(equityStage)}" data-search="${htmlEscape(searchIndex)}" onclick="toggleDetail('${idx}')">
   <td class="bulk-cell"><input type="checkbox" class="bulk-checkbox" data-num="${r.num}" aria-label="Select row #${r.num} (${htmlEscape(r.company)})" onclick="event.stopPropagation();handleRowCheckbox(this)"></td>
-  <td><span class="badge score-badge-lg ${scoreBadgeClass(r.score)} drill-trigger" data-drill="score:${htmlEscape(scoreRange)}" title="Click to see all roles in this score range — or open row for detail" tabindex="0" role="button" onclick="event.stopPropagation();window.drillIn('score','${htmlEscape(scoreRange)}',event)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();window.drillIn('score','${htmlEscape(scoreRange)}',event)}">${r.score.toFixed(1)}</span></td>
+  <td><span class="badge score-badge-lg ${scoreBadgeClass(r.score)} drill-trigger" data-drill="score:${htmlEscape(scoreRange)}" title="Click to see all roles in this score range — or open row for detail" tabindex="0" role="button" onclick="event.stopPropagation();window.drillIn('score','${htmlEscape(scoreRange)}',event)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();window.drillIn('score','${htmlEscape(scoreRange)}',event)}">${r.score.toFixed(1)}</span>${polishBadge}</td>
   <td class="base-cell">${baseCell}</td>
-  <td class="company-cell" title="${htmlEscape(r.company)}"><a href="${htmlEscape(companyCareersUrl(r.company))}" target="_blank" rel="noopener" class="company-link" onclick="event.stopPropagation()" title="Open ${htmlEscape(r.company)} careers page" data-drill="company:${htmlEscape(companySlug)}"><strong>${htmlEscape(r.company)}</strong></a>${archetype ? `<span class="tier-tag" tabindex="0" role="button" data-tooltip="${htmlEscape(tierTooltip(archetype))}" aria-label="Tier ${htmlEscape(archetype)}: ${htmlEscape(tierTooltip(archetype))}" onclick="event.stopPropagation();openTierLegend('${htmlEscape(archetype)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openTierLegend('${htmlEscape(archetype)}')}">${htmlEscape(archetype)}</span>` : ''}</td>
+  <td class="company-cell" title="${htmlEscape(r.company)}">${(() => { const careersHref = companyCareersUrl(r.company); return careersHref
+    ? `<a href="${htmlEscape(careersHref)}" target="_blank" rel="noopener" class="company-link" onclick="event.stopPropagation()" title="Open ${htmlEscape(r.company)} careers page" data-drill="company:${htmlEscape(companySlug)}"><strong>${htmlEscape(r.company)}</strong></a>`
+    : `<strong class="company-link company-link-static" data-drill="company:${htmlEscape(companySlug)}" title="${htmlEscape(r.company)} careers URL not mapped — use the apply link in the action cell to view the role JD">${htmlEscape(r.company)}</strong>`; })()}${archetype ? `<span class="tier-tag" tabindex="0" role="button" data-tooltip="${htmlEscape(tierTooltip(archetype))}" aria-label="Tier ${htmlEscape(archetype)}: ${htmlEscape(tierTooltip(archetype))}" onclick="event.stopPropagation();openTierLegend('${htmlEscape(archetype)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openTierLegend('${htmlEscape(archetype)}')}">${htmlEscape(archetype)}</span>` : ''}</td>
   <td class="role-cell" title="${htmlEscape(r.role)}">${url ? `<a href="${htmlEscape(url)}" target="_blank" rel="noopener" class="role-link" onclick="event.stopPropagation()" title="${htmlEscape(r.role)} — open original job posting">${htmlEscape(r.role)}</a>` : htmlEscape(r.role)}${cardGapChips}</td>
   <td class="status-cell"><span class="badge status-pill ${statusBadgeClass(r.status)} drill-trigger" data-status="${statusKey(r.status)}" data-num="${r.num}" data-drill="status:${htmlEscape(statusKey(r.status))}" role="button" tabindex="0" onclick="openStatusPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){openStatusPopover(this);event.preventDefault();event.stopPropagation()}" title="Click to change status">${htmlEscape(r.status)}</span></td>
   <td class="equity-cell">${equityCell}</td>
@@ -3164,6 +3215,7 @@ function renderRow(r, idx) {
       ) : ''}
       ${r.notes ? `<div class="dcard dcard--tracker-note dcard-drill drill-trigger" data-drill="metric:${htmlEscape(String(r.num||''))}:tracker_note" role="button" tabindex="0" style="margin-bottom:8px;cursor:pointer" title="Open the full Why-this-score popout — score band, council consensus, what is backing this score, and what might block it" onclick="event.stopPropagation();window.drillIn('metric','${htmlEscape(String(r.num||''))}:tracker_note',event)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();window.drillIn('metric','${htmlEscape(String(r.num||''))}:tracker_note',event)}"><div class="dcard-label">Why this score <span class="dcard-explore-hint">▸ see more</span></div>${formatTrackerNote(r.notes)}</div>` : ''}
       ${metaChips ? `<div class="detail-meta">${metaChips}</div>` : ''}
+      ${renderPolishDcard(polishStat, { rowId: String(r.num || idx), packSlug: polishStat?.pack_slug || '' })}
       ${tldrCard}
       ${matchCard}
       ${posCard}
@@ -3309,6 +3361,26 @@ function loadBuilderLog() {
     const latest = (data.history && data.history.length) ? data.history[data.history.length - 1] : null;
     return { ...data, latest };
   } catch { return null; }
+}
+
+// 2026-05-19 BRAVO polish A2 (item #6): commit history for the header-pill drawer.
+// Pulls the last N commits via `git log` at build time. Cached as a build-local
+// constant — the dashboard server only re-runs build-dashboard.mjs on data
+// changes, so this is one shell-out per build, not per request.
+function loadBuilderCommits(limit = 15) {
+  try {
+    // Pipe-separated to survive commit messages containing tabs/colons.
+    // Tilde delimiter chosen because it is rare in commit messages.
+    const out = execSync(`git log --oneline -${limit} --pretty=format:'%h~|~%s~|~%ar~|~%an'`, {
+      cwd: ROOT, encoding: 'utf-8', timeout: 5000,
+    });
+    return out.split('\n').filter(Boolean).map(line => {
+      const [sha, message, age, author] = line.split('~|~');
+      return { sha, message, age, author };
+    });
+  } catch {
+    return [];
+  }
 }
 
 // 2026-05-19 — adjudicated target API/tool stack (council-of-models → dealbreaker).
@@ -3489,6 +3561,12 @@ async function build() {
   // Reset the per-build report cache so successive invocations (e.g. tests
   // that import build()) don't carry stale parsed reports across builds.
   _resetReportCache();
+
+  // Polish-status map (added 2026-05-19) — pre-loaded once per build so the
+  // apply-now row renderer + drawer can do fast O(1) lookups by row_id.
+  // Reads every data/apply-packs/<slug>/polish-orchestrator-summary.json.
+  // Stored at module scope so renderRow can access it without param threading.
+  _polishStatusMap = loadAllPolishStatus();
 
   if (!existsSync(dirname(OUT_PATH))) mkdirSync(dirname(OUT_PATH), { recursive: true });
   const reportsHtmlDir = join(dirname(OUT_PATH), 'reports');
@@ -3698,10 +3776,39 @@ async function build() {
   }
   const applied = apps.filter(r => /applied|interview|offer/i.test(r.status));
   const pipelinePending = countPipelinePending();
+  // 2026-05-20 — Bake sidebar widget initial values into HTML so the user
+  // doesn't see "—" / "Loading…" placeholders flash in on first paint.
+  // The dashboard's polls (5min / 30s / 1s) still refresh these in-place,
+  // but the first render now shows the actual values immediately.
+  let triageAdvanceCount = 0;
+  try {
+    const tap = join(ROOT, 'batch/triage-advance.tsv');
+    if (existsSync(tap)) {
+      const lines = readFileSync(tap, 'utf-8').split('\n').filter(l => l.trim() && !l.startsWith('url'));
+      triageAdvanceCount = lines.length;
+    }
+  } catch { /* default 0 */ }
+  let initialHealthChip = { label: 'health: ?', cls: 'pipeline-health-chip', title: 'Health check not run yet' };
+  try {
+    const hp = join(ROOT, 'data/pipeline-health.json');
+    if (existsSync(hp)) {
+      const h = JSON.parse(readFileSync(hp, 'utf-8'));
+      const ageMin = Math.floor((Date.now() - Date.parse(h.checked_at)) / 60000);
+      const ageLabel = ageMin < 1 ? 'just now' : ageMin + 'm ago';
+      if (h.healthy) {
+        initialHealthChip = { label: 'health: ✓ ' + ageLabel, cls: 'pipeline-health-chip healthy', title: 'All checks passing · last checked ' + ageLabel };
+      } else {
+        initialHealthChip = { label: 'health: ✗ ' + (h.summary || 'check failed'), cls: 'pipeline-health-chip critical', title: (h.summary || 'health check failed') + ' · click for details' };
+      }
+    }
+  } catch { /* default to ? */ }
   // Builder Evolution log — loaded from data/builder-log.json (regenerated
   // nightly by scripts/agents/builder-log.mjs). Surfaces skills/APIs/bug-classes
   // for the PM-trajectory narrative.
   const builderLog = loadBuilderLog();
+  // 2026-05-19 BRAVO polish A2 (item #6): last 15 commits for the header-pill
+  // commit-history drawer. Build-time fetch via `git log`; one shell-out per build.
+  const builderCommits = loadBuilderCommits(15);
   const targetApis = loadTargetApis();
   const scanTotal = countScanHistory();
   const batchRuns = countBatchRuns();
@@ -4878,6 +4985,17 @@ async function build() {
     // contains.
     const jsonStr = JSON.stringify(_cbData);
     waveCBDataJson = Buffer.from(jsonStr, 'utf-8').toString('base64');
+    // 2026-05-20 — Also write raw JSON to dashboard/data/wave-cb.json so the
+    // client can fetch it instead of inlining the 790KB base64 blob into
+    // block 2 of the page. See the matching `window._waveCBReadyPromise =
+    // fetch('/data/wave-cb.json')` shim in the dashboard's inline script.
+    try {
+      const waveCBOutDir = join(ROOT, 'dashboard/data');
+      mkdirSync(waveCBOutDir, { recursive: true });
+      writeFileSync(join(waveCBOutDir, 'wave-cb.json'), jsonStr);
+    } catch (writeErr) {
+      console.warn('[build] failed to write dashboard/data/wave-cb.json:', writeErr.message);
+    }
   } catch (topErr) { waveCBDataJson = ''; }
 
   // ── Cmd-K palette data ────────────────────────────────────────────
@@ -6433,15 +6551,182 @@ async function build() {
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
     margin: 8px 0 14px 0;
   }
+  /* 2026-05-19 BRAVO polish A1 (item #8): explicit 2×2 layout below 640px.
+     Auto-fit minmax(160px) yields 3 columns at ~600px (last chip orphaned).
+     Force a balanced 2×2 grid for narrow viewports. */
+  @media (max-width: 640px) {
+    .builder-evo-grid { grid-template-columns: repeat(2, 1fr); }
+  }
   .be-stat-tile {
     background: var(--surface-2);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 10px 12px;
   }
+  /* 2026-05-19 BRAVO — clickable stat-tile chips. Reset button defaults, add
+     hover/focus affordances, keep visual parity with the original tiles. */
+  button.be-stat-tile-clickable {
+    font: inherit; color: inherit; text-align: left;
+    width: 100%; cursor: pointer;
+    transition: border-color .15s ease, background .15s ease, transform .12s ease;
+  }
+  button.be-stat-tile-clickable:hover {
+    border-color: var(--green-fg);
+    background: var(--surface);
+  }
+  button.be-stat-tile-clickable:focus-visible {
+    outline: none;
+    border-color: var(--green-fg);
+    box-shadow: 0 0 0 2px rgba(22,163,74,.25);
+  }
+  button.be-stat-tile-clickable:active { transform: translateY(1px); }
   .be-stat-label { font-size: 11px; opacity: 0.7; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 4px; }
-  .be-stat-value { font-size: 22px; font-weight: 700; line-height: 1; }
-  .be-stat-cumulative { font-size: 11px; opacity: 0.55; font-weight: 400; margin-left: 6px; }
+  .be-stat-value { font-size: 22px; font-weight: 700; line-height: 1; display: flex; align-items: baseline; gap: 6px; }
+  /* 2026-05-19 BRAVO polish A1 (item #1): removed dead .be-stat-cumulative rule
+     (last reference was in the pre-collapse tile markup; chips now use .be-stat-hint). */
+  .be-stat-chevron {
+    font-size: 14px; font-weight: 500; opacity: 0; color: var(--text-3);
+    margin-left: auto; transition: opacity .15s ease, transform .15s ease;
+    transform: translateX(-4px);
+  }
+  button.be-stat-tile-clickable:hover .be-stat-chevron,
+  button.be-stat-tile-clickable:focus-visible .be-stat-chevron {
+    opacity: 0.85; transform: translateX(0);
+  }
+  .be-stat-hint {
+    /* 2026-05-19 BRAVO polish A1 (item #7): bumped opacity 0.55 → 0.75 for WCAG AA
+       contrast on dark surface. Font-size held at 10.5px to avoid layout shift. */
+    font-size: 10.5px; opacity: 0.75; margin-top: 6px;
+    letter-spacing: 0.02em; font-weight: 400;
+  }
+  .be-subtitle-hint { opacity: 0.7; font-style: italic; }
+
+  /* Builder-evolution stat detail modal (BRAVO 2026-05-19).
+     Pattern lifted from #tier-legend-backdrop — same z-index (2000), shape,
+     animation, dismiss behavior (backdrop click + ESC). One shared modal,
+     content swaps based on which chip fired the open. */
+  #be-stat-backdrop {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,.5); z-index: 2000; backdrop-filter: blur(2px);
+  }
+  #be-stat-backdrop.visible { display: block; }
+  #be-stat-modal {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    width: min(680px, 96vw); max-height: 84vh; overflow-y: auto; z-index: 2001;
+    background: var(--surface); border-radius: 12px; border: 1px solid var(--border);
+    box-shadow: var(--shadow-lg);
+  }
+  .be-stat-modal-header {
+    position: sticky; top: 0; background: var(--surface);
+    border-bottom: 1px solid var(--border); padding: 14px 20px;
+    display: flex; align-items: flex-start; gap: 12px; z-index: 1;
+    border-radius: 12px 12px 0 0;
+  }
+  .be-stat-modal-title-wrap { flex: 1; min-width: 0; }
+  .be-stat-modal-title {
+    font-size: 15px; font-weight: 600; color: var(--text); margin: 0;
+    display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  }
+  .be-stat-modal-headline {
+    font-size: 22px; font-weight: 700; color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+  .be-stat-modal-subhead {
+    font-size: 12px; color: var(--text-3); margin: 4px 0 0;
+    line-height: 1.45;
+  }
+  .be-stat-modal-body { padding: 16px 20px; }
+  .be-stat-modal-section { margin-bottom: 14px; }
+  .be-stat-modal-section:last-child { margin-bottom: 0; }
+  .be-stat-modal-section-label {
+    font-size: 11px; font-weight: 600; opacity: 0.75;
+    letter-spacing: 0.04em; text-transform: uppercase;
+    margin: 0 0 8px;
+  }
+  .be-stat-modal-list {
+    list-style: none; padding: 0; margin: 0;
+    display: grid; gap: 6px;
+  }
+  .be-stat-modal-item {
+    display: grid; grid-template-columns: 1fr auto;
+    gap: 10px; padding: 8px 12px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); font-size: 12.5px;
+    line-height: 1.45;
+  }
+  .be-stat-modal-item-name {
+    font-weight: 600; color: var(--text);
+    word-break: break-word; min-width: 0;
+  }
+  .be-stat-modal-item-evidence {
+    font-size: 11.5px; color: var(--text-2);
+    margin-top: 4px; font-weight: 400;
+    grid-column: 1 / -1;
+  }
+  .be-stat-modal-item-count {
+    font-size: 12px; color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+    align-self: start; white-space: nowrap;
+  }
+  .be-stat-modal-item-tier-a {
+    border-color: rgba(22,163,74,.45);
+    background: rgba(22,163,74,.08);
+  }
+  .be-stat-modal-item-gap {
+    border-color: rgba(245,158,11,.45);
+    background: rgba(245,158,11,.08);
+  }
+  .be-stat-modal-item-gap .be-stat-modal-item-count {
+    color: var(--amber-fg, #b45309);
+    font-weight: 600;
+  }
+  .be-stat-modal-footer {
+    border-top: 1px dashed var(--border);
+    padding: 10px 20px 14px;
+    font-size: 11px; opacity: 0.75;
+    display: flex; flex-wrap: wrap; gap: 10px;
+  }
+  .be-stat-modal-footer code {
+    background: var(--surface-2); padding: 1px 5px;
+    border-radius: 3px; font-size: 10px;
+  }
+  .be-stat-modal-close {
+    background: none; border: none; cursor: pointer;
+    font-size: 18px; line-height: 1; color: var(--text-3);
+    padding: 4px 8px; border-radius: 4px;
+    transition: background .12s, color .12s;
+  }
+  .be-stat-modal-close:hover,
+  .be-stat-modal-close:focus-visible {
+    background: var(--surface-2); color: var(--text); outline: none;
+  }
+  /* 2026-05-20 — Back button for the new popout-stack navigation. Sits
+     before the title; hidden when nav-stack depth ≤ 1. Subtle ghost
+     button styling so it doesn't compete with the close (✕). */
+  .be-stat-modal-back {
+    background: none; border: 1px solid var(--border); cursor: pointer;
+    font-size: 12px; line-height: 1; color: var(--text-2);
+    padding: 6px 10px; border-radius: 4px; margin-right: 10px;
+    transition: background .12s, color .12s, border-color .12s;
+    align-self: flex-start;
+  }
+  .be-stat-modal-back:hover,
+  .be-stat-modal-back:focus-visible {
+    background: var(--surface-2); color: var(--text); border-color: var(--text-3); outline: none;
+  }
+  /* Clickable detail items inside the modal body (drill-into chip behavior).
+     Same affordance pattern as the alignment-bar rows: subtle hover, ▸
+     indicator already rendered inline in the count slot. */
+  .be-stat-modal-item-clickable { transition: background .12s; }
+  .be-stat-modal-item-clickable:hover { background: var(--surface-hover, rgba(255,255,255,.04)); }
+  .be-stat-modal-item-clickable:focus-visible { outline: 2px solid var(--blue-fg,#2563eb); outline-offset: -2px; }
+  @media (max-width: 720px) {
+    #be-stat-modal { width: 96vw; max-height: 88vh; }
+    .be-stat-modal-header { padding: 12px 16px; }
+    .be-stat-modal-body { padding: 14px 16px; }
+    .be-stat-modal-footer { padding: 10px 16px 14px; }
+  }
+
   .be-section { margin: 10px 0; }
   .be-section-label { font-size: 11px; opacity: 0.7; letter-spacing: 0.03em; text-transform: uppercase; margin-bottom: 6px; }
   .be-tags { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -6461,6 +6746,29 @@ async function build() {
     font-size: 11px; opacity: 0.7;
   }
   .be-footer code { background: var(--surface-2); padding: 1px 5px; border-radius: 3px; font-size: 10px; }
+  /* 2026-05-19 BRAVO polish A2 (item #4): copy-to-clipboard button for CLI hints.
+     Renders inline with the surrounding be-footer-cta text. Aria-live region for
+     transient "Copied!" feedback (in addition to window.toast). */
+  .be-copy-btn {
+    background: var(--surface-2); border: 1px solid var(--border);
+    color: inherit; font: inherit; font-size: 10px;
+    padding: 1px 7px 2px 7px; border-radius: 4px;
+    cursor: pointer; margin-left: 4px;
+    transition: border-color .15s ease, background .15s ease, color .15s ease;
+    line-height: 1.4;
+  }
+  .be-copy-btn:hover {
+    border-color: var(--green-fg); background: var(--surface);
+  }
+  .be-copy-btn:focus-visible {
+    outline: none; border-color: var(--green-fg);
+    box-shadow: 0 0 0 2px rgba(22,163,74,.25);
+  }
+  .be-copy-btn.copied {
+    color: var(--green-fg); border-color: var(--green-fg);
+    background: rgba(22,163,74,.08);
+  }
+  .be-copy-btn .be-copy-icon { font-size: 11px; opacity: 0.85; margin-right: 3px; }
 
   /* 2026-05-19 Mitchell trust-fix — sidebar freshness + health chips. */
   .sidebar-pipeline-status {
@@ -6515,6 +6823,22 @@ async function build() {
     padding: 1px 9px; border-radius: var(--radius-full);
     letter-spacing: 0;
   }
+  /* 2026-05-19 BRAVO polish A2 (item #6): Builder-Evolution header pill is
+     now a real <button> that opens the commit-history drawer. Inherit the
+     .pill cosmetics but reset button-default chrome and add affordance. */
+  button.pill.be-commits-pill {
+    border: none; font: inherit; line-height: 1.4;
+    cursor: pointer;
+    transition: background .15s ease, transform .12s ease, box-shadow .15s ease;
+  }
+  button.pill.be-commits-pill:hover {
+    background: var(--green-fg); transform: translateY(-1px);
+  }
+  button.pill.be-commits-pill:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--green-fg);
+  }
+  button.pill.be-commits-pill:active { transform: translateY(0); }
   .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: var(--section-gap); }
 
   /* ── Tonight's pick callout (enriched 2026-05-17) ──────────────── */
@@ -7558,6 +7882,7 @@ async function build() {
   @media (max-width: 640px) { .detail-grid { grid-template-columns: 1fr; } }
   .dcard { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; }
   .dcard-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-4); margin-bottom: 6px; }
+  ${polishCardStyles()}
   .dcard-body { font-size: 12.5px; line-height: 1.55; color: var(--text-2); }
   /* 2026-05-18 Wave B: static (non-drill) cards never show a pointer or
      hover affordance — they're display-only. Kept separate from .dcard-drill
@@ -7599,6 +7924,13 @@ async function build() {
   .alignbar-fill.alignbar-mid    { background: var(--amber-fg); }
   .alignbar-fill.alignbar-weak   { background: var(--red-fg); }
   .alignbar-pct { font-weight: 600; color: var(--text-1); text-align: right; font-variant-numeric: tabular-nums; }
+  /* 2026-05-20 — Mitchell ask: entire alignment-bar row should be clickable
+     with a hover affordance. The ▸ indicator hints that detail is one click
+     away; on hover the whole row lights up. */
+  .alignbar-row-clickable { cursor: pointer; border-radius: 4px; padding: 2px 4px; margin: 0 -4px; transition: background .12s; }
+  .alignbar-row-clickable:hover { background: var(--surface-hover, rgba(255,255,255,.04)); }
+  .alignbar-row-clickable:hover .alignbar-explore-hint { opacity: 1; }
+  .alignbar-explore-hint { font-size: 10px; color: var(--text-4); opacity: .4; transition: opacity .12s; margin-left: 4px; }
   /* How-to-position markdown rendering — real table, not pipe-separated prose. */
   .htp-md table { width: 100%; border-collapse: collapse; margin: 6px 0; font-size: 12px; }
   .htp-md th, .htp-md td { padding: 6px 8px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
@@ -8035,6 +8367,10 @@ async function build() {
   .sidebar-runway-alert.healthy   { background: rgba(22,163,74,.10);  color: #166534; border-left-color: #16a34a; }
   .sidebar-runway-alert.stretched { background: rgba(245,158,11,.10); color: #92400e; border-left-color: #d97706; }
   .sidebar-runway-alert.critical  { background: rgba(220,38,38,.12);  color: #b91c1c; border-left-color: #dc2626; }
+  /* 2026-05-20 — Mitchell can hide the Runway widget via Settings.
+     The hide is driven by a body.runway-widget-hidden class set on
+     page-load after reading /api/settings (data/dashboard-settings.json). */
+  body.runway-widget-hidden .sidebar-runway { display: none; }
   @media (prefers-color-scheme: dark) {
     .sidebar-runway-alert.healthy   { color: #4ade80; background: rgba(22,163,74,.15); }
     .sidebar-runway-alert.stretched { color: #fbbf24; background: rgba(245,158,11,.18); }
@@ -11000,20 +11336,22 @@ async function build() {
       <button type="button" class="pipeline-btn pipeline-btn-batch" onclick="openPipelineModal('batch')" title="Run Anthropic batch eval on currently-queued items">
         <span class="pipeline-btn-icon" aria-hidden="true">⚡</span>
         <span class="pipeline-btn-label">Run Batch</span>
-        <span class="pipeline-btn-count" id="pipeline-btn-batch-count">—</span>
+        <span class="pipeline-btn-count" id="pipeline-btn-batch-count">${triageAdvanceCount}</span>
       </button>
       <button type="button" class="pipeline-btn pipeline-btn-nuclear" onclick="openPipelineModal('process-all')" title="Triage + batch + reconcile + (optional) email — full pipeline drain">
         <span class="pipeline-btn-icon" aria-hidden="true">🚀</span>
         <span class="pipeline-btn-label">Process All</span>
-        <span class="pipeline-btn-count" id="pipeline-btn-all-count">—</span>
+        <span class="pipeline-btn-count" id="pipeline-btn-all-count">${pipelinePending + triageAdvanceCount}</span>
       </button>
     </div>
     <!-- 2026-05-19 Mitchell trust-fix — freshness chip + health chip.
          Chip shows "updated Ns ago" with live ticking. Color-codes on staleness.
-         "System healthy" chip reads /api/pipeline/health-status. -->
+         "System healthy" chip reads /api/pipeline/health-status.
+         2026-05-20 — initial values baked at build time so first paint shows
+         data instead of "badges loading…" / "health: —" flashing in. -->
     <div id="sidebar-pipeline-status" class="sidebar-pipeline-status" aria-label="Pipeline status freshness">
-      <span id="pipeline-freshness-chip" class="pipeline-freshness-chip" title="Time since last badge refresh">badges loading…</span>
-      <span id="pipeline-health-chip" class="pipeline-health-chip" title="Health check (every 5 min) — click to view full status" onclick="window.open('/api/pipeline/health-status','_blank')">health: —</span>
+      <span id="pipeline-freshness-chip" class="pipeline-freshness-chip fresh" title="Time since last badge refresh">badges · just now</span>
+      <span id="pipeline-health-chip" class="${initialHealthChip.cls}" title="${htmlEscape(initialHealthChip.title)} — click to view full status" onclick="openPipelineHealthModal()">${htmlEscape(initialHealthChip.label)}</span>
     </div>
     <!-- Recruiter pipeline-density widget (Phase 6, calibration brief 2026-05-16)
          Chevron toggles inline detail. Label click opens full runway modal
@@ -11172,7 +11510,7 @@ async function build() {
   <div class="container">
 
   <header class="toolbar" role="banner">
-    <button class="toolbar-btn sidebar-hamburger" onclick="toggleSidebar()" id="sidebar-hamburger-btn" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false" title="Open navigation">☰</button>
+    <button class="toolbar-btn sidebar-hamburger" onclick="toggleSidebar()" id="sidebar-hamburger-btn" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false">☰</button>
     <h1 class="sr-only">Career-Ops Dashboard</h1>
     <div class="toolbar-brand" aria-hidden="true">
       <span class="brand-name">Career-Ops</span>
@@ -11188,7 +11526,7 @@ async function build() {
          so a power user can still flip density via DevTools or a future
          settings-menu toggle without re-doing the styling. -->
 
-    <button class="toolbar-btn toolbar-overflow-btn" onclick="openMobileSettingsSheet()" id="toolbar-overflow-btn" aria-label="More options" title="More options">···</button>
+    <button class="toolbar-btn toolbar-overflow-btn" onclick="openMobileSettingsSheet()" id="toolbar-overflow-btn" aria-label="More options">···</button>
     <button class="toolbar-btn" onclick="toggleDark()" id="dark-toggle" aria-label="Toggle dark mode">☀︎ Light</button>
   </header>
 
@@ -11234,7 +11572,6 @@ async function build() {
   </div>
 
   <main id="main">
-
 
   <!-- Cmd-K command palette -->
   <div id="cmdk-backdrop" role="dialog" aria-modal="true" aria-label="Command palette" onclick="closeCmdK()">
@@ -11317,6 +11654,27 @@ async function build() {
           <li><span class="equity-badge equity-badge-empty">—</span> — no entry in CURRENT.md (yet).</li>
         </ul>
       </div>
+    </div>
+  </div>
+
+  <!-- Builder-evolution stat detail modal (BRAVO 2026-05-19).
+       Shared modal, content rendered by openBeStatModal(key) from a data
+       payload serialized inline below. Dismiss: backdrop click, ✕, ESC. -->
+  <div id="be-stat-backdrop" onclick="closeBeStatModal()" role="dialog" aria-modal="true" aria-labelledby="be-stat-modal-title" aria-hidden="true">
+    <div id="be-stat-modal" onclick="event.stopPropagation()">
+      <div class="be-stat-modal-header">
+        <button type="button" id="be-stat-modal-back" class="be-stat-modal-back" onclick="window._beNavBack && window._beNavBack()" aria-label="Back" hidden>&larr; Back</button>
+        <div class="be-stat-modal-title-wrap">
+          <h3 class="be-stat-modal-title" id="be-stat-modal-title">
+            <span id="be-stat-modal-label"></span>
+            <span class="be-stat-modal-headline" id="be-stat-modal-headline"></span>
+          </h3>
+          <p class="be-stat-modal-subhead" id="be-stat-modal-subhead"></p>
+        </div>
+        <button type="button" class="be-stat-modal-close" onclick="closeBeStatModal()" aria-label="Close (Esc)">✕</button>
+      </div>
+      <div class="be-stat-modal-body" id="be-stat-modal-body"></div>
+      <div class="be-stat-modal-footer" id="be-stat-modal-footer"></div>
     </div>
   </div>
 
@@ -11658,9 +12016,13 @@ async function build() {
 
   ${builderLog && builderLog.latest ? (() => {
     const L = builderLog.latest;
-    const topSkills    = (L.top_skills      || []).map(s => `<span class="be-tag be-tag-skill" title="${s.n} commits this window">${htmlEscape(s.skill)} <span class="be-tag-n">${s.n}</span></span>`).join('');
-    const topApis      = (L.top_apis        || []).map(a => `<span class="be-tag be-tag-api" title="${a.n} commits this window">${htmlEscape(a.api)} <span class="be-tag-n">${a.n}</span></span>`).join('');
-    const topBugs      = (L.top_bug_classes || []).map(b => `<span class="be-tag be-tag-bug" title="${b.n} commits this window">${htmlEscape(b.bug_class)} <span class="be-tag-n">${b.n}</span></span>`).join('');
+    // 2026-05-19 BRAVO polish A2 (item #2): drop redundant native `title=` tooltip.
+    // The "N commits this window" text duplicates the visible `.be-tag-n` badge
+    // (the small "N" inside each tag). Keep the semantic via aria-label so
+    // screen readers still announce the count, but stop the tooltip flicker.
+    const topSkills    = (L.top_skills      || []).map(s => `<span class="be-tag be-tag-skill" aria-label="${htmlEscape(s.skill)} — ${s.n} commits this window">${htmlEscape(s.skill)} <span class="be-tag-n" aria-hidden="true">${s.n}</span></span>`).join('');
+    const topApis      = (L.top_apis        || []).map(a => `<span class="be-tag be-tag-api" aria-label="${htmlEscape(a.api)} — ${a.n} commits this window">${htmlEscape(a.api)} <span class="be-tag-n" aria-hidden="true">${a.n}</span></span>`).join('');
+    const topBugs      = (L.top_bug_classes || []).map(b => `<span class="be-tag be-tag-bug" aria-label="${htmlEscape(b.bug_class)} — ${b.n} commits this window">${htmlEscape(b.bug_class)} <span class="be-tag-n" aria-hidden="true">${b.n}</span></span>`).join('');
     const apiCount     = Object.keys(builderLog.apis        || {}).length;
     const skillCount   = Object.keys(builderLog.skills      || {}).length;
     const bugCount     = Object.keys(builderLog.bug_classes || {}).length;
@@ -11684,52 +12046,211 @@ async function build() {
           .filter(([_, v]) => v.tier === 'A' && v.demonstrated === 'no')
           .map(([k]) => k).join(', ')
       : '';
-    const apiTileTitle  = tApi
-      ? `Target API stack for AI PgM / FDE / Solutions Architect roles (council research + dealbreaker, 2026-05-19). ${tA_demo}/${tA_total} Tier-A gating items demonstrated · ${tAll_demo}/${tAll_total} total stack (+${tAll_partial} partial). Tier-A gaps: ${tierAGaps || 'none'}. 30-day closure plan in data/builder-target-apis.json.`
-      : 'Distinct APIs / SDKs / services touched in this window vs cumulative';
+    // 2026-05-19 BRAVO redesign — collapse sub-text out of chips into a click-triggered
+    // shared drawer. Primary big-number stays on each chip; secondary breakdown moves
+    // to be-stat-modal (one shared dialog, content swaps by chip key).
+    //
+    // Each chip is a focusable button (tabindex=0, role=button), Enter/Space and click
+    // open the drawer, Esc + backdrop-click close it. Drawer pattern matches
+    // #tier-legend-backdrop / #equity-legend-backdrop (z-index 2000, below the
+    // batch-running toast at z-index 3000).
+    const apiPrimary    = tApi ? tA_demo : (L.top_apis || []).length;
     const apiTileLabel  = tApi ? 'APIs / tools · Tier-A gating' : 'APIs / tools';
-    const apiTileValue  = tApi
-      ? `${tA_demo}<span class="be-stat-cumulative"> / ${tA_total} · ${tAll_demo}/${tAll_total} stack</span>`
-      : `${(L.top_apis || []).length}<span class="be-stat-cumulative"> / ${apiCount} all-time</span>`;
+    const apiHint       = tApi ? `${tA_total} Tier-A · ${tAll_total} stack` : `${apiCount} all-time`;
+    const skillsPrimary = (L.top_skills || []).length;
+    const bugsPrimary   = (L.top_bug_classes || []).length;
     return `
   <div class="panel panel-strong" id="builder-evolution-section">
     <h2 class="panel-title collapsible" onclick="togglePanel('builder-evolution-section',event)">
       🛠 Builder Evolution
-      <span class="pill" title="${L.commits} commits · ${L.streak}d streak">${L.commits} · ${L.streak}d</span>
+      <button type="button" class="pill be-commits-pill" data-be-stat="commits"
+        onclick="event.stopPropagation();openBeStatModal('commits')"
+        aria-label="Open commit history drawer: last ${builderCommits.length} commits in the rolling window"
+        aria-haspopup="dialog" aria-controls="be-stat-modal">${L.commits} · ${L.streak}d</button>
       <span class="panel-chevron">▾</span>
     </h2>
-    <p class="panel-subtitle">Skills, APIs, bug classes, PM signals — extracted from git history, last ${htmlEscape(sinceLabel)}. Updated nightly at 03:30 PT by <code>scripts/agents/builder-log.mjs</code>.</p>
+    <p class="panel-subtitle">Skills, APIs, bug classes, PM signals — extracted from git history, last ${htmlEscape(sinceLabel)}. Updated nightly at 03:30 PT by <code>scripts/agents/builder-log.mjs</code>. <span class="be-subtitle-hint">Click any tile for detail.</span></p>
 
     <div class="builder-evo-grid">
-      <div class="be-stat-tile" title="${htmlEscape(apiTileTitle)}">
+      <button type="button" class="be-stat-tile be-stat-tile-clickable" data-be-stat="apis" aria-label="Open APIs and tools detail drawer" aria-haspopup="dialog" aria-controls="be-stat-modal" title="Click to open the full Tier-A gating stack and gap-closure plan">
         <div class="be-stat-label">${apiTileLabel}</div>
-        <div class="be-stat-value">${apiTileValue}</div>
-      </div>
-      <div class="be-stat-tile" title="Distinct skills / patterns demonstrated in this window vs cumulative">
+        <div class="be-stat-value">${apiPrimary}<span class="be-stat-chevron" aria-hidden="true">›</span></div>
+        <div class="be-stat-hint">${htmlEscape(apiHint)}</div>
+      </button>
+      <button type="button" class="be-stat-tile be-stat-tile-clickable" data-be-stat="skills" aria-label="Open skills detail drawer" aria-haspopup="dialog" aria-controls="be-stat-modal" title="Click to open the full demonstrated-skills list with commit counts">
         <div class="be-stat-label">Skills demonstrated</div>
-        <div class="be-stat-value">${(L.top_skills || []).length}<span class="be-stat-cumulative"> / ${skillCount} all-time</span></div>
-      </div>
-      <div class="be-stat-tile" title="Bug classes identified or fixed in this window vs cumulative">
+        <div class="be-stat-value">${skillsPrimary}<span class="be-stat-chevron" aria-hidden="true">›</span></div>
+        <div class="be-stat-hint">${skillCount} all-time</div>
+      </button>
+      <button type="button" class="be-stat-tile be-stat-tile-clickable" data-be-stat="bugs" aria-label="Open bug classes detail drawer" aria-haspopup="dialog" aria-controls="be-stat-modal" title="Click to open the full bug-classes list with commit counts">
         <div class="be-stat-label">Bug classes</div>
-        <div class="be-stat-value">${(L.top_bug_classes || []).length}<span class="be-stat-cumulative"> / ${bugCount} all-time</span></div>
-      </div>
-      <div class="be-stat-tile" title="PM-relevant signals triggered (postmortem-then-fix, instrumentation-first, cohesion-driven-UX, etc.)">
+        <div class="be-stat-value">${bugsPrimary}<span class="be-stat-chevron" aria-hidden="true">›</span></div>
+        <div class="be-stat-hint">${bugCount} all-time</div>
+      </button>
+      <button type="button" class="be-stat-tile be-stat-tile-clickable" data-be-stat="pm" aria-label="Open PM signals detail drawer" aria-haspopup="dialog" aria-controls="be-stat-modal" title="Click to open the full PM-relevant signals list with commit counts">
         <div class="be-stat-label">PM signals</div>
-        <div class="be-stat-value">${pmSigCount}</div>
-      </div>
+        <div class="be-stat-value">${pmSigCount}<span class="be-stat-chevron" aria-hidden="true">›</span></div>
+        <div class="be-stat-hint">postmortem · instrumentation · cohesion</div>
+      </button>
     </div>
 
-    ${topApis ? `<div class="be-section"><div class="be-section-label">Top APIs / services this window</div><div class="be-tags">${topApis}</div></div>` : ''}
-    ${topSkills ? `<div class="be-section"><div class="be-section-label">Top skills this window</div><div class="be-tags">${topSkills}</div></div>` : ''}
-    ${topBugs ? `<div class="be-section"><div class="be-section-label">Top bug classes this window</div><div class="be-tags">${topBugs}</div></div>` : ''}
+    <!-- 2026-05-20 — Mitchell flagged the three "Top APIs / services /
+         Skills / Bug classes this window" sections as redundant: the
+         openBeStatModal drawer triggered from each tile (APIs, Skills,
+         Bug classes, PM signals) already shows the same data with full
+         commit counts. The headline tiles + click-to-modal flow is the
+         canonical path. -->
 
     <div class="be-footer">
       <span class="be-footer-meta">Last generated: ${generatedAt}</span>
-      <span class="be-footer-cta">→ See full digest: <code>data/builder-log-rolling-30d.md</code></span>
-      <span class="be-footer-cta">→ Resume bullets: <code>node scripts/agents/builder-log.mjs --export-resume-bullets</code></span>
-      ${tApi ? `<span class="be-footer-cta">→ Target stack audit: <code>data/council-target-apis-2026-05-19-adjudicated.md</code></span>` : ''}
+      <span class="be-footer-cta">&rarr; See full digest: <code>data/builder-log-rolling-30d.md</code></span>
+      <span class="be-footer-cta">&rarr; Resume bullets:
+        <button type="button" class="be-copy-btn" data-copy-text="node scripts/agents/builder-log.mjs --export-resume-bullets"
+          aria-label="Copy resume-bullets command to clipboard"
+          onclick="copyBeCommand(this)"><span class="be-copy-icon" aria-hidden="true">⧉</span>Copy command</button>
+      </span>
+      ${tApi ? `<span class="be-footer-cta">&rarr; Target stack audit: <code>data/council-target-apis-2026-05-19-adjudicated.md</code></span>` : ''}
     </div>
-  </div>`;
+  </div>
+  <script>
+  /* BRAVO 2026-05-19 — be-stat-modal payload + handlers.
+     Data serialized inline at build time, consumed by openBeStatModal(key).
+     Pattern matches TIER_LEGEND injection in the main inline-JS block. */
+  window.__BE_STAT_PAYLOAD__ = ${(() => {
+    // Build the modal payload — one entry per chip key.
+    const skillsAllSorted = Object.entries(builderLog.skills || {})
+      .map(([k, v]) => ({ name: k, n: (typeof v === 'object' && v !== null ? (v.count || v.commits || 0) : (Number(v) || 0)) }))
+      .sort((a, b) => b.n - a.n);
+    const bugsAllSorted = Object.entries(builderLog.bug_classes || {})
+      .map(([k, v]) => ({ name: k, n: (typeof v === 'object' && v !== null ? (v.count || v.commits || 0) : (Number(v) || 0)) }))
+      .sort((a, b) => b.n - a.n);
+    const pmAllSorted = Object.entries(builderLog.pm_signals || {})
+      .map(([k, v]) => ({ name: k, n: (typeof v === 'object' && v !== null ? (v.count || v.commits || 0) : (Number(v) || 0)) }))
+      .sort((a, b) => b.n - a.n);
+
+    // APIs payload — Tier-A demonstrated + Tier-A gaps split out with evidence
+    // and the next-step action from gap_closure_30day. Fallback to the
+    // commit-frequency view when builder-target-apis.json is absent.
+    let apisPayload;
+    if (tApi) {
+      const entries = tApi.entries || {};
+      const tierAEntries = Object.entries(entries).filter(([_, v]) => v.tier === 'A');
+      const tierADemo = tierAEntries.filter(([_, v]) => v.demonstrated === 'yes').map(([k, v]) => ({ name: k, evidence: v.evidence || '', citation: (v.citations || [])[0] || '' }));
+      const tierAGap  = tierAEntries.filter(([_, v]) => v.demonstrated !== 'yes').map(([k, v]) => ({ name: k, action: v.action_priority || '', evidence: v.evidence || '' }));
+      // Pull first 3 gap_closure_30day phases that unlock Tier-A items.
+      // _idx preserves the original array position so the week-drill can
+      // look up the full phase object from data.phases[_idx].
+      const allPhases = tApi.gap_closure_30day || [];
+      const closurePlan = allPhases
+        .map((p, i) => ({ phase: p.phase, action: p.action, unlocks: p.tier_a_unlocked || [], hours: p.cost_hours, _idx: i }))
+        .filter(p => Array.isArray(p.unlocks) && p.unlocks.length > 0)
+        .slice(0, 4);
+      apisPayload = {
+        label: 'APIs / tools',
+        headline: `${tA_demo} / ${tA_total} Tier-A`,
+        subhead: `${tAll_demo} / ${tAll_total} total target stack demonstrated (+${tAll_partial} partial). Council research + dealbreaker, 2026-05-19. ${(tApi.summary && tApi.summary.headline) || ''}`,
+        sections: [
+          { label: `Tier-A demonstrated (${tierADemo.length})`, items: tierADemo, kind: 'demo' },
+          { label: `Tier-A gaps (${tierAGap.length}) — 30-day reachable`, items: tierAGap, kind: 'gap' },
+          { label: '30-day closure plan', items: closurePlan, kind: 'plan' },
+        ],
+        sources: [
+          'data/builder-target-apis.json',
+          'data/council-target-apis-2026-05-19-adjudicated.md',
+        ],
+      };
+    } else {
+      const apisSorted = Object.entries(builderLog.apis || {})
+        .map(([k, v]) => ({ name: k, n: (typeof v === 'object' && v !== null ? (v.count || v.commits || 0) : (Number(v) || 0)) }))
+        .sort((a, b) => b.n - a.n);
+      apisPayload = {
+        label: 'APIs / tools',
+        headline: `${apisSorted.length} this window`,
+        subhead: `${apiCount} cumulative APIs / SDKs / services touched. builder-target-apis.json not present.`,
+        sections: [
+          { label: 'APIs touched this window', items: apisSorted.map(s => ({ name: s.name, n: s.n })), kind: 'count' },
+        ],
+        sources: ['data/builder-log-rolling-30d.md'],
+      };
+    }
+
+    const payload = {
+      apis: apisPayload,
+      skills: {
+        label: 'Skills demonstrated',
+        headline: `${skillsPrimary} top · ${skillsAllSorted.length} all`,
+        subhead: `Chip shows top ${skillsPrimary} this window; drawer lists all ${skillsAllSorted.length} skills demonstrated cumulatively across ${L.commits} commits in the last ${sinceLabel.replace(/\s+ago$/i, '')}.`,
+        sections: [
+          { label: `All skills (${skillsAllSorted.length} ranked by commit count)`, items: skillsAllSorted, kind: 'count' },
+        ],
+        sources: ['data/builder-log-rolling-30d.md'],
+      },
+      bugs: {
+        label: 'Bug classes',
+        headline: `${bugsPrimary} top · ${bugsAllSorted.length} all`,
+        subhead: `Chip shows top ${bugsPrimary} this window; drawer lists all ${bugsAllSorted.length} bug classes identified or fixed across ${L.commits} commits in the last ${sinceLabel.replace(/\s+ago$/i, '')}. Each entry is a documented prevention pattern.`,
+        sections: [
+          { label: `All bug classes (${bugsAllSorted.length} ranked by commit count)`, items: bugsAllSorted, kind: 'count' },
+        ],
+        sources: ['data/builder-log-rolling-30d.md'],
+      },
+      pm: {
+        label: 'PM signals',
+        headline: `${pmAllSorted.length} signals`,
+        subhead: `PM-relevant patterns surfaced from git history across ${L.commits} commits in the last ${sinceLabel.replace(/\s+ago$/i, '')}. Examples: postmortem-then-fix, instrumentation-first, cohesion-driven UX, cost-discipline.`,
+        sections: [
+          { label: `All PM signals (${pmAllSorted.length} ranked by commit count)`, items: pmAllSorted, kind: 'count' },
+        ],
+        sources: ['data/builder-log-rolling-30d.md'],
+      },
+      // 2026-05-19 BRAVO polish A2 (item #6): commit-history drawer fired by the
+      // Builder-Evolution header pill. Last 15 commits from `git log` at build
+      // time. Each entry: short SHA, message, relative age, author.
+      commits: {
+        label: 'Recent commits',
+        headline: `${L.commits} · ${L.streak}d`,
+        subhead: `Last ${builderCommits.length} commits in the rolling window. Total this window: ${L.commits} commits across a ${L.streak}-day active-day streak.`,
+        sections: [
+          { label: `Last ${builderCommits.length} commits`, items: builderCommits, kind: 'commit' },
+        ],
+        sources: ['git log --oneline (live, last 15)'],
+      },
+    };
+    return JSON.stringify(payload);
+  })()};
+  // 2026-05-20 — Drill-in data for chip-level navigation (Mitchell ask).
+  // Inlined here so commit/demo/gap/week drill-ins don't need extra fetches.
+  window.__BE_DRILL_DATA__ = ${(() => {
+    // Demo + gap entries — keyed by skill slug
+    const entries = (tApi && tApi.entries) || {};
+    const tierAEntries = {};
+    for (const [k, v] of Object.entries(entries)) {
+      if (v.tier !== 'A') continue;
+      tierAEntries[k] = {
+        name: k,
+        category: v.category || '',
+        demonstrated: v.demonstrated === 'yes',
+        evidence: v.evidence || '',
+        action: v.action_priority || '',
+        citations: v.citations || [],
+      };
+    }
+    // 30-day plan phases
+    const phases = (tApi && tApi.gap_closure_30day) || [];
+    // Recent commits with SHA + message + age for the commit drill-in.
+    // Read /tmp/be-recent-commits.txt at build time (lines of SHA|msg|age|author).
+    let recentCommits = [];
+    try {
+      const txt = readFileSync('/tmp/be-recent-commits.txt', 'utf-8');
+      recentCommits = txt.split('\n').filter(Boolean).map(line => {
+        const [sha, message, age, author] = line.split('|');
+        return { sha, message, age, author };
+      });
+    } catch { /* file optional */ }
+    const repoUrl = 'https://github.com/mitwilli-create/career-ops';
+    return JSON.stringify({ entries: tierAEntries, phases, commits: recentCommits, repoUrl });
+  })()};
+  </script>`;
   })() : ''}
 
   ${applyNow.length > 0 ? `
@@ -13312,6 +13833,61 @@ function toggleDemoMode() {
 }
 window.toggleDemoMode = toggleDemoMode;
 
+// 2026-05-20 — Dashboard settings runtime (data/dashboard-settings.json
+// is the file-of-record; localStorage 'careerOps.settings' is the
+// per-browser fast cache; /api/settings is read/write).
+// Path-style keys ('outreach.global_intensity') supported.
+const _SETTINGS_LS_KEY = 'careerOps.settings';
+function _applySettingsToDOM(s) {
+  if (!s) return;
+  document.body.classList.toggle('runway-widget-hidden', s.show_runway_widget === false);
+}
+async function _loadSettingsAndApply() {
+  let settings = null;
+  try {
+    const lsRaw = localStorage.getItem(_SETTINGS_LS_KEY);
+    if (lsRaw) settings = JSON.parse(lsRaw);
+  } catch (_) {}
+  try {
+    const res = await fetch('/api/settings', { cache: 'no-store' });
+    if (res.ok) {
+      const j = await res.json();
+      if (j && j.settings) {
+        settings = j.settings;
+        try { localStorage.setItem(_SETTINGS_LS_KEY, JSON.stringify(settings)); } catch (_) {}
+      }
+    }
+  } catch (_) { /* offline-tolerant — keep ls settings if present */ }
+  _applySettingsToDOM(settings || {});
+}
+window._setSetting = async function (path, value) {
+  // Build a partial-update object from a dotted path
+  const parts = path.split('.');
+  const partial = {};
+  let cur = partial;
+  for (let i = 0; i < parts.length - 1; i++) { cur[parts[i]] = {}; cur = cur[parts[i]]; }
+  cur[parts.at(-1)] = value;
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(partial),
+    });
+    const j = await res.json();
+    if (j && j.settings) {
+      try { localStorage.setItem(_SETTINGS_LS_KEY, JSON.stringify(j.settings)); } catch (_) {}
+      _applySettingsToDOM(j.settings);
+    }
+  } catch (err) {
+    console.warn('_setSetting failed', err);
+  }
+};
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', _loadSettingsAndApply);
+} else {
+  _loadSettingsAndApply();
+}
+
 // ── Row expand ──────────────────────────────────────────────────
 const MOBILE_BREAKPOINT_MQ = window.matchMedia('(max-width: 720px)');
 const TABLET_BREAKPOINT_MQ = window.matchMedia('(min-width: 721px) and (max-width: 1279px)');
@@ -14469,21 +15045,25 @@ window.setUseInlineExpand = setUseInlineExpand;
 // 'role' type; for other types it opens a lightweight popover-style overlay
 // that does NOT conflict with the existing drawer or status-popover.
 
-// ── Wave C-B: baked build-time data ────────────────────────────────────────
-// Base64-encoded JSON (see P0-2 fix in scripts/build-dashboard.mjs — apostrophes
-// in the source data broke the previous \\' escape strategy).
-window._waveCB = (function() {
+// ── Wave C-B: build-time data (externalized 2026-05-20) ─────────────────
+// Previously inlined as a 790KB base64 blob (the b64 + atob + TextDecoder
+// dance below was the P0-2 escape-safety workaround). Now lazy-fetched
+// from dashboard/data/wave-cb.json as plain JSON. Block 2 of the inline
+// script shrinks ~790KB. Consumers already read window._waveCB defensively
+// (with empty-object fallback), so empty default during the fetch window
+// is safe.
+window._waveCB = {};
+window._waveCBReadyPromise = fetch('/data/wave-cb.json', { cache: 'force-cache' })
+  .then(function(r){ return r.ok ? r.json() : {}; })
+  .then(function(d){ window._waveCB = d || {}; return d; })
+  .catch(function(e){ console.warn('[wave-cb] fetch failed:', e.message); return {}; });
+// Legacy IIFE shell kept for the closing brace — no-op now.
+(function(){
   try {
-    var b64 = '${waveCBDataJson}';
-    if (!b64) return {};
-    // atob → UTF-8 decode (TextDecoder handles non-ASCII chars in source data)
-    var binary = atob(b64);
-    var bytes = new Uint8Array(binary.length);
-    for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    var jsonStr = new TextDecoder('utf-8').decode(bytes);
-    return JSON.parse(jsonStr);
+    // No-op: data fetched async above.
+    return;
   } catch (e) {
-    console.warn('[build] _waveCB decode failed:', e.message);
+    console.warn('[build] _waveCB shim failed:', e.message);
     return {};
   }
 })();
@@ -16797,6 +17377,73 @@ function drillIn(type, id, evt) {
 }
 window.drillIn = drillIn;
 window.drillInRegistry = drillInRegistry;
+
+// ── Polish-status action handlers (2026-05-19) ──────────────────────────
+// Wired by the dcard--polish action buttons rendered via
+// lib/polish-card-renderer.mjs#renderPolishDcard.
+window.runPolishNow = async function(rowId, packSlug) {
+  if (!confirm('Run polish now on row #' + rowId + '? Cost: up to $50 over ~30 min.')) return;
+  try {
+    const r = await fetch('/api/apply-pack-polish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ row: rowId, slug: packSlug, force_full_burn: false }),
+    });
+    const j = await r.json();
+    if (j.ok) {
+      alert('Polish started for row #' + rowId + '. Job ID: ' + (j.jobId || 'unknown') + '. Check back in ~20 min — refresh dashboard for status.');
+    } else {
+      alert('Polish failed to start: ' + (j.error || 'unknown error'));
+    }
+  } catch (e) {
+    alert('Polish API call failed: ' + e.message);
+  }
+};
+window.repolishRow = async function(rowId, packSlug, forceFullBurn) {
+  const msg = forceFullBurn
+    ? 'Re-polish row #' + rowId + ' with --no-early-abandon? Forces full burn (up to $50, ~40 min). Use when you suspect early-abandon was wrong.'
+    : 'Re-polish row #' + rowId + '?';
+  if (!confirm(msg)) return;
+  try {
+    const r = await fetch('/api/apply-pack-polish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ row: rowId, slug: packSlug, force_full_burn: !!forceFullBurn }),
+    });
+    const j = await r.json();
+    if (j.ok) {
+      alert('Re-polish started for row #' + rowId + '. Job ID: ' + (j.jobId || 'unknown'));
+    } else {
+      alert('Re-polish failed to start: ' + (j.error || 'unknown error'));
+    }
+  } catch (e) {
+    alert('Re-polish API call failed: ' + e.message);
+  }
+};
+window.openBulletLedger = function(packSlug) {
+  const path = 'apply-pack/' + packSlug + '/cv-tailored.md';
+  const NL = String.fromCharCode(10);
+  alert('Edit this file to rewrite the polish source:' + NL + NL + path + NL + NL + 'Open in your editor (Cursor/VS Code).');
+};
+window.skipRowFromPolish = async function(rowId, packSlug) {
+  if (!confirm('Mark row #' + rowId + ' as Discarded? Polish could not save it and JD-fit is not there.')) return;
+  try {
+    const r = await fetch('/api/dismiss-row', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ row: rowId, reason: 'polish-rejected', tag: 'polish_couldnt_save' }),
+    });
+    const j = await r.json();
+    if (j.ok) {
+      alert('Row #' + rowId + ' marked Discarded. Reload dashboard to see updated table.');
+      location.reload();
+    } else {
+      alert('Failed to dismiss row: ' + (j.error || 'unknown error'));
+    }
+  } catch (e) {
+    alert('Dismiss API call failed: ' + e.message);
+  }
+};
 
 // ── Wave C-A Item 2: company names in banners + drawer headers ───────────
 // Scan banner live-ticker gets data-drill on update via MutationObserver.
@@ -19992,7 +20639,47 @@ function _bsRenderBody(data, changed) {
       '</div>';
   }
 
-  body.innerHTML = sectionA + sectionB + sectionC + sectionD;
+  // 2026-05-20 — Section P (Process All multi-phase progress). Rendered
+  // at the top when a process-all job is active so the modal isn't
+  // misleadingly frozen during the triage/rebuild/email phases (when
+  // batch sub-counts legitimately don't change). Builds from
+  // data.process_all_active populated by buildBatchStatusDetailed.
+  const pa = data.process_all_active;
+  let sectionP = '';
+  if (pa) {
+    const phaseBars = (pa.phases || []).map(p => {
+      const stateClr = p.status === 'done'   ? 'var(--green-fg, #16a34a)'
+                     : p.status === 'active' ? 'var(--blue-fg, #2563eb)'
+                     : 'var(--text-4, #9ca3af)';
+      const icon = p.status === 'done' ? String.fromCharCode(0x2713) :
+                   p.status === 'active' ? String.fromCharCode(0x25CF) :
+                   String.fromCharCode(0x25CB);
+      return '<div class="bs-pa-phase-row" style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border,#e5e7eb)">' +
+        '<span style="color:' + stateClr + ';font-size:14px;width:14px;text-align:center" aria-hidden="true">' + icon + '</span>' +
+        '<span style="font-size:12.5px;color:var(--text-1,#1f2937);font-weight:' + (p.status === 'active' ? '600' : '500') + ';flex:1">' + _bsEsc(p.label) + '</span>' +
+        '<span style="font-size:11px;color:var(--text-3,#6b7280);text-transform:uppercase;letter-spacing:.04em">' + _bsEsc(p.status) + '</span>' +
+        '</div>';
+    }).join('');
+    const startedAgo = pa.started_at ? Math.round((Date.now() - Date.parse(pa.started_at)) / 60000) + 'm ago' : 'just now';
+    const phaseAgo = pa.phase_started_at ? Math.round((Date.now() - Date.parse(pa.phase_started_at)) / 1000) + 's ago' : '—';
+    sectionP =
+      '<div class="batch-status-section" style="border-left:3px solid var(--blue-fg,#2563eb);padding-left:12px">' +
+        '<h4 class="batch-status-section-title" style="display:flex;align-items:center;gap:8px">' +
+          '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--blue-fg,#2563eb);box-shadow:0 0 6px rgba(37,99,235,.55);animation:bs-pa-pulse 1.6s ease-in-out infinite"></span>' +
+          'Process All running' +
+          '<span style="font-size:11px;font-weight:400;color:var(--text-3,#6b7280);margin-left:auto">started ' + _bsEsc(startedAgo) + '</span>' +
+        '</h4>' +
+        '<div style="font-size:12px;color:var(--text-2,#4b5563);margin:4px 0 10px">' +
+          'Current: <strong>' + _bsEsc(pa.phase_label) + '</strong> · entered ' + _bsEsc(phaseAgo) +
+          (pa.send_email ? ' · email will send on Phase 4' : '') +
+        '</div>' +
+        '<div class="bs-pa-phases">' + phaseBars + '</div>' +
+        '<div style="font-size:10.5px;color:var(--text-4,#9ca3af);margin-top:8px">Job: <code>' + _bsEsc(pa.job_id || '?') + '</code></div>' +
+      '</div>' +
+      '<style>@keyframes bs-pa-pulse { 0%,100% { opacity: 1 } 50% { opacity: .4 } }</style>';
+  }
+
+  body.innerHTML = sectionP + sectionA + sectionB + sectionC + sectionD;
   // Invariant #8 — apply the universal table baseline (dbl-click expand,
   // [title] tooltips, column-resize handles) to every freshly rendered
   // table inside the batch-status modal body.
@@ -20627,11 +21314,25 @@ async function confirmPipelineAction() {
     // isFullDrain || nothing selected → leave companies=null → script runs
     // full drain (or refuses if nothing selected via the disabled confirm btn).
   }
+  // 2026-05-20 — Pick up the selected tier from the radio picker (Process
+  // All only; Run Batch doesn't have a tier picker). Defaults to '1'
+  // (Standard). Legacy '5' (the prior Tier-5 button) is still routed via
+  // confirmTier5Run() — this path is for the new 3-tier modal.
+  let tier = null;
+  if (_pipelineAction === 'process-all') {
+    tier = (typeof window._pcpGetSelectedTier === 'function')
+      ? window._pcpGetSelectedTier()
+      : '1';
+  }
   try {
     const res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ confirm: true, sendEmail, force, ...(companies?.length ? { companies } : {}) }),
+      body: JSON.stringify({
+        confirm: true, sendEmail, force,
+        ...(companies?.length ? { companies } : {}),
+        ...(tier ? { tier } : {}),
+      }),
     });
     const data = await res.json();
     if (!res.ok || !data.ok) {
@@ -20699,17 +21400,34 @@ function _renderProcessAllPhaseA(pAgg, pCmp) {
   const detectionLine = scopedDetection > 0.005
     ? '<div id="pcp-headline-detection" style="font-size:11px;opacity:0.55;margin-top:2px">+ $' + scopedDetection.toFixed(2) + ' potential AI-detection (post-publish, if ' + optInPct + '% opt in to Build pack)</div>'
     : '<div id="pcp-headline-detection" style="display:none;font-size:11px;opacity:0.55;margin-top:2px"></div>';
-  // 2026-05-19 (Mitchell feedback): Tier-5 line is now a real CTA that POSTs
-  // tier:5 to /api/pipeline/process-all. Opens a confirm dialog with cost +
-  // scope before any LLM spend. Inline-styled to look like a button (subtle).
-  const tier5Line = (tier5.total_cost_usd != null)
-    ? '<button type="button" id="pcp-tier5-cta" onclick="confirmTier5Run()" '
-      + 'style="background:transparent;border:1px dashed rgba(255,255,255,0.18);border-radius:4px;padding:2px 8px;'
-      + 'font-size:11px;color:rgba(255,255,255,0.85);cursor:pointer;font-family:inherit" '
-      + 'title="Run Tier-5 (Sonnet JD enrichment + apply-pack pregen on high-confidence rows). Opens a confirm dialog before spending.">'
-      + '⚡ Run Tier-5 on all ' + totalPipelineItems + ' items '
-      + '<span style="opacity:0.6">· ' + (tier5.unique_companies || 0) + ' companies · $' + tier5.total_cost_usd.toFixed(2) + '</span>'
-      + '</button>'
+  // 2026-05-20 — Three-tier picker (replaces the binary Tier-5 button).
+  // Reads pAgg.process_all.tier_estimates (lib/process-all-tiers.mjs).
+  // Tier 1 = Haiku triage + Sonnet eval; Tier 2 = Sonnet+Sonnet; Tier 3 =
+  // Sonnet+Opus. Auto-escalation (apply-pack pregen + polish on ≥4.0 rows)
+  // is included in every tier's total — it's "the system invests in proven
+  // winners regardless of tier."
+  const tEst = pAgg.process_all.tier_estimates;
+  const tierPickerLine = (tEst && tEst[1] && tEst[2] && tEst[3])
+    ? '<div id="pcp-tier-picker" style="margin-top:8px;padding:10px 12px;border:1px dashed rgba(255,255,255,0.18);border-radius:6px;font-size:12px">'
+      + '<div style="font-weight:600;margin-bottom:6px">Quality tier '
+      +   '<span style="font-weight:400;opacity:0.65">(applies to triage + eval model; ≥4.0 rows auto-escalate to apply-pack pregen, ≥4.5 polish in every tier)</span>'
+      + '</div>'
+      + '<label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer">'
+      +   '<input type="radio" name="pcp-tier" value="1" checked onchange="_pcpUpdateTier(this.value)">'
+      +   '<span><strong>1 · Standard</strong> · Haiku triage + Sonnet eval · <strong>$' + tEst[1].total_cost_usd.toFixed(2) + '</strong>'
+      +     '<span style="opacity:0.6;font-size:11px"> · triage $' + tEst[1].breakdown.triage_cost_usd.toFixed(2) + ' + eval $' + tEst[1].breakdown.eval_cost_usd.toFixed(2) + ' + auto-escalate $' + (tEst[1].breakdown.pregen_cost_usd + tEst[1].breakdown.polish_cost_usd).toFixed(2) + '</span></span>'
+      + '</label>'
+      + '<label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer">'
+      +   '<input type="radio" name="pcp-tier" value="2" onchange="_pcpUpdateTier(this.value)">'
+      +   '<span><strong>2 · Premium Triage</strong> · Sonnet triage + Sonnet eval · <strong>$' + tEst[2].total_cost_usd.toFixed(2) + '</strong>'
+      +     '<span style="opacity:0.6;font-size:11px"> · fewer false-skips at the gate</span></span>'
+      + '</label>'
+      + '<label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer">'
+      +   '<input type="radio" name="pcp-tier" value="3" onchange="_pcpUpdateTier(this.value)">'
+      +   '<span><strong>3 · Premium Eval</strong> · Sonnet triage + <strong>Opus</strong> eval · <strong>$' + tEst[3].total_cost_usd.toFixed(2) + '</strong>'
+      +     '<span style="opacity:0.6;font-size:11px"> · highest-quality A–G reports, esp. for borderline 3.8–4.4</span></span>'
+      + '</label>'
+      + '</div>'
     : '';
   // Drain assurance: green check on full drain (default state), recomputed
   // by _pcpUpdateScopedCost when user toggles checkboxes.
@@ -20737,13 +21455,17 @@ function _renderProcessAllPhaseA(pAgg, pCmp) {
     +   drainAssurance
     +   '<div style="font-size:11px;opacity:0.55;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:6px;align-items:center">'
     +     '<span>Per-company drilldown (council + apply-pack pregen): $' + allCompaniesCost.toFixed(2) + ' · uncheck rows below to reduce scope</span>'
-    +     tier5Line
     +   '</div>'
+    +   tierPickerLine
     + '</div>';
   return headline + _renderPerCompanyPreview(pCmp);
 }
 
 function _renderPerCompanyPreview(pCmp) {
+  // 2026-05-20 — Pull tier_estimates from the cached preview so the
+  // footer's "what you pay" note can reference the three concrete tier
+  // totals. Same data the picker reads.
+  const tEst = (_pipelinePreview && _pipelinePreview.process_all && _pipelinePreview.process_all.tier_estimates) || null;
   if (!pCmp || !Array.isArray(pCmp.companies) || pCmp.companies.length === 0) {
     return ''
       + '<div class="pipeline-modal-section">'
@@ -20784,22 +21506,24 @@ function _renderPerCompanyPreview(pCmp) {
     +       '<tbody>' + rows + '</tbody>'
     +     '</table>'
     +   '</div>'
-    // 2026-05-19 (Mitchell feedback — cohesion fix #2): the footer summary
-    // used to show only the per-company drilldown subtotal ($15 = apply-pack
-    // pregen on 10 companies), labeled "Scoped cost (selected rows)". That
-    // hid the $63.68 full-drain cost the user was actually committing to. Now
-    // we surface BOTH: items processed (187 = 15 + 172), companies in drilldown
-    // (10), full drain cost ($63.68), with the $15 subtotal labeled as the
-    // per-company sub-line so the relationship is explicit.
+    // 2026-05-20 — Footer reduced to counts only. The dollar lines that
+    // used to live here ("Full drain cost $X / per-company drilldown
+    // subtotal $Y") were two DIFFERENT cost models pretending to have a
+    // subset relationship — $Y was actually higher than $X in practice
+    // because they were computed off different rate tables (legacy
+    // bundled vs per-company council). Mitchell rightly flagged this as
+    // a "hidden fee" pattern. The only price the user pays = the
+    // selected-tier total in the picker below, so that's now the single
+    // source of truth and the footer no longer shows competing $$.
     +   '<div class="pcp-summary-grid">'
     +     '<span class="pcp-summary-label">Pipeline items processed</span>'
     +     '<span class="pcp-summary-val" id="pcp-scoped-items">' + _scopedItemsLabel(pCmp) + '</span>'
     +     '<span class="pcp-summary-label">Companies in per-company drilldown</span>'
     +     '<span class="pcp-summary-val" id="pcp-scoped-count">' + pCmp.actionable_count + '</span>'
-    +     '<span class="pcp-summary-label">Full drain cost (this is what you pay)</span>'
-    +     '<span class="pcp-summary-val" id="pcp-scoped-cost">$' + _scopedFullDrainCost(pCmp) + '</span>'
-    +     '<span class="pcp-summary-label" style="opacity:0.55;font-size:11px">↳ per-company drilldown subtotal (subset of full drain)</span>'
-    +     '<span class="pcp-summary-val" id="pcp-scoped-percompany" style="opacity:0.55;font-size:11px">$' + (pCmp.total_cost_estimate_usd || 0).toFixed(2) + '</span>'
+    +   '</div>'
+    +   '<div style="margin-top:8px;padding:8px 10px;background:rgba(59,130,246,.08);border-left:3px solid var(--blue-fg,#2563eb);border-radius:4px;font-size:11.5px;line-height:1.5;color:var(--text-2)">'
+    +     '<strong>What you pay:</strong> the tier you select below ($' + _esc((tEst && tEst[1] && tEst[1].total_cost_usd.toFixed(2)) || '?') + ' Standard / $' + _esc((tEst && tEst[2] && tEst[2].total_cost_usd.toFixed(2)) || '?') + ' Premium Triage / $' + _esc((tEst && tEst[3] && tEst[3].total_cost_usd.toFixed(2)) || '?') + ' Premium Eval). '
+    +     'The per-company drilldown above is the company-level breakdown of what those tiers process — it is not a separate charge.'
     +   '</div>'
     + '</div>';
 }
@@ -21103,9 +21827,29 @@ function _advanceProcessAllToConfirm() {
   const selected = availableRows.filter(c => _pipelineSelectedSlugs.has(c.slug));
   // 2026-05-19 (Mitchell feedback): full-drain vs partial-scope on Phase B.
   const isFullDrain = selected.length === availableRows.length && availableRows.length > 0;
-  const fullDrainCost = (_pipelinePreview.process_all && _pipelinePreview.process_all.total_cost_usd) || 0;
+  // 2026-05-20 — Honor the tier selection from Phase A. Previously Phase B
+  // read process_all.total_cost_usd (the legacy bundled estimate, ~$285)
+  // regardless of which tier the user picked — so selecting Tier 3
+  // ($369.81) silently fell back to $285.20 on confirm. The selected tier's
+  // total IS the contract. Fall back to the legacy total only when no tier
+  // estimates are available.
+  const selectedTierId = (typeof window._pcpGetSelectedTier === 'function')
+    ? window._pcpGetSelectedTier()
+    : '1';
+  const tierEst = _pipelinePreview.process_all && _pipelinePreview.process_all.tier_estimates;
+  const tierTotal = (tierEst && tierEst[selectedTierId])
+    ? tierEst[selectedTierId].total_cost_usd
+    : null;
+  const tierName = (tierEst && tierEst[selectedTierId])
+    ? tierEst[selectedTierId].name
+    : null;
+  const fullDrainCost = tierTotal != null
+    ? tierTotal
+    : ((_pipelinePreview.process_all && _pipelinePreview.process_all.total_cost_usd) || 0);
   const triageCount = (_pipelinePreview.process_all && _pipelinePreview.process_all.triage_count) || 0;
   const perRowSum = selected.reduce((s, c) => s + (c.cost_estimate_usd || 0), 0);
+  // For partial scope (user unchecked rows), still use the per-row sum
+  // since the tier estimator is full-pipeline. Full drain = tier total.
   const scopedCost = isFullDrain ? fullDrainCost : perRowSum;
   // OMEGA-proposal-2: scoped detection sum for Phase B confirm.
   const scopedDetection = selected.reduce((s, c) => s + (c.ai_detection_potential_usd || 0), 0);
@@ -21150,14 +21894,20 @@ function _advanceProcessAllToConfirm() {
       + (queuedCount > 0 ? ' <span style="font-size:11px;opacity:0.55;font-weight:400">(' + pendingCount + ' + ' + queuedCount + ' queued)</span>' : '')
       + ' + ' + selected.length + ' compan' + (selected.length === 1 ? 'y' : 'ies')
     : 'Scoped run (' + selected.length + ' of ' + availableRows.length + ' companies)';
+  // 2026-05-20 — Tier label appended to headline when tier picker is active,
+  // so the user sees exactly which tier they confirmed (Standard / Premium
+  // Triage / Premium Eval) — the cost number alone wasn't enough signal.
+  const tierBadge = (isFullDrain && tierName)
+    ? ' <span style="font-size:11px;padding:2px 8px;background:rgba(59,130,246,.12);color:var(--blue-fg,#2563eb);border-radius:3px;font-weight:500;margin-left:4px">Tier ' + selectedTierId + ' · ' + _esc(tierName) + '</span>'
+    : '';
   body.innerHTML = ''
     + '<div class="pipeline-modal-section">'
-    +   '<div class="pcp-phase-pill" data-phase="confirm">'
-    +     '<button type="button" class="pcp-back-link" onclick="_returnToPhaseA()" aria-label="Back to per-company plan">← Back</button>'
-    +     'Step 2 of 2 — confirm'
+    +   '<div class="pcp-phase-pill" data-phase="confirm" style="display:flex;align-items:center;gap:8px">'
+    +     '<button type="button" class="pcp-back-link pcp-back-link-prominent" onclick="_returnToPhaseA()" aria-label="Back to per-company plan + tier picker" style="background:var(--surface-2);border:1px solid var(--border);padding:5px 10px;border-radius:4px;font-size:11.5px;cursor:pointer;color:var(--text-2)">← Back to tier picker</button>'
+    +     '<span>Step 2 of 2 — confirm</span>'
     +   '</div>'
     +   '<div class="pipeline-stat-grid">'
-    +     '<span class="pipeline-stat-label">' + headlineLabel + '</span>'
+    +     '<span class="pipeline-stat-label">' + headlineLabel + tierBadge + '</span>'
     +     '<span class="pipeline-stat-value pipeline-cost-headline">$' + scopedCost.toFixed(2) + '</span>'
     +   '</div>'
     +   detectionSubLine
@@ -21455,6 +22205,25 @@ async function confirmTier5Run() {
   }
 }
 window.confirmTier5Run = confirmTier5Run;
+
+// 2026-05-20 — Tier-picker integration. The picker radios live in the
+// preview headline (rendered by _renderPipelinePreviewHeadline). When the
+// user changes selection, this updates the headline cost AND swaps the
+// "Continue" button so it submits the selected tier rather than 'normal'.
+let _pcpSelectedTier = '1';
+window._pcpUpdateTier = function (tier) {
+  _pcpSelectedTier = String(tier);
+  if (!_pipelinePreview) return;
+  const tEst = _pipelinePreview.process_all && _pipelinePreview.process_all.tier_estimates;
+  if (!tEst || !tEst[tier]) return;
+  // Update the headline cost to reflect the selected tier
+  const costEl = document.getElementById('pcp-headline-cost');
+  if (costEl) costEl.textContent = '$' + tEst[tier].total_cost_usd.toFixed(2);
+};
+// Wrapper around the existing Continue handler that injects the selected
+// tier. confirmPipelineAction() reads the radio value via this getter.
+window._pcpGetSelectedTier = function () { return _pcpSelectedTier; };
+
 window.openPipelineModal = openPipelineModal;
 window.closePipelineModal = closePipelineModal;
 window.confirmPipelineAction = confirmPipelineAction;
@@ -21575,6 +22344,97 @@ async function refreshHealthChip() {
 setInterval(() => {
   if (document.visibilityState === 'visible') refreshHealthChip();
 }, 60000);
+
+// Pipeline-health modal — opened by the chip click. Renders /api/pipeline/health-status
+// as a small overlay (not a raw JSON tab). Esc to close, click outside to close.
+async function openPipelineHealthModal() {
+  const existing = document.getElementById('ph-modal-backdrop');
+  if (existing) existing.remove();
+
+  const bd = document.createElement('div');
+  bd.id = 'ph-modal-backdrop';
+  bd.setAttribute('role', 'dialog');
+  bd.setAttribute('aria-modal', 'true');
+  bd.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  bd.onclick = function (e) { if (e.target === bd) bd.remove(); };
+
+  const md = document.createElement('div');
+  md.style.cssText = 'background:var(--bg);border:1px solid var(--border);border-radius:8px;max-width:560px;width:100%;max-height:80vh;overflow:auto;color:var(--fg);box-shadow:0 12px 48px rgba(0,0,0,.4);font-size:13px;line-height:1.5';
+  md.innerHTML = '<div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">' +
+    '<strong style="font-size:14px">Pipeline health</strong>' +
+    '<button type="button" aria-label="Close" onclick="document.getElementById(\\'ph-modal-backdrop\\').remove()" style="background:none;border:none;color:var(--text-3);font-size:18px;cursor:pointer;padding:0 4px">' + String.fromCharCode(0x2715) + '</button>' +
+    '</div>' +
+    '<div id="ph-modal-body" style="padding:16px 18px"><div style="color:var(--text-3);text-align:center;padding:24px 0">Loading' + String.fromCharCode(0x2026) + '</div></div>';
+  bd.appendChild(md);
+  document.body.appendChild(bd);
+
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function fmtAgo(iso) {
+    if (!iso) return 'never';
+    const ms = Date.now() - new Date(iso).getTime();
+    const m = Math.round(ms / 60000);
+    if (m < 60) return m + 'm ago';
+    const h = Math.round(ms / 3600000);
+    return h + 'h ago';
+  }
+
+  try {
+    const res = await fetch('/api/pipeline/health-status', { cache: 'no-store' });
+    const data = await res.json();
+    const body = document.getElementById('ph-modal-body');
+    if (!body) return;
+    if (!data || !data.present) {
+      body.innerHTML = '<div style="color:var(--text-3)">Health check has not produced output yet. Run <code>scripts/agents/pipeline-health-check.mjs</code> manually or wait 5 min for the launchd job.</div>';
+      return;
+    }
+    const c = data.checks || {};
+    const fc = c.file_counts || {};
+    const tq = c.triage_queue || {};
+    const dr = c.drift || {};
+    const statusBadge = data.healthy
+      ? '<span style="color:var(--green-fg,#16a34a);font-weight:600">' + String.fromCharCode(0x2713) + ' Healthy</span>'
+      : '<span style="color:#dc2626;font-weight:600">' + String.fromCharCode(0x2717) + ' Issues</span>';
+    const stuckBlock = tq.stuck
+      ? '<div style="background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.3);border-radius:6px;padding:10px 12px;margin:10px 0">' +
+          '<div style="font-weight:600;color:#dc2626;margin-bottom:4px">Triage queue stuck</div>' +
+          '<div style="color:var(--text-2);font-size:12.5px">' +
+            esc(fc.queued_for_batch || 0) + ' URL(s) in <code>batch/triage-advance.tsv</code>, file last modified ' +
+            esc(fmtAgo(tq.mtime)) + ' (threshold ' + esc(tq.threshold_hours) + 'h).' +
+          '</div>' +
+          '<div style="color:var(--text-3);font-size:11.5px;margin-top:8px">' +
+            'Fix: run <strong>Process All</strong> from the sidebar (drains the queue via batch eval) — or scroll to the Pipeline section to act on the rows directly.' +
+          '</div>' +
+        '</div>'
+      : '';
+    const driftBlock = dr.drift_detected
+      ? '<div style="color:#d97706;font-size:12.5px;margin:6px 0">' + String.fromCharCode(0x26a0) + ' Badge ' + String.fromCharCode(0x2194) + ' file drift: pending=' + esc(JSON.stringify(dr.pending_pipeline)) + ', queued=' + esc(JSON.stringify(dr.queued_for_batch)) + '</div>'
+      : '';
+    body.innerHTML =
+      '<div style="margin-bottom:8px">' + statusBadge + ' ' +
+        '<span style="color:var(--text-3);font-size:11.5px;margin-left:6px">checked ' + esc(fmtAgo(data.checked_at)) + '</span>' +
+      '</div>' +
+      (data.summary ? '<div style="color:var(--text-2);margin-bottom:10px">' + esc(data.summary) + '</div>' : '') +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;margin:12px 0;font-size:12.5px">' +
+        '<div><span style="color:var(--text-3)">Pending pipeline:</span> <strong>' + esc(fc.pending_pipeline ?? 0) + '</strong></div>' +
+        '<div><span style="color:var(--text-3)">Queued for batch:</span> <strong>' + esc(fc.queued_for_batch ?? 0) + '</strong></div>' +
+        '<div><span style="color:var(--text-3)">Orchestrators alive:</span> <strong>' + esc((c.orchestrator_pids || []).length) + '</strong></div>' +
+        '<div><span style="color:var(--text-3)">API reachable:</span> <strong>' + (c.api && c.api.ok ? String.fromCharCode(0x2713) : String.fromCharCode(0x2717)) + '</strong></div>' +
+      '</div>' +
+      stuckBlock + driftBlock +
+      '<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);font-size:11.5px;color:var(--text-3)">' +
+        'Source: <code>scripts/agents/pipeline-health-check.mjs</code> via launchd (every 5 min). Raw JSON: <a href="/api/pipeline/health-status" target="_blank" rel="noopener" style="color:var(--text-2)">/api/pipeline/health-status</a>' +
+      '</div>';
+  } catch (err) {
+    const body = document.getElementById('ph-modal-body');
+    if (body) body.innerHTML = '<div style="color:#dc2626">Could not load health: ' + (err && err.message ? err.message : 'unknown') + '</div>';
+  }
+}
+window.openPipelineHealthModal = openPipelineHealthModal;
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'Escape') return;
+  const bd = document.getElementById('ph-modal-backdrop');
+  if (bd) { e.stopPropagation(); bd.remove(); }
+}, true);
 
 // ── Recruiter pipeline-density widget (Phase 6, calibration brief 2026-05-16) ─
 // Fetches /api/recruiter-pipeline-density every 5 minutes (and on load), renders
@@ -22475,6 +23335,372 @@ function closeEquityLegend() {
   if (_equityLegendLastFocus && _equityLegendLastFocus.focus) {
     _equityLegendLastFocus.focus();
     _equityLegendLastFocus = null;
+  }
+}
+
+// ── Builder-Evolution stat detail modal (BRAVO 2026-05-19) ─────
+// Click on any .be-stat-tile button opens this shared modal with
+// payload swapped from window.__BE_STAT_PAYLOAD__ keyed by data-be-stat.
+let _beStatLastFocus = null;
+function _renderBeStatBody(p) {
+  if (!p) return '<div style="opacity:.6">No data available.</div>';
+  const sections = (p.sections || []).map(function(sec) {
+    if (!sec.items || sec.items.length === 0) {
+      return '<div class="be-stat-modal-section">' +
+        '<div class="be-stat-modal-section-label">' + esc(sec.label) + '</div>' +
+        '<div style="opacity:.55;font-size:12px">None this window.</div>' +
+        '</div>';
+    }
+    const items = sec.items.map(function(it) {
+      // 2026-05-20 — Every item is now clickable to drill into a detail
+      // popout. data-be-drill="<type>:<key>" routes to the right render.
+      if (sec.kind === 'demo') {
+        return '<li class="be-stat-modal-item be-stat-modal-item-tier-a be-stat-modal-item-clickable" data-be-drill="demo:' + esc(it.name) + '" role="button" tabindex="0" style="cursor:pointer" title="Click for what was achieved + story moments">' +
+          '<div><span class="be-stat-modal-item-name">' + esc(it.name) + '</span>' +
+          (it.evidence ? '<div class="be-stat-modal-item-evidence">' + esc(it.evidence) + '</div>' : '') +
+          '</div>' +
+          '<div class="be-stat-modal-item-count">demonstrated &rsaquo;</div>' +
+          '</li>';
+      }
+      if (sec.kind === 'gap') {
+        return '<li class="be-stat-modal-item be-stat-modal-item-gap be-stat-modal-item-clickable" data-be-drill="gap:' + esc(it.name) + '" role="button" tabindex="0" style="cursor:pointer" title="Click for strategy + project opportunities (career-ops + xGE)">' +
+          '<div><span class="be-stat-modal-item-name">' + esc(it.name) + '</span>' +
+          (it.action ? '<div class="be-stat-modal-item-evidence">' + esc(it.action) + '</div>' : '') +
+          '</div>' +
+          '<div class="be-stat-modal-item-count">gap &rsaquo;</div>' +
+          '</li>';
+      }
+      if (sec.kind === 'plan') {
+        // 30-day closure plan phase — clickable to drill to day-by-day view
+        const unlocks = Array.isArray(it.unlocks) ? it.unlocks.join(', ') : '';
+        const idx = it._idx != null ? it._idx : 0;
+        return '<li class="be-stat-modal-item be-stat-modal-item-clickable" data-be-drill="week:' + esc(idx) + '" role="button" tabindex="0" style="cursor:pointer" title="Click for the day-by-day breakdown of this phase">' +
+          '<div><span class="be-stat-modal-item-name">' + esc(it.phase) + '</span>' +
+          (it.action ? '<div class="be-stat-modal-item-evidence">' + esc(it.action) + '</div>' : '') +
+          (unlocks ? '<div class="be-stat-modal-item-evidence">Unlocks: <strong>' + esc(unlocks) + '</strong></div>' : '') +
+          '</div>' +
+          '<div class="be-stat-modal-item-count">' + (it.hours != null ? (it.hours + 'h &rsaquo;') : '&rsaquo;') + '</div>' +
+          '</li>';
+      }
+      if (sec.kind === 'commit') {
+        return '<li class="be-stat-modal-item">' +
+          '<div><span class="be-stat-modal-item-name"><code style="background:var(--surface-2);padding:1px 6px;border-radius:3px;font-size:11px;margin-right:8px">' + esc(it.sha || '') + '</code>' + esc(it.message || '') + '</span>' +
+          '<div class="be-stat-modal-item-evidence">' + esc(it.age || '') + (it.author ? ' · ' + esc(it.author) : '') + '</div>' +
+          '</div>' +
+          '</li>';
+      }
+      // kind === 'count' default — clickable to drill to the commit list
+      // for this skill/bug/PM-signal.
+      return '<li class="be-stat-modal-item be-stat-modal-item-clickable" data-be-drill="commit:' + esc(it.name) + '" data-be-chip-name="' + esc(it.name) + '" role="button" tabindex="0" style="cursor:pointer" title="Click for the commits that demonstrate this">' +
+        '<span class="be-stat-modal-item-name">' + esc(it.name) + '</span>' +
+        '<span class="be-stat-modal-item-count">' + esc(String(it.n || 0)) + ' commits &rsaquo;</span>' +
+        '</li>';
+    }).join('');
+    return '<div class="be-stat-modal-section">' +
+      '<div class="be-stat-modal-section-label">' + esc(sec.label) + '</div>' +
+      '<ul class="be-stat-modal-list">' + items + '</ul>' +
+      '</div>';
+  }).join('');
+  return sections;
+}
+// 2026-05-20 — Popout navigation stack. Drilling into a chip pushes the
+// current view; back button pops. Replaces (does not overlay) the current
+// content. Stack stored on window so handlers can read/mutate it.
+window._beNavStack = [];
+
+function _beRenderView(view) {
+  document.getElementById('be-stat-modal-label').textContent = (view.label || '') + ' ·';
+  document.getElementById('be-stat-modal-headline').textContent = view.headline || '';
+  document.getElementById('be-stat-modal-subhead').textContent = view.subhead || '';
+  document.getElementById('be-stat-modal-body').innerHTML = view.bodyHtml || '<div style="opacity:.6">No detail yet.</div>';
+  const footer = document.getElementById('be-stat-modal-footer');
+  if (view.sources && view.sources.length) {
+    footer.innerHTML = view.sources.map(function(s) {
+      return '<span>&rarr; Source: <code>' + esc(s) + '</code></span>';
+    }).join('');
+  } else {
+    footer.innerHTML = '';
+  }
+  // Back button visibility — only when stack depth > 1
+  const backBtn = document.getElementById('be-stat-modal-back');
+  if (backBtn) {
+    backBtn.hidden = window._beNavStack.length <= 1;
+    backBtn.setAttribute('aria-label', window._beNavStack.length > 1
+      ? ('Back to ' + (window._beNavStack[window._beNavStack.length - 2].label || 'previous'))
+      : 'Back');
+  }
+}
+
+function _beNavPush(view) {
+  window._beNavStack.push(view);
+  _beRenderView(view);
+}
+function _beNavPop() {
+  if (window._beNavStack.length <= 1) return;
+  window._beNavStack.pop();
+  _beRenderView(window._beNavStack[window._beNavStack.length - 1]);
+}
+window._beNavBack = _beNavPop;
+
+function openBeStatModal(key) {
+  const payload = (window.__BE_STAT_PAYLOAD__ || {})[key];
+  if (!payload) return;
+  _beStatLastFocus = document.activeElement;
+  // Fresh stack — drilling from a tile resets the breadcrumb
+  window._beNavStack = [{
+    label: payload.label,
+    headline: payload.headline || '',
+    subhead: payload.subhead || '',
+    bodyHtml: _renderBeStatBody(payload),
+    sources: payload.sources || [],
+    payloadKey: key,
+  }];
+  _beRenderView(window._beNavStack[0]);
+  const backdrop = document.getElementById('be-stat-backdrop');
+  backdrop.classList.add('visible');
+  backdrop.setAttribute('aria-hidden', 'false');
+  const close = backdrop.querySelector('.be-stat-modal-close');
+  if (close) close.focus();
+}
+
+// ── Drill-in render functions ──────────────────────────────────────
+// Each returns a view {label, headline, subhead, bodyHtml, sources}.
+
+function _beRenderCommits(chipKey, chipName) {
+  const data = window.__BE_DRILL_DATA__ || {};
+  const repo = data.repoUrl || '';
+  // Filter recent commits whose message mentions the chip name (case-insensitive
+  // substring). Falls back to all commits if no matches (so the user always
+  // sees something).
+  const all = data.commits || [];
+  const needle = String(chipName || '').toLowerCase();
+  const matched = needle ? all.filter(c => (c.message || '').toLowerCase().includes(needle)) : all;
+  const rows = matched.length ? matched : all.slice(0, 20);
+  const items = rows.map(c => {
+    const href = repo ? (repo + '/commit/' + c.sha) : '#';
+    return '<li class="be-stat-modal-item">' +
+      '<div style="flex:1;min-width:0">' +
+        '<a href="' + esc(href) + '" target="_blank" rel="noopener" style="color:var(--text-1);text-decoration:none">' +
+          '<code style="background:var(--surface-2);padding:1px 6px;border-radius:3px;font-size:11px;margin-right:8px">' + esc(c.sha || '') + '</code>' +
+          '<span class="be-stat-modal-item-name">' + esc(c.message || '') + '</span>' +
+        '</a>' +
+        '<div class="be-stat-modal-item-evidence">' + esc(c.age || '') + (c.author ? ' · ' + esc(c.author) : '') + '</div>' +
+      '</div>' +
+      '<a href="' + esc(href) + '" target="_blank" rel="noopener" style="font-size:11px;color:var(--blue-fg,#2563eb);text-decoration:underline">GitHub' + String.fromCharCode(0x2197) + '</a>' +
+      '</li>';
+  }).join('');
+  return {
+    label: chipName ? (chipName + ' commits') : 'Commits',
+    headline: matched.length + (matched.length === 1 ? ' commit' : ' commits'),
+    subhead: needle
+      ? 'Commits in the rolling 30-day window whose message mentions "' + chipName + '". Click any row to open in GitHub.'
+      : 'All commits in the rolling 30-day window. Click any row to open in GitHub.',
+    bodyHtml: '<div class="be-stat-modal-section"><ul class="be-stat-modal-list">' + items + '</ul></div>',
+    sources: ['data/builder-log-rolling-30d.md', 'git log (since 30 days)'],
+  };
+}
+
+function _beRenderDemo(skillKey) {
+  const data = window.__BE_DRILL_DATA__ || {};
+  const e = (data.entries || {})[skillKey];
+  if (!e) return _beRenderFallback('Demo detail unavailable for ' + skillKey);
+  // Pull commits that mention this skill — these are the "story moments"
+  const commits = (data.commits || []).filter(c => (c.message || '').toLowerCase().includes(skillKey.toLowerCase())).slice(0, 6);
+  const commitItems = commits.map(c => {
+    const href = (data.repoUrl || '') + '/commit/' + c.sha;
+    return '<li style="padding:6px 10px;background:var(--surface-2);border-radius:4px;margin-bottom:4px;font-size:12px">' +
+      '<a href="' + esc(href) + '" target="_blank" rel="noopener" style="color:var(--text-1);text-decoration:none">' +
+        '<code style="font-size:10.5px;margin-right:6px">' + esc(c.sha) + '</code>' +
+        esc(c.message) +
+      '</a>' +
+      '<div style="opacity:.55;font-size:10.5px;margin-top:2px">' + esc(c.age || '') + '</div>' +
+    '</li>';
+  }).join('') || '<div style="opacity:.55;font-size:12px">No commits mention this skill by name in the rolling window. Evidence is in the broader codebase.</div>';
+  // NB: outer-template-unescape bug class — a regex literal /^https?:\\/\\//
+  // gets its backslashes eaten by the surrounding backtick template, leaving
+  // /^https?:/// in the output (SyntaxError). Build via RegExp constructor
+  // so the pattern survives the template.
+  const _hostStripRe = new RegExp('^https?://');
+  const citations = (e.citations || []).map(u => '<a href="' + esc(u) + '" target="_blank" rel="noopener" style="display:inline-block;margin-right:8px;font-size:11.5px;color:var(--blue-fg);text-decoration:underline">' + esc(u.replace(_hostStripRe, '').slice(0, 60)) + '</a>').join('');
+  return {
+    label: 'Tier-A demonstrated · ' + skillKey,
+    headline: skillKey,
+    subhead: e.category ? ('Category: ' + e.category + ' · demonstrated in career-ops fork') : 'Demonstrated in career-ops fork',
+    bodyHtml:
+      '<div class="be-stat-modal-section">' +
+        '<div class="be-stat-modal-section-label">What was achieved</div>' +
+        '<div style="padding:8px 12px;background:var(--surface-2);border-radius:4px;font-size:13px;line-height:1.55">' + esc(e.evidence) + '</div>' +
+      '</div>' +
+      '<div class="be-stat-modal-section">' +
+        '<div class="be-stat-modal-section-label">Story moments (commits mentioning ' + esc(skillKey) + ')</div>' +
+        '<ul style="padding:0;margin:0;list-style:none">' + commitItems + '</ul>' +
+      '</div>' +
+      (citations ? '<div class="be-stat-modal-section"><div class="be-stat-modal-section-label">External references</div><div>' + citations + '</div></div>' : ''),
+    sources: ['data/builder-target-apis.json'],
+  };
+}
+
+function _beRenderGap(skillKey) {
+  const data = window.__BE_DRILL_DATA__ || {};
+  const e = (data.entries || {})[skillKey];
+  if (!e) return _beRenderFallback('Gap detail unavailable for ' + skillKey);
+  // Heuristic project opportunities (career-ops vs xGE) — derived from the
+  // skill category. Encoded inline; can be replaced by an LLM-generated map
+  // later. Each entry: { personal: string, work: string }.
+  const opportunityMap = {
+    'agent-framework':  { personal: 'Wrap an existing career-ops agent (cv-tailor, council, or apply-pack-polish) as a stateful LangGraph workflow — public trace URL counts as proof.', work: 'xGE: rebuild the comms-triage agent as a multi-node LangGraph state machine; documented trace replaces the hand-wired 3-prompt pipeline.' },
+    'observability':    { personal: 'Pair LangSmith with the LangGraph rewrite — every council call ships a public trace.', work: 'xGE: pipe internal agents through LangSmith for trace replay during postmortems.' },
+    'vector-db':        { personal: 'Build a Pinecone/pgvector index over cv.md + article-digest.md; replace career-ops grep with semantic retrieval. ~2h.', work: 'xGE: index the curated comms corpus; A/B retrieval-augmented drafts vs the existing kill-list pipeline.' },
+    'web-framework':    { personal: 'Spin a Next.js subdomain (e.g., agents.careers-ops.com) hosting a Vercel-AI-SDK chat UI over the career-ops council.', work: 'xGE: ship the Voice DNA RAG as a Next.js internal tool with a chat-with-tools front-end.' },
+    'workflow-engine':  { personal: 'Deploy cv-tailor-batch as a Temporal workflow — uses the multi-step retry semantics for real.', work: 'xGE: convert the apply-pack-polish flow to Temporal so each artifact stage is a durable activity.' },
+    'eval-platform':    { personal: 'Wire Braintrust into the council; every multi-LLM run logs to a public eval dataset.', work: 'xGE: track drafting-quality regressions across model upgrades with Braintrust scoreboards.' },
+  };
+  const opp = opportunityMap[e.category] || { personal: 'Pick an existing career-ops surface (dashboard, heartbeat email, or apply-pack pipeline) and wire this dependency in. Public surface counts as proof.', work: 'xGE: identify an internal-comms surface that would benefit from this technology and ship a small POC.' };
+  return {
+    label: 'Tier-A gap · ' + skillKey,
+    headline: skillKey,
+    subhead: e.category ? ('Category: ' + e.category + ' · gap (30-day reachable)') : 'Gap (30-day reachable)',
+    bodyHtml:
+      '<div class="be-stat-modal-section">' +
+        '<div class="be-stat-modal-section-label">Strategy to close the gap</div>' +
+        '<div style="padding:8px 12px;background:rgba(217,119,6,.08);border-left:3px solid var(--amber-fg,#d97706);border-radius:4px;font-size:13px;line-height:1.55">' + esc(e.action || ('Build a public artifact demonstrating ' + skillKey + '.')) + '</div>' +
+      '</div>' +
+      '<div class="be-stat-modal-section">' +
+        '<div class="be-stat-modal-section-label">Personal-project route (career-ops)</div>' +
+        '<div style="padding:8px 12px;background:rgba(59,130,246,.08);border-left:3px solid var(--blue-fg,#2563eb);border-radius:4px;font-size:13px;line-height:1.55">' + esc(opp.personal) + '</div>' +
+      '</div>' +
+      '<div class="be-stat-modal-section">' +
+        '<div class="be-stat-modal-section-label">Work-project route (xGE)</div>' +
+        '<div style="padding:8px 12px;background:rgba(124,58,237,.08);border-left:3px solid #7c3aed;border-radius:4px;font-size:13px;line-height:1.55">' + esc(opp.work) + '</div>' +
+      '</div>',
+    sources: ['data/builder-target-apis.json'],
+  };
+}
+
+function _beRenderWeek(phaseIdx) {
+  const data = window.__BE_DRILL_DATA__ || {};
+  const phase = (data.phases || [])[Number(phaseIdx)];
+  if (!phase) return _beRenderFallback('Plan detail unavailable for phase ' + phaseIdx);
+  const hours = phase.cost_hours || 0;
+  // Split the phase hours into daily blocks. Heuristic: 7-day week with the
+  // hours distributed in 2-hour blocks until exhausted (e.g., 8h = 4 days
+  // of 2h; 6h = 3 days; 10h = 5 days). Future enhancement: have an LLM
+  // produce per-day deliverables.
+  const blockSize = 2;
+  const dayCount = Math.max(1, Math.min(7, Math.ceil(hours / blockSize)));
+  const days = [];
+  let remaining = hours;
+  for (let i = 1; i <= dayCount; i++) {
+    const todayHours = Math.min(blockSize, remaining);
+    remaining -= todayHours;
+    days.push({ day: i, hours: todayHours, suggestion: '~' + todayHours + 'h on ' + (phase.action || 'plan work').slice(0, 80) });
+  }
+  const dayRows = days.map(d => '<li class="be-stat-modal-item"><div><span class="be-stat-modal-item-name">Day ' + d.day + '</span><div class="be-stat-modal-item-evidence">' + esc(d.suggestion) + '</div></div><div class="be-stat-modal-item-count">' + d.hours + 'h</div></li>').join('');
+  const unlocksLine = (Array.isArray(phase.tier_a_unlocked) && phase.tier_a_unlocked.length)
+    ? '<div style="padding:8px 12px;background:rgba(22,163,74,.08);border-left:3px solid var(--green-fg,#16a34a);border-radius:4px;font-size:13px;margin-bottom:10px">Unlocks: <strong>' + phase.tier_a_unlocked.map(esc).join(', ') + '</strong></div>'
+    : '';
+  return {
+    label: phase.phase || ('Phase ' + (Number(phaseIdx) + 1)),
+    headline: hours + 'h budget',
+    subhead: phase.note || phase.action || '',
+    bodyHtml:
+      unlocksLine +
+      '<div class="be-stat-modal-section">' +
+        '<div class="be-stat-modal-section-label">Phase action</div>' +
+        '<div style="padding:8px 12px;background:var(--surface-2);border-radius:4px;font-size:13px;line-height:1.55">' + esc(phase.action || '') + '</div>' +
+      '</div>' +
+      '<div class="be-stat-modal-section">' +
+        '<div class="be-stat-modal-section-label">Day-by-day breakdown (' + dayCount + ' day' + (dayCount === 1 ? '' : 's') + ', ' + blockSize + 'h blocks)</div>' +
+        '<ul class="be-stat-modal-list">' + dayRows + '</ul>' +
+        '<div style="opacity:.55;font-size:11px;margin-top:6px">Auto-split heuristic. For richer per-day deliverables, run /researcher with the phase action as the brief.</div>' +
+      '</div>',
+    sources: ['data/builder-target-apis.json (gap_closure_30day)'],
+  };
+}
+
+function _beRenderFallback(msg) {
+  return {
+    label: 'Detail unavailable',
+    headline: '',
+    subhead: '',
+    bodyHtml: '<div style="padding:20px;text-align:center;color:var(--text-3)">' + esc(msg) + '</div>',
+    sources: [],
+  };
+}
+
+// Drill dispatch — capture-phase handler so the modal's
+// onclick="event.stopPropagation()" (which exists to keep backdrop-clicks
+// from closing the modal when clicking inside) doesn't suppress us.
+// Capture-phase fires BEFORE the modal's bubble-phase stopPropagation.
+document.addEventListener('click', function(e) {
+  const drill = e.target.closest && e.target.closest('[data-be-drill]');
+  if (!drill) return;
+  if (!drill.closest('#be-stat-modal')) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const raw = drill.getAttribute('data-be-drill') || '';
+  // Note: keys may contain ':' (e.g., commit message keys). Split on FIRST
+  // colon only to preserve any nested colons in the key.
+  const colonIdx = raw.indexOf(':');
+  const type = colonIdx >= 0 ? raw.slice(0, colonIdx) : raw;
+  const key  = colonIdx >= 0 ? raw.slice(colonIdx + 1) : '';
+  let view = null;
+  if (type === 'commit')   view = _beRenderCommits(key, drill.getAttribute('data-be-chip-name') || key);
+  if (type === 'demo')     view = _beRenderDemo(key);
+  if (type === 'gap')      view = _beRenderGap(key);
+  if (type === 'week')     view = _beRenderWeek(key);
+  if (view) _beNavPush(view);
+}, true);
+function closeBeStatModal() {
+  const backdrop = document.getElementById('be-stat-backdrop');
+  if (!backdrop) return;
+  backdrop.classList.remove('visible');
+  backdrop.setAttribute('aria-hidden', 'true');
+  if (_beStatLastFocus && _beStatLastFocus.focus) {
+    _beStatLastFocus.focus();
+    _beStatLastFocus = null;
+  }
+}
+// Event delegation — chips render before this script runs; native button click
+// + Enter/Space work via native semantics, we just route to openBeStatModal.
+// 2026-05-19 BRAVO polish A2 (item #6): broadened selector from
+// .be-stat-tile-clickable to [data-be-stat] so the new header-pill commits
+// drawer participates without duplicating the wiring. The header pill's
+// onclick already stopPropagation()s on the parent h2 to keep the panel
+// from collapsing.
+document.addEventListener('click', function(e) {
+  const trigger = e.target.closest && e.target.closest('[data-be-stat]');
+  if (!trigger) return;
+  const key = trigger.getAttribute('data-be-stat');
+  if (key) openBeStatModal(key);
+});
+
+// 2026-05-19 BRAVO polish A2 (item #4): copy-to-clipboard for the Builder-Evolution
+// resume-bullets CLI hint. Uses navigator.clipboard.writeText with a transient
+// in-button "Copied!" state plus the shared window.toast for screen-reader
+// confirmation. Best-effort: falls back to a manual selection prompt if
+// clipboard API is unavailable.
+function copyBeCommand(btn) {
+  if (!btn) return;
+  const text = btn.getAttribute('data-copy-text') || '';
+  if (!text) return;
+  const showCopied = function() {
+    btn.classList.add('copied');
+    const original = btn.innerHTML;
+    btn.innerHTML = '<span class="be-copy-icon" aria-hidden="true">✓</span>Copied!';
+    setTimeout(function() {
+      btn.classList.remove('copied');
+      btn.innerHTML = original;
+    }, 1800);
+    if (window.toast) window.toast('Command copied to clipboard', 'success');
+  };
+  if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(showCopied).catch(function(err) {
+      if (window.toast) window.toast('Copy failed: ' + (err && err.message ? err.message : err), 'error');
+    });
+  } else {
+    // Pre-clipboard-API fallback: select the text for manual Cmd+C.
+    if (window.toast) window.toast('Clipboard API unavailable — copy from the drawer', 'error');
   }
 }
 
@@ -23459,7 +24685,7 @@ document.addEventListener('keydown', e => {
 // ── Keyboard shortcuts ──────────────────────────────────────────
 document.addEventListener('keydown', e => {
   if (typeof _cmdkOpen !== 'undefined' && _cmdkOpen) return;
-  if (e.key === 'Escape') { closeVerify(); closeGapModal(); closeTierLegend(); closeStatusPopover(); closeQuickAdd(); }
+  if (e.key === 'Escape') { closeVerify(); closeGapModal(); closeTierLegend(); closeEquityLegend(); closeBeStatModal(); closeStatusPopover(); closeQuickAdd(); }
 });
 
 // ── Inline status writeback ─────────────────────────────────────
@@ -24637,11 +25863,37 @@ function renderNetworkGraphSvg(contacts, cx, cy, r) {
 }
 window.renderNetworkGraphSvg = renderNetworkGraphSvg;
 
-// ── Contacts directory (2026-05-18) ──────────────────────────────
+// ── Contacts directory (2026-05-18, externalized 2026-05-20) ────────────
 // Sidebar Contacts modal renders this list. Sources: outreach-state +
-// LinkedIn Connections.csv merged at build time. ~2.9k rows.
-var _CONTACTS_DATA = ${JSON.stringify(contactsDirectory).replace(/<\//g, '<\\/')};
-var _CONTACTS_STATS = ${JSON.stringify(contactsDirectoryStats).replace(/<\//g, '<\\/')};
+// LinkedIn Connections.csv merged at build time. ~2.9k rows ≈ 2.36MB.
+// Previously inlined into block 2 — caused ~5-10s parse delay on cold load.
+// Now lazy-fetched from dashboard/data/contacts.json (written at build
+// time). Consumers see empty defaults until the fetch resolves (~50-100ms
+// on a warm connection), then _onContactsReady() callbacks fire to
+// re-render any UI bound to this data.
+var _CONTACTS_DATA = [];
+var _CONTACTS_STATS = {};
+window._CONTACTS_DATA = _CONTACTS_DATA;
+window._CONTACTS_STATS = _CONTACTS_STATS;
+window._contactsReadyCallbacks = [];
+window._onContactsReady = function(cb) {
+  if (window._CONTACTS_DATA && window._CONTACTS_DATA.length) { try { cb(); } catch(_){} return; }
+  window._contactsReadyCallbacks.push(cb);
+};
+window._contactsReadyPromise = fetch('/data/contacts.json', { cache: 'force-cache' })
+  .then(function(r){ return r.ok ? r.json() : null; })
+  .then(function(payload){
+    if (!payload) return;
+    _CONTACTS_DATA = payload.contacts || [];
+    _CONTACTS_STATS = payload.stats || {};
+    window._CONTACTS_DATA = _CONTACTS_DATA;
+    window._CONTACTS_STATS = _CONTACTS_STATS;
+    var cbs = window._contactsReadyCallbacks || [];
+    window._contactsReadyCallbacks = [];
+    for (var i = 0; i < cbs.length; i++) { try { cbs[i](); } catch(_) {} }
+    if (typeof _updateContactsChip === 'function') _updateContactsChip();
+  })
+  .catch(function(err){ console.warn('[contacts] fetch failed:', err.message); });
 // 2026-05-18 — defensive multi-shot update: synchronous IIFE first (works
 // when script runs after the sidebar HTML — typical case), then a
 // DOMContentLoaded re-fire (covers the case where script ran before the
@@ -25431,9 +26683,100 @@ function openMobileSettingsSheet(btn) {
       '<button type="button" class="toolbar-btn" style="min-height:48px;width:100%;text-align:left;padding:12px 14px" onclick="toggleDemoMode()">' +
         (demoOn ? '🎭  Disable demo mode' : '🎭  Enable demo mode') +
       '</button>' +
+      // 2026-05-20 — Behavior section. Hides the sidebar Runway widget +
+      // dials outreach intensity. Reads via /api/settings on open, writes
+      // via /api/settings POST + mirrors localStorage for instant feedback.
+      '<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">' +
+        '<div style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin-bottom:8px">Behavior</div>' +
+        '<label style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border:1px solid var(--border);border-radius:8px;cursor:pointer" for="settings-runway-toggle">' +
+          '<span>Show Runway widget' +
+            '<div class="muted-text" style="font-size:11.5px;line-height:1.4;margin-top:2px">The pulsing red \\'RUNWAY · CRITICAL\\' card in the left sidebar. Off = sidebar one less card.</div>' +
+          '</span>' +
+          '<input type="checkbox" id="settings-runway-toggle" onchange="window._setSetting(\\'show_runway_widget\\', this.checked)">' +
+        '</label>' +
+        '<label style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border:1px solid var(--border);border-radius:8px;cursor:pointer;margin-top:8px" for="settings-outreach-intensity">' +
+          '<span>Outreach intensity — global' +
+            '<div class="muted-text" style="font-size:11.5px;line-height:1.4;margin-top:2px">If set to Gentle/Aggressive, overrides warm/cold below. Normal = let the per-degree knobs decide.</div>' +
+          '</span>' +
+          '<select id="settings-outreach-intensity" onchange="window._setSetting(\\'outreach.global_intensity\\', this.value)" style="padding:6px 10px;border:1px solid var(--border);background:var(--surface);color:var(--fg);border-radius:6px;min-width:120px">' +
+            '<option value="gentle">Gentle</option>' +
+            '<option value="normal" selected>Normal</option>' +
+            '<option value="aggressive">Aggressive</option>' +
+          '</select>' +
+        '</label>' +
+        '<label style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border:1px solid var(--border);border-radius:8px;cursor:pointer;margin-top:8px" for="settings-warm-intensity">' +
+          '<span>Outreach — warm (1st-degree)' +
+            '<div class="muted-text" style="font-size:11.5px;line-height:1.4;margin-top:2px">How aggressively to prompt outreach to people you already know directly.</div>' +
+          '</span>' +
+          '<select id="settings-warm-intensity" onchange="window._setSetting(\\'outreach.warm_intensity\\', this.value)" style="padding:6px 10px;border:1px solid var(--border);background:var(--surface);color:var(--fg);border-radius:6px;min-width:120px">' +
+            '<option value="gentle">Gentle</option>' +
+            '<option value="normal" selected>Normal</option>' +
+            '<option value="aggressive">Aggressive</option>' +
+          '</select>' +
+        '</label>' +
+        '<label style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border:1px solid var(--border);border-radius:8px;cursor:pointer;margin-top:8px" for="settings-cold-intensity">' +
+          '<span>Outreach — cold (2nd-degree)' +
+            '<div class="muted-text" style="font-size:11.5px;line-height:1.4;margin-top:2px">How aggressively to prompt warm-intro outreach to 2nd-degree contacts. Default Gentle to avoid harassing strangers.</div>' +
+          '</span>' +
+          '<select id="settings-cold-intensity" onchange="window._setSetting(\\'outreach.cold_intensity\\', this.value)" style="padding:6px 10px;border:1px solid var(--border);background:var(--surface);color:var(--fg);border-radius:6px;min-width:120px">' +
+            '<option value="gentle" selected>Gentle</option>' +
+            '<option value="normal">Normal</option>' +
+            '<option value="aggressive">Aggressive</option>' +
+          '</select>' +
+        '</label>' +
+        '<div style="padding:10px 14px;border:1px solid var(--border);border-radius:8px;margin-top:8px">' +
+          '<div style="font-size:13px;margin-bottom:6px">Outreach suppression list' +
+            '<div class="muted-text" style="font-size:11.5px;line-height:1.4;margin-top:2px">One entry per line. Each line is matched against contact_id OR name (substring, case-insensitive). Suppressed contacts are dropped from every outreach surface.</div>' +
+          '</div>' +
+          '<textarea id="settings-outreach-suppression" rows="4" placeholder="(empty)" style="width:100%;padding:8px 10px;font-family:ui-monospace,Menlo,monospace;font-size:12px;border:1px solid var(--border);background:var(--surface);color:var(--fg);border-radius:6px;resize:vertical;min-height:60px"></textarea>' +
+          '<button type="button" onclick="window._saveSuppression()" style="margin-top:6px;padding:6px 14px;border:1px solid var(--border);background:var(--surface);color:var(--fg);border-radius:6px;cursor:pointer;font-size:12px">Save suppression list</button>' +
+          '<span id="settings-suppression-status" style="margin-left:10px;font-size:11px;color:var(--text-3)"></span>' +
+        '</div>' +
+        '<label style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border:1px solid var(--border);border-radius:8px;margin-top:8px" for="settings-triage-cap">' +
+          '<span>Triage daily-limit cap' +
+            '<div class="muted-text" style="font-size:11.5px;line-height:1.4;margin-top:2px">Used by the scheduled triage path. Process All ignores this — it drains whatever you confirm via the cost modal. Leave 0 for no cap.</div>' +
+          '</span>' +
+          '<input type="number" id="settings-triage-cap" min="0" step="50" placeholder="0 (none)" onchange="window._setSetting(\\'triage_daily_limit\\', parseInt(this.value,10)||0)" style="width:120px;padding:6px 10px;border:1px solid var(--border);background:var(--surface);color:var(--fg);border-radius:6px;font-family:ui-monospace,monospace;text-align:right">' +
+        '</label>' +
+      '</div>' +
       '<p class="muted-text" style="margin:6px 2px 0;line-height:1.45">Pull-to-refresh: drag down from the top of the page. Long-press a row to enter multi-select mode.</p>' +
     '</div>'
   );
+  // Async-load current settings + reflect in the toggles/selects
+  (async function _hydrateSettingsSheet() {
+    try {
+      const res = await fetch('/api/settings', { cache: 'no-store' });
+      if (!res.ok) return;
+      const { settings } = await res.json();
+      const rw = document.getElementById('settings-runway-toggle');
+      if (rw) rw.checked = settings.show_runway_widget !== false;
+      const o = settings.outreach || {};
+      const setSelect = (id, val) => { const el = document.getElementById(id); if (el && val) el.value = val; };
+      setSelect('settings-outreach-intensity', o.global_intensity);
+      setSelect('settings-warm-intensity', o.warm_intensity);
+      setSelect('settings-cold-intensity', o.cold_intensity);
+      const sup = document.getElementById('settings-outreach-suppression');
+      if (sup) {
+        const lines = (o.suppression || []).map(x => typeof x === 'string' ? x : (x.name || x.id || ''));
+        sup.value = lines.join('\\n');
+      }
+      const tc = document.getElementById('settings-triage-cap');
+      if (tc) tc.value = settings.triage_daily_limit || 0;
+    } catch (_) { /* offline-tolerant */ }
+  })();
+  // 2026-05-20 — save suppression list as an array (one entry per non-blank line)
+  window._saveSuppression = async function () {
+    const sup = document.getElementById('settings-outreach-suppression');
+    const status = document.getElementById('settings-suppression-status');
+    if (!sup) return;
+    const list = sup.value.split(/\\n+/).map(s => s.trim()).filter(Boolean);
+    if (status) status.textContent = 'saving' + String.fromCharCode(0x2026);
+    await window._setSetting('outreach.suppression', list);
+    if (status) {
+      status.textContent = String.fromCharCode(0x2713) + ' saved ' + list.length + ' entr' + (list.length === 1 ? 'y' : 'ies');
+      setTimeout(() => { if (status) status.textContent = ''; }, 3000);
+    }
+  };
   bodyEl.scrollTop = 0;
   bd.classList.add('visible');
   bd.removeAttribute('aria-hidden');
@@ -27637,8 +28980,8 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     // would have to be triple-escaped to survive the outer template literal).
     var toolbarHtml = ''
       + '<div class="op-toolbar" data-op-toolbar="1">'
-      +   '<button type="button" class="op-tb-btn op-tb-btn-snooze" data-op-action="snooze" title="Snooze this card" aria-label="Snooze this card">↪ snooze</button>'
-      +   '<button type="button" class="op-tb-btn op-tb-btn-cancel" data-op-action="cancel-strategy" title="Cancel this strategy recommendation" aria-label="Cancel this strategy recommendation">✕</button>'
+      +   '<button type="button" class="op-tb-btn op-tb-btn-snooze" data-op-action="snooze" aria-label="Snooze this card">↪ snooze</button>'
+      +   '<button type="button" class="op-tb-btn op-tb-btn-cancel" data-op-action="cancel-strategy" aria-label="Cancel this strategy recommendation">✕</button>'
       + '</div>'
       + '<div class="op-snooze-pop" data-op-snooze-pop="1" role="dialog" aria-label="Snooze options" hidden>'
       +   '<div class="op-snooze-pop-head">Snooze until</div>'
@@ -29387,6 +30730,22 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 
   writeFileSync(OUT_PATH, minifiedHtml);
   console.log(`Wrote ${OUT_PATH}`);
+
+  // 2026-05-20 — Write the contacts directory as a separate JSON file so
+  // the dashboard can lazy-fetch it instead of inlining 2.36MB into block
+  // 2 of the page. Matched by the `window._contactsReadyPromise =
+  // fetch('/data/contacts.json')` shim in the inline script.
+  try {
+    const contactsOutDir = join(ROOT, 'dashboard/data');
+    mkdirSync(contactsOutDir, { recursive: true });
+    const contactsPayload = { contacts: contactsDirectory, stats: contactsDirectoryStats };
+    writeFileSync(join(contactsOutDir, 'contacts.json'), JSON.stringify(contactsPayload));
+    const contactsBytes = Buffer.byteLength(JSON.stringify(contactsPayload), 'utf8');
+    console.log(`  Externalized:      contacts.json (${contactsBytes.toLocaleString()} bytes) — was inlined`);
+  } catch (writeErr) {
+    console.warn('[build] failed to write dashboard/data/contacts.json:', writeErr.message);
+  }
+
   console.log(`  Total evaluations: ${total}`);
   console.log(`  Apply-Now queue:   ${applyNow.length}`);
   console.log(`  Pipeline pending:  ${pipelinePending}`);
@@ -29417,6 +30776,22 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
       console.error('✗ build-dashboard: post-build JS lint failed (see above).');
       console.error('  Set DASHBOARD_SKIP_LINT=1 to bypass (emergency only).');
       process.exit(res.status || 1);
+    }
+  }
+
+  // 2026-05-20 — also rebuild dashboard/contacts.html (the standalone
+  // relationship-intelligence directory). Previously this had no scheduled
+  // hook so the file went stale and 404'd. Chaining here keeps it in sync
+  // with every dashboard rebuild. Skip with DASHBOARD_SKIP_CONTACTS=1.
+  if (process.env.DASHBOARD_SKIP_CONTACTS !== '1') {
+    const { spawnSync } = await import('node:child_process');
+    const res = spawnSync('node', [join(ROOT, 'scripts/build-contacts-page.mjs')], {
+      cwd: ROOT,
+      stdio: 'inherit',
+    });
+    if (res.status !== 0) {
+      // Don't fail the whole build on a contacts-page glitch — log + continue.
+      console.warn('⚠ build-dashboard: contacts.html rebuild failed (see above). Dashboard itself is OK.');
     }
   }
 }

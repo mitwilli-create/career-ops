@@ -12,6 +12,7 @@ import { execSync as _execSync, spawn as _spawn, spawnSync as _spawnSync } from 
 import { homedir } from 'os';
 import yaml from 'js-yaml';
 import { marked } from 'marked';
+import { tierCostEstimates as _tierCostEstimates } from './lib/process-all-tiers.mjs';
 import { parseApplicationsFile } from './lib/parse-applications.mjs';
 import { statusKey, statusBadgeClass } from './lib/status-key.mjs';
 import { getCachedUrl } from './lib/resolve-ats-url.mjs';
@@ -47,6 +48,144 @@ import {
 // honest fresh-vs-stale counts.
 import { findContactsAtCompany as networkFindContactsAtCompany } from './lib/network-graph.mjs';
 import { guessCompany as _guessCompanyFromUrl } from './lib/ats-utils.mjs';
+// P1-6 / P1-5 — SQLite job-run ledger + scraper health widget
+import { initSchema as _ledgerInitSchema, lastFinishedRun, recentRuns } from './lib/job-runs-ledger.mjs';
+
+// Registry of tracked scheduler jobs with expected cadence.
+//
+// Originally a hardcoded 6-entry list of scrapers; expanded 2026-05-19 to
+// auto-discover ALL scheduled jobs from scripts/launchd/com.mitchell.career-ops.*.plist
+// so the chip strip reflects the full pipeline (33 jobs). Hardcoded entries
+// in HARDCODED_TRACKED_JOBS still apply for jobs that don't have a plist
+// (e.g., heartbeat-evening — fired by a wrapper, not directly by launchd).
+const HARDCODED_TRACKED_JOBS = [
+  // Jobs without a dedicated plist (fired by wrappers / other jobs).
+  { name: 'heartbeat-evening', expected_cadence_minutes: 1440 },
+];
+
+// Plist labels that don't represent "scheduled jobs" (long-lived daemons,
+// debug sessions, or pure delivery wrappers). Excluded from auto-discovery.
+const _JRS_DAEMON_LABELS = new Set([
+  'dashboard-server',
+  'cloudflared',
+  'cloudflared-staging',
+  'cloudflared-staging-nohup-wrapper',
+  'telegram-bot',
+  'chrome-debugging',
+  'dashboard-phase3',
+]);
+
+// Map plist label → in-script startRun() job_name when they differ. The
+// chip strip uses the IN-SCRIPT name so it matches the ledger rows actually
+// being written. Without this, the auto-discovered plist label would render
+// a chip that nothing ever writes to (stuck on 'unknown' forever).
+const _JRS_LABEL_ALIASES = {
+  // scan plist invokes scripts/scan-unattended.mjs which calls
+  // startRun('portal-scan') — main's reliability-foundation naming.
+  'scan': 'portal-scan',
+};
+
+/**
+ * Discover scheduled jobs from scripts/launchd/com.mitchell.career-ops.*.plist.
+ * Returns [{ name, expected_cadence_minutes }, ...] merged with the hardcoded
+ * fallback list (auto-discovery wins on name collision).
+ *
+ * Parse rules:
+ *   StartInterval=N seconds       → N/60 minutes
+ *   StartCalendarInterval daily   → 1440 (daily)
+ *   StartCalendarInterval weekly  → 10080 (weekly)
+ *   StartCalendarInterval array N → 1440/N (e.g., 4 entries → every 6h = 360 min)
+ *   StartCalendarInterval Day+Mo  → 525600 (yearly, sparse)
+ *
+ * Cached for 5 min to avoid re-reading 40 plists on every endpoint hit.
+ */
+let _jrsTrackedJobsCache = null;
+function _jrsDiscoverTrackedJobs() {
+  if (_jrsTrackedJobsCache && Date.now() - _jrsTrackedJobsCache.ts < 5 * 60 * 1000) {
+    return _jrsTrackedJobsCache.jobs;
+  }
+  const plistDir = join(ROOT, 'scripts', 'launchd');
+  const merged = new Map();
+  try {
+    if (existsSync(plistDir)) {
+      for (const file of readdirSync(plistDir)) {
+        if (!file.endsWith('.plist')) continue;
+        if (!file.startsWith('com.mitchell.career-ops.')) continue;
+        const rawLabel = file.replace(/^com\.mitchell\.career-ops\./, '').replace(/\.plist$/, '');
+        if (_JRS_DAEMON_LABELS.has(rawLabel)) continue;
+        const label = _JRS_LABEL_ALIASES[rawLabel] || rawLabel;
+        try {
+          const xml = readFileSync(join(plistDir, file), 'utf-8');
+          let cadenceMinutes = null;
+
+          const intervalMatch = xml.match(/<key>StartInterval<\/key>\s*<integer>(\d+)<\/integer>/);
+          if (intervalMatch) {
+            cadenceMinutes = Math.max(1, Math.round(Number(intervalMatch[1]) / 60));
+          } else {
+            const calMatch = xml.match(/<key>StartCalendarInterval<\/key>\s*((?:<array>[\s\S]*?<\/array>)|(?:<dict>[\s\S]*?<\/dict>))/);
+            if (calMatch) {
+              const firstDict = calMatch[1].match(/<dict>([\s\S]*?)<\/dict>/);
+              const inner = firstDict ? firstDict[1] : '';
+              const hasWeekday = /<key>Weekday<\/key>/.test(inner);
+              const hasMonth = /<key>Month<\/key>/.test(inner);
+
+              if (hasMonth) {
+                cadenceMinutes = 525600;       // yearly
+              } else if (hasWeekday) {
+                cadenceMinutes = 10080;        // weekly
+              } else {
+                // Daily — possibly multiple fires per day. Compute the
+                // minimum gap between sorted Hour values (with wraparound)
+                // rather than 1440/N — handles uneven schedules like
+                // scrape-frequent (06/10/14/18/22 → 4h cadence, not 4.8h).
+                const hours = [];
+                const dictRe = /<dict>([\s\S]*?)<\/dict>/g;
+                let dm;
+                while ((dm = dictRe.exec(calMatch[1])) !== null) {
+                  const hm = dm[1].match(/<key>Hour<\/key>\s*<integer>(\d+)<\/integer>/);
+                  if (hm) hours.push(Number(hm[1]));
+                }
+                if (hours.length >= 2) {
+                  hours.sort((a, b) => a - b);
+                  let minGap = 24;
+                  for (let i = 1; i < hours.length; i++) {
+                    minGap = Math.min(minGap, hours[i] - hours[i - 1]);
+                  }
+                  // wraparound: last → first across midnight
+                  minGap = Math.min(minGap, 24 - hours[hours.length - 1] + hours[0]);
+                  cadenceMinutes = Math.max(1, Math.round(minGap * 60));
+                } else {
+                  cadenceMinutes = 1440; // single daily fire
+                }
+              }
+            }
+          }
+
+          if (cadenceMinutes != null) {
+            merged.set(label, { name: label, expected_cadence_minutes: cadenceMinutes });
+          }
+        } catch { /* skip unparseable plists */ }
+      }
+    }
+  } catch { /* plist dir missing — fall back to hardcoded list */ }
+
+  // Hardcoded fallback wins for jobs not represented by a plist (e.g.
+  // heartbeat-evening fired by a wrapper, not directly by launchd).
+  for (const j of HARDCODED_TRACKED_JOBS) {
+    if (!merged.has(j.name)) merged.set(j.name, j);
+  }
+
+  const jobs = Array.from(merged.values()).sort((a, b) => a.name.localeCompare(b.name));
+  _jrsTrackedJobsCache = { jobs, ts: Date.now() };
+  return jobs;
+}
+// Expose as a function — call _trackedJobs() wherever the endpoint needs
+// the live list. 5-min cache inside _jrsDiscoverTrackedJobs() keeps this cheap.
+function _trackedJobs() { return _jrsDiscoverTrackedJobs(); }
+
+// Initialise the SQLite schema eagerly so the DB exists even before any job
+// has run (the dashboard widget renders 'unknown' for all jobs initially).
+try { _ledgerInitSchema(); } catch (_) {}
 
 // ── Application enrichment for outreach API ────────────────────────────────
 // Join contact.linked_application_id → applications.md row so the dashboard
@@ -1120,6 +1259,34 @@ function buildPipelinePreview() {
         assumed_cache_hit_rate:     COMPANY_CACHE_HIT_RATE,
         exceeds_per_run_cap:        tier5ProcessAllCost > PER_RUN_CAP_PROCESS_ALL,
       },
+      // 2026-05-20 — Three-tier picker (lib/process-all-tiers.mjs). New
+      // canonical field; tier5_estimate above is kept for backwards-compat
+      // with the legacy dashboard Tier-5 button.
+      tier_estimates: (() => {
+        try {
+          // Read current apply-now-queue size for the auto-escalate cost
+          // estimate. Falls back to estimating from batchEvalCount × 0.15
+          // if the queue file isn't readable.
+          let applyNowSize = Math.round(batchEvalCount * 0.15);
+          try {
+            const apqPath = join(ROOT, 'data/apply-now-queue.json');
+            if (existsSync(apqPath)) {
+              const apq = JSON.parse(readFileSync(apqPath, 'utf-8'));
+              applyNowSize = (apq.ranked || []).filter(r => !r._dropped && (r.eval_score || r.score || 0) >= 4.0).length;
+            }
+          } catch (_) { /* fall through */ }
+          // 2026-05-20 — Use the tier estimator's own defaults (advance 12%,
+          // pregen-eligible 5%, polish-eligible 1.5%) rather than passing
+          // dashboard-server.mjs's ADVANCE_RATE_ESTIMATE=0.50 which was set
+          // for the legacy non-tier breakdown and produces wildly-inflated
+          // tier totals (~$1800 vs the realistic ~$250). Tier estimator is
+          // the source of truth.
+          return _tierCostEstimates({
+            pipelineSize:  pending,
+            applyNowSize,
+          });
+        } catch (_) { return null; }
+      })(),
     },
     run_batch: {
       // ── Decomposed stages (no triage for run_batch) ───────────────────────
@@ -2358,7 +2525,26 @@ function batchLive() {
 // Reuses batchLive() for the current run summary, detailBatches() for the
 // recent-runs grouping (15-min gap heuristic), data/cost-log.tsv for per-batch
 // cost rows, and data/errors.log for batch-related failures.
+// 2026-05-20 — Mitchell flagged dashboard load lag. /api/batch/status-detailed
+// was the bottleneck (798ms vs <20ms for every other endpoint) because it
+// re-parses 4,400-row cost-log.tsv + batch-state.tsv + errors.log + pipeline-
+// process-state.json on every request. Cache for 5 seconds — well within
+// the dashboard's 10s poll window, so the first poll-tick after a change
+// still sees fresh data, but rapid-fire calls (first paint + 1s timestamp
+// updates) reuse the cached payload.
+let _batchStatusCache = null;
+let _batchStatusCacheTs = 0;
+const BATCH_STATUS_CACHE_MS = 5000;
 function buildBatchStatusDetailed() {
+  if (_batchStatusCache && (Date.now() - _batchStatusCacheTs) < BATCH_STATUS_CACHE_MS) {
+    return _batchStatusCache;
+  }
+  const result = _buildBatchStatusDetailedUncached();
+  _batchStatusCache = result;
+  _batchStatusCacheTs = Date.now();
+  return result;
+}
+function _buildBatchStatusDetailedUncached() {
   const live = batchLive();
 
   // ── Recent runs: enrich detailBatches() output with per-run cost ──
@@ -2482,6 +2668,50 @@ function buildBatchStatusDetailed() {
     }
   }
 
+  // ── 2026-05-20 — surface the currently-running Process All job so the
+  // Batch Status modal stops looking frozen during the triage/rebuild/email
+  // phases (when the batch sub-phase data legitimately doesn't change).
+  let process_all_active = null;
+  try {
+    const stateFp = join(ROOT, 'data/pipeline-process-state.json');
+    if (existsSync(stateFp)) {
+      const state = JSON.parse(readFileSync(stateFp, 'utf-8'));
+      // Pick the most recently-updated running process-all job (ignore batch-only).
+      const candidates = Object.values(state.jobs || {})
+        .filter(j => j.type === 'process-all' && j.status === 'running');
+      candidates.sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
+      const j = candidates[0];
+      if (j) {
+        const PHASES = [
+          { key: 'triage',  label: 'Phase 1/4 — Triage',         pct: 20 },
+          { key: 'batch',   label: 'Phase 2/4 — Batch eval',     pct: 50 },
+          { key: 'rebuild', label: 'Phase 3/4 — Dashboard rebuild', pct: 85 },
+          { key: 'email',   label: 'Phase 4/4 — Heartbeat email', pct: 95 },
+        ];
+        const currentIdx = Math.max(0, PHASES.findIndex(p => p.key === j.phase));
+        const phasesOut = PHASES.map((p, i) => ({
+          key: p.key,
+          label: p.label,
+          status: i < currentIdx ? 'done' : i === currentIdx ? 'active' : 'pending',
+          ok: !!(j.phases && j.phases[p.key] && j.phases[p.key].ok),
+        }));
+        process_all_active = {
+          job_id:           j.jobId,
+          phase:            j.phase || 'queued',
+          phase_label:      (PHASES.find(p => p.key === j.phase) || {}).label || 'Queued',
+          phase_pct:        (PHASES.find(p => p.key === j.phase) || {}).pct || 5,
+          started_at:       j.started_at,
+          updated_at:       j.updated_at,
+          phase_started_at: j.phase_started_at,
+          pending_before:   j.pending_before,
+          send_email:       j.send_email,
+          phases:           phasesOut,
+          log_path:         j.log_path,
+        };
+      }
+    }
+  } catch (_) { /* state file unreadable — fall through with process_all_active=null */ }
+
   return {
     ok: true,
     current_summary: {
@@ -2495,6 +2725,7 @@ function buildBatchStatusDetailed() {
       model:     'claude-sonnet-4-6',  // current batch-runner-batches.mjs default
       temperature: 0,
     },
+    process_all_active,
     recent_runs,
     queue_depth,
     cost_today_usd: Math.round(cost_today_usd * 100) / 100,
@@ -4649,6 +4880,44 @@ const server = createServer((req, res) => {
     return json({ ok: true, active: true, job, log_tail: tail });
   }
 
+  // 2026-05-20 — user-editable dashboard preferences. Backed by
+  // data/dashboard-settings.json (file-of-record, cross-device) and
+  // shadowed by localStorage 'careerOps.settings' (per-browser overrides).
+  // Schema: { show_runway_widget: bool, outreach: { global_intensity,
+  // warm_intensity, cold_intensity, suppression[] } }.
+  if (url === '/api/settings' && req.method === 'GET') {
+    const fp = join(ROOT, 'data', 'dashboard-settings.json');
+    if (!existsSync(fp)) return json({ ok: true, settings: {} });
+    try { return json({ ok: true, settings: JSON.parse(readFileSync(fp, 'utf-8')) }); }
+    catch (err) { return json({ ok: false, error: err.message }, 500); }
+  }
+  if (url === '/api/settings' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; if (body.length > 50_000) req.connection.destroy(); });
+    req.on('end', () => {
+      try {
+        const incoming = JSON.parse(body || '{}');
+        const fp = join(ROOT, 'data', 'dashboard-settings.json');
+        const current = existsSync(fp) ? JSON.parse(readFileSync(fp, 'utf-8')) : {};
+        // Shallow merge top-level; deep-merge `outreach` so partial updates work.
+        const merged = { ...current, ...incoming };
+        if (incoming.outreach || current.outreach) {
+          merged.outreach = { ...(current.outreach || {}), ...(incoming.outreach || {}) };
+        }
+        merged.schema_version = merged.schema_version || 1;
+        writeFileSync(fp, JSON.stringify(merged, null, 2));
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ ok: true, settings: merged }));
+      } catch (err) {
+        res.statusCode = 400;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ ok: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
   // 2026-05-19 Mitchell instrumentation — pipeline health endpoint reads
   // the most-recent pipeline-health.json (written every 5 min by
   // scripts/agents/pipeline-health-check.mjs). Dashboard's "System healthy"
@@ -5342,6 +5611,67 @@ const server = createServer((req, res) => {
       }
     })();
     return;
+  }
+
+  // ── GET /api/job-runs-status ─────────────────────────────────────────
+  // P1-5 scraper health widget data source.
+  // Returns one entry per TRACKED_JOBS job with state derivation:
+  //   green   — last_status='ok', finished within 1.0× cadence, urls_found > 0
+  //   yellow  — past 1.0× cadence but not yet 2.0×
+  //   red     — past 2.0× cadence
+  //   purple  — last_status='ok' but urls_found == 0
+  //   skipped — last_status='skipped'
+  //   unknown — no ledger entries yet
+  if (url === '/api/job-runs-status') {
+    try {
+      const nowMs = Date.now();
+      const jobs = _trackedJobs().map(({ name, expected_cadence_minutes }) => {
+        const last = lastFinishedRun(name);
+        if (!last) {
+          return { name, expected_cadence_minutes, last_finished_at: null, last_status: null, last_urls_found: null, state: 'unknown' };
+        }
+        const cadenceMs = expected_cadence_minutes * 60 * 1000;
+        const finishedMs = last.finished_at ? new Date(last.finished_at).getTime() : 0;
+        const ageMs = nowMs - finishedMs;
+        let state;
+        if (last.status === 'skipped') {
+          state = 'skipped';
+        } else if (last.status === 'ok' && (last.urls_found ?? 0) === 0) {
+          state = 'purple';
+        } else if (last.status === 'ok' && ageMs <= cadenceMs) {
+          state = 'green';
+        } else if (ageMs <= cadenceMs * 2) {
+          state = 'yellow';
+        } else {
+          state = 'red';
+        }
+        return {
+          name,
+          expected_cadence_minutes,
+          last_finished_at: last.finished_at || null,
+          last_status: last.status,
+          last_urls_found: last.urls_found ?? null,
+          state,
+        };
+      });
+      return json({ jobs });
+    } catch (e) {
+      return json({ ok: false, error: e.message }, 500);
+    }
+  }
+
+  // ── GET /api/job-runs-history?job=<name>&limit=<n> ───────────────────
+  // Returns the last N runs for a single job (used by the widget's detail modal).
+  if (url === '/api/job-runs-history') {
+    try {
+      const jobName = String(query.job || '').trim();
+      const limit = Math.min(parseInt(query.limit || '10', 10) || 10, 100);
+      if (!jobName) return json({ ok: false, error: 'job param required' }, 400);
+      const rows = recentRuns(jobName, limit);
+      return json({ ok: true, job: jobName, rows });
+    } catch (e) {
+      return json({ ok: false, error: e.message }, 500);
+    }
   }
 
   // ── GET /api/hang-watchdog/status ────────────────────────────────────
@@ -6554,6 +6884,12 @@ async function generatePack(){
       if (Number.isFinite(Number(parsed.targetConfidence))) args.push('--target-confidence', String(Number(parsed.targetConfidence)));
       if (Number.isFinite(Number(parsed.costCap))) args.push('--cost-cap', String(Number(parsed.costCap)));
       if (parsed.noCache === true) args.push('--no-cache');
+      // 2026-05-19 — extension: dashboard polish drawer's "Re-polish (force full)"
+      // action passes force_full_burn=true to disable the cost-saving early-abandon
+      // policy. Also accepts the more explicit no_early_abandon flag.
+      if (parsed.force_full_burn === true || parsed.no_early_abandon === true) {
+        args.push('--no-early-abandon');
+      }
       const { jobId, logPath } = _alphaSpawn({ kind: 'polish', args });
       return json({ ok: true, jobId, log_path: logPath, stream_url: `/api/apply-pack-polish-stream/${jobId}` });
     });

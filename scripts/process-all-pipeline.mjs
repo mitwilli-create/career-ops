@@ -46,13 +46,27 @@ const DRY_RUN = !!ARGS['dry-run'];
 const JOB_ID = ARGS['job-id'] || ('proc-' + Date.now().toString(36) + '-' + randomBytes(3).toString('hex'));
 const LOG_PATH = `/tmp/process-all-${JOB_ID}.log`;
 
-// Quality tier — 'normal' (default, Haiku triage) or '5' (Sonnet triage + apply-pack pregen on high-confidence rows).
-// Tier 5 enriches the entire pipeline drain with Sonnet JD reasoning ($0.07/item vs $0.005)
-// AND pre-generates apply-packs for rows scoring ≥ HIGH_CONFIDENCE_PREGEN_FLOOR (default 4.5).
-// Triggered explicitly via the Tier-5 button in the Process All modal.
-const TIER = String(ARGS.tier || 'normal').trim();
-const IS_TIER5 = TIER === '5';
-const HIGH_CONFIDENCE_PREGEN_FLOOR = parseFloat(process.env.HIGH_CONFIDENCE_PREGEN_FLOOR || '4.5');
+// 2026-05-20 — Tier system overhaul. Three tiers selectable in the Process
+// All cost modal; defaults to 1 (Standard). See lib/process-all-tiers.mjs
+// for the canonical definitions + cost estimates.
+//
+//   1 Standard         Haiku triage + Sonnet eval
+//   2 Premium Triage   Sonnet triage + Sonnet eval (matches legacy '5')
+//   3 Premium Eval     Sonnet triage + Opus eval
+//
+// Independent of tier: post-eval auto-escalation. Every row scoring ≥4.0
+// gets apply-pack pregen + polish — the system invests more in proven
+// winners regardless of which tier the user picked.
+const { resolveTier, PREGEN_FLOOR, POLISH_FLOOR } = await import('../lib/process-all-tiers.mjs');
+const TIER_OBJ = resolveTier(ARGS.tier);
+const TIER = String(TIER_OBJ.id);
+const IS_TIER5 = TIER_OBJ.id >= 2;  // legacy alias — anything 2+ used to be "Tier-5"
+// 2026-05-20 — Two-floor auto-escalation. Pregen is cheap ($2.50/row) so it
+// fires on every ≥4.0 row. Polish is expensive ($60/pack) so it only fires
+// on ≥4.5 — invest the big spend in proven-winner cream, not the borderline
+// 4.0-4.4 band.
+const HIGH_CONFIDENCE_PREGEN_FLOOR = parseFloat(process.env.HIGH_CONFIDENCE_PREGEN_FLOOR || String(PREGEN_FLOOR));
+const POLISH_FLOOR_SCORE = parseFloat(process.env.POLISH_FLOOR_SCORE || String(POLISH_FLOOR));
 
 // Optional company scope from the Process All Phase A modal. When present,
 // passed through to triage.mjs and batch-runner-batches.mjs so both filter
@@ -155,23 +169,86 @@ async function phaseTriage() {
   updateJob({ phase: 'triage', phase_started_at: new Date().toISOString(), tier: TIER });
   log(`━━━ Phase 1/4: TRIAGE ${IS_TIER5 ? '(TIER-5: Sonnet JD)' : '(Haiku)'} ━━━`);
   if (DRY_RUN) { log('(dry-run) skipping triage'); return { ok: true, advanced: 0 }; }
-  const triageArgs = ['--daily-limit=300', ...SCOPED_ARGS];
-  if (IS_TIER5) triageArgs.push('--use-sonnet-jd');
+  // 2026-05-20 — Process All is gated by an explicit cost-confirmation
+  // modal (Run Batch $25 / Process All $250 / Monthly $500). That user
+  // consent IS the throughput governor; hidden caps below it break the
+  // contract — the cost preview promises "drain the pipeline" but the
+  // caps silently truncate.
+  //
+  // triage.mjs has TWO caps:
+  //   --limit=N         per-session (default 50, the binding constraint)
+  //   --daily-limit=N   cumulative daily (default 200)
+  //
+  // The original bug only overrode --daily-limit=300, leaving --limit at
+  // its 50 default → each Process All run processed at most 50 URLs
+  // regardless of confirmed cost. Now we override BOTH to effectively-
+  // unlimited values (high enough to drain any realistic queue), letting
+  // the modal's confirmed spend be the only governor.
+  //
+  // Mitchell can re-impose caps via:
+  //   - PROCESS_ALL_TRIAGE_LIMIT env var (sets both --limit and
+  //     --daily-limit to the same value), OR
+  //   - triage_daily_limit in data/dashboard-settings.json (only used
+  //     by the scheduled-launchd path, not Process All).
+  //
+  // Standalone `node triage.mjs --limit=N --daily-limit=M` still works
+  // for ad-hoc capped runs outside Process All.
+  const triageArgs = [...SCOPED_ARGS];
+  const envCap = process.env.PROCESS_ALL_TRIAGE_LIMIT;
+  const cap = envCap && /^\d+$/.test(envCap) ? parseInt(envCap, 10) : 100000;
+  triageArgs.push(`--limit=${cap}`);
+  triageArgs.push(`--daily-limit=${cap}`);
+  log(envCap
+    ? `  cap: --limit=${cap} --daily-limit=${cap} (from PROCESS_ALL_TRIAGE_LIMIT env)`
+    : `  cap: --limit=${cap} --daily-limit=${cap} (effectively unlimited — per cost-confirmation contract)`);
+  if (TIER_OBJ.triage_use_sonnet_jd) triageArgs.push('--use-sonnet-jd');
+
+  // 2026-05-20 — Per-run telemetry. Capture pipeline size BEFORE triage so we
+  // can detect cap-hits in post (if processed < pipeline_size_before AND cap
+  // < pipeline_size_before, the cap bound the throughput). Surfaced via
+  // pipeline-process-state.json + the dashboard Batch Status modal.
+  let pipelineBefore = 0;
+  try {
+    const pipeText = readFileSync(join(ROOT, 'data/pipeline.md'), 'utf-8');
+    pipelineBefore = (pipeText.match(/^- \[ \] https?:\/\//gm) || []).length;
+  } catch {}
+  updateJob({ triage_pipeline_before: pipelineBefore, triage_cap: cap });
+
   const code = await runScript('triage.mjs', triageArgs);
-  // Parse triage's output for advanced count (best-effort)
-  let advanced = 0;
+  // Parse triage's output for advanced + skipped + dead counts.
+  let advanced = 0, skipped = 0, dead = 0;
   try {
     const logText = readFileSync(LOG_PATH, 'utf-8');
-    const m = logText.match(/Advanced:\s+(\d+)/);
-    if (m) advanced = parseInt(m[1], 10);
+    const mA = logText.match(/Advanced:\s+(\d+)/);     if (mA) advanced = parseInt(mA[1], 10);
+    const mS = logText.match(/Skipped:\s+(\d+)/);      if (mS) skipped  = parseInt(mS[1], 10);
+    const mD = logText.match(/Dead:\s+(\d+)/);         if (mD) dead     = parseInt(mD[1], 10);
   } catch {}
   if (code !== 0) {
     log(`✗ triage failed (exit ${code})`);
     return { ok: false, advanced };
   }
-  log(`✓ triage complete — ${advanced} advanced to batch queue`);
-  updateJob({ triage_advanced: advanced });
-  return { ok: true, advanced };
+  // Cap-hit detection: triage processed (advanced + skipped + dead) URLs;
+  // if that equals the cap AND pipeline still has un-touched rows, the cap
+  // was the binding constraint.
+  const processed = advanced + skipped + dead;
+  let pipelineAfter = 0;
+  try {
+    const pipeText = readFileSync(join(ROOT, 'data/pipeline.md'), 'utf-8');
+    pipelineAfter = (pipeText.match(/^- \[ \] https?:\/\//gm) || []).length;
+  } catch {}
+  const capHit = processed >= cap && pipelineAfter > 0;
+  const missed = capHit ? pipelineAfter : 0;
+  log(`✓ triage complete — pipeline ${pipelineBefore} → ${pipelineAfter} · processed ${processed} (advanced=${advanced} skipped=${skipped} dead=${dead}) · cap=${cap}${capHit ? ` · ⚠ CAP HIT — ${missed} URL(s) missed this run` : ''}`);
+  updateJob({
+    triage_advanced: advanced,
+    triage_skipped:  skipped,
+    triage_dead:     dead,
+    triage_processed: processed,
+    triage_pipeline_after: pipelineAfter,
+    triage_cap_hit:  capHit,
+    triage_missed_this_run: missed,
+  });
+  return { ok: true, advanced, skipped, dead, processed, cap_hit: capHit, missed };
 }
 
 // 2026-05-19 cohesion fix (Mitchell postmortem) — count rows in the
@@ -204,8 +281,12 @@ async function phaseBatch() {
       log(`  batch queue empty (round ${round}) — drain complete`);
       break;
     }
-    log(`━━━ Batch round ${round}/${MAX_ROUNDS} — ${beforeCount} items in queue ━━━`);
-    const code = await runScript('batch-runner-batches.mjs', ['run', `--limit=${PER_ROUND_LIMIT}`, ...SCOPED_ARGS]);
+    log(`━━━ Batch round ${round}/${MAX_ROUNDS} — ${beforeCount} items in queue · eval=${TIER_OBJ.eval_model} ━━━`);
+    // 2026-05-20 — pass tier's eval model to batch-runner-batches.mjs
+    // (which already accepts --model). Tier 1+2 use Sonnet (default);
+    // Tier 3 uses Opus for the A-G report writing.
+    const batchArgs = ['run', `--limit=${PER_ROUND_LIMIT}`, `--model=${TIER_OBJ.eval_model}`, ...SCOPED_ARGS];
+    const code = await runScript('batch-runner-batches.mjs', batchArgs);
     if (code !== 0) {
       log(`✗ batch round ${round} failed (exit ${code})`);
       return { ok: false };
@@ -268,9 +349,18 @@ async function phaseBatch() {
 //   4. Aggregates polished/failed/skipped + cumulative cost into the job state
 //      object so dashboard SSE bars can render real counts.
 async function phasePolish() {
-  const enabled = String(process.env.POLISH_PACK_ENABLED || '').trim() === '1';
-  if (!enabled) {
-    log('━━━ Phase 2.6/4: POLISH PACKS ━━━ (skipped — POLISH_PACK_ENABLED!=1)');
+  // 2026-05-20 — Auto-escalation rule: polish ALWAYS runs on ≥4.0 rows
+  // post-eval (the "premium treatment for anything that passes triage and
+  // proves itself with a ≥4.0 score" contract). The POLISH_PACK_ENABLED
+  // env var is retained as a kill-switch — set to '0' to explicitly
+  // disable polish for a run. Default is now ON.
+  const killSwitch = String(process.env.POLISH_PACK_ENABLED || '').trim() === '0';
+  if (killSwitch) {
+    log('━━━ Phase 2.6/4: POLISH PACKS ━━━ (skipped — POLISH_PACK_ENABLED=0 kill-switch)');
+    return { ok: true, skipped: true };
+  }
+  if (!TIER_OBJ.auto_polish_on_high_score) {
+    log(`━━━ Phase 2.6/4: POLISH PACKS ━━━ (skipped — tier ${TIER_OBJ.id} disables auto-polish)`);
     return { ok: true, skipped: true };
   }
   updateJob({ phase: 'polish', phase_started_at: new Date().toISOString() });
@@ -294,8 +384,18 @@ async function phasePolish() {
   // Polish applies to Evaluated (pre-application materials), Applied (waiting-for-recruiter
   // tightening), and Interview (closing-stage materials). All three states ship downstream
   // artifacts that benefit from the loop.
+  // 2026-05-20 — Polish only fires on ≥POLISH_FLOOR_SCORE (default 4.5) rows.
+  // The original Tier-5 rule polished every Apply-Now-statused row; that was
+  // expensive ($60/pack × 17 rows = $1,000+ per run) and disproportionate to
+  // the marginal-quality lift. Now: only invest in cream-of-the-crop.
   const polishStatuses = new Set(['Evaluated', 'Applied', 'Interview']);
-  const ranked = (apq.ranked || []).filter(r => r && r.num && polishStatuses.has(r.status)).slice(0, topN);
+  const ranked = (apq.ranked || [])
+    .filter(r => r && r.num && polishStatuses.has(r.status))
+    .filter(r => {
+      const s = parseFloat(r.eval_score ?? r.score ?? 0);
+      return Number.isFinite(s) && s >= POLISH_FLOOR_SCORE;
+    })
+    .slice(0, topN);
 
   let polished = 0;
   let failed = 0;
@@ -358,13 +458,17 @@ async function phaseMergeTracker() {
 // and generates the full pack directory (cover-letter, form-fields, interview-prep, ATS check, etc.).
 // We cap N at TIER5_PREGEN_TOP_N (default 10) so a single run can't auto-generate 50 packs.
 async function phasePregen() {
-  if (!IS_TIER5) {
-    log('━━━ Phase 2.75/4: APPLY-PACK PREGEN ━━━ (skipped — Tier-5 only)');
+  // 2026-05-20 — Auto-escalation rule: apply-pack pregen ALWAYS runs on
+  // ≥AUTO_ESCALATE_FLOOR (4.0) rows post-eval. Was previously gated to
+  // Tier-5 only with a top-10 cap; now caps at TIER5_PREGEN_TOP_N (default
+  // raised from 10 → 50 since the floor is now ≥4.0 not ≥4.5).
+  if (!TIER_OBJ.auto_pregen_on_high_score) {
+    log(`━━━ Phase 2.75/4: APPLY-PACK PREGEN ━━━ (skipped — tier ${TIER_OBJ.id} disables auto-pregen)`);
     return { ok: true, skipped: true };
   }
   updateJob({ phase: 'pregen', phase_started_at: new Date().toISOString() });
-  const topN = Math.max(1, Math.min(50, parseInt(process.env.TIER5_PREGEN_TOP_N || '10', 10)));
-  log(`━━━ Phase 2.75/4: APPLY-PACK PREGEN (TIER-5) — top ${topN} rows ≥${HIGH_CONFIDENCE_PREGEN_FLOOR} ━━━`);
+  const topN = Math.max(1, Math.min(50, parseInt(process.env.TIER5_PREGEN_TOP_N || '50', 10)));
+  log(`━━━ Phase 2.75/4: APPLY-PACK PREGEN — top ${topN} rows ≥${HIGH_CONFIDENCE_PREGEN_FLOOR} (auto-escalation, tier ${TIER_OBJ.id}) ━━━`);
   if (DRY_RUN) { log('(dry-run) skipping pregen'); return { ok: true, generated: 0 }; }
   const code = await runScript('scripts/build-apply-packs.mjs', [`--top=${topN}`, '--include-todays-top']);
   if (code !== 0) {

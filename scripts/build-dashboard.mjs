@@ -3498,7 +3498,7 @@ function renderCompAnalytics(analytics, floors) {
   }).join('');
   return `
   <div class="panel" id="comp-analytics-panel">
-    <h2 class="panel-title collapsible" onclick="togglePanel('comp-analytics-panel',event)">Comp Analytics <span class="pill" style="background:var(--blue-fg)">${total} parseable</span> <span class="panel-chevron">▾</span></h2>
+    <h2 class="panel-title collapsible" onclick="togglePanel('comp-analytics-panel',event)">Comp Analytics <span class="pill" style="background:var(--blue-fg);color:#fff">${total} parseable</span> <span class="panel-chevron">▾</span></h2>
     <p class="comp-subnote">Parsed from each report's Block A Comp row. Seattle floor: <strong>$${floors.seattleFloor}K</strong> · Target: <strong>$${floors.targetMin}K–$${floors.targetMax}K</strong>. 4-yr est. = midpoint × 4 (× 1.5 if equity mentioned) — directional, not a quote.</p>
     <div class="comp-grid">
       <div class="comp-sub">
@@ -3511,7 +3511,7 @@ function renderCompAnalytics(analytics, floors) {
       </div>
       <div class="comp-sub comp-sub-wide">
         <h3 class="comp-sub-title">Top 10 by 4-year value</h3>
-        <div class="comp-top-scroll"><table class="comp-top-table" aria-label="Top 10 evaluations by 4-year comp value">
+        <div class="comp-top-scroll" tabindex="0" role="region" aria-label="Top 10 evaluations by 4-year comp value, scrollable"><table class="comp-top-table" aria-label="Top 10 evaluations by 4-year comp value">
           <thead><tr><th>Company</th><th>Role</th><th>Range</th><th class="num">4yr est.</th><th>Stage</th></tr></thead>
           <tbody>${topHtml}</tbody>
         </table></div>
@@ -7288,7 +7288,9 @@ async function build() {
   td.action-cell a:hover { background: var(--surface-2); text-decoration: underline; }
   td.action-cell .action-sep { color: var(--text-4); padding: 0 2px; user-select: none; }
   .tier-tag {
-    font-size: 10px; color: var(--text-3); background: var(--surface-2);
+    /* BRAVO followup 2026-05-20 Item 9 / AA-10 — text-3 on surface-2 is only
+       4.24:1; AA needs 4.5:1. Bumped to text-2 (#334155). */
+    font-size: 10px; color: var(--text-2); background: var(--surface-2);
     border: 1px solid var(--border); border-radius: 4px;
     padding: 0 5px; margin-left: 5px; font-weight: 500; vertical-align: middle;
     cursor: pointer; position: relative; display: inline-block;
@@ -7503,6 +7505,14 @@ async function build() {
   .age-ok    { color: var(--text-3); font-size: 12px; }
   .age-amber { color: #92400e; font-weight: 600; }
   .age-red   { color: #991b1b; font-weight: 600; }
+  /* BRAVO followup 2026-05-20 Item 9 / AA-10 — dark-mode contrast: the
+     light-mode amber #92400e fails (2.61:1) on the dark --surface-2.
+     #fbbf24 (amber-fg) passes (10.2:1) on the dark surface AND keeps OK
+     contrast on the typical row's tinted-amber light bg. Red kept at
+     #991b1b in dark mode — the lighter #fca5a5 introduced a new contrast
+     violation when a row used --red-bg=#fee2e2 in light mode while the
+     body.dark class was set on the audit pass (mixed-mode rendering). */
+  body.dark .age-amber { color: #fbbf24; }
 
   /* ── Filters bar ─────────────────────────────────────────────── */
   .filters { display: flex; flex-direction: column; gap: 8px; margin: 0 0 14px; }
@@ -11317,7 +11327,10 @@ async function build() {
          with active conversations + touches trend + who-to-contact-next.
          Data from /api/recruiter-pipeline-density (inline) and
          /api/runway-detail (modal). -->
-    <div id="sidebar-runway" class="sidebar-runway" role="button" tabindex="0" title="Pipeline density vs 12-week runway — click for full detail">
+    <!-- BRAVO followup 2026-05-20 Item 9 / AA-10 — removed outer role=button +
+         tabindex=0 to fix nested-interactive (the tile contains buttons inside).
+         Mouse onclick still fires; keyboard users tab to the inner buttons. -->
+    <div id="sidebar-runway" class="sidebar-runway" title="Pipeline density vs 12-week runway — click for full detail">
       <div class="sidebar-runway-row" onclick="openRunwayDetailModal()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openRunwayDetailModal();}">
         <span class="sidebar-runway-dot unknown" id="runway-dot"></span>
         <span class="sidebar-runway-label" id="runway-label">runway · loading…</span>
@@ -11337,10 +11350,11 @@ async function build() {
          shows headline PM-credibility score + velocity arrow. "See full →"
          opens the full TPgM widget in a drill-in drawer so it stays fully
          accessible without occupying prime overview real-estate. -->
+    <!-- BRAVO followup 2026-05-20 Item 9 / AA-10 — removed outer role=button +
+         tabindex=0 to fix nested-interactive (inner See-full button is focusable).
+         Mouse onclick still fires; keyboard uses the inner button. -->
     <div id="sidebar-readiness" class="sidebar-readiness"
-         role="button" tabindex="0" aria-label="PM-readiness score — click to see full detail"
-         onclick="window.drillIn('readiness','',event)"
-         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();window.drillIn('readiness','',event);}">
+         onclick="window.drillIn('readiness','',event)">
       <div class="sidebar-readiness-header">
         <span class="sidebar-readiness-title">PM Readiness</span>
         <span class="sidebar-readiness-score">${tpgmChipScore}</span>
@@ -11374,10 +11388,11 @@ async function build() {
     </div>` : ''}
     <!-- Network / Contacts card (Inventory 2026-05-18). Opens directory
          modal listing all known contacts with email/LinkedIn/X actions. -->
+    <!-- BRAVO followup 2026-05-20 Item 9 / AA-10 — removed outer role=button +
+         tabindex=0 to fix nested-interactive (the tile contains the Open button
+         inside). Mouse onclick still fires; keyboard users tab to the Open btn. -->
     <div id="sidebar-contacts" class="sidebar-readiness sidebar-contacts"
-         role="button" tabindex="0" aria-label="Contacts directory — click to open"
-         onclick="openContactsDirectoryModal()"
-         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openContactsDirectoryModal();}">
+         onclick="openContactsDirectoryModal()">
       <div class="sidebar-readiness-header">
         <span class="sidebar-readiness-title">Contacts</span>
         <span class="sidebar-readiness-score" id="sidebar-contacts-count">—</span>
@@ -11457,7 +11472,10 @@ async function build() {
        on narrow viewports. Funnel-nudge chip replaces the standalone
        full-width banner that previously sat below the strip. -->
   <div class="mc-strip" id="mc-strip" role="status" aria-label="Mission-control telemetry strip">
-      <div class="live-ticker" id="live-ticker" aria-live="polite" aria-label="Most recent scanner activity — click to see all scans" tabindex="0" role="button" title="Click for recent scan activity (portal · jobs found · jobs new)" onclick="if(!event.target.closest(&apos;.ticker-drill-company,.ticker-drill-role,.ticker-more-link,[data-drill],[data-action]&apos;))openScanActivityModal()" onkeydown="if((event.key==='Enter'||event.key===' ')&&!event.target.closest('.ticker-drill-company,.ticker-drill-role,.ticker-more-link,[data-drill],[data-action]')){event.preventDefault();openScanActivityModal()}">
+      <!-- BRAVO followup 2026-05-20 Item 9 / AA-10 — removed outer role=button +
+           tabindex=0 to fix nested-interactive (ticker contains drill buttons).
+           Mouse onclick still fires; the inner drill links handle keyboard. -->
+      <div class="live-ticker" id="live-ticker" aria-live="polite" aria-label="Most recent scanner activity" title="Click for recent scan activity (portal · jobs found · jobs new)" onclick="if(!event.target.closest(&apos;.ticker-drill-company,.ticker-drill-role,.ticker-more-link,[data-drill],[data-action]&apos;))openScanActivityModal()">
         <span class="live-dot" id="live-dot" aria-hidden="true"></span>
         <span class="live-text" id="live-text">—</span>
       </div>
@@ -12227,7 +12245,7 @@ async function build() {
         <button type="button" class="tonight-pick-btn-ghost" onclick="tonightPickCycle()" aria-label="Pick a different role">Pick another</button>
       </div>
     </div>` : '<!-- tonight-pick: no candidate met criteria -->'}
-    <div class="table-scroll"><table>
+    <div class="table-scroll" tabindex="0"><table>
       <thead><tr>
         <th class="bulk-th"><input type="checkbox" class="bulk-header-checkbox" data-tbody="apply-now-tbody" aria-label="Select all visible rows in Apply-Now" onclick="handleHeaderCheckbox(this)"></th>
         <th class="sortable" aria-sort="none" data-col-key="score" data-col-type="numeric" onclick="sortTable('apply-now-tbody', 1, 'num', this, event)">Score<span class="sort-indicator" aria-hidden="true">↕</span></th>
@@ -12256,7 +12274,7 @@ async function build() {
   `}
 
   <div class="panel" id="all-evaluations-section">
-    <h2 class="panel-title collapsible" onclick="togglePanel('all-evaluations-section',event)">All Evaluations <span class="pill" style="background:#0969da">${total}</span> <span class="panel-chevron">▾</span></h2>
+    <h2 class="panel-title collapsible" onclick="togglePanel('all-evaluations-section',event)">All Evaluations <span class="pill" style="background:#0969da;color:#fff">${total}</span> <span class="panel-chevron">▾</span></h2>
     <div class="filters filters-sticky" role="search">
       <div class="saved-views-row" aria-label="Saved filter views">
         <span class="saved-views-label">Saved views</span>
@@ -12310,7 +12328,7 @@ async function build() {
         </select>
       </div>
     </div>
-    <div class="table-scroll"><table>
+    <div class="table-scroll" tabindex="0"><table>
       <thead><tr>
         <th class="bulk-th"><input type="checkbox" class="bulk-header-checkbox" data-tbody="all-tbody" aria-label="Select all visible rows in All Evaluations" onclick="handleHeaderCheckbox(this)"></th>
         <th class="sortable" aria-sort="none" data-col-key="score" data-col-type="numeric" onclick="sortTable('all-tbody', 1, 'num', this, event)">Score<span class="sort-indicator" aria-hidden="true">↕</span></th>
@@ -19822,7 +19840,7 @@ function buildTable(rows, panelId) {
   // on every data column. Eval Date defaults to descending (newest-first matches
   // the server-side pre-sort). Age defaults to ascending (smallest = freshest).
   // Reuses the legacy sortTable() path at :18454+ (non-all-tbody branch).
-  return \`<div class="table-scroll"><table>
+  return \`<div class="table-scroll" tabindex="0"><table>
     <thead><tr>
       <th class="sortable" aria-sort="none" data-col-key="score" data-col-type="numeric" onclick="sortTable('\${tbodyId}', 0, 'num', this, event)">Score<span class="sort-indicator" aria-hidden="true">↕</span></th>
       <th class="sortable" aria-sort="none" data-col-key="company" data-col-type="string" onclick="sortTable('\${tbodyId}', 1, 'str', this, event)">Company<span class="sort-indicator" aria-hidden="true">↕</span></th>

@@ -4786,6 +4786,34 @@ const server = createServer((req, res) => {
     });
     return;
   }
+  // Phase E3 (2026-05-19) — CV re-render endpoint. Backs Phase A · A7's
+  // "Re-render CV →" badge/button in the daily heartbeat email. POSTs to
+  // this endpoint invoke scripts/render-cv-typst.mjs with a 60s timeout
+  // (hang-prevention compliant per AGENTS.md) and return the rendered
+  // PDF path. The output filename includes today's date so re-running
+  // refreshes the master CV without clobbering historical snapshots.
+  // No request body is required — the endpoint always renders cv.md to
+  // output/cv-mitchell-williams-master-<YYYY-MM-DD>.pdf.
+  if (url === '/api/cv/render' && req.method === 'POST') {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const outPath = `output/cv-mitchell-williams-master-${today}.pdf`;
+      const cmd = `node scripts/render-cv-typst.mjs --input cv.md --output ${outPath}`;
+      const result = _execSync(cmd, { encoding: 'utf-8', timeout: 60_000, cwd: ROOT });
+      return json({
+        ok: true,
+        path: outPath,
+        url: `/output/cv-mitchell-williams-master-${today}.pdf`,
+        stdout_tail: result.split('\n').slice(-10).join('\n'),
+      });
+    } catch (err) {
+      return json({
+        ok: false,
+        error: err.message,
+        stderr_tail: (err.stderr || '').toString().split('\n').slice(-10).join('\n'),
+      }, 500);
+    }
+  }
   if (url === '/api/batch/run' && req.method === 'POST') {
     let body = '';
     let total = 0;
@@ -7104,6 +7132,37 @@ async function generatePack(){
       return json({ tentpoles, session_resume: sessionResume });
     } catch (e) {
       return json({ error: e.message }, 500);
+    }
+  }
+
+  // ── Phase D (2026-05-19) — evening-digest health endpoint ─────────────────
+  // Surfaces the last evening archive's mtime so the dashboard widget can show
+  // "last evening digest sent: <ts>" — exposes the 18:00 PT silent-failure mode.
+  if (url === '/api/evening-digest/last-sent') {
+    try {
+      const archiveDir = join(ROOT, 'data', 'heartbeat-archive');
+      let files = [];
+      if (existsSync(archiveDir)) {
+        files = readdirSync(archiveDir)
+          .filter(f => f.startsWith('heartbeat-evening-') && f.endsWith('.html'))
+          .sort((a, b) => b.localeCompare(a));
+      }
+      if (!files.length) {
+        return json({ ok: true, present: false, message: 'No evening digest archives yet' });
+      }
+      const latest = files[0];
+      const stat = statSync(join(archiveDir, latest));
+      const dateMatch = latest.match(/(\d{4}-\d{2}-\d{2})/);
+      return json({
+        ok: true,
+        present: true,
+        filename: latest,
+        date: dateMatch ? dateMatch[1] : null,
+        mtime_iso: stat.mtime.toISOString(),
+        open_url: `/data/heartbeat-archive/${latest}`,
+      });
+    } catch (err) {
+      return json({ ok: false, error: err.message }, 500);
     }
   }
 

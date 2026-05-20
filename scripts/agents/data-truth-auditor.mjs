@@ -44,6 +44,8 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from '
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
+// Phase D (2026-05-19): checkHeartbeatTokensDrift() uses globalThis.fetch
+// (Node 18+) with AbortSignal.timeout for hang-prevention compliance.
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..', '..');
@@ -58,6 +60,7 @@ const flags = {
   audit:             args.includes('--audit'),
   checkAttribution:  args.includes('--check-attribution'),
   checkDates:        args.includes('--check-dates'),
+  checkTokens:       args.includes('--check-tokens'),  // Phase D (2026-05-19)
   all:               args.includes('--all'),
   json:              args.includes('--json'),
   help:              args.includes('--help') || args.includes('-h'),
@@ -77,6 +80,10 @@ Flags:
                        dashboard build resolves to an existing file.
   --check-dates        Sweep lib/*.mjs for hardcoded "Today is YYYY-MM-DD"
                        literals (the CRIT-2 pattern from the γ audit).
+  --check-tokens       Verify dashboard HTML contains the canonical colour
+                       values from lib/heartbeat-tokens.json (Phase D,
+                       2026-05-19). Tries staging URL first; falls back to
+                       local dashboard/index.html. (Phase C drift check)
   --all                Run every check, write the audit report to disk.
   --json               Emit JSON instead of human-readable text (where
                        applicable).
@@ -364,6 +371,140 @@ function checkSilentZeroPatterns() {
   };
 }
 
+// ── Sweep 5: Heartbeat-tokens drift check (Phase D, 2026-05-19) ───────────
+// Phase C introduced lib/heartbeat-tokens.json as the shared design source of
+// truth for dashboard and email colour tokens. This check verifies the
+// dashboard's rendered HTML still reflects the canonical token values.
+//
+// Strategy:
+//   1. Read lib/heartbeat-tokens.json — extract canonical CSS variable values.
+//   2. Try to fetch https://staging-dashboard.careers-ops.com/ with a 10s
+//      AbortSignal. On network failure / timeout, fall back to reading
+//      dashboard/index.html directly (the built file).
+//   3. Grep the rendered HTML for each canonical token value. PASS if all
+//      canonical values are present; WARN/FAIL for any that are absent.
+//
+// Hang-prevention: fetch uses AbortSignal.timeout(10_000). Body read is
+// bounded by the same signal via Promise.race with a 30s manual timer.
+
+async function checkHeartbeatTokensDrift() {
+  const tokensPath = join(ROOT, 'lib', 'heartbeat-tokens.json');
+  if (!existsSync(tokensPath)) {
+    return {
+      ok: false,
+      summary: 'lib/heartbeat-tokens.json not found — Phase C tokens check skipped',
+      findings: [{ severity: 'HIGH', file: 'lib/heartbeat-tokens.json', line: 0, pattern: 'File missing — install Phase C (PR #56) first' }],
+    };
+  }
+
+  let tokens;
+  try {
+    tokens = JSON.parse(readFileSync(tokensPath, 'utf-8'));
+  } catch (e) {
+    return {
+      ok: false,
+      summary: `lib/heartbeat-tokens.json parse error: ${e.message}`,
+      findings: [{ severity: 'HIGH', file: 'lib/heartbeat-tokens.json', line: 0, pattern: e.message }],
+    };
+  }
+
+  // Extract canonical color values from dashboard.tokens_dark
+  const canonicalTokens = {};
+  const darkTokens = tokens?.dashboard?.tokens_dark || {};
+  for (const [k, v] of Object.entries(darkTokens)) {
+    if (typeof v === 'string' && v.startsWith('#')) canonicalTokens[k] = v;
+  }
+  // Also include email light tokens (they appear in the built email archives)
+  const emailLight = tokens?.email?.light || {};
+  for (const [k, v] of Object.entries(emailLight)) {
+    if (typeof v === 'string' && v.startsWith('#')) canonicalTokens[`email.light.${k}`] = v;
+  }
+
+  if (Object.keys(canonicalTokens).length === 0) {
+    return {
+      ok: true,
+      summary: 'lib/heartbeat-tokens.json has no #hex colour values to check — no drift to detect',
+      findings: [],
+    };
+  }
+
+  // ── Acquire HTML to grep ────────────────────────────────────────────────
+  let htmlContent = null;
+  let source = 'unknown';
+
+  // Try network fetch first (staging URL, no auth required)
+  const STAGING_URL = 'https://staging-dashboard.careers-ops.com/';
+  try {
+    const FETCH_TIMEOUT_MS = 10_000;
+    const BODY_TIMEOUT_MS  = 30_000;
+
+    const controller = new AbortController();
+    const fetchTimer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+    const resp = await fetch(STAGING_URL, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'career-ops-data-truth-auditor/1.0' },
+    });
+    clearTimeout(fetchTimer);
+
+    if (resp.ok) {
+      // Body read with independent timer (hang-prevention rule 2)
+      const bodyTimer = setTimeout(() => controller.abort(), BODY_TIMEOUT_MS);
+      htmlContent = await resp.text();
+      clearTimeout(bodyTimer);
+      source = `fetch:${STAGING_URL}`;
+    }
+  } catch (_fetchErr) {
+    // Network unavailable or timeout — fall through to local file
+  }
+
+  // Fallback: read the built dashboard/index.html
+  if (!htmlContent) {
+    const localPath = join(ROOT, 'dashboard', 'index.html');
+    if (existsSync(localPath)) {
+      htmlContent = readFileSync(localPath, 'utf-8');
+      source = `local:dashboard/index.html`;
+    }
+  }
+
+  if (!htmlContent) {
+    return {
+      ok: false,
+      summary: 'Could not acquire dashboard HTML (network unavailable + dashboard/index.html missing)',
+      findings: [{ severity: 'MEDIUM', file: 'dashboard/index.html', line: 0, pattern: 'File missing; run `node scripts/build-dashboard.mjs` first' }],
+    };
+  }
+
+  // ── Token presence check ─────────────────────────────────────────────────
+  const findings = [];
+  const checked = [];
+  for (const [tokenName, canonicalValue] of Object.entries(canonicalTokens)) {
+    const present = htmlContent.includes(canonicalValue);
+    checked.push({ tokenName, canonicalValue, present });
+    if (!present) {
+      findings.push({
+        severity: 'WARN',
+        file: source,
+        line: 0,
+        claim: tokenName,
+        context_snippet: `Expected ${canonicalValue} from heartbeat-tokens.json[${tokenName}] — not found in rendered HTML`,
+        pattern: `Token ${tokenName}=${canonicalValue} absent from dashboard HTML (source: ${source})`,
+      });
+    }
+  }
+
+  const passCount = checked.filter(c => c.present).length;
+  return {
+    ok: findings.length === 0,
+    findings,
+    summary: findings.length === 0
+      ? `All ${passCount} heartbeat token values present in dashboard HTML (source: ${source})`
+      : `${findings.length}/${checked.length} heartbeat token(s) missing from dashboard HTML — Phase C token drift detected (source: ${source})`,
+    source,
+    checked_count: checked.length,
+  };
+}
+
 // ── Compose audit report ───────────────────────────────────────────────────
 
 function composeReport(results) {
@@ -396,44 +537,56 @@ function composeReport(results) {
   return lines.join('\n');
 }
 
-// ── Main ────────────────────────────────────────────────────────────────────
+// ── Main (async wrapper for heartbeat-tokens drift check) ──────────────────
 
-const results = {};
+async function main() {
+  const results = {};
 
-if (flags.checkAttribution) {
-  results['False attribution sweep'] = checkFalseAttributions();
-}
-if (flags.checkDates) {
-  results['Hardcoded date sweep'] = checkHardcodedDates();
-}
-if (flags.audit || flags.all) {
-  results['Inventory consistency'] = checkInventoryConsistency();
-  results['Silent-zero patterns'] = checkSilentZeroPatterns();
-}
+  if (flags.checkAttribution) {
+    results['False attribution sweep'] = checkFalseAttributions();
+  }
+  if (flags.checkDates) {
+    results['Hardcoded date sweep'] = checkHardcodedDates();
+  }
+  if (flags.audit || flags.all) {
+    results['Inventory consistency'] = checkInventoryConsistency();
+    results['Silent-zero patterns'] = checkSilentZeroPatterns();
+  }
+  // Phase D (2026-05-19) — heartbeat-tokens drift check. Runs on --check-tokens
+  // or --all. The async fetch is await-ed so the result lands before output.
+  if (flags.checkTokens || flags.all) {
+    results['Heartbeat-tokens drift'] = await checkHeartbeatTokensDrift();
+  }
 
-if (flags.json) {
-  console.log(JSON.stringify(results, null, 2));
-} else {
-  for (const [name, r] of Object.entries(results)) {
-    const status = r.ok ? '✓' : '✗';
-    console.log(`${status} ${name}: ${r.summary}`);
-    if (!r.ok && r.findings?.length) {
-      for (const f of r.findings.slice(0, 10)) {
-        console.log(`    ${f.file || f.metric || '?'}${f.line ? `:${f.line}` : ''} — ${f.literal || f.claim || f.pattern || ''}`);
-      }
-      if (r.findings.length > 10) {
-        console.log(`    ... +${r.findings.length - 10} more`);
+  if (flags.json) {
+    console.log(JSON.stringify(results, null, 2));
+  } else {
+    for (const [name, r] of Object.entries(results)) {
+      const status = r.ok ? '✓' : '✗';
+      console.log(`${status} ${name}: ${r.summary}`);
+      if (!r.ok && r.findings?.length) {
+        for (const f of r.findings.slice(0, 10)) {
+          console.log(`    ${f.file || f.metric || '?'}${f.line ? `:${f.line}` : ''} — ${f.literal || f.claim || f.pattern || ''}`);
+        }
+        if (r.findings.length > 10) {
+          console.log(`    ... +${r.findings.length - 10} more`);
+        }
       }
     }
   }
+
+  if (flags.all) {
+    const out = composeReport(results);
+    const outPath = join(ROOT, 'data', `data-truth-audit-${TODAY}.md`);
+    writeFileSync(outPath, out);
+    console.log(`\nReport written: ${outPath}`);
+  }
+
+  const anyFindings = Object.values(results).some(r => !r.ok);
+  process.exit(anyFindings ? 1 : 0);
 }
 
-if (flags.all) {
-  const out = composeReport(results);
-  const outPath = join(ROOT, 'data', `data-truth-audit-${TODAY}.md`);
-  writeFileSync(outPath, out);
-  console.log(`\nReport written: ${outPath}`);
-}
-
-const anyFindings = Object.values(results).some(r => !r.ok);
-process.exit(anyFindings ? 1 : 0);
+main().catch(err => {
+  console.error('[data-truth-auditor] fatal:', err.message);
+  process.exit(1);
+});

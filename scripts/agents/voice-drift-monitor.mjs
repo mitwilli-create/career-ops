@@ -31,7 +31,7 @@
  * polish-pack post-ship gate.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, readdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
@@ -157,17 +157,96 @@ function filesFromGitDiff(diffRange) {
   }
 }
 
+// ── Phase D (2026-05-19) — heartbeat archive surface ────────────────────────
+// Heartbeat emails (morning + evening) contribute to the Mitchell-voice corpus.
+// The morning email is action-driven cards; the evening is system-state
+// narrative. Both surfaces are tagged with analyzer_surface so the drift
+// report can pinpoint which email drifted.
+//
+// HTML stripping: simple tag-removal regex. No cheerio dep required; the
+// heartbeat emails are MJML-generated with predictable structure.
+
+function stripHtml(html) {
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function checkHeartbeatArchive(filepath, surface) {
+  if (!existsSync(filepath)) return null;
+  let rawHtml;
+  try { rawHtml = readFileSync(filepath, 'utf8'); }
+  catch (e) { return { file: filepath, error: e.message, analyzer_surface: surface }; }
+  const text = stripHtml(rawHtml);
+  if (text.length < 50) return { file: filepath, error: 'stripped text too short — parse issue', analyzer_surface: surface };
+  const stats = computeStats(text);
+  const baseline = loadCorpusBaselineStats();
+  const score = driftScore(stats, baseline);
+  return {
+    file: filepath.replace(REPO_ROOT + '/', ''),
+    analyzer_surface: surface,
+    stats,
+    baseline,
+    drift_score: score,
+    drift_band: score < 0.2 ? 'CLEAR' : score < 0.4 ? 'LOW' : score < 0.7 ? 'MED' : 'HIGH',
+    flag: score >= THRESHOLD,
+  };
+}
+
+function filesFromHeartbeatArchives() {
+  // Returns [{filepath, surface}] for all morning + evening archives.
+  const archiveDir = join(REPO_ROOT, 'data', 'heartbeat-archive');
+  if (!existsSync(archiveDir)) return [];
+  let files;
+  try { files = readdirSync(archiveDir); } catch { return []; }
+  const out = [];
+  for (const f of files) {
+    if (f.startsWith('heartbeat-evening-') && f.endsWith('.html')) {
+      out.push({ filepath: join(archiveDir, f), surface: 'heartbeat-evening' });
+    } else if (f.startsWith('heartbeat-') && f.endsWith('.html') && !f.startsWith('heartbeat-evening-')) {
+      out.push({ filepath: join(archiveDir, f), surface: 'heartbeat-morning' });
+    }
+  }
+  return out;
+}
+
 function main() {
   const targets = [];
   if (arg('--file')) targets.push(arg('--file'));
   if (arg('--diff')) targets.push(...filesFromGitDiff(arg('--diff')));
   if (arg('--since')) targets.push(...filesFromGitDiff(`@{${arg('--since')}}..HEAD`));
-  if (!targets.length) {
-    console.log('usage: --file <path> | --diff <range> | --since <date>');
+
+  // Phase D (2026-05-19): --heartbeat-archives scans all heartbeat archive HTML files.
+  // Also fires implicitly when --since is used (archives may be in scope even if not
+  // git-tracked, since data/heartbeat-archive/ is gitignored).
+  const includeArchives = flag('--heartbeat-archives') || flag('--archives');
+
+  if (!targets.length && !includeArchives) {
+    console.log('usage: --file <path> | --diff <range> | --since <date> | --heartbeat-archives');
     process.exit(0);
   }
 
+  // Standard git-tracked targets
   const results = targets.map(checkFile).filter(r => r);
+
+  // Heartbeat archive targets (HTML surface, tagged by surface)
+  if (includeArchives) {
+    const archiveEntries = filesFromHeartbeatArchives();
+    for (const { filepath, surface } of archiveEntries) {
+      const r = checkHeartbeatArchive(filepath, surface);
+      if (r) results.push(r);
+    }
+  }
   const flagged = results.filter(r => r.flag);
   const date = new Date().toISOString().slice(0, 10);
   const reportPath = join(OUTPUT_DIR, `voice-drift-${date}.md`);
@@ -181,7 +260,7 @@ function main() {
     `## Per-file scores`,
     ``,
     ...results.map(r => [
-      `### \`${r.file}\` — drift ${r.drift_score?.toFixed(2) || 'err'} (${r.drift_band || 'err'})`,
+      `### \`${r.file}\`${r.analyzer_surface ? ` [surface: ${r.analyzer_surface}]` : ''} — drift ${r.drift_score?.toFixed(2) || 'err'} (${r.drift_band || 'err'})`,
       r.error ? `error: ${r.error}` : `- buzzword rate /100w: ${r.stats?.buzzwordRatePer100?.toFixed(2)} (baseline ${r.baseline?.buzzwordRatePer100?.toFixed(2)})`,
       r.error ? '' : `- Mitchell-tell rate /100w: ${r.stats?.mitchellTellRatePer100?.toFixed(2)} (baseline ${r.baseline?.mitchellTellRatePer100?.toFixed(2)})`,
       r.error ? '' : `- avg sentence words: ${r.stats?.avgSentenceWords?.toFixed(1)} (baseline ${r.baseline?.avgSentenceWords?.toFixed(1)})`,

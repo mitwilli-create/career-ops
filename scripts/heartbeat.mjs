@@ -42,6 +42,18 @@ import { renderSystemBanner, renderDiscardPatternSection, renderRunwayAlert, ren
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
 
+// ── Design tokens (Phase E2 dark-first, 2026-05-19) ────────────────────────
+// Source of truth: lib/heartbeat-tokens.json. Phase E2 closes the Phase C
+// deferral and ships dark-first per the 7/7 universal real-council
+// ratification of Decision A (.claude/audit/email-review/
+// council-divergence-analysis.md finding-014). Decision B (token shape)
+// and Decision C (H2 = 16px / 700 / no UPPERCASE / no border-left) carry
+// over unchanged.
+const TOKENS = JSON.parse(readFileSync(
+  new URL('../lib/heartbeat-tokens.json', import.meta.url),
+  'utf-8'
+));
+
 // Inline pipeline-density compute for heartbeat (decoupled from the live
 // dashboard server). Matches the shape renderRunwayAlert expects from
 // dashboard-server.mjs's computeRecruiterPipelineDensity.
@@ -118,32 +130,46 @@ function loadSecrets() {
 // Wrap a numeric score in a color-coded pill. The thresholds match the
 // system's own classification (4.5+ = priority, 4.0–4.49 = qualifying,
 // below = filtered). Used in tables and inline.
-// Brand palette — same tokens as the dashboard's mission-control dark mode
-// + light-mode-safe equivalents for email clients that don't honor
-// prefers-color-scheme. Single source of truth at lib/dashboard-tokens.mjs;
-// duplicated inline here so heartbeat.mjs stays a one-file zero-dep launchd
-// job (the tokens module would force an ESM import + path resolution that
-// breaks the heartbeat's standalone-script invariant).
+// Brand palette — pulled from lib/heartbeat-tokens.json email.dark.*.
+//
+// Phase E2 (2026-05-19) — DARK-FIRST. The Phase C deferral is closed.
+// Council Decision A (dark-first MJML body) was ratified 7/7 universal in
+// the real-council Phase E1 fan-out — see
+// .claude/audit/email-review/council-divergence-analysis.md finding 014.
+//
+// Body default is now dark (#06070d). The @media (prefers-color-scheme: light)
+// overlay in templates/heartbeat.mjml flips on clients where the user has
+// explicitly opted into light. The meta name="supported-color-schemes" /
+// "color-scheme" pair (Decision-A Gmail iOS fix) remains in the template
+// head and is still load-bearing for partial-inversion prevention.
+//
+// BRAND.green / .greenFg semantics intentionally preserved across the
+// inversion — the ~30 inline-style call sites downstream still reference
+// these fields by name and would not benefit from a renaming pass. The
+// hexes shift to the dark-mode equivalents:
+//   .green   = #4ade80 (matrix-green on dark, accent_deep in tokens)
+//   .greenFg = #86efac (high-contrast green-fg / link color)
+const _emailDark = TOKENS.email.dark;
+const _colorDark = TOKENS.color.dark;
 const BRAND = {
-  // Light-mode (default — broad client support)
-  bg:           '#f8fafc',
-  surface:      '#ffffff',
-  surface2:     '#f1f5f9',
-  border:       '#e2e8f0',
-  text:         '#0f172a',
-  text2:        '#1e293b',
-  text3:        '#475569',
-  text4:        '#64748b',
-  green:        '#16a34a',     // matrix-green, brand accent
-  greenFg:      '#15803d',
-  greenBg:      '#dcfce7',
-  greenBorder:  '#86efac',
-  blue:         '#2563eb',
-  blueBg:       '#dbeafe',
-  amber:        '#8a6840',
-  amberBg:      '#f4ede1',
-  red:          '#991b1b',
-  redBg:        '#fee2e2',
+  bg:           _emailDark.body_bg,                  // #06070d
+  surface:      _emailDark.panel_bg,                 // #11131c
+  surface2:     _emailDark.panel_strong_bg,          // #181b27
+  border:       _emailDark.border,                   // #232737
+  text:         _colorDark.text.t1,                  // #fafafa
+  text2:        _emailDark.body_color,               // #e4e4e7
+  text3:        _emailDark.muted_color,              // #b8b8c0
+  text4:        _emailDark.chrome_color,             // #9a9aa6
+  green:        _emailDark.accent_deep,              // #4ade80 — matrix-green on dark
+  greenFg:      _emailDark.accent,                   // #86efac — high-contrast green-fg
+  greenBg:      _emailDark.accent_bg,                // rgba(22,163,74,0.12)
+  greenBorder:  _emailDark.accent_border,            // rgba(22,163,74,0.30)
+  blue:         _colorDark.semantic.info,            // #94a3b8
+  blueBg:       _emailDark.info_bg,                  // rgba(100,116,139,0.22)
+  amber:        _colorDark.semantic.warning,         // #c2a571
+  amberBg:      _emailDark.warning_bg,               // rgba(168,123,72,0.22)
+  red:          _emailDark.danger_fg,                // #fca5a5
+  redBg:        _emailDark.danger_bg,                // rgba(220,38,38,0.18)
 };
 
 function scorePill(score) {
@@ -214,11 +240,13 @@ function renderContentHtml(markdownBody) {
     .replace(/<td>/g, `<td class="border" style="padding:8px 10px;border-bottom:1px solid ${BRAND.surface2};vertical-align:top;color:${BRAND.text2};font-size:13px">`)
     .replace(/<blockquote>/g, `<blockquote class="card" style="margin:12px 0;padding:10px 14px;border-left:3px solid ${BRAND.green};background:${BRAND.greenBg};color:${BRAND.text};border-radius:0 8px 8px 0;font-size:13px;line-height:1.5">`)
     .replace(/<h1>/g, `<h1 class="text-strong accent" style="font-size:22px;margin:0 0 6px;color:${BRAND.greenFg};font-weight:700;letter-spacing:-0.01em">`)
-    // h2 → compact section label style (matches dashboard --fs-meta + section heading pattern)
-    // Left border in accent green stays; reduced font and margin so it doesn't compete with §1
-    .replace(/<h2>/g, `<h2 class="text-strong" style="font-size:13px;margin:20px 0 6px;color:${BRAND.text3};font-weight:700;border-left:3px solid ${BRAND.green};padding-left:10px;letter-spacing:0.04em;text-transform:uppercase">`)
-    // h3 → per-role name / sub-section, subtle, no decoration
-    .replace(/<h3>/g, `<h3 class="text-strong" style="font-size:14px;margin:14px 0 5px;color:${BRAND.text2};font-weight:600;letter-spacing:-0.01em">`)
+    // Phase C Decision C — H2 promoted to a real section opener (matches dashboard
+    // H2 spec): 16px / 700 / -0.3px ls / no UPPERCASE / no border-left. The old
+    // console-style 13px UPPERCASE treatment was demoted to H3 (below).
+    .replace(/<h2>/g, `<h2 class="text-strong" style="font-size:16px;margin:22px 0 10px;color:${BRAND.text};font-weight:700;letter-spacing:-0.3px;line-height:1.3">`)
+    // Phase C Decision C — H3 inherits the demoted console-style: 13px UPPERCASE
+    // with the green accent border-left. Reads as a subsection label INSIDE an H2.
+    .replace(/<h3>/g, `<h3 class="text-strong" style="font-size:13px;margin:16px 0 8px;color:${BRAND.text3};font-weight:700;border-left:3px solid ${BRAND.greenFg};padding-left:10px;letter-spacing:0.04em;text-transform:uppercase;line-height:1.3">`)
     .replace(/<a /g, `<a class="accent" style="color:${BRAND.greenFg};text-decoration:underline;text-underline-offset:2px;font-weight:500" `)
     .replace(/<code>/g, `<code style="background:${BRAND.surface2};padding:1px 5px;border-radius:4px;font-family:'JetBrains Mono','SF Mono',ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:${BRAND.greenFg}">`)
     .replace(/<ul>/g, `<ul style="margin:6px 0 10px;padding-left:20px;color:${BRAND.text2}">`)
@@ -257,28 +285,61 @@ function renderContentHtml(markdownBody) {
 // Replaces the binary pink banner with 3 tiers: approaching / at / past
 // threshold. Reads the same `density` object as renderRunwayAlert but
 // renders a tiered visual. color tokens are inline hex (no CSS vars — Gmail).
+//
+// Phase A · A4 · HIGH-2 (2026-05-19) — the 2px red/amber border now fires
+// ONLY when state transitioned from healthy → stretched/critical in the last
+// 24h. On unchanged or healthy state, the panel renders with a quiet 1px
+// neutral border so a stable runway state does not compete with TONIGHT'S
+// APPLY for attention.
+function readPriorRunwayHealth() {
+  try {
+    const y = new Date(TARGET_DATE + 'T12:00:00');
+    y.setDate(y.getDate() - 1);
+    const yDateStr = y.toISOString().slice(0, 10);
+    const yPath = join(ROOT, `data/heartbeat-archive/heartbeat-${yDateStr}.html`);
+    if (!existsSync(yPath)) return null;
+    const text = readFileSync(yPath, 'utf-8');
+    if (text.includes('Past runway floor')) return 'critical';
+    if (text.includes('Cushion shrinking')) return 'stretched';
+    if (text.includes('On track')) return 'healthy';
+    return null;
+  } catch { return null; }
+}
+
 function renderRunwayAlertTiered(density) {
   if (!density || !density.ok) {
-    return '<div style="margin:12px 0;padding:10px;background:#fef9c3;border-radius:6px;color:#854d0e;font-size:12px">Runway alert: pipeline-density data unavailable.</div>';
+    return `<div class="runway-unavailable" style="margin:12px 0;padding:10px;background:${BRAND.amberBg};border:1px solid rgba(168,123,72,0.35);border-radius:6px;color:${BRAND.amber};font-size:12px">Runway alert: pipeline-density data unavailable.</div>`;
   }
   const { health, runway_alert, contacts, velocity, runway_weeks } = density;
-  // Tier definitions matching Datadog/Sentry/PagerDuty tier patterns
+  // Phase C — dark-mode runway tiers. Same semantic mapping (green/amber/red),
+  // dark-palette equivalents from BRAND so the panel sits on dark body cleanly.
   const tiers = {
-    healthy:   { bg: '#dcfce7', border: '#86efac', fg: '#166534', icon: '🟢', label: 'On track',        aria: 'Green circle: on track' },
-    stretched: { bg: '#fef3c7', border: '#f59e0b', fg: '#92400e', icon: '🟡', label: 'Cushion shrinking', aria: 'Yellow circle: cushion shrinking' },
-    critical:  { bg: '#fee2e2', border: '#f87171', fg: '#991b1b', icon: '🔴', label: 'Past runway floor', aria: 'Red circle: past runway floor' },
+    healthy:   { bg: BRAND.greenBg, border: BRAND.greenBorder, fg: BRAND.greenFg, icon: '🟢', label: 'On track',        aria: 'Green circle: on track' },
+    stretched: { bg: BRAND.amberBg, border: 'rgba(168,123,72,0.45)', fg: BRAND.amber, icon: '🟡', label: 'Cushion shrinking', aria: 'Yellow circle: cushion shrinking' },
+    critical:  { bg: BRAND.redBg,   border: 'rgba(220,38,38,0.45)',  fg: BRAND.red,   icon: '🔴', label: 'Past runway floor', aria: 'Red circle: past runway floor' },
   };
   const t = tiers[health] || tiers.stretched;
-  const actionLink = health === 'critical'
+
+  const priorHealth = readPriorRunwayHealth();
+  const escalated = priorHealth === 'healthy' && (health === 'stretched' || health === 'critical');
+  const quietPanel = !escalated;
+
+  const bg = quietPanel ? BRAND.surface : t.bg;
+  const borderColor = quietPanel ? BRAND.border : t.border;
+  const borderWidth = quietPanel ? '1px' : '2px';
+  const fg = quietPanel ? BRAND.text3 : t.fg;
+  const valueFg = quietPanel ? BRAND.text2 : t.fg;
+
+  const actionLink = (health === 'critical' && !quietPanel)
     ? ` <a href="${DASHBOARD_PUBLIC_URL}/?focus=outreach" style="color:${t.fg};font-size:11px;text-decoration:underline">→ action</a>`
     : '';
   return `
-<div style="margin:14px 0;padding:12px 14px;background:${t.bg};border:2px solid ${t.border};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
-  <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${t.fg};margin-bottom:6px">
+<div class="runway-card" style="margin:14px 0;padding:12px 14px;background:${bg};border:${borderWidth} solid ${borderColor};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+  <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${fg};margin-bottom:6px">
     <span role="img" aria-label="${t.aria}">${t.icon}</span> Runway — ${runway_weeks}-week window · <strong>${t.label}</strong>${actionLink}
   </div>
-  <div style="font-size:13px;color:${t.fg};font-weight:${health === 'critical' ? 700 : 600};margin-bottom:8px;line-height:1.4">${runway_alert}</div>
-  <div style="display:flex;gap:18px;flex-wrap:wrap;font-size:11.5px;color:#374151">
+  <div style="font-size:13px;color:${valueFg};font-weight:${health === 'critical' && !quietPanel ? 700 : 600};margin-bottom:8px;line-height:1.4">${runway_alert}</div>
+  <div style="display:flex;gap:18px;flex-wrap:wrap;font-size:11.5px;color:${BRAND.text2}">
     <span><strong>${contacts.active}</strong> active</span>
     <span><strong>${contacts.responded}</strong> replied (${Math.round(contacts.response_rate*100)}%)</span>
     <span><strong>${velocity.touches_last_7d}</strong>/7d</span>
@@ -328,18 +389,18 @@ function renderSignalPulseSection() {
 
   const rows = top5.map(d => {
     const srcLink = d.source_url
-      ? ` <a href="${d.source_url}" style="color:#15803d;text-decoration:underline;font-size:11px">see source →</a>`
+      ? ` <a href="${d.source_url}" style="color:${BRAND.greenFg};text-decoration:underline;font-size:11px">see source →</a>`
       : '';
-    const companyLink = `<a href="${deeplink('company', d.company)}" style="display:inline-block;padding:2px 8px;background:#dbeafe;color:#1e40af;border-radius:12px;font-weight:600;font-size:11px;text-decoration:none">${d.company}</a>`;
+    const companyLink = `<a href="${deeplink('company', d.company)}" style="display:inline-block;padding:2px 8px;background:${BRAND.blueBg};color:${BRAND.blue};border-radius:12px;font-weight:600;font-size:11px;text-decoration:none">${d.company}</a>`;
     return `<tr>
       <td style="padding:5px 10px 5px 0;vertical-align:top;width:120px">${companyLink}</td>
-      <td style="padding:5px 0;font-size:12px;color:#374151;vertical-align:top;line-height:1.45">${d.summary.slice(0, 160)}${srcLink}</td>
+      <td style="padding:5px 0;font-size:12px;color:${BRAND.text2};vertical-align:top;line-height:1.45">${d.summary.slice(0, 160)}${srcLink}</td>
     </tr>`;
   }).join('');
 
   return `
-<div style="margin:14px 0;padding:12px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
-  <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#075985;margin-bottom:8px">
+<div class="signal-pulse-card" style="margin:14px 0;padding:12px 14px;background:${BRAND.surface};border:1px solid ${BRAND.border};border-left:3px solid ${BRAND.blue};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+  <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${BRAND.blue};margin-bottom:8px">
     <span role="img" aria-label="Satellite dish: signal pulse">📡</span> Signal Pulse — ${top5.length} delta${top5.length === 1 ? '' : 's'} · last 24h
   </div>
   <table style="border-collapse:collapse;width:100%">${rows}</table>
@@ -371,9 +432,10 @@ function renderNextMovesSection() {
   if (!nm || !Array.isArray(nm.top_moves) || nm.top_moves.length === 0) return '';
 
   const d = nm.deadline_stats || {};
-  const urgencyColor = d.days_left <= 30 ? '#dc2626' : d.days_left <= 60 ? '#d97706' : '#16a34a';
-  const urgencyBg    = d.days_left <= 30 ? '#fef2f2' : d.days_left <= 60 ? '#fffbeb' : '#f0fdf4';
-  const urgencyBorder = d.days_left <= 30 ? '#fca5a5' : d.days_left <= 60 ? '#fcd34d' : '#86efac';
+  // Dark-mode urgency palette — saturated semantic tokens against the dark body.
+  const urgencyColor   = d.days_left <= 30 ? BRAND.red : d.days_left <= 60 ? BRAND.amber : BRAND.greenFg;
+  const urgencyBg      = d.days_left <= 30 ? BRAND.redBg : d.days_left <= 60 ? BRAND.amberBg : BRAND.greenBg;
+  const urgencyBorder  = d.days_left <= 30 ? 'rgba(220,38,38,0.45)' : d.days_left <= 60 ? 'rgba(168,123,72,0.45)' : 'rgba(22,163,74,0.45)';
 
   const top3 = nm.top_moves.slice(0, 3);
   const restCount = Math.max(0, nm.top_moves.length - 3);
@@ -384,21 +446,21 @@ function renderNextMovesSection() {
     let ctaHref = `${DASHBOARD_PUBLIC_URL}/`;
     if (cta.kind === 'open-row-drawer' && cta.row_num != null) ctaHref = deeplink('row', cta.row_num);
     else if (cta.kind === 'open-company-profile' && cta.slug) ctaHref = `${DASHBOARD_PUBLIC_URL}/?focus=company-${cta.slug}`;
-    return `<div style="margin:6px 0;padding:10px 12px;background:#ffffff;border:1px solid #e5e7eb;border-left:3px solid ${urgencyColor};border-radius:6px">
+    return `<div class="next-move-row" style="margin:6px 0;padding:10px 12px;background:${BRAND.surface};border:1px solid ${BRAND.border};border-left:3px solid ${urgencyColor};border-radius:6px">
       <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:4px">
         <span style="font-size:10px;font-weight:700;color:${urgencyColor};text-transform:uppercase;letter-spacing:0.05em">${m.rank}. ${escapeHtml(kindLabel)}</span>
-        <span style="font-size:10px;color:#6b7280;font-family:monospace">~${m.cost_hours}h · ${m.composite_score}</span>
+        <span style="font-size:10px;color:${BRAND.text3};font-family:monospace">~${m.cost_hours}h · ${m.composite_score}</span>
       </div>
-      <div style="font-size:13px;font-weight:600;color:#111827;line-height:1.4;margin-bottom:3px">${escapeHtml(m.label || '')}</div>
-      <div style="font-size:11px;color:#6b7280;line-height:1.5">${escapeHtml(m.evidence || '')}</div>
+      <div style="font-size:13px;font-weight:600;color:${BRAND.text};line-height:1.4;margin-bottom:3px">${escapeHtml(m.label || '')}</div>
+      <div style="font-size:11px;color:${BRAND.text3};line-height:1.5">${escapeHtml(m.evidence || '')}</div>
       <a href="${ctaHref}" style="display:inline-block;margin-top:6px;color:${urgencyColor};font-size:11px;text-decoration:underline">Open →</a>
     </div>`;
   }).join('');
 
   const seeAllHref = `${DASHBOARD_PUBLIC_URL}/?focus=next-moves`;
-  return `<div class="next-moves-card" style="margin:6px 0 8px;padding:14px 16px;background:${urgencyBg};border:2px solid ${urgencyBorder};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+  return `<div class="next-moves-card" style="margin:6px 0 8px;padding:14px 16px;background:${urgencyBg};border:1px solid ${urgencyBorder};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
   <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${urgencyColor};margin-bottom:4px">Next moves · ${d.days_left != null ? d.days_left + ' days left' : ''}</div>
-  <div style="font-size:12px;color:#374151;margin-bottom:8px">${d.apps_applied || 0} applied of ~${(d.apps_applied||0)+(d.apps_needed_estimate||0)} needed · <strong>${d.apps_per_week_required || '—'}/week required</strong></div>
+  <div style="font-size:12px;color:${BRAND.text2};margin-bottom:8px">${d.apps_applied || 0} applied of ~${(d.apps_applied||0)+(d.apps_needed_estimate||0)} needed · <strong style="color:${BRAND.text}">${d.apps_per_week_required || '—'}/week required</strong></div>
   ${moveCards}
   ${restCount > 0 ? `<div style="margin-top:8px"><a href="${seeAllHref}" style="color:${urgencyColor};font-size:11px;text-decoration:none">+${restCount} more ranked action${restCount === 1 ? '' : 's'} · skip-this-week list →</a></div>` : ''}
 </div>`.trim();
@@ -412,12 +474,59 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
+// ── WHAT'S NEW OVERNIGHT (slot 5) ───────────────────────────────────────────
+// Phase E2 finding-002 (council-divergence-analysis.md): render as triage-only
+// discovery — NO Apply CTAs (those live in TONIGHT'S APPLY / NEXT MOVES),
+// cap to 3 inline role-lines, "+N more" link for overflow, collapsed-by-default
+// via <details><summary>, imperative-fragment copy (no editorializing).
+//
+// The role lines preserve byte-identical tracking-critical patterns: role num,
+// score (X.XX/5), company name, role title — exactly the same substrings the
+// markdown body emits, so regex audits across morning + dashboard stay aligned.
+function renderWhatsNewSection(whatsNew) {
+  if (!whatsNew || whatsNew.length === 0) {
+    // Quiet-state: nothing new overnight. Render a single muted line.
+    return `<details class="whats-new-card" style="margin:6px 0 8px;padding:8px 14px;background:${BRAND.surface};border:1px solid ${BRAND.border};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+  <summary style="cursor:pointer;list-style:none;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${BRAND.text4};outline:none">What's New Overnight — 0 above ${APPLY_NOW_FLOOR.toFixed(1)}</summary>
+  <div style="font-size:12px;color:${BRAND.text3};margin-top:8px;line-height:1.45">Batch ran — nothing new scored ≥ ${APPLY_NOW_FLOOR.toFixed(1)}. Queue unchanged.</div>
+</details>`.trim();
+  }
+
+  const top = whatsNew.slice(0, 3);
+  const overflow = Math.max(0, whatsNew.length - top.length);
+
+  const rows = top.map(r => {
+    const num = r.num;
+    const score = r.score ? r.score.toFixed(2) : '—';
+    const company = (r.company || '').slice(0, 40);
+    const role = (r.role || '').slice(0, 70);
+    // Triage-only role-line — imperative fragment. The score + role num are
+    // tracking-critical and preserved byte-identical from applications.md.
+    return `<div style="margin:4px 0;font-size:12px;color:${BRAND.text2};line-height:1.45;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+      <span style="color:${BRAND.text4};font-family:'JetBrains Mono','SF Mono',ui-monospace,monospace">#${num}</span>
+      <strong style="color:${BRAND.text}">${escapeHtml(company)}</strong>
+      <span style="color:${BRAND.text3}"> · ${escapeHtml(role)}</span>
+      <span style="color:${BRAND.greenFg};font-variant-numeric:tabular-nums;margin-left:6px">${score}/5</span>
+      <span style="color:${BRAND.text4};margin-left:6px">· evaluated today</span>
+    </div>`;
+  }).join('');
+
+  const overflowLine = overflow > 0
+    ? `<div style="margin:8px 0 0;font-size:11px;color:${BRAND.text3}">+${overflow} more — <a href="${DASHBOARD_PUBLIC_URL}/?focus=apply-now" style="color:${BRAND.greenFg};text-decoration:none">see dashboard →</a></div>`
+    : '';
+
+  return `<details class="whats-new-card" style="margin:6px 0 8px;padding:10px 14px;background:${BRAND.surface};border:1px solid ${BRAND.border};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+  <summary style="cursor:pointer;list-style:none;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${BRAND.text3};outline:none">What's New Overnight — ${whatsNew.length} above ${APPLY_NOW_FLOOR.toFixed(1)} <span style="color:${BRAND.text4};font-weight:500;text-transform:none;letter-spacing:0;margin-left:4px">· tap to expand</span></summary>
+  <div style="margin-top:8px">${rows}${overflowLine}</div>
+</details>`.trim();
+}
+
 function renderTonightsApplySection(applyNow) {
   if (!applyNow || applyNow.length === 0) {
-    return `<div class="tonight-card" style="margin:6px 0 8px;padding:14px 16px;background:#f0fdf4;border:2px solid #86efac;border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
-  <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#166534;margin-bottom:8px">Queue empty</div>
-  <div style="font-size:14px;color:#14532d;margin-bottom:12px;line-height:1.4">No actionable roles — batch may not have run or all scored roles are already acted on.</div>
-  <a href="${DASHBOARD_PUBLIC_URL}/?focus=apply-now" style="display:inline-block;background:#16a34a;color:#ffffff;padding:10px 20px;border-radius:8px;font-weight:700;font-size:13px;text-decoration:none">Open dashboard →</a>
+    return `<div class="tonight-card" style="margin:6px 0 8px;padding:14px 16px;background:${BRAND.greenBg};border:2px solid ${BRAND.greenBorder};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+  <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${BRAND.greenFg};margin-bottom:8px">Queue empty</div>
+  <div style="font-size:14px;color:${BRAND.text};margin-bottom:12px;line-height:1.4">No actionable roles — batch may not have run or all scored roles are already acted on.</div>
+  <a href="${DASHBOARD_PUBLIC_URL}/?focus=apply-now" style="display:inline-block;background:${BRAND.green};color:#ffffff;padding:10px 20px;border-radius:8px;font-weight:700;font-size:13px;text-decoration:none">Open dashboard →</a>
 </div>`.trim();
   }
 
@@ -442,20 +551,20 @@ function renderTonightsApplySection(applyNow) {
   const ageLabel = daysOld !== null ? `${daysOld}d ago` : '';
   const scoreDisplay = pick.score ? pick.score.toFixed(2) : '—';
 
-  return `<div class="tonight-card" style="margin:6px 0 8px;padding:16px 18px;background:#f0fdf4;border:2px solid #86efac;border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
-  <div style="font-size:12px;color:#166534;margin-bottom:10px;line-height:1.3">
-    <span style="display:inline-block;background:#dcfce7;color:#166534;border:1px solid #86efac;padding:2px 9px;border-radius:999px;font-weight:700;font-size:11px;margin-right:6px">${scoreDisplay}</span>
-    <strong style="font-size:15px;color:#14532d">${pick.company}</strong>
-    <span style="color:#374151;font-size:14px"> — ${(pick.role || '').slice(0, 70)}</span>
-    ${ageLabel ? `<span style="font-size:11px;color:#6b7280;margin-left:6px">${ageLabel}</span>` : ''}
+  return `<div class="tonight-card" style="margin:6px 0 8px;padding:16px 18px;background:${BRAND.greenBg};border:2px solid ${BRAND.greenBorder};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+  <div style="font-size:12px;color:${BRAND.greenFg};margin-bottom:10px;line-height:1.3">
+    <span style="display:inline-block;background:rgba(22,163,74,0.20);color:${BRAND.greenFg};border:1px solid ${BRAND.greenBorder};padding:2px 9px;border-radius:999px;font-weight:700;font-size:11px;margin-right:6px">${scoreDisplay}</span>
+    <strong style="font-size:15px;color:${BRAND.text}">${pick.company}</strong>
+    <span style="color:${BRAND.text2};font-size:14px"> — ${(pick.role || '').slice(0, 70)}</span>
+    ${ageLabel ? `<span style="font-size:11px;color:${BRAND.text3};margin-left:6px">${ageLabel}</span>` : ''}
   </div>
   <div style="margin-bottom:12px">
-    <a href="${primaryCtaHref}" style="display:inline-block;background:#16a34a;color:#ffffff;padding:10px 20px;border-radius:8px;font-weight:700;font-size:13px;text-decoration:none;margin-right:6px" aria-label="Open apply pack for ${pick.company}">Open apply pack →</a>
-    ${packUrl ? `<a href="${packUrl}" style="display:inline-block;background:transparent;color:#15803d;padding:9px 16px;border-radius:8px;border:1px solid #86efac;font-weight:600;font-size:12px;text-decoration:none;margin-right:6px" aria-label="Apply pack for ${pick.company}">Apply Pack</a>` : ''}
-    <a href="${rowDeeplink}" style="display:inline-block;background:transparent;color:#374151;padding:9px 14px;border-radius:8px;border:1px solid #e5e7eb;font-weight:500;font-size:12px;text-decoration:none" aria-label="Open report for ${pick.company}">Report</a>
+    <a href="${primaryCtaHref}" style="display:inline-block;background:${BRAND.green};color:#ffffff;padding:10px 20px;border-radius:8px;font-weight:700;font-size:13px;text-decoration:none;margin-right:6px" aria-label="Open apply pack for ${pick.company}">Open apply pack →</a>
+    ${packUrl ? `<a href="${packUrl}" style="display:inline-block;background:transparent;color:${BRAND.greenFg};padding:9px 16px;border-radius:8px;border:1px solid ${BRAND.greenBorder};font-weight:600;font-size:12px;text-decoration:none;margin-right:6px" aria-label="Apply pack for ${pick.company}">Apply Pack</a>` : ''}
+    <a href="${rowDeeplink}" style="display:inline-block;background:transparent;color:${BRAND.text2};padding:9px 14px;border-radius:8px;border:1px solid ${BRAND.border};font-weight:500;font-size:12px;text-decoration:none" aria-label="Open report for ${pick.company}">Report</a>
   </div>
-  <div style="font-size:12px;color:#6b7280;line-height:1.4">
-    ${applyNow.length > 1 ? `<a href="${DASHBOARD_PUBLIC_URL}/?focus=apply-now" style="color:#16a34a;text-decoration:none;font-size:11px">+${applyNow.length - 1} more in queue →</a>` : ''}
+  <div style="font-size:12px;color:${BRAND.text3};line-height:1.4">
+    ${applyNow.length > 1 ? `<a href="${DASHBOARD_PUBLIC_URL}/?focus=apply-now" style="color:${BRAND.greenFg};text-decoration:none;font-size:11px">+${applyNow.length - 1} more in queue →</a>` : ''}
   </div>
 </div>`.trim();
 }
@@ -480,8 +589,8 @@ function renderDueTodaySection() {
     const title = c.title_at_send || c.contact_type || '';
     const days = outreachDaysSince(c);
     const urgencyLevel = outreachUrgency(c);
-    const urgencyColor = urgencyLevel === 'overdue' ? '#dc2626' : '#a87b48';
-    const urgencyBg    = urgencyLevel === 'overdue' ? '#fee2e2' : '#f4ede1';
+    const urgencyColor = urgencyLevel === 'overdue' ? BRAND.red : BRAND.amber;
+    const urgencyBg    = urgencyLevel === 'overdue' ? BRAND.redBg : BRAND.amberBg;
 
       // Mailto link
     let actionLink = '';
@@ -495,32 +604,32 @@ function renderDueTodaySection() {
         : c;
       const { url: mailtoUrl } = buildOutreachMailto(contactForMailto, 'Mitchell');
       if (emailStr) {
-        actionLink = `<a href="${mailtoUrl}" style="display:inline-block;background:#16a34a;color:#ffffff;padding:4px 10px;border-radius:6px;font-weight:600;font-size:11px;text-decoration:none;margin-left:8px">Send email</a>`;
+        actionLink = `<a href="${mailtoUrl}" style="display:inline-block;background:${BRAND.green};color:#ffffff;padding:4px 10px;border-radius:6px;font-weight:600;font-size:11px;text-decoration:none;margin-left:8px">Send email</a>`;
       } else if (c.contact_id && c.contact_id.startsWith('https://')) {
-        actionLink = `<a href="${c.contact_id}" style="display:inline-block;background:transparent;color:#5a76a6;padding:3px 9px;border-radius:6px;border:1px solid #c0cad9;font-weight:500;font-size:11px;text-decoration:none;margin-left:8px">LinkedIn</a>`;
+        actionLink = `<a href="${c.contact_id}" style="display:inline-block;background:transparent;color:${BRAND.blue};padding:3px 9px;border-radius:6px;border:1px solid rgba(148,163,184,0.35);font-weight:500;font-size:11px;text-decoration:none;margin-left:8px">LinkedIn</a>`;
       }
     } catch { /* non-fatal */ }
 
     const nx = c.next_action;
-    const stratBadge = nx ? `<span style="display:inline-block;background:#e8edf4;color:#3d4f6b;padding:2px 7px;border-radius:999px;font-size:10px;font-weight:600;margin-right:4px">S${nx.strategy_id}</span>` : '';
+    const stratBadge = nx ? `<span style="display:inline-block;background:${BRAND.blueBg};color:${BRAND.blue};padding:2px 7px;border-radius:999px;font-size:10px;font-weight:600;margin-right:4px">S${nx.strategy_id}</span>` : '';
     const daysBadge = days !== null
       ? `<span style="display:inline-block;background:${urgencyBg};color:${urgencyColor};padding:2px 7px;border-radius:999px;font-size:10px;font-weight:600;margin-right:4px">day ${days}</span>`
       : '';
 
-    return `<div style="padding:8px 0;border-bottom:1px solid #f4f4f6;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+    return `<div style="padding:8px 0;border-bottom:1px solid ${BRAND.border};font-family:-apple-system,BlinkMacSystemFont,sans-serif">
   <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
     ${daysBadge}${stratBadge}
-    <strong style="font-size:13px;color:#111827">${c.name || c.contact_id}</strong>
-    <span style="font-size:12px;color:#6b7280"> · ${company}${title ? ', ' + title : ''}</span>
+    <strong style="font-size:13px;color:${BRAND.text}">${c.name || c.contact_id}</strong>
+    <span style="font-size:12px;color:${BRAND.text3}"> · ${company}${title ? ', ' + title : ''}</span>
     ${actionLink}
   </div>
-  ${nx && nx.rationale ? `<div style="font-size:11px;color:#6b7280;margin-top:3px;padding-left:2px;line-height:1.3">${nx.rationale.slice(0, 100)}${nx.rationale.length > 100 ? '…' : ''}</div>` : ''}
+  ${nx && nx.rationale ? `<div style="font-size:11px;color:${BRAND.text3};margin-top:3px;padding-left:2px;line-height:1.3">${nx.rationale.slice(0, 100)}${nx.rationale.length > 100 ? '…' : ''}</div>` : ''}
 </div>`;
   }).join('');
 
-  const html = `<div class="due-today-card" style="margin:4px 0 8px;padding:10px 14px;background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+  const html = `<div class="due-today-card" style="margin:4px 0 8px;padding:10px 14px;background:${BRAND.surface};border:1px solid ${BRAND.border};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
 ${rows}
-<div style="margin-top:8px;font-size:11px;color:#9ca3af"><a href="${DASHBOARD_PUBLIC_URL}/?focus=outreach" style="color:#16a34a;text-decoration:none;font-size:11px">log-touch.mjs →</a></div>
+<div style="margin-top:8px;font-size:11px;color:${BRAND.text4}"><a href="${DASHBOARD_PUBLIC_URL}/?focus=outreach" style="color:${BRAND.greenFg};text-decoration:none;font-size:11px">log-touch.mjs →</a></div>
 </div>`;
 
   return { html, label, count: allDue.length };
@@ -568,6 +677,7 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
   const runwayState    = meta.runwayState || 'healthy';
   const outreachDue    = meta.outreachDue || 0;
   const applyNow       = meta.applyNow    || [];
+  const whatsNew       = meta.whatsNew    || [];
 
   // H3 — no-news early-exit check
   const deltaScore    = meta.deltaScore   || 0;
@@ -594,30 +704,35 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
     try { todaysFocus = await getTodaysFocus(meta); } catch {}
   }
   const todaysFocusHtml = todaysFocus
-    ? `<div class="focus-callout" style="margin:4px 0 8px;padding:11px 14px;background:#f0fdf4;border-left:4px solid #16a34a;border-radius:0 8px 8px 0;font-size:13px;color:#14532d;line-height:1.5;font-style:italic">${todaysFocus}</div>`
+    ? `<div class="focus-callout" style="margin:4px 0 8px;padding:11px 14px;background:${BRAND.greenBg};border-left:4px solid ${BRAND.greenFg};border-radius:0 8px 8px 0;font-size:13px;color:${BRAND.text};line-height:1.5;font-style:italic">${todaysFocus}</div>`
     : '';
 
   // Combine §1–§4 into one actionSectionsHtml blob (single mj-text → single
   // MJML table, not 4 separate mj-sections). Section labels are inline spans
   // matching dashboard section-label style (uppercase, small, muted).
   function sectionLabel(text, accent = false) {
-    const color = accent ? '#16a34a' : '#6b7280';
+    const color = accent ? BRAND.greenFg : BRAND.text3;
     return `<div style="font-size:10px;font-weight:700;letter-spacing:0.10em;text-transform:uppercase;color:${color};margin:10px 0 3px;font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif">${text}</div>`;
   }
 
   let actionSectionsHtml = '';
+  // Phase E2 (2026-05-19) section order, per real-council finding-001:
+  //   1. TONIGHT'S APPLY → 2. NEXT MOVES → 3. DUE TODAY →
+  //   4. TODAY'S FOCUS → 5. WHAT'S NEW OVERNIGHT → (DELTAS conditional)
+  // Slot 5 (not slot 4) preserves the single-CTA dominance hierarchy: action
+  // surfaces come first, then the coaching directive, THEN the discovery surface
+  // (triage-only, no CTAs — see renderWhatsNewSection finding-002).
+  //
   // §1 TONIGHT'S APPLY — accent label (leads the email)
-  // Reordered 2026-05-19 (Phase A · A1 · CRITICAL-1) — single primary action
-  // card now sits ABOVE NEXT MOVES so it's the first thing visible at 09:01 PT.
   actionSectionsHtml += sectionLabel("Tonight's Apply", true);
   actionSectionsHtml += tonightsApplyHtml;
-  // §1b NEXT MOVES — ranked queue underneath the primary card
+  // §2 NEXT MOVES — ranked queue underneath the primary card
   const nextMovesHtml = renderNextMovesSection();
   if (nextMovesHtml) {
     actionSectionsHtml += sectionLabel('Next 3 actions queued', false);
     actionSectionsHtml += nextMovesHtml;
   }
-  // §2 DUE TODAY — show label even when empty (shows "Outreach — clear")
+  // §3 DUE TODAY — show label even when empty (shows "Outreach — clear")
   if (dueTodayHtml) {
     const dueTodayLabelText = dueTodayCount > 0
       ? `Due Today — ${dueTodayCount}`
@@ -625,15 +740,20 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
     actionSectionsHtml += sectionLabel(dueTodayLabelText);
     actionSectionsHtml += dueTodayHtml;
   }
-  // §3 DELTAS — only show when there are actual deltas
-  if (signalPulseHtml) {
-    actionSectionsHtml += sectionLabel('Deltas — Last 24h');
-    actionSectionsHtml += signalPulseHtml;
-  }
-  // §4 TODAY'S FOCUS — show only when content present
+  // §4 TODAY'S FOCUS — Haiku coaching directive (anchored to TONIGHT'S APPLY
+  // pack per finding-005 — see getTodaysFocus prompt construction below).
   if (todaysFocusHtml) {
     actionSectionsHtml += sectionLabel("Today's Focus");
     actionSectionsHtml += todaysFocusHtml;
+  }
+  // §5 WHAT'S NEW OVERNIGHT — triage-only discovery (finding-001 + finding-002).
+  // Always rendered (collapsed-by-default), so the 0-state quiet line is visible.
+  actionSectionsHtml += renderWhatsNewSection(whatsNew);
+  // (§ DELTAS — only show when there are actual signal-pulse deltas; this is
+  //  optional 24h-delta surface, not part of the main action chain.)
+  if (signalPulseHtml) {
+    actionSectionsHtml += sectionLabel('Deltas — Last 24h');
+    actionSectionsHtml += signalPulseHtml;
   }
 
   // H2 — day-over-day diff badges on KPI tiles
@@ -652,53 +772,56 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
   // Tier 5 system-status banner (calibration brief 2026-05-16)
   // Phase A · A3 · HIGH-1 (2026-05-19) — banner now renders as a one-liner with
   // a "details →" link pointing at the dashboard, not the 7-row table.
+  // Note: Phase B planned to remove this from morning + move to evening digest.
+  // Kept here for the legacy Phase E2 emission path; Phase F's dispatch design
+  // does NOT call this code (dispatch has its own status treatment in evening).
   let systemBannerHtml = '';
   try { systemBannerHtml = renderSystemBanner({ format: 'html', dashboardUrl: DASHBOARD_PUBLIC_URL }) || ''; } catch {}
 
   // Cron-health watchdog (added 2026-05-19). Auto-suppresses when all
   // tracked jobs (scan / scan-rss / scan-email) are healthy; lights up
-  // a red/amber banner when one is failing or stale. Goal: surface
-  // silent failures within 24h instead of 4 days.
+  // a red/amber banner when one is failing or stale.
   let cronHealthHtml = '';
   try { cronHealthHtml = renderCronHealthBanner({ format: 'html' }) || ''; } catch {}
 
   // CDP-attached Chrome auth-health banner — only renders if CDP is down OR
-  // LinkedIn auth has broken. Self-suppresses when healthy. Reads
-  // data/cdp-auth-state.json written by the 30-min cdp-auth-probe plist.
+  // LinkedIn auth has broken. Self-suppresses when healthy.
   let cdpAuthBannerHtml = '';
   try { cdpAuthBannerHtml = renderCdpAuthHealthSection({ format: 'html' }) || ''; } catch {}
 
   // Polish summary — last 24h of apply-pack-polish runs (added 2026-05-19).
-  // Self-suppresses on zero runs; counts by verdict bucket (approved /
-  // needs-review / rejected / abandoned) with deep-link row IDs.
+  // Self-suppresses on zero runs.
   let polishSummaryHtml = '';
   try { polishSummaryHtml = (await renderPolishSummarySection({ format: 'html', sinceHours: 24 })) || ''; } catch {}
 
   // Master CV freshness banner (audit Item L 2026-05-18) — surfaces today's
   // master PDF path or a re-render reminder. Renders inline so it stacks with
   // the other system-status signals already in contextSectionsHtml.
+  // Phase A · A7 · MEDIUM-2 (2026-05-19) — render a badge/button instead of
+  // exposing the raw shell command in the email body.
+  // TODO: /api/cv/render endpoint may need to be implemented on dashboard-server.mjs
+  // in a follow-up session if the "Re-render CV →" button is clicked before it's wired.
   let cvFreshnessHtml = '';
   try {
     const cvBasename = `cv-mitchell-williams-master-${date}.pdf`;
     const cvPath = join(ROOT, 'output', cvBasename);
     if (existsSync(cvPath)) {
       cvFreshnessHtml =
-        `<p style="margin:6px 0;font-size:13px;color:#0f172a;">` +
-        `📄 <strong>Master CV ready:</strong> ` +
-        `<a href="file://${cvPath}" style="color:#15803d;text-decoration:none;">${cvBasename}</a>` +
+        `<p style="margin:6px 0;font-size:13px;color:${BRAND.text};">` +
+        `<span style="display:inline-block;background:${BRAND.green};color:#ffffff;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:600">CV ready ✓</span> ` +
+        `<a href="${DASHBOARD_PUBLIC_URL}/?focus=cv" style="color:${BRAND.greenFg};text-decoration:none;font-size:12px;margin-left:6px">download →</a>` +
         `</p>`;
     } else {
       cvFreshnessHtml =
-        `<p style="margin:6px 0;font-size:13px;color:#475569;">` +
-        `📄 <strong>Master CV:</strong> re-render via ` +
-        `<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">node scripts/render-cv-typst.mjs --input cv.md --output output/${cvBasename}</code>` +
+        `<p style="margin:6px 0;font-size:13px;color:${BRAND.text3};">` +
+        `<a href="${DASHBOARD_PUBLIC_URL}/api/cv/render" data-action="render-cv" style="display:inline-block;background:${BRAND.green};color:#ffffff;padding:7px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none">Re-render CV →</a>` +
         `</p>`;
     }
   } catch { /* non-fatal */ }
 
-  // Rejected pattern (auto-suppresses on zero discards in 7d)
-  let discardSectionHtml = '';
-  try { discardSectionHtml = renderDiscardPatternSection({ format: 'html', days: 7 }) || ''; } catch {}
+  // Rejected pattern — Phase B (2026-05-19): removed from morning HTML.
+  // Discard pattern section moved to evening digest (heartbeat-evening.mjs, Fridays).
+  const discardSectionHtml = '';  // Phase B: evening only
 
   // §5 WEEKLY GROWTH — TPgM section (Monday only, de-emphasized)
   let tpgmHeartbeatSectionHtml = '';
@@ -767,7 +890,17 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
   }
 
   // Render markdown body to styled HTML (§7 content area)
-  const contentHtml = renderContentHtml(markdownBody);
+  // Phase E2 finding-001 — strip the "What's New Overnight" section from the
+  // markdown body before HTML rendering. WHAT'S NEW OVERNIGHT now lives at
+  // slot 5 in actionSectionsHtml (renderWhatsNewSection, triage-only). The
+  // markdown body retains the section so the persisted .md archive trail is
+  // complete. Strip pattern: `## What's New Overnight` + everything until
+  // the next top-level `## ` heading.
+  const bodyForHtml = markdownBody.replace(
+    /## What's New Overnight[\s\S]*?(?=\n## |$)/,
+    ''
+  );
+  const contentHtml = renderContentHtml(bodyForHtml);
 
   // Interpolate data into the MJML template. Pre-rendered HTML blobs pass
   // through verbatim (no escapeForMjml). Scalar strings are escaped.
@@ -796,6 +929,25 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
   }
 
   return result.html || '';
+}
+
+// ── Phase F-5 dispatch dispatch (2026-05-20) ────────────────────────────────
+// HEARTBEAT_DESIGN=dispatch routes to the Vogue+Bloomberg editorial Dispatch
+// module instead of the Phase E2 emission path. Anything else (including the
+// flag being unset) keeps the existing Phase E2 path byte-identical.
+async function renderDispatchHtml(meta) {
+  const { renderDispatchMorning } = await import('./heartbeat-dispatch.mjs');
+  return renderDispatchMorning({
+    ...meta,
+    // heartbeat.mjs's meta object already contains queueCount, trackedCount,
+    // evaluatedToday, runwayState, runwayAlert, outreachDue, newRoles, topRole,
+    // applyNow, whatsNew. F-5 needs todaysFocus and density too — recompute
+    // both here so the dispatch module stays decoupled from heartbeat.mjs's
+    // private state.
+    todaysFocus: await getTodaysFocus(meta).catch(() => ''),
+    density:     computeRunwayDensityForHeartbeat(),
+    markdownBody: meta._markdownBody || '',
+  });
 }
 
 async function sendEmail({ subject, body, meta = {} }) {
@@ -828,7 +980,17 @@ async function sendEmail({ subject, body, meta = {} }) {
     }
   }
 
-  const html = await renderHtmlEmail(body, meta);
+  // Phase F-5 dispatch toggle — env-flag-conditional. Default (unset / any
+  // value other than 'dispatch') keeps the Phase E2 path BYTE-IDENTICAL.
+  let html, dispatchSubject, dispatchAttachments;
+  if (process.env.HEARTBEAT_DESIGN === 'dispatch') {
+    const r = await renderDispatchHtml({ ...meta, _markdownBody: body });
+    html = r.html;
+    dispatchSubject = r.subject;
+    dispatchAttachments = r.attachments;
+  } else {
+    html = await renderHtmlEmail(body, meta);
+  }
 
   // Archive rendered HTML for /email-review skill (added 2026-05-19).
   // The email-review-strategist orchestrator at 09:30 PT reads
@@ -842,9 +1004,10 @@ async function sendEmail({ subject, body, meta = {} }) {
     from: secrets.GMAIL_USER,
     to: secrets.HEARTBEAT_TO,
     bcc,
-    subject,
+    subject: dispatchSubject || subject,
     text: body,
     html,
+    attachments: dispatchAttachments || undefined,
   });
   return { messageId: info.messageId, bccTo: bcc || null };
 }
@@ -1044,13 +1207,58 @@ async function getTodaysFocus(metaState) {
   }
 
   const { newRoles = 0, runwayAlert = false, runwayState = 'healthy',
-          outreachDue = 0, queueCount = 0 } = metaState;
+          outreachDue = 0, queueCount = 0, applyNow = [] } = metaState;
   // Compute rough runway days from weeks env (same as computeRunwayDensityForHeartbeat)
   const runwayWeeks = parseInt(process.env.RUNWAY_WEEKS || '12');
   const runwayDays = runwayWeeks * 7;
 
   const stateStr = `{newRoles=${newRoles}, applyNowReady=${queueCount}, outreachDue=${outreachDue}, runwayDays=${runwayDays}, runwayAlert=${runwayAlert}, runwayState=${runwayState}}`;
-  const prompt = `You are Mitchell Williams's executive coach. Given today's pipeline state, in EXACTLY 1-2 sentences, what should Mitchell prioritize right now? Tone: terse, action-paired, no hedging. State: ${stateStr}. Output: plain text, no markdown, max 240 chars.`;
+
+  // Phase E2 finding-005 (council-divergence-analysis.md) — anchor the focus
+  // to the TONIGHT'S APPLY pack rather than free-form coaching. Without this
+  // anchor, the model emits assistant-cheerleader phrasing ("you've got this",
+  // "momentum is what matters") that reads as a non-sequitur after the action
+  // sections. The anchor turns it into "today, ship the OpenAI FDE pack —
+  // it's the highest-leverage move" — concrete, imperative, single-target.
+  //
+  // Fallback when queue is empty: anchor the directive to the apps-per-week
+  // runway target (recalibration), not motivational fluff.
+  const tonightsApplyPick = (applyNow && applyNow.length > 0) ? applyNow[0] : null;
+  const tonightsApplyStr = tonightsApplyPick
+    ? `{company="${tonightsApplyPick.company}", role="${(tonightsApplyPick.role || '').slice(0, 60)}", score=${tonightsApplyPick.score ? tonightsApplyPick.score.toFixed(2) : '—'}, daysSinceEval=${tonightsApplyPick.date ? Math.round((Date.now() - new Date(tonightsApplyPick.date + 'T12:00:00').getTime()) / 86400000) : '?'}}`
+    : 'EMPTY';
+
+  const prompt = tonightsApplyPick
+    ? [
+        'You are Mitchell Williams\'s executive coach writing a single-sentence directive.',
+        '',
+        `TONIGHT'S APPLY (the target you MUST anchor the directive to): ${tonightsApplyStr}`,
+        `Pipeline state: ${stateStr}`,
+        '',
+        'Write ONE imperative sentence (max 200 chars, plain text, no markdown) that tells Mitchell exactly what to do tonight, anchored to the TONIGHT\'S APPLY pack above.',
+        '',
+        'EXAMPLE GOOD: "Today, ship the OpenAI FDE pack — it\'s the highest-leverage move."',
+        'EXAMPLE GOOD: "Tonight, send the Anthropic Editorial Lead apply pack — overdue 9d, score 4.65."',
+        '',
+        'FORBIDDEN PHRASES (do NOT use): "you\'ve got this", "trust the process", "momentum is what matters", "stay focused", "keep going", "you can do this", "believe in yourself".',
+        '',
+        'Tone: terse, action-paired, no hedging, no cheerleading. The sentence must reference the specific company or role from TONIGHT\'S APPLY.',
+      ].join('\n')
+    : [
+        'You are Mitchell Williams\'s executive coach writing a single-sentence calibration message.',
+        '',
+        `Pipeline state: ${stateStr}`,
+        `Apps-per-week required to hit runway target: derive from queueCount=${queueCount}, outreachDue=${outreachDue}, runwayDays=${runwayDays}.`,
+        '',
+        'TONIGHT\'S APPLY is empty (no actionable role in the queue).',
+        '',
+        'Write ONE imperative sentence (max 200 chars, plain text, no markdown) calibrating Mitchell to the apps-per-week required to hit his runway target. Reference the empty-queue state explicitly.',
+        '',
+        'EXAMPLE GOOD: "Queue is dry — push a triage pass on the pipeline before EOD to keep the 12-week runway intact."',
+        '',
+        'FORBIDDEN PHRASES: "you\'ve got this", "trust the process", "momentum is what matters".',
+        'Tone: terse, action-paired, no hedging, no cheerleading.',
+      ].join('\n');
 
   try {
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
@@ -1099,11 +1307,19 @@ async function getTodaysFocus(metaState) {
 }
 
 function buildFocusFallback(metaState) {
-  const { newRoles = 0, runwayAlert = false, outreachDue = 0, queueCount = 0 } = metaState;
-  if (runwayAlert) return `Outreach is below your runway floor — push to 10+ touches this week to stay on track. ${queueCount} role${queueCount === 1 ? '' : 's'} are ready to apply.`;
+  // Phase E2 finding-005 — fallback also anchored to TONIGHT'S APPLY when
+  // a pick exists, so the no-LLM path mirrors the anchored-LLM path.
+  const { newRoles = 0, runwayAlert = false, outreachDue = 0, queueCount = 0, applyNow = [] } = metaState;
+  const pick = (applyNow && applyNow.length > 0) ? applyNow[0] : null;
+  if (pick) {
+    const co = pick.company || 'top role';
+    const scoreStr = pick.score ? pick.score.toFixed(2) : '—';
+    return `Tonight, ship the ${co} apply pack — ${scoreStr}/5, highest-leverage move in your queue.`;
+  }
+  if (runwayAlert) return `Queue dry + runway tight — push outreach to 10+ touches this week and run a triage pass tonight.`;
   if (newRoles > 0) return `${newRoles} new role${newRoles === 1 ? '' : 's'} scored 4.0 or above — open the top one, build your apply pack, and submit tonight.`;
   if (outreachDue > 0) return `${outreachDue} follow-up${outreachDue === 1 ? '' : 's'} due today — send them before noon so nothing stalls.`;
-  return `${queueCount} role${queueCount === 1 ? '' : 's'} ready to apply — pick the highest-scoring one and get an application out today.`;
+  return `Queue empty — run a triage pass on the pipeline before EOD to keep the runway window intact.`;
 }
 
 // ── Wave D: Day-over-day KPI diff (H2) ──────────────────────────────────────
@@ -1143,15 +1359,17 @@ function loadYesterdayKpis() {
 // delta === 0 → gray → (neutral)
 // `invert` = true for metrics where increase is bad (e.g., if any were inverted)
 function deltaBadge(current, yesterday, { invert = false } = {}) {
+  // Phase E2 (2026-05-19) — tracks BRAND so the badge inverts cleanly with
+  // the dark/light flip rather than freezing literal hexes from one mode.
   if (yesterday === null || yesterday === undefined || isNaN(current) || isNaN(yesterday)) {
-    return '<span style="font-size:10px;color:#94a3b8;margin-left:4px">—</span>';
+    return `<span style="font-size:10px;color:${BRAND.text3};margin-left:4px">—</span>`;
   }
   const delta = current - yesterday;
   if (delta === 0) {
-    return '<span style="font-size:10px;color:#94a3b8;margin-left:4px">±0</span>';
+    return `<span style="font-size:10px;color:${BRAND.text3};margin-left:4px">±0</span>`;
   }
   const positive = invert ? delta < 0 : delta > 0;
-  const color = positive ? '#16a34a' : '#dc2626';
+  const color = positive ? BRAND.green : BRAND.red;
   const arrow = delta > 0 ? '↑' : '↓';
   return `<span style="font-size:10px;font-weight:600;color:${color};margin-left:4px">${arrow}${Math.abs(delta)} vs yday</span>`;
 }
@@ -1394,12 +1612,12 @@ function formatRoleBlock(r, packEligibleNums = null) {
   const packUrl = applyPackUrl(r);
   const packAllowed = packEligibleNums == null || packEligibleNums.has(r.num);
 
-  // Primary button style (H6)
+  // Primary button style (H6) — dark-mode flavor
   const primaryBtn = (text, href, ariaSuffix = '') =>
-    `<a href="${href}" style="display:inline-block;background:#16a34a;color:#ffffff;padding:6px 14px;border-radius:6px;font-weight:600;font-size:13px;text-decoration:none;margin:2px 4px 2px 0"${ariaSuffix}>${text}</a>`;
-  // Secondary button style (H6)
+    `<a href="${href}" style="display:inline-block;background:${BRAND.green};color:#ffffff;padding:6px 14px;border-radius:6px;font-weight:600;font-size:13px;text-decoration:none;margin:2px 4px 2px 0"${ariaSuffix}>${text}</a>`;
+  // Secondary button style (H6) — transparent ghost with subtle border
   const secondaryBtn = (text, href, ariaSuffix = '') =>
-    `<a href="${href}" style="display:inline-block;background:transparent;color:#374151;padding:5px 13px;border-radius:6px;border:1px solid #d1d5db;font-weight:500;font-size:13px;text-decoration:none;margin:2px 4px 2px 0"${ariaSuffix}>${text}</a>`;
+    `<a href="${href}" style="display:inline-block;background:transparent;color:${BRAND.text2};padding:5px 13px;border-radius:6px;border:1px solid ${BRAND.border};font-weight:500;font-size:13px;text-decoration:none;margin:2px 4px 2px 0"${ariaSuffix}>${text}</a>`;
 
   const btnBits = [];
   if (url) btnBits.push(primaryBtn('Apply', url, ` aria-label="Apply to ${r.company}"`));
@@ -1707,10 +1925,11 @@ function formatPipelineFunnel(inflow, reportsToday, applyNowCount, totalTracked)
   return out;
 }
 
+// Phase A · A10 · MEDIUM-5 (2026-05-19) — interpretation guide deleted; the
+// dashboard footer link below replaces it. Function kept as no-op to avoid
+// touching callers that may import it externally.
 function getInterpretationGuide() {
-  return [
-    `> **Open report** → read A–G reasoning · **Apply** → go straight to JD · **✅ Mark Applied** → clears the row from tomorrow's queue. [Dashboard →](${DASHBOARD_URL})`,
-  ];
+  return [];
 }
 
 function grokStatus(date) {
@@ -1875,7 +2094,13 @@ async function generateHeartbeat() {
   const calibrationLines = renderCalibrationPromptSection();
   for (const line of calibrationLines) lines.push(line);
 
-  // What's New Overnight (freshly surfaced roles)
+  // What's New Overnight (freshly surfaced roles) — Phase E2 finding-001:
+  // emitted into the .md file (audit trail) and into the HTML email body via
+  // renderHtmlEmail's stripWhatsNewFromMarkdown() helper, which removes it
+  // before marked() runs so the HTML email shows it ONCE at slot 5 (via
+  // renderWhatsNewSection, triage-only, cap 3, collapsed). Keeping it in
+  // the .md preserves the audit-trail expectation that the persisted file
+  // reflects everything that was surfaced today.
   for (const line of formatWhatsNewSection(whatsNew, packEligibleNums)) lines.push(line);
   lines.push('');
 
@@ -1890,32 +2115,27 @@ async function generateHeartbeat() {
   // the §2 DUE TODAY card from {{dueTodayHtml}} instead of this block).
   for (const line of formatOutreachCadence()) lines.push(line);
 
-  // Rejected Pattern of the Week
-  try {
-    const discardMd = renderDiscardPatternSection({ format: 'markdown', days: 7 });
-    if (discardMd) {
-      for (const line of discardMd.split('\n')) lines.push(line);
-      lines.push('');
-    }
-  } catch (e) {
-    console.warn(`[heartbeat] discard pattern section unavailable: ${e.message}`);
-  }
+  // Phase B (2026-05-19) — sections removed from morning body, now in evening:
+  //   - Rejected Pattern of the Week (heartbeat-evening.mjs, Fridays)
+  //   - Activity Snapshot (heartbeat-evening.mjs, SECTION 2)
+  //   - Pipeline Funnel (heartbeat-evening.mjs, SECTION 3)
+  //   - System Status (heartbeat-evening.mjs, SECTION 1)
+  //   - Errors / Warnings (heartbeat-evening.mjs, SECTION 5)
+  //   - Action Required (heartbeat-evening.mjs, SECTION 5, suppressed when no errors)
+  //
+  // Variables still computed below because meta/subject builder needs them.
 
-  // Activity Snapshot — full status funnel
-  const buckets = getStatusBreakdown(trackerRows);
-  for (const line of formatActivitySnapshot(buckets)) lines.push(line);
-
-  // Pipeline Funnel — today's inflow by source
+  // Compute stats needed for meta object (subject line + preheader).
+  const buckets = getStatusBreakdown(trackerRows);  // subject builder downstream
   const inflow = getInflowStats(TARGET_DATE);
   const reportsToday = countReports(TARGET_DATE);
   const applicationsRows = countApplicationsRows(join(ROOT, 'data/applications.md'));
-  for (const line of formatPipelineFunnel(inflow, reportsToday, applyNow.length, applicationsRows)) {
-    lines.push(line);
-  }
+  void buckets;  // subject builder uses trackedCount from applicationsRows
 
-  // System Status — compact table, visually de-emphasized in HTML (last visible
-  // section before footer; no accent color on heading).
-  lines.push('## System Status');
+  // One-line stat summary — the sole system-at-a-glance line in morning.
+  // Phase B: link label updated to reference the 18:00 evening digest.
+  const todayNew = (inflow.portalNew || 0) + (inflow.rssNew || 0) + (inflow.emailNew || 0);
+  lines.push(`**Tracked:** ${applicationsRows} (+${todayNew} today) · **Apply-Now:** ${applyNow.length} · **Evaluated today:** ${reportsToday} · [full system digest 18:00 →](${DASHBOARD_PUBLIC_URL}/?focus=funnel)`);
   lines.push('');
 
   const pipelinePending = countPipelinePending(join(ROOT, 'data/pipeline.md'));
@@ -1973,12 +2193,7 @@ async function generateHeartbeat() {
   lines.push('---');
   lines.push('');
 
-  // Interpretation guide — at the bottom so the actionable content
-  // (What's New, Apply-Now Queue) is the first thing visible on open.
-  for (const line of getInterpretationGuide()) lines.push(line);
-  lines.push('');
-
-  lines.push(`*[Dashboard →](${DASHBOARD_URL}) · heartbeat.mjs · 09:00 PT*`);
+  lines.push(`*heartbeat.mjs · 09:00 PT · [dashboard →](${DASHBOARD_URL})*`);
 
   // Pull state for the dynamic subject + hidden preheader (Phase 2 Day-1 quick
   // wins, 2026-05-17). The four signals all-7-models converged on:
@@ -2025,6 +2240,10 @@ async function generateHeartbeat() {
     // of the markdown body. This avoids coupling the HTML email to the markdown
     // content structure for the §1 action card.
     applyNow,
+    // Phase E2 finding-001 — whatsNew passed through so renderHtmlEmail can
+    // render WHAT'S NEW OVERNIGHT at slot 5 (BELOW TODAY'S FOCUS) instead of
+    // having it sit at slot 7+ inside the markdown content body.
+    whatsNew,
   };
   return { body: lines.join('\n'), meta };
 }
@@ -2119,10 +2338,42 @@ async function main() {
   console.log(`Wrote ${outPath}`);
 
   if (PREVIEW) {
-    const html = await renderHtmlEmail(body, meta);
-    const previewPath = '/tmp/heartbeat-preview.html';
+    // Phase F-5 dispatch toggle — preview also routes via env flag so the
+    // preview path matches what would actually be sent.
+    let html;
+    if (process.env.HEARTBEAT_DESIGN === 'dispatch') {
+      const r = await renderDispatchHtml({ ...meta, _markdownBody: body });
+      html = r.html;
+      console.log(`Subject (dispatch): ${r.subject}  [source: ${r.subjectSource}]`);
+    } else {
+      html = await renderHtmlEmail(body, meta);
+    }
+    const previewPath = process.env.HEARTBEAT_DESIGN === 'dispatch'
+      ? '/tmp/dispatch-morning.html'
+      : '/tmp/heartbeat-preview.html';
     writeFileSync(previewPath, html);
     console.log(`Wrote ${previewPath} (${html.length} chars)`);
+
+    // Phase E2 finding-009 — post-render lint hook. Gated by HEARTBEAT_LINT.
+    // Default behavior: run the lint, log violations, but DO NOT exit non-zero
+    // (the preview is for human review, the .md was already written, and the
+    // lint script's own CI use case is in npm test / pre-commit, not here).
+    if ((process.env.HEARTBEAT_LINT || 'on') !== 'off') {
+      try {
+        const { spawnSync } = await import('node:child_process');
+        const r = spawnSync(
+          process.execPath,
+          [join(__dirname, 'lint-heartbeat-mjml.mjs'), '--file', previewPath],
+          { stdio: 'inherit', timeout: 15000 }
+        );
+        if (r.status !== 0) {
+          console.warn('[heartbeat] post-render lint violations — see above. Not blocking preview.');
+        }
+      } catch (e) {
+        console.warn(`[heartbeat] lint hook failed: ${e.message}`);
+      }
+    }
+
     // Open in default browser via macOS `open` (silent fail on non-mac)
     try {
       const { execSync } = await import('child_process');

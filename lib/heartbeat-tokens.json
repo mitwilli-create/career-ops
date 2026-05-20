@@ -1,0 +1,370 @@
+{
+  "$schema": "career-ops-heartbeat-tokens-v1",
+  "$description": "Shared design tokens for the career-ops dashboard, evaluation reports, and heartbeat emails. Source of truth — when in doubt, edit here, not in scripts/build-dashboard.mjs or scripts/heartbeat*.mjs. Council-approved 2026-05-19 per .claude/audit/email-review/phase-c-council-ledger.md. Decision A=dark-first MJML, Decision B=this three-layer shape, Decision C=H2 16px / 700 / no text-transform / no border.",
+  "$lastUpdated": "2026-05-19",
+  "color": {
+    "dark": {
+      "bg": {
+        "app": "#06070d",
+        "panel": "#11131c",
+        "panel_strong": "#181b27",
+        "panel_subtle": "rgba(255,255,255,0.02)"
+      },
+      "border": {
+        "default": "#232737",
+        "strong": "#353a52"
+      },
+      "text": {
+        "t1": "#fafafa",
+        "t2": "#e4e4e7",
+        "t3": "#b8b8c0",
+        "t4": "#9a9aa6"
+      },
+      "accent": {
+        "green": "#4ade80",
+        "green_fg": "#86efac",
+        "green_fg_dark": "#bbf7d0",
+        "green_bg": "rgba(22,163,74,0.12)",
+        "green_border": "rgba(22,163,74,0.30)"
+      },
+      "semantic": {
+        "success": "#4ade80",
+        "success_fg": "#86efac",
+        "success_bg": "rgba(22,163,74,0.12)",
+        "warning": "#c2a571",
+        "warning_fg": "#d4ba84",
+        "warning_bg": "rgba(168,123,72,0.14)",
+        "danger": "#f87171",
+        "danger_fg": "#fca5a5",
+        "danger_bg": "rgba(220,38,38,0.12)",
+        "info": "#94a3b8",
+        "info_fg": "#cbd5e1",
+        "info_bg": "rgba(100,116,139,0.14)"
+      },
+      "link": {
+        "default": "#86efac",
+        "hover": "#bbf7d0"
+      },
+      "brand": {
+        "primary": "#4ade80",
+        "primary_soft": "rgba(22,163,74,0.12)"
+      }
+    },
+    "light": {
+      "bg": {
+        "app": "#ffffff",
+        "panel": "#f8f9fb",
+        "panel_strong": "#f1f5f9",
+        "panel_subtle": "#fafafa"
+      },
+      "border": {
+        "default": "#e5e7eb",
+        "strong": "#d1d5db"
+      },
+      "text": {
+        "t1": "#111827",
+        "t2": "#374151",
+        "t3": "#475569",
+        "t4": "#6b7280"
+      },
+      "accent": {
+        "green": "#15803d",
+        "green_fg": "#166534",
+        "green_fg_dark": "#14532d",
+        "green_bg": "#dcfce7",
+        "green_border": "#86efac"
+      },
+      "semantic": {
+        "success": "#15803d",
+        "success_fg": "#166534",
+        "success_bg": "#dcfce7",
+        "warning": "#8a6840",
+        "warning_fg": "#6b5430",
+        "warning_bg": "#f4ede1",
+        "danger": "#b91c1c",
+        "danger_fg": "#991b1b",
+        "danger_bg": "#fee2e2",
+        "info": "#5a76a6",
+        "info_fg": "#3d4f6b",
+        "info_bg": "#e8edf4"
+      },
+      "link": {
+        "default": "#0969da",
+        "hover": "#0550ae"
+      },
+      "brand": {
+        "primary": "#15803d",
+        "primary_soft": "#dcfce7"
+      }
+    }
+  },
+  "email": {
+    "dark": {
+      "body_bg": "#06070d",
+      "panel_bg": "#11131c",
+      "panel_strong_bg": "#181b27",
+      "panel_strong_accent": "#86efac",
+      "border": "#232737",
+      "border_strong": "#353a52",
+      "body_color": "#e4e4e7",
+      "muted_color": "#b8b8c0",
+      "chrome_color": "#9a9aa6",
+      "h1_color": "#bbf7d0",
+      "h2_color": "#fafafa",
+      "h3_color": "#86efac",
+      "accent": "#86efac",
+      "accent_deep": "#4ade80",
+      "accent_bg": "rgba(22,163,74,0.12)",
+      "accent_border": "rgba(22,163,74,0.30)",
+      "link_color": "#86efac",
+      "button_bg": "#238636",
+      "button_text": "#ffffff",
+      "button_border": "#2a7f3f",
+      "danger_bg": "rgba(220,38,38,0.18)",
+      "danger_fg": "#fca5a5",
+      "warning_bg": "rgba(168,123,72,0.22)",
+      "warning_fg": "#d4ba84",
+      "success_bg": "rgba(22,163,74,0.18)",
+      "success_fg": "#86efac",
+      "info_bg": "rgba(100,116,139,0.22)",
+      "info_fg": "#cbd5e1"
+    },
+    "light": {
+      "body_bg": "#f8f9fb",
+      "panel_bg": "#ffffff",
+      "panel_strong_bg": "#f1f5f9",
+      "panel_strong_accent": "#15803d",
+      "border": "#e5e7eb",
+      "border_strong": "#d1d5db",
+      "body_color": "#374151",
+      "muted_color": "#475569",
+      "chrome_color": "#6b7280",
+      "h1_color": "#14532d",
+      "h2_color": "#111827",
+      "h3_color": "#15803d",
+      "accent": "#15803d",
+      "accent_deep": "#166534",
+      "accent_bg": "#dcfce7",
+      "accent_border": "#86efac",
+      "link_color": "#0969da",
+      "button_bg": "#15803d",
+      "button_text": "#ffffff",
+      "button_border": "#166534",
+      "danger_bg": "#fee2e2",
+      "danger_fg": "#991b1b",
+      "warning_bg": "#f4ede1",
+      "warning_fg": "#6b5430",
+      "success_bg": "#dcfce7",
+      "success_fg": "#166534",
+      "info_bg": "#e8edf4",
+      "info_fg": "#3d4f6b"
+    },
+    "morning_dispatch": {
+      "$comment": "Phase F-5 Vogue+Bloomberg editorial palette — ivory paper, charcoal ink, oxidized brass. Calibrated for AAA contrast on the body color pairing (#1a1816 on #f4f1e8 = 14.8:1).",
+      "paper": "#f4f1e8",
+      "paper_shadow": "#ede9dd",
+      "ink": "#1a1816",
+      "ink_2": "#3a3530",
+      "ink_3": "#5a5048",
+      "ink_4": "#8a8378",
+      "accent": "#a48a4f",
+      "accent_deep": "#7d6735",
+      "rule": "rgba(26,24,22,0.12)",
+      "rule_strong": "rgba(26,24,22,0.28)",
+      "positive": "#2d6b40",
+      "negative": "#8a3a2a"
+    },
+    "evening_dispatch": {
+      "$comment": "Phase F-5 Vogue+Bloomberg editorial palette — anthracite paper, ash-cream ink, single-malt amber. Calibrated for AAA contrast on the body color pairing (#e8e4d8 on #0d0e10 = 14.6:1).",
+      "paper": "#0d0e10",
+      "paper_shadow": "#15171a",
+      "ink": "#e8e4d8",
+      "ink_2": "#d4cdb8",
+      "ink_3": "#a8a39a",
+      "ink_4": "#7a7468",
+      "accent": "#c89a4a",
+      "accent_deep": "#a87f30",
+      "accent_soft": "rgba(200,154,74,0.10)",
+      "rule": "rgba(212,205,184,0.10)",
+      "rule_strong": "rgba(212,205,184,0.26)",
+      "positive": "#9bbc8e",
+      "negative": "#c47860"
+    }
+  },
+  "dashboard": {
+    "$comment": "Mirrors the CSS custom property names emitted by scripts/build-dashboard.mjs. Used at build time to generate the :root and body.dark rules.",
+    "tokens_dark": {
+      "--bg": "#06070d",
+      "--surface": "#11131c",
+      "--surface-2": "#181b27",
+      "--border": "#232737",
+      "--border-strong": "#353a52",
+      "--text": "#fafafa",
+      "--text-2": "#e4e4e7",
+      "--text-3": "#b8b8c0",
+      "--text-4": "#9a9aa6",
+      "--green": "#4ade80",
+      "--green-fg": "#86efac",
+      "--green-fg-dark": "#bbf7d0",
+      "--green-bg": "rgba(22,163,74,0.12)",
+      "--green-border": "rgba(22,163,74,0.30)",
+      "--action": "#238636",
+      "--action-hover": "#2a7f3f",
+      "--action-active": "#196127",
+      "--positive-text": "#4ac26b",
+      "--negative-text": "#f85149",
+      "--link": "#58a6ff",
+      "--link-hover": "#79c0ff",
+      "--blue": "#a4b0c2",
+      "--blue-fg": "#94a3b8",
+      "--blue-fg-dark": "#cbd5e1",
+      "--blue-bg": "rgba(100,116,139,0.14)",
+      "--blue-border": "rgba(100,116,139,0.30)",
+      "--amber": "#c2a571",
+      "--amber-fg": "#d4ba84",
+      "--amber-fg-dark": "#e6d4a8",
+      "--amber-bg": "rgba(168,123,72,0.14)",
+      "--amber-border": "rgba(168,123,72,0.30)",
+      "--red": "#f87171",
+      "--red-fg": "#fca5a5",
+      "--red-fg-dark": "#fecaca",
+      "--red-bg": "rgba(220,38,38,0.12)",
+      "--red-border": "rgba(220,38,38,0.30)",
+      "--purple": "#b3afbf",
+      "--purple-fg": "#a39db5",
+      "--purple-fg-dark": "#cdc8d6",
+      "--purple-bg": "rgba(132,122,153,0.14)",
+      "--purple-border": "rgba(132,122,153,0.30)"
+    },
+    "tokens_light": {
+      "--bg": "#f8f9fb",
+      "--surface": "#ffffff",
+      "--surface-2": "#f4f4f6",
+      "--border": "#e5e7eb",
+      "--border-strong": "#d1d5db",
+      "--text": "#111827",
+      "--text-2": "#374151",
+      "--text-3": "#6b7280",
+      "--text-4": "#9ca3af",
+      "--green": "#15803d",
+      "--green-fg": "#16a34a",
+      "--green-fg-dark": "#166534",
+      "--green-bg": "#dcfce7",
+      "--green-border": "#86efac",
+      "--action": "#15803d",
+      "--action-hover": "#166534",
+      "--action-active": "#14532d",
+      "--positive-text": "#1a7f37",
+      "--negative-text": "#c0392b",
+      "--link": "#0969da",
+      "--link-hover": "#0550ae",
+      "--blue": "#475c75",
+      "--blue-fg": "#5a76a6",
+      "--blue-fg-dark": "#3d4f6b",
+      "--blue-bg": "#e8edf4",
+      "--blue-border": "#c0cad9",
+      "--amber": "#8a6840",
+      "--amber-fg": "#a87b48",
+      "--amber-fg-dark": "#6b5430",
+      "--amber-bg": "#f4ede1",
+      "--amber-border": "#d8c79f",
+      "--red": "#b91c1c",
+      "--red-fg": "#dc2626",
+      "--red-fg-dark": "#991b1b",
+      "--red-bg": "#fee2e2",
+      "--red-border": "#fca5a5",
+      "--purple": "#5d5670",
+      "--purple-fg": "#847a99",
+      "--purple-fg-dark": "#4f4960",
+      "--purple-bg": "#ecebf0",
+      "--purple-border": "#cac6d4"
+    }
+  },
+  "typography": {
+    "$comment": "Type ramp shared across surfaces. h2_email vs h2_dashboard captures the council's Decision-C nuance: email H2 = 16px (right ratio against 14px body in mobile WebKit), dashboard H2 = 16-18px depending on context (the dashboard uses both).",
+    "fontFamily": {
+      "sans": "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif",
+      "mono": "'JetBrains Mono', 'IBM Plex Mono', 'SF Mono', SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+    },
+    "size": {
+      "h1": "22px",
+      "h2_email": "16px",
+      "_note_h2_email": "intentionally smaller than h2_dashboard_large (18px); compensates for mobile WebKit text autosize that scales email font-size ~0.5-1px larger than desktop browser. See docs/adr/0007-email-h2-divergence.md. DO NOT 'fix' this back to 18px without consulting the ADR.",
+      "h2_dashboard": "16px",
+      "h2_dashboard_large": "18px",
+      "h3": "13px",
+      "h4": "15px",
+      "body": "14px",
+      "small": "13px",
+      "caption": "12px",
+      "meta": "11px",
+      "badge": "10px"
+    },
+    "weight": {
+      "regular": "400",
+      "medium": "500",
+      "semibold": "600",
+      "bold": "700"
+    },
+    "letterSpacing": {
+      "tight": "-0.3px",
+      "tighter": "-0.4px",
+      "normal": "0",
+      "wide": "0.04em",
+      "wider": "0.06em",
+      "widest": "0.18em"
+    },
+    "lineHeight": {
+      "tight": "1.2",
+      "snug": "1.3",
+      "normal": "1.5",
+      "relaxed": "1.625"
+    },
+    "h2_email_spec": {
+      "$comment": "Council Decision C — apply this to <h2> emissions in the heartbeat MJML template.",
+      "font_size": "16px",
+      "font_weight": "700",
+      "letter_spacing": "-0.3px",
+      "text_transform": "none",
+      "line_height": "1.3",
+      "margin": "22px 0 10px",
+      "border_left": "none",
+      "color_token": "h2_color"
+    },
+    "h3_email_spec": {
+      "$comment": "Council Decision C — apply this to <h3> emissions (demoted from old console-style 'section' treatment).",
+      "font_size": "13px",
+      "font_weight": "700",
+      "letter_spacing": "0.04em",
+      "text_transform": "uppercase",
+      "line_height": "1.3",
+      "margin": "16px 0 8px",
+      "border_left": "3px solid",
+      "border_left_color_token": "accent",
+      "padding_left": "10px",
+      "color_token": "h3_color"
+    }
+  },
+  "spacing": {
+    "xs": "4px",
+    "sm": "8px",
+    "md": "12px",
+    "lg": "16px",
+    "xl": "24px",
+    "2xl": "32px",
+    "3xl": "48px",
+    "4xl": "64px"
+  },
+  "radius": {
+    "sm": "6px",
+    "md": "8px",
+    "lg": "12px",
+    "xl": "16px",
+    "pill": "9999px"
+  },
+  "shadow": {
+    "sm": "0 1px 2px 0 rgba(0,0,0,0.05)",
+    "md": "0 4px 6px -1px rgba(0,0,0,0.1)",
+    "lg": "0 10px 15px -3px rgba(0,0,0,0.1)"
+  }
+}

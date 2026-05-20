@@ -884,7 +884,14 @@ async function phaseProcess(apiKey) {
       // verdict, not just a metadata header.
       let tldr = '';
       try {
-        const tldrMatch = /^\|\s*\*\*TL;DR\*\*\s*\|\s*(.+?)\s*\|\s*$/m.exec(cleanReport);
+        // P1.14 (2026-05-20): regex relaxed from `\*\*TL;DR\*\*` to
+        // `(?:\*\*)?TL;DR(?:\*\*)?` — matches the tolerant pattern in
+        // scripts/agents/backfill-tracker-notes.mjs:58. Reports vary on
+        // whether the TL;DR cell key is bold; the stricter regex was
+        // falling through to the "Evaluated | <archetype> | …" placeholder
+        // on any report that omitted the `**` wrap, which is what the
+        // backfill script then had to repair post-hoc.
+        const tldrMatch = /^\|\s*(?:\*\*)?TL;DR(?:\*\*)?\s*\|\s*(.+?)\s*\|\s*$/m.exec(cleanReport);
         if (tldrMatch) {
           tldr = tldrMatch[1].trim().replace(/\s+/g, ' ');
           if (tldr.length > 200) tldr = tldr.slice(0, 197).trimEnd() + '…';

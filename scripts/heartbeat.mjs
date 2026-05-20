@@ -253,27 +253,58 @@ function renderContentHtml(markdownBody) {
 // Replaces the binary pink banner with 3 tiers: approaching / at / past
 // threshold. Reads the same `density` object as renderRunwayAlert but
 // renders a tiered visual. color tokens are inline hex (no CSS vars — Gmail).
+//
+// Phase A · A4 · HIGH-2 (2026-05-19) — the 2px red/amber border now fires
+// ONLY when state transitioned from healthy → stretched/critical in the last
+// 24h. On unchanged or healthy state, the panel renders with a quiet 1px
+// neutral border so a stable runway state does not compete with TONIGHT'S
+// APPLY for attention.
+function readPriorRunwayHealth() {
+  try {
+    const y = new Date(TARGET_DATE + 'T12:00:00');
+    y.setDate(y.getDate() - 1);
+    const yDateStr = y.toISOString().slice(0, 10);
+    const yPath = join(ROOT, `data/heartbeat-archive/heartbeat-${yDateStr}.html`);
+    if (!existsSync(yPath)) return null;
+    const text = readFileSync(yPath, 'utf-8');
+    if (text.includes('Past runway floor')) return 'critical';
+    if (text.includes('Cushion shrinking')) return 'stretched';
+    if (text.includes('On track')) return 'healthy';
+    return null;
+  } catch { return null; }
+}
+
 function renderRunwayAlertTiered(density) {
   if (!density || !density.ok) {
     return '<div style="margin:12px 0;padding:10px;background:#fef9c3;border-radius:6px;color:#854d0e;font-size:12px">Runway alert: pipeline-density data unavailable.</div>';
   }
   const { health, runway_alert, contacts, velocity, runway_weeks } = density;
-  // Tier definitions matching Datadog/Sentry/PagerDuty tier patterns
   const tiers = {
     healthy:   { bg: '#dcfce7', border: '#86efac', fg: '#166534', icon: '🟢', label: 'On track',        aria: 'Green circle: on track' },
     stretched: { bg: '#fef3c7', border: '#f59e0b', fg: '#92400e', icon: '🟡', label: 'Cushion shrinking', aria: 'Yellow circle: cushion shrinking' },
     critical:  { bg: '#fee2e2', border: '#f87171', fg: '#991b1b', icon: '🔴', label: 'Past runway floor', aria: 'Red circle: past runway floor' },
   };
   const t = tiers[health] || tiers.stretched;
-  const actionLink = health === 'critical'
+
+  const priorHealth = readPriorRunwayHealth();
+  const escalated = priorHealth === 'healthy' && (health === 'stretched' || health === 'critical');
+  const quietPanel = !escalated;
+
+  const bg = quietPanel ? '#f9fafb' : t.bg;
+  const borderColor = quietPanel ? '#e5e7eb' : t.border;
+  const borderWidth = quietPanel ? '1px' : '2px';
+  const fg = quietPanel ? '#6b7280' : t.fg;
+  const valueFg = quietPanel ? '#374151' : t.fg;
+
+  const actionLink = (health === 'critical' && !quietPanel)
     ? ` <a href="${DASHBOARD_PUBLIC_URL}/?focus=outreach" style="color:${t.fg};font-size:11px;text-decoration:underline">→ action</a>`
     : '';
   return `
-<div style="margin:14px 0;padding:12px 14px;background:${t.bg};border:2px solid ${t.border};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
-  <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${t.fg};margin-bottom:6px">
+<div style="margin:14px 0;padding:12px 14px;background:${bg};border:${borderWidth} solid ${borderColor};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+  <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${fg};margin-bottom:6px">
     <span role="img" aria-label="${t.aria}">${t.icon}</span> Runway — ${runway_weeks}-week window · <strong>${t.label}</strong>${actionLink}
   </div>
-  <div style="font-size:13px;color:${t.fg};font-weight:${health === 'critical' ? 700 : 600};margin-bottom:8px;line-height:1.4">${runway_alert}</div>
+  <div style="font-size:13px;color:${valueFg};font-weight:${health === 'critical' && !quietPanel ? 700 : 600};margin-bottom:8px;line-height:1.4">${runway_alert}</div>
   <div style="display:flex;gap:18px;flex-wrap:wrap;font-size:11.5px;color:#374151">
     <span><strong>${contacts.active}</strong> active</span>
     <span><strong>${contacts.responded}</strong> replied (${Math.round(contacts.response_rate*100)}%)</span>
@@ -602,19 +633,17 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
   }
 
   let actionSectionsHtml = '';
-  // §0 NEXT MOVES — synthesis layer (top 3 + see-all link)
-  // Shows ONLY when data/next-moves.json exists with ranked moves; otherwise
-  // section is omitted (the function returns ''). Sits above Tonight's Apply
-  // because it's the ranked overview — Tonight's Apply is the one-thing-to-
-  // do-tonight pick that follows from the same data.
-  const nextMovesHtml = renderNextMovesSection();
-  if (nextMovesHtml) {
-    actionSectionsHtml += sectionLabel('Next Moves', true);
-    actionSectionsHtml += nextMovesHtml;
-  }
-  // §1 TONIGHT'S APPLY — accent label (loudest)
+  // §1 TONIGHT'S APPLY — accent label (leads the email)
+  // Reordered 2026-05-19 (Phase A · A1 · CRITICAL-1) — single primary action
+  // card now sits ABOVE NEXT MOVES so it is the first thing visible at 09:01 PT.
   actionSectionsHtml += sectionLabel("Tonight's Apply", true);
   actionSectionsHtml += tonightsApplyHtml;
+  // §1b NEXT MOVES — ranked queue underneath the primary card
+  const nextMovesHtml = renderNextMovesSection();
+  if (nextMovesHtml) {
+    actionSectionsHtml += sectionLabel('Next 3 actions queued', false);
+    actionSectionsHtml += nextMovesHtml;
+  }
   // §2 DUE TODAY — show label even when empty (shows "Outreach — clear")
   if (dueTodayHtml) {
     const dueTodayLabelText = dueTodayCount > 0
@@ -648,12 +677,18 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
   } catch {}
 
   // Tier 5 system-status banner (calibration brief 2026-05-16)
+  // Phase A · A3 · HIGH-1 (2026-05-19) — banner now renders as a one-liner
+  // with a "details →" link pointing at the dashboard, not the 7-row table.
   let systemBannerHtml = '';
-  try { systemBannerHtml = renderSystemBanner({ format: 'html' }) || ''; } catch {}
+  try { systemBannerHtml = renderSystemBanner({ format: 'html', dashboardUrl: DASHBOARD_PUBLIC_URL }) || ''; } catch {}
 
   // Master CV freshness banner (audit Item L 2026-05-18) — surfaces today's
   // master PDF path or a re-render reminder. Renders inline so it stacks with
   // the other system-status signals already in contextSectionsHtml.
+  // Phase A · A7 · MEDIUM-2 (2026-05-19) — render a badge/button instead of
+  // exposing the raw shell command in the email body.
+  // TODO: /api/cv/render endpoint may need to be implemented on dashboard-server.mjs
+  // in a follow-up session if the "Re-render CV →" button is clicked before it's wired.
   let cvFreshnessHtml = '';
   try {
     const cvBasename = `cv-mitchell-williams-master-${date}.pdf`;
@@ -661,14 +696,13 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
     if (existsSync(cvPath)) {
       cvFreshnessHtml =
         `<p style="margin:6px 0;font-size:13px;color:#0f172a;">` +
-        `📄 <strong>Master CV ready:</strong> ` +
-        `<a href="file://${cvPath}" style="color:#15803d;text-decoration:none;">${cvBasename}</a>` +
+        `<span style="display:inline-block;background:#16a34a;color:#ffffff;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:600">CV ready ✓</span> ` +
+        `<a href="${DASHBOARD_PUBLIC_URL}/?focus=cv" style="color:#15803d;text-decoration:none;font-size:12px;margin-left:6px">download →</a>` +
         `</p>`;
     } else {
       cvFreshnessHtml =
         `<p style="margin:6px 0;font-size:13px;color:#475569;">` +
-        `📄 <strong>Master CV:</strong> re-render via ` +
-        `<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">node scripts/render-cv-typst.mjs --input cv.md --output output/${cvBasename}</code>` +
+        `<a href="${DASHBOARD_PUBLIC_URL}/api/cv/render" data-action="render-cv" style="display:inline-block;background:#16a34a;color:#ffffff;padding:7px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none">Re-render CV →</a>` +
         `</p>`;
     }
   } catch { /* non-fatal */ }
@@ -1679,10 +1713,11 @@ function formatPipelineFunnel(inflow, reportsToday, applyNowCount, totalTracked)
   return out;
 }
 
+// Phase A · A10 · MEDIUM-5 (2026-05-19) — interpretation guide deleted; the
+// dashboard footer link below replaces it. Function kept as no-op to avoid
+// touching callers that may import it externally.
 function getInterpretationGuide() {
-  return [
-    `> **Open report** → read A–G reasoning · **Apply** → go straight to JD · **✅ Mark Applied** → clears the row from tomorrow's queue. [Dashboard →](${DASHBOARD_URL})`,
-  ];
+  return [];
 }
 
 function grokStatus(date) {
@@ -1873,17 +1908,21 @@ async function generateHeartbeat() {
     console.warn(`[heartbeat] discard pattern section unavailable: ${e.message}`);
   }
 
-  // Activity Snapshot — full status funnel
-  const buckets = getStatusBreakdown(trackerRows);
-  for (const line of formatActivitySnapshot(buckets)) lines.push(line);
-
-  // Pipeline Funnel — today's inflow by source
+  // Activity + Pipeline figures (still needed downstream for meta/subject build).
+  const buckets = getStatusBreakdown(trackerRows);  // kept for future surfacing
   const inflow = getInflowStats(TARGET_DATE);
   const reportsToday = countReports(TARGET_DATE);
   const applicationsRows = countApplicationsRows(join(ROOT, 'data/applications.md'));
-  for (const line of formatPipelineFunnel(inflow, reportsToday, applyNow.length, applicationsRows)) {
-    lines.push(line);
-  }
+
+  // Phase A · A8 · MEDIUM-3 (2026-05-19) — two stats tables collapsed to one
+  // line. The dashboard at /?focus=funnel surfaces the full breakdown when
+  // Mitchell needs it; the 09:01 PT morning email does not.
+  const todayNew = (inflow.portalNew || 0) + (inflow.rssNew || 0) + (inflow.emailNew || 0);
+  lines.push(`**Tracked:** ${applicationsRows} (+${todayNew} today) · **Apply-Now:** ${applyNow.length} · **Evaluated today:** ${reportsToday} · [details →](${DASHBOARD_PUBLIC_URL}/?focus=funnel)`);
+  lines.push('');
+  // `buckets` is intentionally unused here (post-A8) but still computed — keep
+  // for the subject/preheader builder downstream.
+  void buckets;
 
   // System Status — compact table, visually de-emphasized in HTML (last visible
   // section before footer; no accent color on heading).
@@ -1916,39 +1955,42 @@ async function generateHeartbeat() {
   lines.push(`| Quota schedule | ✅ 08:05 PT | batch fires after Claude Max reset |`);
   lines.push('');
 
-  lines.push('## Errors / Warnings');
-  lines.push('');
-
+  // Phase A · A2 · CRITICAL-3 (2026-05-19) — collapse the two empty-state H2
+  // sections (Errors / Warnings + Action Required) into one quiet footer line
+  // on no-error days. Both sections still render as H2s when something needs
+  // attention so the signal is not buried.
   const errorLog = join(ROOT, 'data/errors.log');
+  let todaysErrors = [];
   if (existsSync(errorLog)) {
-    const errors = readFileSync(errorLog, 'utf-8')
+    todaysErrors = readFileSync(errorLog, 'utf-8')
       .split('\n')
       .filter(l => l.includes(TARGET_DATE));
-    if (errors.length > 0) {
-      lines.push('```');
-      errors.slice(-20).forEach(e => lines.push(e));
-      lines.push('```');
-    } else {
-      lines.push('- No errors logged today.');
-    }
-  } else {
-    lines.push('- No error log present.');
   }
-
-  lines.push('');
-  lines.push('## Action Required');
-  lines.push('');
-  lines.push('- [ ] None — system running unattended');
-  lines.push('');
+  if (todaysErrors.length === 0) {
+    lines.push('<small style="color:#9ca3af">No errors · no action required · system running unattended.</small>');
+    lines.push('');
+  } else {
+    lines.push('## Errors / Warnings');
+    lines.push('');
+    lines.push('```');
+    todaysErrors.slice(-20).forEach(e => lines.push(e));
+    lines.push('```');
+    lines.push('');
+    lines.push('## Action Required');
+    lines.push('');
+    lines.push('- [ ] Review the errors above before acting on the queue.');
+    lines.push('');
+  }
   lines.push('---');
   lines.push('');
 
-  // Interpretation guide — at the bottom so the actionable content
-  // (What's New, Apply-Now Queue) is the first thing visible on open.
-  for (const line of getInterpretationGuide()) lines.push(line);
-  lines.push('');
-
-  lines.push(`*[Dashboard →](${DASHBOARD_URL}) · heartbeat.mjs · 09:00 PT*`);
+  // Phase A · A10 · MEDIUM-5 (2026-05-19) — glossary blockquote removed.
+  // Quiet attribution line with commit SHA replaces it.
+  let commitSha = '';
+  try {
+    commitSha = execSync('git rev-parse --short HEAD', { encoding: 'utf-8', timeout: 3000 }).trim();
+  } catch { commitSha = 'unknown'; }
+  lines.push(`*heartbeat.mjs · 09:00 PT · v.${commitSha} · [dashboard →](${DASHBOARD_URL})*`);
 
   // Pull state for the dynamic subject + hidden preheader (Phase 2 Day-1 quick
   // wins, 2026-05-17). The four signals all-7-models converged on:

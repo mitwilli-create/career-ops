@@ -20,7 +20,7 @@
         border-radius="8px"
         inner-padding="8px 16px"
       />
-      <mj-section padding="0 0 8px 0" />
+      <mj-section padding="0 0 4px 0" />
     </mj-attributes>
 
     <mj-style>

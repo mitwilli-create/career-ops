@@ -286,6 +286,35 @@ const pageCSS = `
 }
 .contacts-header .stats strong { color: var(--text); font-weight: 700; }
 
+/* ── BRAVO followup Item 8 / AA-4 — clickable stat tiles ──────────── */
+.stat-tile {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm, 6px);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+  font-family: inherit;
+}
+.stat-tile strong { color: var(--text); font-weight: 700; }
+.stat-tile:hover {
+  background: var(--surface);
+  border-color: var(--border);
+}
+.stat-tile:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.stat-tile[aria-pressed="true"] {
+  background: var(--blue-bg);
+  border-color: var(--blue-fg);
+  color: var(--blue-fg);
+}
+.stat-tile[aria-pressed="true"] strong { color: var(--blue-fg); }
+
 /* Progress bar — empty-corpus transparency */
 .contacts-progress {
   background: var(--surface);
@@ -1058,11 +1087,23 @@ const mainHTML = `
     <div>
       <h1>Network <span class="muted-text" style="font-weight:400;font-size:14px;margin-left:8px">relationship intelligence</span></h1>
     </div>
-    <div class="stats" aria-label="Network corpus stats">
-      <span><strong>${totalContacts}</strong> contacts</span>
-      <span><strong>${totalT3 + totalT2}</strong> with signal (${enrichedRate}%)</span>
-      <span><strong>${warmToApplyNowCount}</strong> warm to apply-now targets</span>
-      <span><strong>${inOutreachCount}</strong> in outreach</span>
+    <!-- BRAVO followup Item 8 / AA-4 — clickable stat tiles.
+         Each tile is a button mapping to a filter preset:
+         total → clear all filters; with signal → toggle Has email + Tier 3/2;
+         warm targets → toggle Warm to Apply-Now; in outreach → toggle In outreach. -->
+    <div class="stats" role="group" aria-label="Network corpus stats — click a tile to apply that filter">
+      <button type="button" class="stat-tile" data-stat-filter="all" aria-label="Show all contacts — clear filters" aria-pressed="false">
+        <strong>${totalContacts}</strong> contacts
+      </button>
+      <button type="button" class="stat-tile" data-stat-filter="signal" aria-label="Filter to contacts with signal (email or full enrichment)" aria-pressed="false">
+        <strong>${totalT3 + totalT2}</strong> with signal <span class="muted-text">(${enrichedRate}%)</span>
+      </button>
+      <button type="button" class="stat-tile" data-stat-filter="warm-apply-now" aria-label="Filter to warm contacts at apply-now target companies" aria-pressed="false">
+        <strong>${warmToApplyNowCount}</strong> warm to apply-now targets
+      </button>
+      <button type="button" class="stat-tile" data-stat-filter="outreach" aria-label="Filter to contacts currently in outreach" aria-pressed="false">
+        <strong>${inOutreachCount}</strong> in outreach
+      </button>
     </div>
   </div>
 
@@ -1367,18 +1408,83 @@ const pageJS = `
   });
 
   // Clear all filters
-  document.getElementById('clear-filters').addEventListener('click', function () {
+  function clearAllFilters() {
     activeFilters.clear();
     selectedTargets.clear();
     document.querySelectorAll('.filter-chip[data-filter]').forEach(function (b) {
       b.setAttribute('aria-pressed', 'false');
     });
     document.querySelectorAll('input[data-target-company]').forEach(function (inp) { inp.checked = false; });
-    document.getElementById('target-selected-count').textContent = '0';
+    var tgtCount = document.getElementById('target-selected-count');
+    if (tgtCount) tgtCount.textContent = '0';
+    var tgtTrigger = document.querySelector('#target-dropdown .filter-chip');
+    if (tgtTrigger) tgtTrigger.setAttribute('aria-pressed', 'false');
     document.getElementById('contacts-search').value = '';
     activeQuery = '';
+    document.querySelectorAll('.stat-tile').forEach(function (t) { t.setAttribute('aria-pressed', 'false'); });
     applyFilters();
+  }
+  document.getElementById('clear-filters').addEventListener('click', clearAllFilters);
+
+  // ── BRAVO followup Item 8 / AA-4 — clickable stat tiles ──────────
+  // Each tile maps to a filter preset. Click toggles the filter on/off
+  // and reflects state via aria-pressed.
+  function setChipPressed(filterKey, pressed) {
+    var chip = document.querySelector('.filter-chip[data-filter="' + filterKey + '"]');
+    if (!chip) return;
+    if (pressed) { activeFilters.add(filterKey); chip.setAttribute('aria-pressed', 'true'); }
+    else { activeFilters.delete(filterKey); chip.setAttribute('aria-pressed', 'false'); }
+  }
+  function updateStatTilePressedStates() {
+    document.querySelectorAll('.stat-tile').forEach(function (tile) {
+      var k = tile.dataset.statFilter;
+      var pressed = false;
+      if (k === 'all') {
+        pressed = activeFilters.size === 0 && selectedTargets.size === 0 && !activeQuery;
+      } else if (k === 'signal') {
+        // "with signal" = Tier 3 or Tier 2. Pressed when both T3+T2 chips are on.
+        pressed = activeFilters.has('tier-3') && activeFilters.has('tier-2');
+      } else if (k === 'warm-apply-now') {
+        pressed = activeFilters.has('warm-apply-now');
+      } else if (k === 'outreach') {
+        pressed = activeFilters.has('outreach');
+      }
+      tile.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+    });
+  }
+  document.querySelectorAll('.stat-tile').forEach(function (tile) {
+    tile.addEventListener('click', function () {
+      var k = tile.dataset.statFilter;
+      if (k === 'all') {
+        clearAllFilters();
+        return;
+      }
+      if (k === 'signal') {
+        // Toggle Tier 3 AND Tier 2 together to represent "with signal"
+        var on = !(activeFilters.has('tier-3') && activeFilters.has('tier-2'));
+        setChipPressed('tier-3', on);
+        setChipPressed('tier-2', on);
+      } else if (k === 'warm-apply-now') {
+        setChipPressed('warm-apply-now', !activeFilters.has('warm-apply-now'));
+      } else if (k === 'outreach') {
+        setChipPressed('outreach', !activeFilters.has('outreach'));
+      }
+      updateStatTilePressedStates();
+      applyFilters();
+      // Announce
+      var ann = document.getElementById('_shortcut-announcer');
+      if (ann) ann.textContent = (tile.getAttribute('aria-pressed') === 'true' ? 'Applied ' : 'Removed ') + (tile.querySelector('strong').textContent + ' ' + tile.lastChild.textContent).trim();
+    });
   });
+  // Also recompute stat-tile pressed state whenever a chip is toggled.
+  // applyFilters() is a function declaration so we can't easily reassign it;
+  // instead, hook the chip-click + clear-filter call sites we control.
+  document.querySelectorAll('.filter-chip[data-filter]').forEach(function (chip) {
+    chip.addEventListener('click', updateStatTilePressedStates);
+  });
+  document.getElementById('clear-filters').addEventListener('click', updateStatTilePressedStates);
+  // Initial sync
+  updateStatTilePressedStates();
 
   // Target-company dropdown
   window.toggleTargetDropdown = function () {

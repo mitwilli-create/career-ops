@@ -26,7 +26,7 @@
     filters: {},
     sort: 'warm_path_strength',
     page: 1,
-    pageSize: 50,
+    pageSize: 200,  // P0.8 #1a (2026-05-20) — was 50; bumped per Mitchell's "more populated" ask. 50/page = ~2% of 2,824 corpus, too slow to find anyone. 200 keeps render perf acceptable without virtualization (which is its own follow-up — see data/decisions-pending-2026-05-20.md § P0.8 #1b).
     total: 0,
     lastFetchAt: 0,
     selected: new Set(),

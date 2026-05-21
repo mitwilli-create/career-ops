@@ -2722,6 +2722,103 @@ function buildBatchItemsForState(state) {
   return { items: [], total: 0, truncated: false };
 }
 
+// P0.7 Q3 (2026-05-20 iter8) — Surface the actual stderr context for a
+// failed batch row. The stored error in batch-state.tsv often hides the
+// real root cause (e.g. a bash arithmetic bug at runner.sh:243 was
+// surfacing as "API Error: 529 Overloaded" because the runner shell exited
+// with code 1 before the API recorder could overwrite the field). The
+// daily combined log is the ground truth — tail the chunk around the
+// row's timestamps + extract the `--- Processing offer #ID` /
+// `    ❌ Failed` / `STDERR:` triplet.
+function buildBatchFailureDetail(rowId) {
+  const ROOT_LOCAL = ROOT;
+  const stateFp = join(ROOT_LOCAL, 'batch/batch-state.tsv');
+  if (!existsSync(stateFp)) return { error: 'batch-state.tsv not found', row: null, log_lines: [] };
+  const raw = readFileSync(stateFp, 'utf-8');
+  const lines = raw.split('\n');
+  const header = (lines[0] || '').split('\t');
+  const idx = (name) => header.indexOf(name);
+  let row = null;
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split('\t');
+    if (cols[idx('id')] === String(rowId)) {
+      row = {
+        id:           cols[idx('id')] || '',
+        url:          cols[idx('url')] || '',
+        status:       cols[idx('status')] || '',
+        started_at:   cols[idx('started_at')] || '',
+        completed_at: cols[idx('completed_at')] || '',
+        report_num:   cols[idx('report_num')] || '',
+        score:        cols[idx('score')] || '',
+        error:        cols[idx('error')] || '',
+        retries:      cols[idx('retries')] || '',
+      };
+      break;
+    }
+  }
+  if (!row) return { error: 'row not found in batch-state.tsv', row: null, log_lines: [] };
+
+  // Derive the daily log file from started_at (UTC ISO). Fall back to today
+  // if the row is missing a timestamp.
+  const tsForLog = row.started_at || row.completed_at || new Date().toISOString();
+  const datePart = tsForLog.slice(0, 10);  // YYYY-MM-DD
+  const logFp = join(ROOT_LOCAL, 'data/logs', `batch-${datePart}.log`);
+  let log_lines = [];
+  let log_path_rel = `data/logs/batch-${datePart}.log`;
+  let log_available = false;
+  let real_stderr = null;
+  let exit_code = null;
+  if (existsSync(logFp)) {
+    log_available = true;
+    const logRaw = readFileSync(logFp, 'utf-8');
+    const allLines = logRaw.split('\n');
+    // Find the "--- Processing offer #<id>:" line(s). A row may have multiple
+    // attempts (retries) — grab the LAST one's surrounding window since that's
+    // the one that produced the final failure.
+    const marker = `--- Processing offer #${row.id}:`;
+    const hits = [];
+    for (let i = 0; i < allLines.length; i++) {
+      if (allLines[i].startsWith(marker)) hits.push(i);
+    }
+    if (hits.length) {
+      const start = hits[hits.length - 1];
+      // Extract from the marker up through the next 6 lines or the next
+      // "--- Processing offer #" line, whichever comes first. The fail/stderr
+      // triplet usually lives within 4 lines of the marker.
+      let end = Math.min(start + 8, allLines.length);
+      for (let j = start + 1; j < end; j++) {
+        if (allLines[j].startsWith('--- Processing offer #')) { end = j; break; }
+      }
+      log_lines = allLines.slice(start, end);
+      // Pull structured fields from the slice.
+      for (const ln of log_lines) {
+        const stderrMatch = ln.match(/^STDERR:\s*(.+)$/);
+        if (stderrMatch) real_stderr = stderrMatch[1];
+        const exitMatch = ln.match(/exit code (\d+)/);
+        if (exitMatch) exit_code = parseInt(exitMatch[1], 10);
+      }
+    }
+  }
+
+  // Compute duration_ms if both timestamps present.
+  let duration_ms = null;
+  if (row.started_at && row.completed_at) {
+    const s = Date.parse(row.started_at);
+    const e = Date.parse(row.completed_at);
+    if (!Number.isNaN(s) && !Number.isNaN(e)) duration_ms = Math.max(0, e - s);
+  }
+
+  return {
+    row,
+    log_path: log_path_rel,
+    log_available,
+    log_lines,
+    real_stderr,
+    exit_code,
+    duration_ms,
+  };
+}
+
 function _buildBatchStatusDetailedUncached() {
   const live = batchLive();
 
@@ -5434,6 +5531,26 @@ const server = createServer((req, res) => {
       const state = (u.searchParams.get('state') || 'failed').toLowerCase();
       const items = buildBatchItemsForState(state);
       return json({ ok: true, state: state, items: items.items, total: items.total, truncated: items.truncated, error_categories: items.error_categories || null });
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ ok: false, error: err.message }));
+      return;
+    }
+  }
+
+  // P0.7 Q3 (2026-05-20 iter8) — Per-row failure-detail tail. ?id=<batch_id>
+  // returns the batch-state row + a snippet of the daily batch log surrounding
+  // the row's started_at/completed_at window so users can see the ACTUAL
+  // root cause (e.g., STDERR lines) rather than just the structured error
+  // field, which often lags the real failure mode (e.g. records a 529 message
+  // when the runner shell already exited with code 1 from a bash arithmetic
+  // bug). Logs at data/logs/batch-YYYY-MM-DD.log (combined stdout+stderr).
+  if (url === '/api/batch/failure-detail') {
+    try {
+      const rowId = String(query.id || '').trim();
+      if (!rowId) return json({ ok: false, error: 'missing id query param' });
+      const detail = buildBatchFailureDetail(rowId);
+      return json({ ok: true, ...detail });
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify({ ok: false, error: err.message }));

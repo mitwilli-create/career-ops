@@ -21499,7 +21499,19 @@ function _renderBatchDrillInBody(state, data) {
       var cat = it.error_category ? ('<span class="bs-drillin-item-cat">' + esc(it.error_category) + '</span>') : '';
       var err = it.error ? ('<div class="bs-drillin-item-error">' + esc(it.error) + '</div>') : '';
       var retries = it.retries ? (' ' + String.fromCharCode(183) + ' retried ' + it.retries + 'x') : '';
-      meta = '<div class="bs-drillin-item-meta">' + cat + retries + '</div>' + err;
+      // P0.7 Q3 (iter8 2026-05-20) — "Why?" button on every failed row.
+      // Click opens the inline failure-detail panel with log_lines tail +
+      // real_stderr + exit_code from the daily batch log. The stored error
+      // field on the row often hides the root cause (batch-runner shell
+      // exits before the API recorder overwrites the field) so the log
+      // tail is the ground truth.
+      var whyBtn = '';
+      if (it.id != null) {
+        var WHY_BTN_STYLE = 'margin-left:8px;padding:2px 8px;font-size:10.5px;background:var(--surface,#ffffff);color:var(--text-2,#4b5563);border:1px solid var(--border,#e5e7eb);border-radius:4px;cursor:pointer;font-weight:500';
+        whyBtn = ' <button type="button" class="bs-drillin-why-btn" style="' + WHY_BTN_STYLE + '" onclick="openBatchFailureDetail(\\'' + esc(String(it.id)) + '\\', this)" aria-label="Show actual failure cause from batch log">Why?</button>';
+      }
+      meta = '<div class="bs-drillin-item-meta">' + cat + retries + whyBtn + '</div>' + err +
+             '<div class="bs-drillin-failure-detail" data-row-id="' + esc(String(it.id || '')) + '" aria-hidden="true"></div>';
     } else if (state === 'running') {
       var sec = it.elapsed_seconds || 0;
       var elapsed = sec < 60 ? (sec + 's') : (Math.floor(sec / 60) + 'm ' + (sec % 60) + 's');
@@ -21525,6 +21537,98 @@ document.addEventListener('keydown', function (e) {
 
 window.openBatchDrillIn = openBatchDrillIn;
 window.closeBatchDrillIn = closeBatchDrillIn;
+
+// P0.7 Q3 (iter8 2026-05-20) — inline failure-detail expansion under each
+// failed row in the batch-status drill-in. Surfaces the actual stderr from
+// the daily batch log when the stored error field doesn't match the real
+// failure (e.g. bash runner exits with code 1 before API recorder writes).
+async function openBatchFailureDetail(rowId, btn) {
+  if (!rowId) return;
+  var panel = btn && btn.closest('.bs-drillin-item');
+  var detailEl = panel && panel.querySelector('.bs-drillin-failure-detail');
+  if (!detailEl) return;
+  // Toggle close if already open.
+  if (detailEl.getAttribute('aria-hidden') === 'false') {
+    detailEl.setAttribute('aria-hidden', 'true');
+    detailEl.innerHTML = '';
+    if (btn) btn.textContent = 'Why?';
+    return;
+  }
+  if (btn) { btn.textContent = 'Loading' + String.fromCharCode(8230); btn.disabled = true; }
+  var data = null;
+  try {
+    var r = await fetch('/api/batch/failure-detail?id=' + encodeURIComponent(rowId), { cache: 'no-cache' });
+    data = await r.json();
+  } catch (e) {
+    detailEl.setAttribute('aria-hidden', 'false');
+    detailEl.innerHTML = '<div class="bs-drillin-fd-error">Could not load failure detail.</div>';
+    if (btn) { btn.textContent = 'Why?'; btn.disabled = false; }
+    return;
+  }
+  if (btn) { btn.textContent = 'Hide'; btn.disabled = false; }
+  detailEl.setAttribute('aria-hidden', 'false');
+  detailEl.innerHTML = _renderBatchFailureDetail(data);
+}
+
+function _renderBatchFailureDetail(data) {
+  var esc = function (s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  };
+  var CARD_STYLE = 'margin:8px 0 4px;padding:10px 12px;background:var(--surface-2,#f7f8fa);border:1px solid var(--border,#e5e7eb);border-radius:6px;font-size:12px;line-height:1.45';
+  var LABEL_STYLE = 'font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3,#6b7280);font-weight:600;margin:6px 0 4px';
+  var STDERR_STYLE = 'margin:0;padding:6px 8px;background:var(--red-bg,#fef2f2);color:var(--red-fg,#b91c1c);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:1.4;white-space:pre-wrap;word-break:break-word;border-radius:4px;border:1px solid var(--red-fg,#fecaca)';
+  var LOGTAIL_STYLE = 'margin:0;padding:6px 8px;background:var(--bg,#0b0f17);color:var(--text-2,#d1d5db);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:1.4;white-space:pre-wrap;word-break:break-word;border-radius:4px;max-height:200px;overflow-y:auto';
+  var META_STYLE = 'font-size:11.5px;color:var(--text-2,#4b5563);margin-bottom:6px';
+  var EMPTY_STYLE = 'padding:6px 8px;color:var(--text-3,#6b7280);font-style:italic;font-size:11.5px';
+  var STORED_STYLE = 'margin-top:8px;font-size:11px;color:var(--text-3,#6b7280)';
+  if (!data || data.ok === false) {
+    return '<div class="bs-drillin-fd-error" style="' + CARD_STYLE + ';color:var(--red-fg,#b91c1c)">' + esc((data && data.error) || 'Unknown error') + '</div>';
+  }
+  var rowEl = data.row || {};
+  var lines = data.log_lines || [];
+  var logTail = '';
+  if (lines.length) {
+    logTail = '<pre style="' + LOGTAIL_STYLE + '">' + lines.map(function (l) { return esc(l); }).join(String.fromCharCode(10)) + '</pre>';
+  } else if (data.log_available === false) {
+    logTail = '<div style="' + EMPTY_STYLE + '">No log file for ' + esc(data.log_path || 'this date') + '.</div>';
+  } else {
+    logTail = '<div style="' + EMPTY_STYLE + '">No "Processing offer #' + esc(rowEl.id || '?') + '" lines found in ' + esc(data.log_path || '?') + '.</div>';
+  }
+  var stderrBlock = '';
+  if (data.real_stderr) {
+    stderrBlock = '<div style="' + LABEL_STYLE + '">Actual stderr (ground truth)</div>' +
+      '<pre style="' + STDERR_STYLE + '">' + esc(data.real_stderr) + '</pre>';
+  }
+  var meta = [];
+  if (data.exit_code != null) meta.push('exit code <strong>' + esc(String(data.exit_code)) + '</strong>');
+  if (data.duration_ms != null) {
+    var sec = Math.round(data.duration_ms / 1000);
+    var durTxt = sec < 60 ? (sec + 's') : (Math.floor(sec / 60) + 'm ' + (sec % 60) + 's');
+    meta.push('duration <strong>' + esc(durTxt) + '</strong>');
+  }
+  if (rowEl.retries) meta.push('retried <strong>' + esc(rowEl.retries) + '×</strong>');
+  var metaLine = meta.length ? '<div style="' + META_STYLE + '">' + meta.join(' · ') + '</div>' : '';
+  var storedNote = '';
+  // Surface the stored field but flag it may lag the real cause — column
+  // layout in batch-state.tsv currently shifts on failure rows (the score
+  // column sometimes holds the API error text, error column holds retries),
+  // so the log tail above is the ground truth.
+  var stored = rowEl.error || rowEl.score;
+  if (stored) {
+    storedNote = '<details style="' + STORED_STYLE + '">' +
+      '<summary style="cursor:pointer;font-weight:500">Stored field (may lag real cause)</summary>' +
+      '<div style="margin-top:4px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;color:var(--text-3,#6b7280);word-break:break-word">' + esc(String(stored)) + '</div>' +
+    '</details>';
+  }
+  return '<div style="' + CARD_STYLE + '">' +
+    metaLine +
+    stderrBlock +
+    '<div style="' + LABEL_STYLE + '">Log tail · <code style="font-size:10.5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace">' + esc(data.log_path || '?') + '</code></div>' +
+    logTail +
+    storedNote +
+  '</div>';
+}
+window.openBatchFailureDetail = openBatchFailureDetail;
 
 // ── Verify claims modal ─────────────────────────────────────────
 async function openVerify(slug) {

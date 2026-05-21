@@ -1,7 +1,7 @@
 {
   "$schema": "career-ops-tokens-master-v1",
   "$description": "Canonical source-of-truth for all career-ops design tokens. DO NOT EDIT derived files (lib/heartbeat-tokens.json, lib/dashboard-tokens.mjs, dashboard/css/tokens.css) directly — edit this file, then run `node scripts/transform-tokens.mjs` to regenerate all consumers. A CI gate (.github/workflows/test-all.yml step 'tokens-drift-check') enforces this: any derived file that diverges from what the transform would produce will fail the build. See AGENTS.md § token-sources-of-truth.",
-  "$schemaVersion": "1.0.0",
+  "$schemaVersion": "1.1.0",
   "$generatedBy": "finding-007-token-unification (2026-05-20)",
   "_provenance": {
     "captured_at": "2026-05-19T01:14:57.760Z",
@@ -353,7 +353,99 @@
       "color_token": "h3_color"
     },
     "role": {
-      "$reserved": "ARCH.42 populates this object. Empty until ARCH.42 lands. The transform asserts this key contains only `$reserved` — adding sibling keys here fails CI."
+      "$comment": "ARCH.42 (2026-05-21) — 10 semantic typography roles. Color-agnostic; callers supply color via style or var(--text-*). fontSize is a string OR {email, web} object for dual-encoded roles. Identity locks: h2.fontSize.email=16px (Council Decision C / ADR-0007), body.fontSize.{email=13px, web=14px} (dealbreaker fix #2). Role count cap = 10 (was 9 pre-dealbreaker; body-large added per fix #3).",
+      "h1": {
+        "fontSize": { "email": "22px", "web": "22px" },
+        "fontWeight": "700",
+        "lineHeight": "1.2",
+        "letterSpacing": "-0.01em",
+        "textTransform": "none",
+        "fontFamily": "$typography.fontFamily.sans",
+        "_usage": "Top-level surface heading. Color-agnostic — heartbeat sets accent green, dashboard sets standard text color."
+      },
+      "h2": {
+        "fontSize": { "email": "16px", "web": "18px" },
+        "fontWeight": "700",
+        "lineHeight": "1.3",
+        "letterSpacing": "-0.3px",
+        "textTransform": "none",
+        "fontFamily": "$typography.fontFamily.sans",
+        "_usage": "Sub-section heading. Dual fontSize: email=16px identity-locked (Council Decision C / ADR-0007 mobile WebKit autosize compensation); web=18px preserves dashboard desktop hierarchy.",
+        "_lock": "email-size: 16px"
+      },
+      "h3": {
+        "fontSize": { "email": "13px", "web": "13px" },
+        "fontWeight": "700",
+        "lineHeight": "1.3",
+        "letterSpacing": "0.04em",
+        "textTransform": "uppercase",
+        "fontFamily": "$typography.fontFamily.sans",
+        "_usage": "Tertiary heading / card title. Uppercase + tracked."
+      },
+      "section-label": {
+        "fontSize": { "email": "10px", "web": "10px" },
+        "fontWeight": "700",
+        "lineHeight": "1.3",
+        "letterSpacing": "0.10em",
+        "textTransform": "uppercase",
+        "fontFamily": "$typography.fontFamily.sans",
+        "_usage": "Overline label above a content group. Replaces ALL 10px and 11px uppercase/tracked patterns (1px difference is below perceptual threshold for overline labels)."
+      },
+      "body-large": {
+        "fontSize": { "email": "15px", "web": "15px" },
+        "fontWeight": "600",
+        "lineHeight": "1.4",
+        "letterSpacing": "normal",
+        "textTransform": "none",
+        "fontFamily": "$typography.fontFamily.sans",
+        "_usage": "Hero-card subject (heartbeat:557 company name), prominent inline emphasis. Distinct from h3: no uppercase, no tracking. Added per dealbreaker fix #3."
+      },
+      "body": {
+        "fontSize": { "email": "13px", "web": "14px" },
+        "fontWeight": "400",
+        "lineHeight": "1.5",
+        "letterSpacing": "normal",
+        "textTransform": "none",
+        "fontFamily": "$typography.fontFamily.sans",
+        "_usage": "Primary paragraph / list text. Dual-encoded per dealbreaker fix #2: dashboard 14px baseline (build-dashboard.mjs global body rule) vs heartbeat MJML 13px.",
+        "_lock": "email-size: 13px, web-size: 14px"
+      },
+      "body-small": {
+        "fontSize": { "email": "12px", "web": "12px" },
+        "fontWeight": "400",
+        "lineHeight": "1.4",
+        "letterSpacing": "normal",
+        "textTransform": "none",
+        "fontFamily": "$typography.fontFamily.sans",
+        "_usage": "Secondary paragraph, sidebar notes, hint text."
+      },
+      "meta": {
+        "fontSize": { "email": "11px", "web": "11px" },
+        "fontWeight": "500",
+        "lineHeight": "1.3",
+        "letterSpacing": "0.01em",
+        "textTransform": "none",
+        "fontFamily": "$typography.fontFamily.sans",
+        "_usage": "Inline metadata, timestamps, badge text, helper notes. Caption-like usages migrate here with an explicit color override."
+      },
+      "code": {
+        "fontSize": { "email": "12px", "web": "12px" },
+        "fontWeight": "400",
+        "lineHeight": "1.4",
+        "letterSpacing": "normal",
+        "textTransform": "none",
+        "fontFamily": "$typography.fontFamily.mono",
+        "_usage": "Inline code / monospace data."
+      },
+      "button-label": {
+        "fontSize": { "email": "12px", "web": "12px" },
+        "fontWeight": "600",
+        "lineHeight": "1",
+        "letterSpacing": "0.04em",
+        "textTransform": "uppercase",
+        "fontFamily": "$typography.fontFamily.sans",
+        "_usage": "CTA / interactive control labels ON ACTUAL BUTTONS (links styled as buttons, <button>, CTA pills). Static overline labels use section-label instead. Distinct from section-label: weight 600 vs 700, tighter tracking 0.04em vs 0.10em. Step-4 gate: grep render-time code for actual call sites; if <6, drop and merge to section-label."
+      }
     }
   }
 }

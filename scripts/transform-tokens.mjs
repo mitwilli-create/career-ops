@@ -1,21 +1,23 @@
 #!/usr/bin/env node
 /**
- * scripts/transform-tokens.mjs — ARCH.41 finding-007 token unification.
+ * scripts/transform-tokens.mjs — ARCH.41 (finding-007) + ARCH.42 (finding-008) token unification.
  *
- * Reads tokens/master.json and emits 3 derived consumer files (+ 1 lockfile):
- *   lib/heartbeat-tokens.json   — heartbeat email tokens
- *   lib/dashboard-tokens.mjs    — dashboard build tokens (JS module)
+ * Reads tokens/master.json and emits 4 derived consumer files (+ 1 lockfile):
+ *   lib/heartbeat-tokens.json        — heartbeat email tokens
+ *   lib/dashboard-tokens.mjs         — dashboard build tokens (JS module)
  *   lib/dashboard-tokens.mjs.sha256  — lockfile (master hash)
- *   dashboard/css/tokens.css    — standalone-page CSS tokens
+ *   dashboard/css/tokens.css         — standalone-page CSS tokens + .t-{role} typography classes
+ *   lib/typography-roles.mjs         — TYPE_ROLES + styleString() helper (email fontSize path)
  *
  * CLI:
- *   node scripts/transform-tokens.mjs               # write all 4 files
+ *   node scripts/transform-tokens.mjs               # write all 5 files
  *   node scripts/transform-tokens.mjs --check       # diff against on-disk; exit 1 if drift
- *   node scripts/transform-tokens.mjs --output=heartbeat|dashboard-mjs|dashboard-css|all
+ *   node scripts/transform-tokens.mjs --output=heartbeat|dashboard-mjs|dashboard-css|typography-roles|all
  *   node scripts/transform-tokens.mjs --verbose
  *
- * Spec: data/architecture/finding-007-implementation-spec-2026-05-20.md
- * Dealbreaker audit: data/architecture/dealbreaker-final-arch41-token-unification-20260520.md
+ * Spec (ARCH.41): data/architecture/finding-007-implementation-spec-2026-05-20.md
+ * Spec (ARCH.42): data/architecture/finding-008-implementation-spec-2026-05-20.md
+ * Dealbreaker audits: data/architecture/dealbreaker-final-arch{41,42}-*.md
  *
  * Bypass for the CI gate (EMERGENCY ONLY): set TOKENS_SKIP_CI_GATE=1 in workflow env.
  */
@@ -34,9 +36,17 @@ const OUT_HEARTBEAT = resolve(REPO_ROOT, 'lib/heartbeat-tokens.json');
 const OUT_DASHBOARD_MJS = resolve(REPO_ROOT, 'lib/dashboard-tokens.mjs');
 const OUT_DASHBOARD_LOCK = resolve(REPO_ROOT, 'lib/dashboard-tokens.mjs.sha256');
 const OUT_TOKENS_CSS = resolve(REPO_ROOT, 'dashboard/css/tokens.css');
+const OUT_TYPOGRAPHY_ROLES = resolve(REPO_ROOT, 'lib/typography-roles.mjs');
 
 const GENERATOR_NAME = 'scripts/transform-tokens.mjs';
-const SCHEMA_VERSION = '1.0.0';
+const SCHEMA_VERSION = '1.1.0';
+
+// ARCH.42 invariants
+const ROLE_COUNT_CAP = 10;            // 9 pre-dealbreaker; body-large added per fix #3
+const H2_EMAIL_LOCK = '16px';         // Council Decision C / ADR-0007
+const BODY_EMAIL_LOCK = '13px';       // dealbreaker fix #2 — heartbeat MJML baseline
+const BODY_WEB_LOCK = '14px';         // dealbreaker fix #2 — dashboard baseline
+const REQUIRED_ROLE_PROPS = ['fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'textTransform', 'fontFamily'];
 
 // CSS variable name → master.json nested path. ORDER IS FIXED.
 const CSS_VAR_MAP = [
@@ -142,10 +152,42 @@ export function validateMaster(master) {
       throw new Error(`Unknown top-level category in master.json: ${key}. Update KNOWN_TOP_LEVEL_CATEGORIES + emit logic.`);
     }
   }
-  assert.ok(master.typography?.role?.$reserved,
-    'master.json typography.role must reserve $reserved sentinel for ARCH.42');
-  assert.equal(Object.keys(master.typography.role).length, 1,
-    'master.json typography.role must contain ONLY $reserved (ARCH.42 owns this slot).');
+
+  // ARCH.42 invariants — typography.role.* layer
+  const role = master.typography?.role;
+  assert.ok(role && typeof role === 'object',
+    'master.json typography.role must be an object (ARCH.42 populates this layer).');
+  const roleNames = Object.keys(role).filter(k => !k.startsWith('$') && !k.startsWith('_'));
+  assert.ok(roleNames.length > 0 && roleNames.length <= ROLE_COUNT_CAP,
+    `typography.role has ${roleNames.length} roles — must be in [1, ${ROLE_COUNT_CAP}]. ARCH.42 spec § dealbreaker fix #3.`);
+  for (const name of roleNames) {
+    const r = role[name];
+    for (const prop of REQUIRED_ROLE_PROPS) {
+      assert.ok(r[prop] !== undefined,
+        `typography.role.${name} missing required prop: ${prop}`);
+    }
+    // fontSize must be string OR {email, web}
+    if (typeof r.fontSize === 'object') {
+      assert.ok(r.fontSize.email && r.fontSize.web,
+        `typography.role.${name}.fontSize is an object — must have {email, web} keys.`);
+    }
+  }
+  // H2 email size identity lock (Council Decision C)
+  if (role.h2) {
+    const h2Email = typeof role.h2.fontSize === 'object' ? role.h2.fontSize.email : role.h2.fontSize;
+    assert.equal(h2Email, H2_EMAIL_LOCK,
+      `typography.role.h2.fontSize.email is identity-locked to ${H2_EMAIL_LOCK} (Council Decision C / ADR-0007). Got: ${h2Email}`);
+  }
+  // body dual-encoding lock (dealbreaker fix #2)
+  if (role.body) {
+    assert.ok(typeof role.body.fontSize === 'object',
+      'typography.role.body.fontSize must be an object {email, web} (dealbreaker fix #2 dual-encoding).');
+    assert.equal(role.body.fontSize.email, BODY_EMAIL_LOCK,
+      `typography.role.body.fontSize.email is locked to ${BODY_EMAIL_LOCK}. Got: ${role.body.fontSize.email}`);
+    assert.equal(role.body.fontSize.web, BODY_WEB_LOCK,
+      `typography.role.body.fontSize.web is locked to ${BODY_WEB_LOCK}. Got: ${role.body.fontSize.web}`);
+  }
+
   const REQUIRED = [
     'color.dark.bg.app', 'color.dark.bg.panel', 'color.dark.bg.panel_strong',
     'color.dark.accent.green_glow', 'color.dark.chip.blue_fg',
@@ -154,11 +196,37 @@ export function validateMaster(master) {
     'radius.sm', 'focus.ring.dark', 'focus.ring.light',
     'shadow.sm', 'backdrop.dark',
     'email.dark.body_bg', 'email.morning_dispatch', 'email.evening_dispatch',
+    'typography.fontFamily.sans', 'typography.fontFamily.mono',
   ];
   for (const path of REQUIRED) {
     const v = getPath(master, path);
     assert.ok(v !== undefined, `master.json missing required path: ${path}`);
   }
+}
+
+// ─── typography helpers (ARCH.42) ────────────────────────────────────────────
+
+function resolveFontRef(ref, master) {
+  if (typeof ref !== 'string' || !ref.startsWith('$typography.fontFamily.')) return ref;
+  const key = ref.replace('$typography.fontFamily.', '');
+  const v = master.typography.fontFamily[key];
+  if (v === undefined) {
+    throw new Error(`Unknown fontFamily ref: ${ref} (no $typography.fontFamily.${key} in master).`);
+  }
+  return v;
+}
+
+function getRoleNames(master) {
+  return Object.keys(master.typography.role)
+    .filter(k => !k.startsWith('$') && !k.startsWith('_'));
+}
+
+function getRoleFontSize(role, surface) {
+  return typeof role.fontSize === 'object' ? role.fontSize[surface] : role.fontSize;
+}
+
+function kebabToCamel(s) {
+  return s.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
 }
 
 // ─── emit: lib/heartbeat-tokens.json ─────────────────────────────────────────
@@ -306,7 +374,97 @@ export function emitTokensCss(master, hash) {
   lines.push('  }');
   lines.push('}');
   lines.push('');
+  // ARCH.42 — typography role classes. Web fontSize path. Color-agnostic.
+  lines.push('/* ── ARCH.42 typography roles — .t-{role} classes ──────────────── */');
+  lines.push('/* Color-agnostic: callers supply color via style="color:..." or  */');
+  lines.push('/* a separate utility. Web fontSize path; email path lives in     */');
+  lines.push('/* lib/typography-roles.mjs as TYPE_ROLES with email fontSize.    */');
+  lines.push('');
+  for (const name of getRoleNames(master)) {
+    const r = master.typography.role[name];
+    lines.push(`.t-${name} {`);
+    lines.push(`  font-size: ${getRoleFontSize(r, 'web')};`);
+    lines.push(`  font-weight: ${r.fontWeight};`);
+    lines.push(`  line-height: ${r.lineHeight};`);
+    if (r.letterSpacing && r.letterSpacing !== 'normal') {
+      lines.push(`  letter-spacing: ${r.letterSpacing};`);
+    }
+    if (r.textTransform && r.textTransform !== 'none') {
+      lines.push(`  text-transform: ${r.textTransform};`);
+    }
+    lines.push(`  font-family: ${resolveFontRef(r.fontFamily, master)};`);
+    lines.push('}');
+    lines.push('');
+  }
   return lines.join('\n');
+}
+
+// ─── emit: lib/typography-roles.mjs (ARCH.42) ───────────────────────────────
+
+export function emitTypographyRolesMjs(master, hash) {
+  const entries = [];
+  for (const name of getRoleNames(master)) {
+    const r = master.typography.role[name];
+    const camel = kebabToCamel(name);
+    const obj = {
+      fontSize: getRoleFontSize(r, 'email'),
+      fontWeight: r.fontWeight,
+      lineHeight: r.lineHeight,
+    };
+    if (r.letterSpacing && r.letterSpacing !== 'normal') {
+      obj.letterSpacing = r.letterSpacing;
+    }
+    if (r.textTransform && r.textTransform !== 'none') {
+      obj.textTransform = r.textTransform;
+    }
+    obj.fontFamily = resolveFontRef(r.fontFamily, master);
+    // Hand-format the inner object — canonicalStringify alone would alphabetize
+    // keys and lose the role's natural property order (fontSize → fontWeight →
+    // lineHeight → ...). Order matters for human readability of the generated
+    // file; the BYTES still hash deterministically because we build the same
+    // object the same way on every run.
+    const props = Object.entries(obj).map(([k, v]) => `    ${k}: ${JSON.stringify(v)}`).join(',\n');
+    entries.push(`  ${camel}: Object.freeze({\n${props}\n  })`);
+  }
+  return (
+    `// AUTO-GENERATED by ${GENERATOR_NAME} — DO NOT EDIT.\n` +
+    `// Source: tokens/master.json typography.role.* (email fontSize path)\n` +
+    `// Master hash (sha256): ${hash}\n` +
+    `// Schema version: ${SCHEMA_VERSION}\n` +
+    `// Re-run: node scripts/transform-tokens.mjs\n` +
+    `//\n` +
+    `// Web fontSize path lives in dashboard/css/tokens.css as .t-{role} classes.\n` +
+    `// styleString() converts a role + overrides into an email-safe inline-style\n` +
+    `// string (no media queries, no CSS vars — Outlook strips both).\n` +
+    `\n` +
+    `export const TYPE_ROLES = Object.freeze({\n` +
+    entries.join(',\n') +
+    `\n});\n` +
+    `\n` +
+    `/**\n` +
+    ` * Converts a TYPE_ROLES entry + overrides into an email-safe inline-style string.\n` +
+    ` *\n` +
+    ` * @param {Readonly<Record<string, string>>} roleProps  one TYPE_ROLES entry\n` +
+    ` * @param {Record<string, string>} [overrides]  e.g. { color: '#86efac', margin: '10px 0 3px' }\n` +
+    ` * @returns {string}  e.g. 'font-size:10px;font-weight:700;color:#86efac;margin:10px 0 3px'\n` +
+    ` *\n` +
+    ` * - Keys are emitted in role-then-overrides order (overrides win on collision).\n` +
+    ` * - 'textTransform: none' and 'letterSpacing: normal' are suppressed (no-op in email).\n` +
+    ` * - Never emits a 'color:' from the role itself — color is always an override.\n` +
+    ` * - Output is a single line; no trailing semicolon; ready to drop into style="...".\n` +
+    ` */\n` +
+    `export function styleString(roleProps, overrides = {}) {\n` +
+    `  const merged = { ...roleProps, ...overrides };\n` +
+    `  return Object.entries(merged)\n` +
+    `    .filter(([, v]) => v !== undefined && v !== null && v !== 'none' && v !== 'normal')\n` +
+    `    .map(([k, v]) => camelToKebab(k) + ':' + v)\n` +
+    `    .join(';');\n` +
+    `}\n` +
+    `\n` +
+    `function camelToKebab(s) {\n` +
+    `  return s.replace(/([A-Z])/g, m => '-' + m.toLowerCase());\n` +
+    `}\n`
+  );
 }
 
 // ─── transform (pure) ────────────────────────────────────────────────────────
@@ -317,6 +475,7 @@ export function transform(master) {
     heartbeat: emitHeartbeatJson(master, hash),
     dashboardMjs: emitDashboardMjs(master, hash),
     tokensCss: emitTokensCss(master, hash),
+    typographyRoles: emitTypographyRolesMjs(master, hash),
     dashboardLock: hash + '\n',
     hash
   };
@@ -348,7 +507,7 @@ function ensureDir(filePath) {
 
 function runWrite(opts) {
   const master = readMaster();
-  const { heartbeat, dashboardMjs, tokensCss, dashboardLock, hash } = transform(master);
+  const { heartbeat, dashboardMjs, tokensCss, typographyRoles, dashboardLock, hash } = transform(master);
   const targets = [];
   if (opts.output === 'all' || opts.output === 'heartbeat') {
     targets.push([OUT_HEARTBEAT, heartbeat]);
@@ -359,6 +518,9 @@ function runWrite(opts) {
   }
   if (opts.output === 'all' || opts.output === 'dashboard-css') {
     targets.push([OUT_TOKENS_CSS, tokensCss]);
+  }
+  if (opts.output === 'all' || opts.output === 'typography-roles') {
+    targets.push([OUT_TYPOGRAPHY_ROLES, typographyRoles]);
   }
   for (const [path, content] of targets) {
     ensureDir(path);
@@ -372,7 +534,7 @@ function runWrite(opts) {
 
 function runCheck(opts) {
   const master = readMaster();
-  const { heartbeat, dashboardMjs, tokensCss, dashboardLock } = transform(master);
+  const { heartbeat, dashboardMjs, tokensCss, typographyRoles, dashboardLock } = transform(master);
   const checks = [];
   if (opts.output === 'all' || opts.output === 'heartbeat') {
     checks.push([OUT_HEARTBEAT, heartbeat]);
@@ -383,6 +545,9 @@ function runCheck(opts) {
   }
   if (opts.output === 'all' || opts.output === 'dashboard-css') {
     checks.push([OUT_TOKENS_CSS, tokensCss]);
+  }
+  if (opts.output === 'all' || opts.output === 'typography-roles') {
+    checks.push([OUT_TYPOGRAPHY_ROLES, typographyRoles]);
   }
   let drift = false;
   for (const [path, expected] of checks) {
@@ -419,7 +584,7 @@ export function main(argv) {
     else if (a === '--help' || a === '-h') { printUsage(); return 0; }
     else if (a.startsWith('--output=')) {
       const v = a.slice('--output='.length);
-      if (!['heartbeat', 'dashboard-mjs', 'dashboard-css', 'all'].includes(v)) {
+      if (!['heartbeat', 'dashboard-mjs', 'dashboard-css', 'typography-roles', 'all'].includes(v)) {
         console.error(`Unknown --output value: ${v}`);
         return 2;
       }
@@ -434,7 +599,7 @@ export function main(argv) {
 }
 
 function printUsage() {
-  console.log('Usage: node scripts/transform-tokens.mjs [--check] [--output=heartbeat|dashboard-mjs|dashboard-css|all] [--verbose]');
+  console.log('Usage: node scripts/transform-tokens.mjs [--check] [--output=heartbeat|dashboard-mjs|dashboard-css|typography-roles|all] [--verbose]');
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

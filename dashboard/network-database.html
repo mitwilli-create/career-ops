@@ -5,12 +5,15 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Network database · career-ops</title>
   <link rel="manifest" href="/manifest.json">
+  <!-- B1.3 (2026-05-20) — set data-theme attribute BEFORE any stylesheet/inline
+       CSS so the chosen palette renders on first paint (avoid FOUC). -->
+  <script>(function(){try{var v=localStorage.getItem('career-ops-theme');if(['dark','light','match-os'].indexOf(v)===-1)v='dark';document.documentElement.setAttribute('data-theme',v);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
   <style>
-    /* P0.8 (2026-05-20) — Network DB now defaults to DARK regardless of
-       OS preference per Mitchell's ask. Light mode is opt-in via the
-       prefers-color-scheme: light media query (so a light-mode-preferring
-       user on a different device still gets a usable surface), but the
-       baseline is the dark palette. */
+    /* B1.3 (2026-05-20) — resolves iter1/iter6 P0.8 contradiction.
+       Mitchell's canonical preference: DARK as the default; OS preference
+       is honored ONLY when the user explicitly opts in via the "Match OS"
+       toggle in the toolbar (data-theme="match-os"). The early-script in
+       <head> sets data-theme before paint to avoid FOUC. */
     :root {
       color-scheme: dark;
       --bg: #0b0f17; --surface: #111827; --surface-2: #1f2937;
@@ -20,15 +23,22 @@
       --amber-fg: #fcd34d; --red-fg: #fca5a5;
       --blue-fg: #93c5fd; --blue-bg: rgba(59,130,246,0.12);
     }
-    /* P3.25 iter6 2026-05-20 — light-mode opt-out for users whose OS
-       prefers light. Previous syntax was `@media (prefers-color-scheme:
-       light) and (not (data-theme: dark))` — invalid because data-theme
-       is an HTML attribute, not a media feature, so the rule never matched
-       and the page rendered always-dark in practice. Dropped the
-       data-theme clause; if a force-dark JS toggle is added later, wrap
-       the override with `body:not(.force-dark)` or similar selector. */
+    /* Force-light: applies whenever the user picked "Light" explicitly. */
+    :root[data-theme="light"] {
+      color-scheme: light;
+      --bg: #f7f8fa; --surface: #ffffff; --surface-2: #f0f2f5;
+      --border: #e2e6eb; --text: #0f172a; --text-2: #334155;
+      --text-3: #64748b; --text-4: #94a3b8;
+      --green-fg: #047857; --green-bg: #ecfdf5;
+      --amber-fg: #b45309; --red-fg: #b91c1c;
+      --blue-fg: #2563eb; --blue-bg: #eff6ff;
+    }
+    /* Match-OS light: applies ONLY when the user picked "Match OS" AND
+       the OS prefers light. If the user is on the default ("dark") this
+       block never matches. */
     @media (prefers-color-scheme: light) {
-      :root {
+      :root[data-theme="match-os"] {
+        color-scheme: light;
         --bg: #f7f8fa; --surface: #ffffff; --surface-2: #f0f2f5;
         --border: #e2e6eb; --text: #0f172a; --text-2: #334155;
         --text-3: #64748b; --text-4: #94a3b8;
@@ -36,6 +46,25 @@
         --amber-fg: #b45309; --red-fg: #b91c1c;
         --blue-fg: #2563eb; --blue-bg: #eff6ff;
       }
+    }
+    /* Toolbar widget — 3-state segmented toggle. Identical pattern is
+       re-used on /contacts.html via lib/dashboard-theme.mjs. */
+    .theme-toggle {
+      display: inline-flex; gap: 0; border: 1px solid var(--border);
+      border-radius: 6px; overflow: hidden; flex-shrink: 0;
+    }
+    .theme-toggle .theme-opt {
+      padding: 6px 10px; font-size: 11.5px; font-weight: 500;
+      background: var(--surface-2); color: var(--text-3);
+      border: none; cursor: pointer; line-height: 1.2;
+    }
+    .theme-toggle .theme-opt + .theme-opt { border-left: 1px solid var(--border); }
+    .theme-toggle .theme-opt:hover { background: var(--border); color: var(--text); }
+    .theme-toggle .theme-opt[aria-pressed="true"] {
+      background: var(--blue-bg); color: var(--blue-fg); font-weight: 600;
+    }
+    .theme-toggle .theme-opt:focus-visible {
+      outline: none; box-shadow: inset 0 0 0 2px var(--blue-fg);
     }
     * { box-sizing: border-box; }
     body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
@@ -169,13 +198,13 @@
        #92400e (dark amber) for AA on light --surface. */
     .conf-medium { background: color-mix(in srgb, var(--amber-fg) 12%, var(--surface));
       color: #fbbf24; }
+    /* B1.3 2026-05-20 — conf-medium light-mode override now matches the
+       3-state theme system: applies when forced-light OR (match-OS AND
+       OS-prefers-light). ~5.4:1 contrast vs the amber-tinted light bg
+       from color-mix. */
+    :root[data-theme="light"] .conf-medium { color: #92400e; }
     @media (prefers-color-scheme: light) {
-      /* Source-order tiebreaker: must live AFTER .conf-medium so this
-         override wins. The @media :root vars block at the top of the
-         file flips bg/text tokens; the badge text color is hardcoded
-         to a literal hex (no token), so the override has to be a literal
-         too. ~5.4:1 contrast vs the amber-tinted light bg from color-mix. */
-      .conf-medium { color: #92400e; }
+      :root[data-theme="match-os"] .conf-medium { color: #92400e; }
     }
     .conf-low { background: var(--surface-2); color: var(--text-4); }
     .pill { display: inline-block; padding: 1px 7px; margin: 1px 4px 1px 0;
@@ -214,11 +243,12 @@
   --focus-ring: 0 0 0 3px var(--blue-bg);
   --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Helvetica, Arial, sans-serif;
 }
-@media (prefers-color-scheme: dark) {
-  :root { --border-strong: #353a52; }
-}
+/* B1.3 2026-05-20 — --border-strong tracks the 3-state theme.
+   Dark default → #353a52; forced-light → #cbd5e1; match-OS light → #cbd5e1. */
+:root { --border-strong: #353a52; }
+:root[data-theme="light"] { --border-strong: #cbd5e1; }
 @media (prefers-color-scheme: light) {
-  :root { --border-strong: #cbd5e1; }
+  :root[data-theme="match-os"] { --border-strong: #cbd5e1; }
 }
 body { display: block; }
 .netdb-page-wrap {
@@ -661,6 +691,13 @@ textarea:focus-visible {
   <button id="bulk-email" disabled>Find email selected</button>
   <button id="export-csv">Export CSV</button>
   <button id="open-saved" title="Saved searches">★ Saved</button>
+  <!-- B1.3 (2026-05-20) — 3-state theme toggle. Dark default; persists in
+       localStorage('career-ops-theme'); "Match OS" honors prefers-color-scheme. -->
+  <div class="theme-toggle" role="group" aria-label="Color theme">
+    <button type="button" class="theme-opt" data-theme-opt="dark" aria-pressed="false" title="Always dark">◐ Dark</button>
+    <button type="button" class="theme-opt" data-theme-opt="light" aria-pressed="false" title="Always light">☀︎ Light</button>
+    <button type="button" class="theme-opt" data-theme-opt="match-os" aria-pressed="false" title="Match OS preference">⏿ Match OS</button>
+  </div>
 </div>
 
 <!-- BRAVO followup 2026-05-20 Item 1 / AAA-1 — harmonized filter chip
@@ -890,6 +927,39 @@ window.closeSidebar = closeSidebar;
   } else {
     injectShortcutsModal();
   }
+})();
+
+// B1.3 (2026-05-20) — 3-state theme toggle handler. Matches the early-script
+// in <head> (which sets data-theme before paint). Persists in localStorage.
+(function () {
+  var STORAGE_KEY = 'career-ops-theme';
+  var ATTR = 'data-theme';
+  var VALID = ['dark', 'light', 'match-os'];
+  function apply(v) {
+    if (VALID.indexOf(v) === -1) v = 'dark';
+    document.documentElement.setAttribute(ATTR, v);
+    try { localStorage.setItem(STORAGE_KEY, v); } catch (e) {}
+    paint(v);
+  }
+  function paint(v) {
+    document.querySelectorAll('.theme-toggle .theme-opt').forEach(function (btn) {
+      var on = btn.getAttribute('data-theme-opt') === v;
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+  var saved = 'dark';
+  try { var s = localStorage.getItem(STORAGE_KEY); if (VALID.indexOf(s) !== -1) saved = s; } catch (e) {}
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () { paint(saved); });
+  } else {
+    paint(saved);
+  }
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('.theme-toggle .theme-opt');
+    if (!btn) return;
+    var v = btn.getAttribute('data-theme-opt');
+    if (v) apply(v);
+  });
 })();
 
 </script>

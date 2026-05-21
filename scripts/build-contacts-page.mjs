@@ -1031,6 +1031,27 @@ const pageCSS = `
   .grid { grid-template-columns: 1fr; }
   .controls-trailing { width: 100%; justify-content: flex-end; flex-wrap: wrap; }
 }
+
+/* B1.3 (2026-05-20) — 3-state theme toggle widget. Shared with
+   /network-database.html. Dark default; user can pick Dark/Light/Match-OS.
+   Persists in localStorage('career-ops-theme'); handler at end of pageJS. */
+.theme-toggle {
+  display: inline-flex; gap: 0; border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px); overflow: hidden; flex-shrink: 0;
+}
+.theme-toggle .theme-opt {
+  padding: 6px 10px; font-size: 11.5px; font-weight: 500;
+  background: var(--surface-2); color: var(--text-3);
+  border: none; cursor: pointer; line-height: 1.2; font-family: inherit;
+}
+.theme-toggle .theme-opt + .theme-opt { border-left: 1px solid var(--border); }
+.theme-toggle .theme-opt:hover { background: var(--border); color: var(--text); }
+.theme-toggle .theme-opt[aria-pressed="true"] {
+  background: var(--blue-bg); color: var(--blue-fg); font-weight: 600;
+}
+.theme-toggle .theme-opt:focus-visible {
+  outline: none; box-shadow: inset 0 0 0 2px var(--blue-fg);
+}
 `;
 
 // ---------------------------------------------------------------------------
@@ -1238,6 +1259,14 @@ const mainHTML = `
       <div class="view-switcher" role="group" aria-label="View mode">
         <a href="/contacts.html" class="active" aria-current="page">Cards</a>
         <a href="/network-database.html">Table</a>
+      </div>
+      <!-- B1.3 (2026-05-20) — 3-state theme toggle, mirrored on
+           /network-database.html. Persists in localStorage; "Match OS"
+           honors prefers-color-scheme. -->
+      <div class="theme-toggle" role="group" aria-label="Color theme">
+        <button type="button" class="theme-opt" data-theme-opt="dark" aria-pressed="false" title="Always dark">◐ Dark</button>
+        <button type="button" class="theme-opt" data-theme-opt="light" aria-pressed="false" title="Always light">☀︎ Light</button>
+        <button type="button" class="theme-opt" data-theme-opt="match-os" aria-pressed="false" title="Match OS preference">⏿ Match OS</button>
       </div>
       <div class="sort-dropdown" id="sort-dropdown">
         <button type="button" class="sort-dropdown-trigger" aria-haspopup="listbox" aria-expanded="false" id="sort-trigger" onclick="toggleSortDropdown()">
@@ -2149,6 +2178,40 @@ function initContactsPage() {
       }
       paintFreshness('Live fetch failed · ' + (err.message || 'unknown') + (cached ? ' · showing cache' : ''), 'stale');
     });
+})();
+
+// B1.3 (2026-05-20) — theme-toggle click handler. The early-script in <head>
+// (emitted by renderDashboardShell) already set data-theme before paint;
+// this just keeps the toggle UI in sync + persists user clicks.
+(function () {
+  var STORAGE_KEY = 'career-ops-theme';
+  var ATTR = 'data-theme';
+  var VALID = ['dark', 'light', 'match-os'];
+  function apply(v) {
+    if (VALID.indexOf(v) === -1) v = 'dark';
+    document.documentElement.setAttribute(ATTR, v);
+    try { localStorage.setItem(STORAGE_KEY, v); } catch (e) {}
+    paint(v);
+  }
+  function paint(v) {
+    document.querySelectorAll('.theme-toggle .theme-opt').forEach(function (btn) {
+      var on = btn.getAttribute('data-theme-opt') === v;
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+  var saved = 'dark';
+  try { var s = localStorage.getItem(STORAGE_KEY); if (VALID.indexOf(s) !== -1) saved = s; } catch (e) {}
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () { paint(saved); });
+  } else {
+    paint(saved);
+  }
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('.theme-toggle .theme-opt');
+    if (!btn) return;
+    var v = btn.getAttribute('data-theme-opt');
+    if (v) apply(v);
+  });
 })();
 </script>
 `;

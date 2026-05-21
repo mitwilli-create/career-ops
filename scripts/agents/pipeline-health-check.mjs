@@ -5,11 +5,16 @@
  * Periodically asserts that:
  *   1. Sidebar badge numbers MATCH the underlying files (pipeline.md +
  *      triage-advance.tsv). Drift = bug.
- *   2. Triage-advance.tsv doesn't contain "stuck" URLs (in the queue >2h
- *      without being processed). Stuck URLs are usually dead postings that
- *      should be in the expired archive.
- *   3. The dashboard-server is reachable (200 on /api/stats).
- *   4. No more than one Process All / Run Batch orchestrator is alive at once.
+ *   2. batch-state.tsv has no rows with status='in-progress' AND
+ *      started_at > STUCK_THRESHOLD_HOURS old. Those are real batch-worker
+ *      hangs that need investigation.
+ *   3. triage-advance.tsv queue is informational ONLY. Rows sitting in the
+ *      queue are waiting for the next scheduled batch fire (08:05 PT and
+ *      12:00 PT) — NOT stuck. We only flag the queue as STALE if the file
+ *      mtime is older than QUEUE_STALE_HOURS, indicating the batch may
+ *      have stopped firing entirely.
+ *   4. The dashboard-server is reachable (200 on /api/stats).
+ *   5. No more than one Process All / Run Batch orchestrator is alive at once.
  *
  * Outputs data/pipeline-health.json (machine-readable) — read by the
  * dashboard's "System healthy" chip + the /api/pipeline/health-status endpoint.
@@ -20,6 +25,11 @@
  *
  * Designed to run every 5 min via launchd
  * (com.mitchell.career-ops.pipeline-health.plist).
+ *
+ * 2026-05-20: Refactored to distinguish "queue waiting" (normal) from
+ * "worker stuck" (alarm). The original mtime-only check was flagging the
+ * daily-batch waiting queue as stuck — a false positive that drowned the
+ * real worker-hang signal.
  */
 
 import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
@@ -35,6 +45,7 @@ const ROOT = join(__dirname, '..', '..');
 const HEALTH_FILE = join(ROOT, 'data', 'pipeline-health.json');
 
 const STUCK_THRESHOLD_HOURS = parseFloat(process.env.PIPELINE_HEALTH_STUCK_THRESHOLD_HOURS || '2');
+const QUEUE_STALE_THRESHOLD_HOURS = parseFloat(process.env.PIPELINE_HEALTH_QUEUE_STALE_HOURS || '20');
 const DASHBOARD_URL = process.env.DASHBOARD_HEALTH_URL || 'http://localhost:3097';
 
 function countPipelinePending() {
@@ -53,6 +64,39 @@ function getTriageAdvanceMtime() {
   const fp = join(ROOT, 'batch/triage-advance.tsv');
   if (!existsSync(fp)) return null;
   try { return statSync(fp).mtime.toISOString(); } catch { return null; }
+}
+
+function readBatchState() {
+  const fp = join(ROOT, 'batch/batch-state.tsv');
+  if (!existsSync(fp)) return [];
+  const text = readFileSync(fp, 'utf-8');
+  const lines = text.split('\n').filter(l => l.trim() && !l.startsWith('id\t'));
+  return lines.map(l => {
+    const cols = l.split('\t');
+    return {
+      id: cols[0],
+      url: cols[1],
+      status: cols[2],
+      started_at: cols[3],
+      completed_at: cols[4],
+      report_num: cols[5],
+      score: cols[6],
+      error: cols[7],
+      retries: cols[8],
+    };
+  });
+}
+
+function findStuckInProgress(thresholdHours) {
+  const now = Date.now();
+  const thresholdMs = thresholdHours * 60 * 60 * 1000;
+  return readBatchState().filter(row => {
+    if (row.status !== 'in-progress') return false;
+    if (!row.started_at) return false;
+    const startedMs = Date.parse(row.started_at);
+    if (!Number.isFinite(startedMs)) return false;
+    return (now - startedMs) > thresholdMs;
+  });
 }
 
 async function checkApiBadge() {
@@ -111,31 +155,49 @@ async function main() {
     checks.drift = { drift_detected: null, api_unreachable: true };
   }
 
-  // 3. Stuck-URL detection — entries in triage-advance.tsv that have been
-  //    there >STUCK_THRESHOLD_HOURS but never get cleared (likely expired).
-  //    We use file mtime as a coarse proxy: if the file hasn't been modified
-  //    in >2h AND it has rows, those rows are stuck.
-  const mtime = getTriageAdvanceMtime();
-  let stuckHours = null;
-  if (mtime) {
-    stuckHours = (Date.now() - new Date(mtime).getTime()) / (1000 * 60 * 60);
-  }
-  checks.triage_queue = {
-    mtime,
-    age_hours: stuckHours,
-    stuck: (fileQueued > 0 && stuckHours != null && stuckHours > STUCK_THRESHOLD_HOURS),
+  // 3. REAL stuck detection — batch-state.tsv has rows with status='in-progress'
+  //    AND started_at > STUCK_THRESHOLD_HOURS ago. These are worker hangs that
+  //    need investigation; either a process crashed without writing 'completed'
+  //    or 'failed', or the batch worker is genuinely hung mid-eval.
+  const stuckInFlight = findStuckInProgress(STUCK_THRESHOLD_HOURS);
+  checks.in_flight = {
+    stuck_count: stuckInFlight.length,
+    stuck_rows: stuckInFlight.map(r => ({
+      id: r.id,
+      url: r.url,
+      started_at: r.started_at,
+      age_hours: ((Date.now() - new Date(r.started_at).getTime()) / (1000 * 60 * 60)).toFixed(2),
+    })),
     threshold_hours: STUCK_THRESHOLD_HOURS,
   };
 
-  // 4. Orchestrator process check — flag if more than 1 alive (race condition)
+  // 4. triage-advance queue depth — INFORMATIONAL only. Rows wait for the next
+  //    scheduled batch fire (08:05 PT + 12:00 PT). Only flag as STALE if the
+  //    file's mtime is older than QUEUE_STALE_THRESHOLD_HOURS, indicating the
+  //    batch has stopped firing entirely (e.g., launchd job unloaded).
+  const queueMtime = getTriageAdvanceMtime();
+  let queueAgeHours = null;
+  if (queueMtime) {
+    queueAgeHours = (Date.now() - new Date(queueMtime).getTime()) / (1000 * 60 * 60);
+  }
+  checks.triage_queue = {
+    mtime: queueMtime,
+    age_hours: queueAgeHours,
+    rows_queued: fileQueued,
+    stale: (fileQueued > 0 && queueAgeHours != null && queueAgeHours > QUEUE_STALE_THRESHOLD_HOURS),
+    stale_threshold_hours: QUEUE_STALE_THRESHOLD_HOURS,
+  };
+
+  // 5. Orchestrator process check — flag if more than 1 alive (race condition)
   const pids = findOrchestratorPids();
   checks.orchestrator_pids = pids;
   checks.orchestrator_warning = pids.length > 1 ? `${pids.length} orchestrator processes alive (expected 0 or 1)` : null;
 
-  // 5. Roll up to a single "healthy" flag
+  // 6. Roll up to a single "healthy" flag
   const healthy =
     !checks.drift?.drift_detected &&
-    !checks.triage_queue.stuck &&
+    checks.in_flight.stuck_count === 0 &&
+    !checks.triage_queue.stale &&
     !checks.orchestrator_warning &&
     api.ok;
 
@@ -147,7 +209,8 @@ async function main() {
       ? 'all checks pass'
       : [
           checks.drift?.drift_detected ? 'badge↔file drift' : null,
-          checks.triage_queue.stuck    ? `${fileQueued} URL(s) stuck > ${STUCK_THRESHOLD_HOURS}h` : null,
+          checks.in_flight.stuck_count > 0 ? `${checks.in_flight.stuck_count} batch worker(s) stuck > ${STUCK_THRESHOLD_HOURS}h` : null,
+          checks.triage_queue.stale ? `triage queue stale > ${QUEUE_STALE_THRESHOLD_HOURS}h (${fileQueued} rows waiting on batch)` : null,
           checks.orchestrator_warning,
           !api.ok ? 'dashboard-server unreachable' : null,
         ].filter(Boolean).join(' · '),

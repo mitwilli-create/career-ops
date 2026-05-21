@@ -8,45 +8,15 @@
   <!-- B1.3 (2026-05-20) — set data-theme attribute BEFORE any stylesheet/inline
        CSS so the chosen palette renders on first paint (avoid FOUC). -->
   <script>(function(){try{var v=localStorage.getItem('career-ops-theme');if(['dark','light','match-os'].indexOf(v)===-1)v='dark';document.documentElement.setAttribute('data-theme',v);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+  <!-- ARCH.41 (2026-05-21) — canonical color/spacing/radius tokens. Edit
+       tokens/master.json then run `node scripts/transform-tokens.mjs`.
+       Dark = :root default; :root[data-theme="light"] = explicit light;
+       @media (prefers-color-scheme: light) :root:not([data-theme="dark"])
+       = match-OS light path (fires for data-theme="match-os" since dark
+       is excluded by :not()). FOUC-safe because tokens.css ships with
+       the same :root dark defaults the early-paint script assumes. -->
+  <link rel="stylesheet" href="/dashboard/css/tokens.css">
   <style>
-    /* B1.3 (2026-05-20) — resolves iter1/iter6 P0.8 contradiction.
-       Mitchell's canonical preference: DARK as the default; OS preference
-       is honored ONLY when the user explicitly opts in via the "Match OS"
-       toggle in the toolbar (data-theme="match-os"). The early-script in
-       <head> sets data-theme before paint to avoid FOUC. */
-    :root {
-      color-scheme: dark;
-      --bg: #0b0f17; --surface: #111827; --surface-2: #1f2937;
-      --border: #1f2937; --text: #f9fafb; --text-2: #e5e7eb;
-      --text-3: #cbd5e1; --text-4: #94a3b8;
-      --green-fg: #6ee7b7; --green-bg: rgba(34,197,94,0.10);
-      --amber-fg: #fcd34d; --red-fg: #fca5a5;
-      --blue-fg: #93c5fd; --blue-bg: rgba(59,130,246,0.12);
-    }
-    /* Force-light: applies whenever the user picked "Light" explicitly. */
-    :root[data-theme="light"] {
-      color-scheme: light;
-      --bg: #f7f8fa; --surface: #ffffff; --surface-2: #f0f2f5;
-      --border: #e2e6eb; --text: #0f172a; --text-2: #334155;
-      --text-3: #64748b; --text-4: #94a3b8;
-      --green-fg: #047857; --green-bg: #ecfdf5;
-      --amber-fg: #b45309; --red-fg: #b91c1c;
-      --blue-fg: #2563eb; --blue-bg: #eff6ff;
-    }
-    /* Match-OS light: applies ONLY when the user picked "Match OS" AND
-       the OS prefers light. If the user is on the default ("dark") this
-       block never matches. */
-    @media (prefers-color-scheme: light) {
-      :root[data-theme="match-os"] {
-        color-scheme: light;
-        --bg: #f7f8fa; --surface: #ffffff; --surface-2: #f0f2f5;
-        --border: #e2e6eb; --text: #0f172a; --text-2: #334155;
-        --text-3: #64748b; --text-4: #94a3b8;
-        --green-fg: #047857; --green-bg: #ecfdf5;
-        --amber-fg: #b45309; --red-fg: #b91c1c;
-        --blue-fg: #2563eb; --blue-bg: #eff6ff;
-      }
-    }
     /* Toolbar widget — 3-state segmented toggle. Identical pattern is
        re-used on /contacts.html via lib/dashboard-theme.mjs. */
     .theme-toggle {
@@ -243,13 +213,9 @@
   --focus-ring: 0 0 0 3px var(--blue-bg);
   --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Helvetica, Arial, sans-serif;
 }
-/* B1.3 2026-05-20 — --border-strong tracks the 3-state theme.
-   Dark default → #353a52; forced-light → #cbd5e1; match-OS light → #cbd5e1. */
-:root { --border-strong: #353a52; }
-:root[data-theme="light"] { --border-strong: #cbd5e1; }
-@media (prefers-color-scheme: light) {
-  :root[data-theme="match-os"] { --border-strong: #cbd5e1; }
-}
+/* ARCH.41 (2026-05-21) — --border-strong is now sourced from
+   /dashboard/css/tokens.css for all 3 theme states (was inline above with
+   drift in light: #cbd5e1 → canonical #d1d5db). */
 body { display: block; }
 .netdb-page-wrap {
   display: grid;

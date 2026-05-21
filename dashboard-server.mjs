@@ -1062,6 +1062,36 @@ function getRolling30dSpend() {
   return total;
 }
 
+// P0.7 Q5 (2026-05-20 iter9) — sum cost-log spend incurred since a job's
+// start ISO timestamp. Backs the cost-confirmation gate on /api/batch/cancel:
+// the dashboard surfaces spend-so-far to the user before SIGTERM so they
+// don't kill an expensive run by accident. Same TSV parsing rules as
+// getRolling30dSpend (two observed column shapes).
+function getSpendSinceIso(startedAtIso) {
+  const fp = join(ROOT, 'data/cost-log.tsv');
+  if (!existsSync(fp)) return 0;
+  const cutoff = Date.parse(startedAtIso);
+  if (!Number.isFinite(cutoff)) return 0;
+  let total = 0;
+  const lines = readFileSync(fp, 'utf-8').split('\n').filter(Boolean);
+  for (const line of lines) {
+    if (line.startsWith('date\t')) continue;
+    const cols = line.split('\t');
+    let dateStr, cost;
+    if (cols.length >= 9) {
+      dateStr = cols[0]; cost = parseFloat(cols[7]);
+    } else if (cols.length >= 4) {
+      // Short append rows carry ISO ts in col 1 — prefer it for finer-grain windows.
+      dateStr = cols[1] || cols[0]; cost = parseFloat(cols[2]);
+    } else continue;
+    if (!isFinite(cost)) continue;
+    const t = Date.parse(dateStr);
+    if (!Number.isFinite(t) || t < cutoff) continue;
+    total += cost;
+  }
+  return total;
+}
+
 function buildPipelinePreview() {
   const pending = countPipelinePending();
   const queued  = countTriageAdvanceQueued();
@@ -1769,16 +1799,36 @@ function spawnProcessAll({ sendEmail, force, companies, tier }) {
     }
     if (safe.length) args.push(`--companies=${safe.join(',')}`);
   }
+  // P0.7 Q5 (2026-05-20 iter9): capture PID synchronously via the statically-
+  // imported _spawn so /api/batch/cancel can SIGTERM the running child later.
+  // Previously this used a dynamic import, which deferred PID availability and
+  // left no way to track or interrupt the spawned process.
+  let pid = null;
   try {
-    // Lazy import to avoid pulling child_process when no one calls this endpoint
-    import('child_process').then(({ spawn }) => {
-      const proc = spawn('node', args, {
-        cwd: ROOT,
-        env: process.env,
-        stdio: ['ignore', 'ignore', 'ignore'],
-        detached: true,
-      });
-      proc.unref();
+    const proc = _spawn('node', args, {
+      cwd: ROOT,
+      env: process.env,
+      stdio: ['ignore', 'ignore', 'ignore'],
+      detached: true,
+    });
+    pid = proc.pid;
+    proc.unref();
+    // Best-effort: when the child exits while the dashboard is still up,
+    // record the exit code in state so /api/batch/cancel knows not to SIGKILL
+    // a stale PID. The 'exit' handler will not fire if the dashboard restarts
+    // first — that's a pre-existing limitation of detached children.
+    proc.on('exit', (code) => {
+      try {
+        const s = loadPipelineProcessState();
+        if (s.jobs[jobId] && (s.jobs[jobId].status === 'queued' || s.jobs[jobId].status === 'running')) {
+          s.jobs[jobId].exit_code = code;
+          if (s.jobs[jobId].status !== 'cancelled') {
+            s.jobs[jobId].status = code === 0 ? 'completed' : 'failed';
+            s.jobs[jobId].completed_at = new Date().toISOString();
+          }
+          writeFileSync(join(ROOT, 'data/pipeline-process-state.json'), JSON.stringify(s, null, 2));
+        }
+      } catch (_) { /* state file unreadable — orchestrator owns the canonical status */ }
     });
   } catch (err) {
     return { ok: false, error: err.message };
@@ -1792,6 +1842,7 @@ function spawnProcessAll({ sendEmail, force, companies, tier }) {
     started_at:  new Date().toISOString(),
     send_email:  sendEmail,
     log_path:    logPath,
+    pid,
   };
   try {
     if (!existsSync(join(ROOT, 'data'))) mkdirSync(join(ROOT, 'data'), { recursive: true });
@@ -1831,15 +1882,30 @@ function spawnBatchOnly({ sendEmail, force }) {
   const args = [join(ROOT, 'scripts/batch-only-pipeline.mjs'), `--job-id=${jobId}`];
   if (sendEmail) args.push('--send-email');
   if (force) args.push('--cap-override');
+  // P0.7 Q5 (2026-05-20 iter9): capture PID synchronously so /api/batch/cancel
+  // can interrupt this run. Same pattern as spawnPipelineProcessAll above.
+  let pid = null;
   try {
-    import('child_process').then(({ spawn }) => {
-      const proc = spawn('node', args, {
-        cwd: ROOT,
-        env: process.env,
-        stdio: ['ignore', 'ignore', 'ignore'],
-        detached: true,
-      });
-      proc.unref();
+    const proc = _spawn('node', args, {
+      cwd: ROOT,
+      env: process.env,
+      stdio: ['ignore', 'ignore', 'ignore'],
+      detached: true,
+    });
+    pid = proc.pid;
+    proc.unref();
+    proc.on('exit', (code) => {
+      try {
+        const s = loadPipelineProcessState();
+        if (s.jobs[jobId] && (s.jobs[jobId].status === 'queued' || s.jobs[jobId].status === 'running')) {
+          s.jobs[jobId].exit_code = code;
+          if (s.jobs[jobId].status !== 'cancelled') {
+            s.jobs[jobId].status = code === 0 ? 'completed' : 'failed';
+            s.jobs[jobId].completed_at = new Date().toISOString();
+          }
+          writeFileSync(join(ROOT, 'data/pipeline-process-state.json'), JSON.stringify(s, null, 2));
+        }
+      } catch (_) { /* state file unreadable — orchestrator owns the canonical status */ }
     });
   } catch (err) {
     return { ok: false, error: err.message };
@@ -1853,6 +1919,7 @@ function spawnBatchOnly({ sendEmail, force }) {
     started_at:  new Date().toISOString(),
     send_email:  sendEmail,
     log_path:    logPath,
+    pid,
   };
   try {
     if (!existsSync(join(ROOT, 'data'))) mkdirSync(join(ROOT, 'data'), { recursive: true });
@@ -2970,6 +3037,12 @@ function _buildBatchStatusDetailedUncached() {
           status: i < currentIdx ? 'done' : i === currentIdx ? 'active' : 'pending',
           ok: !!(j.phases && j.phases[p.key] && j.phases[p.key].ok),
         }));
+        // P0.7 Q5 (2026-05-20 iter9): include fields the Cancel UX needs.
+        // cancellable=true means we have a PID we can SIGTERM. spend_so_far_usd
+        // is gated against BATCH_CANCEL_WARN_THRESHOLD_USD on the client to
+        // decide whether to show a confirm dialog before SIGTERM.
+        const spendSoFar = j.started_at ? getSpendSinceIso(j.started_at) : 0;
+        const warnUsd = parseFloat(process.env.BATCH_CANCEL_WARN_THRESHOLD_USD || '10');
         process_all_active = {
           job_id:           j.jobId,
           phase:            j.phase || 'queued',
@@ -2982,6 +3055,10 @@ function _buildBatchStatusDetailedUncached() {
           send_email:       j.send_email,
           phases:           phasesOut,
           log_path:         j.log_path,
+          cancellable:      Number.isFinite(j.pid),
+          pid:              j.pid || null,
+          spend_so_far_usd: Math.round(spendSoFar * 100) / 100,
+          warn_threshold_usd: warnUsd,
         };
       }
     }
@@ -5556,6 +5633,72 @@ const server = createServer((req, res) => {
       res.end(JSON.stringify({ ok: false, error: err.message }));
       return;
     }
+  }
+
+  // P0.7 Q5 (2026-05-20 iter9) — cancel an in-flight batch / process-all job.
+  // Mirrors the alpha cancel pattern at line ~7259 but reads PID from the
+  // persistent pipeline-process-state.json instead of an in-memory map.
+  //   body: { jobId } (or query ?job_id=<id>)
+  //   returns: { ok, jobId, signalSent, exitState, sigkill_at_ms }
+  //   env: BATCH_CANCEL_TIMEOUT_MS (default 125000ms) — SIGTERM→SIGKILL window
+  if (url === '/api/batch/cancel' && req.method === 'POST') {
+    let body = '';
+    let total = 0;
+    req.on('data', c => { total += c.length; if (total > 4 * 1024) { req.destroy(); return; } body += c; });
+    req.on('end', () => {
+      let parsed;
+      try { parsed = JSON.parse(body || '{}'); }
+      catch (_) { return json({ ok: false, error: 'invalid JSON body' }, 400); }
+      const jobId = String(parsed.jobId || parsed.job_id || query.job_id || query.id || '').trim();
+      if (!jobId) return json({ ok: false, error: 'jobId required' }, 400);
+
+      const state = loadPipelineProcessState();
+      const job = state.jobs?.[jobId];
+      if (!job) return json({ ok: false, error: 'job not found' }, 404);
+      if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+        return json({ ok: true, jobId, signalSent: null, exitState: 'already-finished', status: job.status });
+      }
+      const pid = job.pid;
+      if (!Number.isFinite(pid)) {
+        return json({
+          ok: false,
+          error: 'job has no pid — state file predates iter9 PID capture or process spawned before this dashboard-server restart',
+        }, 409);
+      }
+
+      let signalSent = null;
+      let exitState  = 'cancel-requested';
+      try {
+        process.kill(pid, 'SIGTERM');
+        signalSent = 'SIGTERM';
+      } catch (e) {
+        if (e.code === 'ESRCH') {
+          // Process gone already — mark state cancelled so the UI clears.
+          job.status = 'cancelled';
+          job.cancelled_at = new Date().toISOString();
+          job.cancel_note = 'process was already gone (ESRCH)';
+          try { writeFileSync(join(ROOT, 'data/pipeline-process-state.json'), JSON.stringify(state, null, 2)); } catch (_) {}
+          return json({ ok: true, jobId, signalSent: null, exitState: 'process-already-gone' });
+        }
+        return json({ ok: false, error: 'SIGTERM failed: ' + (e?.message || 'unknown') }, 500);
+      }
+
+      // Mark cancelled in state immediately so the UI no longer shows running.
+      // proc.on('exit') in the spawners respects status='cancelled' and won't
+      // overwrite it with completed/failed.
+      job.status = 'cancelled';
+      job.cancelled_at = new Date().toISOString();
+      try { writeFileSync(join(ROOT, 'data/pipeline-process-state.json'), JSON.stringify(state, null, 2)); } catch (_) {}
+
+      // Schedule SIGKILL fallback after BATCH_CANCEL_TIMEOUT_MS.
+      const timeoutMs = parseInt(process.env.BATCH_CANCEL_TIMEOUT_MS || '125000', 10);
+      setTimeout(() => {
+        try { process.kill(pid, 'SIGKILL'); } catch (_) { /* already gone — fine */ }
+      }, Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 125000);
+
+      return json({ ok: true, jobId, signalSent, exitState, sigkill_at_ms: timeoutMs });
+    });
+    return;
   }
 
   const verifyMatch = url.match(/^\/api\/verify\/(.+\.md)$/);

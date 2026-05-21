@@ -21298,19 +21298,46 @@ function _bsRenderBody(data, changed) {
     }).join('');
     const startedAgo = pa.started_at ? Math.round((Date.now() - Date.parse(pa.started_at)) / 60000) + 'm ago' : 'just now';
     const phaseAgo = pa.phase_started_at ? Math.round((Date.now() - Date.parse(pa.phase_started_at)) / 1000) + 's ago' : '—';
+    // P0.7 Q5 (2026-05-20 iter9): Cancel button + spend-so-far chip.
+    // cancellable=false when state file predates iter9's PID-capture pattern
+    // (e.g. dashboard restarted before this job started). In that case we
+    // surface why cancel is unavailable rather than hiding the affordance.
+    const spendUsd = Number.isFinite(pa.spend_so_far_usd) ? pa.spend_so_far_usd : 0;
+    const warnUsd  = Number.isFinite(pa.warn_threshold_usd) ? pa.warn_threshold_usd : 10;
+    const spendChip = spendUsd > 0
+      ? '<span style="font-size:11px;color:var(--text-3,#6b7280);margin-left:8px;padding:1px 6px;background:var(--surface-2,#f3f4f6);border-radius:4px">' +
+        '$' + spendUsd.toFixed(2) + ' spent' + (spendUsd >= warnUsd ? ' (over $' + warnUsd + ' threshold)' : '') +
+        '</span>'
+      : '';
+    var cancelBtnHtml;
+    if (pa.cancellable && pa.job_id) {
+      cancelBtnHtml =
+        '<button type="button" id="bs-cancel-' + _bsEsc(pa.job_id) + '" ' +
+          'onclick="window.cancelBatchJob(\\'' + _bsEsc(pa.job_id) + '\\', ' + spendUsd + ', ' + warnUsd + ')" ' +
+          'style="padding:5px 12px;font-size:11.5px;background:transparent;border:1px solid var(--border,#e5e7eb);' +
+          'color:var(--text-2,#4b5563);border-radius:5px;cursor:pointer">Cancel run</button>';
+    } else {
+      cancelBtnHtml =
+        '<span style="font-size:10.5px;color:var(--text-4,#9ca3af)" ' +
+        'title="No PID on file — job started before iter9 PID-capture or dashboard-server restarted mid-run">' +
+        'Cancel unavailable (no PID)</span>';
+    }
     sectionP =
       '<div class="batch-status-section" style="border-left:3px solid var(--blue-fg,#2563eb);padding-left:12px">' +
         '<h4 class="batch-status-section-title" style="display:flex;align-items:center;gap:8px">' +
           '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--blue-fg,#2563eb);box-shadow:0 0 6px rgba(37,99,235,.55);animation:bs-pa-pulse 1.6s ease-in-out infinite"></span>' +
           'Process All running' +
-          '<span style="font-size:11px;font-weight:400;color:var(--text-3,#6b7280);margin-left:auto">started ' + _bsEsc(startedAgo) + '</span>' +
+          '<span style="font-size:11px;font-weight:400;color:var(--text-3,#6b7280);margin-left:auto">started ' + _bsEsc(startedAgo) + spendChip + '</span>' +
         '</h4>' +
         '<div style="font-size:12px;color:var(--text-2,#4b5563);margin:4px 0 10px">' +
           'Current: <strong>' + _bsEsc(pa.phase_label) + '</strong> · entered ' + _bsEsc(phaseAgo) +
           (pa.send_email ? ' · email will send on Phase 4' : '') +
         '</div>' +
         '<div class="bs-pa-phases">' + phaseBars + '</div>' +
-        '<div style="font-size:10.5px;color:var(--text-4,#9ca3af);margin-top:8px">Job: <code>' + _bsEsc(pa.job_id || '?') + '</code></div>' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;gap:8px;flex-wrap:wrap">' +
+          '<span style="font-size:10.5px;color:var(--text-4,#9ca3af)">Job: <code>' + _bsEsc(pa.job_id || '?') + '</code></span>' +
+          cancelBtnHtml +
+        '</div>' +
       '</div>' +
       '<style>@keyframes bs-pa-pulse { 0%,100% { opacity: 1 } 50% { opacity: .4 } }</style>';
   }
@@ -21365,6 +21392,11 @@ async function _bsFetchAndRender() {
   } catch (_) { /* adaptive cadence is best-effort */ }
 }
 var _batchStatusPollIntervalMs = 10000;
+
+// P0.7 Q5 (2026-05-20 iter9): expose for window.cancelBatchJob to re-render
+// the modal immediately after a successful cancel, so the user sees the
+// Process All section clear instead of waiting for the 2s poll tick.
+window._bsFetchAndRender = _bsFetchAndRender;
 
 function openBatchStatusModal() {
   const bd = document.getElementById('batch-status-backdrop');
@@ -26418,6 +26450,54 @@ function _alphaPollExitState(jobId, done) {
     })
     .catch(function() { if (typeof done === 'function') done(); });
 }
+
+// P0.7 Q5 (2026-05-20 iter9) — cancel a Process All / Run Batch job.
+// Distinct from alphaCancelJob: that one operates on the in-memory alphaJobs
+// map (apply-pack polish / intel-refresh / rebuild). This one operates on
+// the persistent pipeline-process-state.json registry via /api/batch/cancel.
+// Cost-confirmation contract: if spend-so-far ≥ warn threshold, confirm first.
+window.cancelBatchJob = function(jobId, spendSoFarUsd, warnThresholdUsd) {
+  if (!jobId) return;
+  var btn = document.getElementById('bs-cancel-' + jobId);
+  if (btn && btn.disabled) return;
+  var spend = Number(spendSoFarUsd) || 0;
+  var warn  = Number(warnThresholdUsd) || 10;
+  if (spend >= warn) {
+    var msg = '$' + spend.toFixed(2) + ' already spent on this run' +
+              (warn === 10 ? '' : ' (threshold $' + warn + ')') +
+              '. Cancel anyway? Costs already incurred stay on the books; ' +
+              'the cancel only stops future stages from spending more.';
+    if (!confirm(msg)) return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = 'Stopping' + String.fromCharCode(8230); }
+  fetch('/api/batch/cancel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jobId: jobId }),
+  })
+    .then(function(r) { return r.ok ? r.json() : r.json().then(function(j){ throw new Error(j.error || 'cancel failed (HTTP ' + r.status + ')'); }); })
+    .then(function(data) {
+      if (btn) {
+        if (data && (data.exitState === 'already-finished' || data.exitState === 'process-already-gone')) {
+          btn.textContent = 'Already stopped';
+        } else {
+          btn.textContent = 'Stop signal sent';
+        }
+      }
+      // Force-refresh the batch status modal so the section clears
+      if (typeof window._bsFetchAndRender === 'function') {
+        setTimeout(function() { try { window._bsFetchAndRender(); } catch (_) {} }, 700);
+      }
+    })
+    .catch(function(err) {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Cancel run';
+        btn.title = String(err && err.message || 'cancel error');
+      }
+      try { console.warn('cancelBatchJob error:', err && err.message); } catch (_) {}
+    });
+};
 
 // Cancel an in-flight alpha-spawned job. Server SIGTERMs and SIGKILLs 5s
 // after if the child ignores. Mitchell's cost-confirmation contract:

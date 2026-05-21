@@ -47,17 +47,17 @@ const headerInjection = `
 :root {
   --sidebar-w: 200px;
   --sidebar-w-collapsed: 56px;
-  --radius-sm: 6px;
   --radius-full: 9999px;
+  /* --focus-ring intentionally overrides tokens.css's 3-layer composite ring
+     with this page's simpler 3px solid ring (one-off design call). */
   --focus-ring: 0 0 0 3px var(--blue-bg);
   --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Helvetica, Arial, sans-serif;
 }
-@media (prefers-color-scheme: dark) {
-  :root { --border-strong: #353a52; }
-}
-@media (prefers-color-scheme: light) {
-  :root { --border-strong: #cbd5e1; }
-}
+/* ARCH.41 (2026-05-21) — --border-strong is sourced from /dashboard/css/tokens.css
+   for all 3 theme states (dark, [data-theme=light], match-OS light). Dropped
+   the prior @media (prefers-color-scheme) rules — they fired on OS pref alone
+   and ignored the 3-state data-theme contract. --radius-sm dropped too
+   (tokens.css canonical = 6px, same value). */
 body { display: block; }
 .netdb-page-wrap {
   display: grid;

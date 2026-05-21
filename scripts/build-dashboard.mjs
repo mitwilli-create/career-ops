@@ -21474,9 +21474,15 @@ function _renderBatchDrillInBody(state, data) {
       return (data.error_categories[b] || 0) - (data.error_categories[a] || 0);
     });
     if (cats.length) {
-      categoryPills = '<div class="bs-drillin-categories" role="group" aria-label="Failure categories">' +
+      // iter9: inline-flex w/ gap fixes the "other · 5rate-limit · 1" run-together
+      // bug iter8 surfaced. Pills had no surrounding CSS so adjacent spans touched.
+      categoryPills = '<div class="bs-drillin-categories" role="group" aria-label="Failure categories" ' +
+        'style="display:inline-flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px">' +
         cats.map(function (c) {
-          return '<span class="bs-drillin-cat-pill" title="' + esc(c) + ' failures">' + esc(c) + ' ' + String.fromCharCode(183) + ' ' + (data.error_categories[c] || 0) + '</span>';
+          return '<span class="bs-drillin-cat-pill" title="' + esc(c) + ' failures" ' +
+            'style="padding:2px 8px;background:var(--surface-2,#f3f4f6);border:1px solid var(--border,#e5e7eb);' +
+            'border-radius:999px;font-size:11px;color:var(--text-2,#4b5563);white-space:nowrap">' +
+            esc(c) + ' ' + String.fromCharCode(183) + ' ' + (data.error_categories[c] || 0) + '</span>';
         }).join('') + '</div>';
     }
   }

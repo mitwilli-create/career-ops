@@ -16613,10 +16613,26 @@ _drillInRegister('percentage', function(id) {
         }
       }
     }
+    // P0.6 v1 (2026-05-20) — interview-likelihood popout surfaces a live
+    // Polish-pack button so "raise this score" stops being a text suggestion
+    // and starts being a one-click action. Gated on rowId being numeric so
+    // the button never fires against an unknown row. Generate-equivalent
+    // ships in v2 once apply-pack-generate.mjs emits NDJSON phases.
+    var polishActionHtml = '';
+    if (key === 'interview' && rowId && /^\\d+$/.test(String(rowId))) {
+      polishActionHtml = '<div style="margin:0 0 14px;padding:10px 12px;background:var(--surface-2);border:1px solid var(--border);border-left:3px solid var(--green-fg,#16a34a);border-radius:6px">'
+        + '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-bottom:4px">Lift this score now</div>'
+        + '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+        +   '<button type="button" onclick="window.alphaPolishPack(\\'' + rowId + '\\')" style="padding:7px 14px;font-size:12.5px;background:var(--green-fg,#16a34a);border:1px solid var(--green-fg,#16a34a);color:#fff;border-radius:5px;cursor:pointer;font-weight:600">Polish apply pack</button>'
+        +   '<span style="font-size:11.5px;color:var(--text-3);line-height:1.4">Polished packs convert ~15-25% vs ~3-8% raw. ~10-20 min · streams live in a popout.</span>'
+        + '</div>'
+        + '</div>';
+    }
     cardHtml = '<div style="font-size:13px;line-height:1.55">'
       + (pct ? '<div style="display:inline-block;background:var(--surface-2);padding:4px 12px;border-radius:999px;font-weight:700;color:var(--text);margin-bottom:10px">Current: ' + pct + '</div>' : '')
       + '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-bottom:4px">What this number means</div>'
       + '<p style="margin:0 0 12px;color:var(--text-2)">' + d.definition + '</p>'
+      + polishActionHtml
       + tailoredHtml
       + (!tailoredHtml && d.closeActions.length
           ? '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-bottom:6px">How to raise this</div>'
@@ -26252,31 +26268,378 @@ function _alphaStreamJob(jobId, streamUrl, onExit) {
   if (typeof EventSource === 'undefined') return;
   try {
     const es = new EventSource(streamUrl);
+    const finalize = function(reason) {
+      try { es.close(); } catch (_) {}
+      _alphaPollExitState(jobId, function() {
+        if (typeof window._renderAlphaJob === 'function') window._renderAlphaJob(jobId);
+        if (typeof onExit === 'function') onExit();
+      });
+    };
     es.addEventListener('progress', function(ev) {
       try {
         const evt = JSON.parse(ev.data);
         const job = window._alphaJobs[jobId] || (window._alphaJobs[jobId] = { events: [] });
         job.events.push(evt);
-        // Re-render the popout if it's the active one
-        const root = document.querySelector('[data-drill-target="alpha-job:' + jobId + '"], #drill-in-' + jobId);
-        if (root && typeof window._renderAlphaJob === 'function') window._renderAlphaJob(jobId);
-        // If we see the orchestrator-level final summary, close the stream
+        if (typeof window._renderAlphaJob === 'function') window._renderAlphaJob(jobId);
         if (evt && (evt.phase === 'phase-3' && evt.step === 'coherence-done')) {
-          es.close();
-          if (typeof onExit === 'function') onExit();
+          finalize('coherence-done');
         }
       } catch (_) { /* ignore parse error */ }
     });
-    es.addEventListener('error', function() { /* let browser auto-reconnect or close */ });
+    es.addEventListener('error', function() { /* allow browser auto-reconnect; final poll covers exit detection */ });
     // Hard stop after 20 min — these jobs should finish well before then
-    setTimeout(function() { try { es.close(); } catch (_) {} }, 20 * 60 * 1000);
+    setTimeout(function() { finalize('hard-timeout'); }, 20 * 60 * 1000);
   } catch (_) { /* */ }
 }
 
-// Renderer registered via _drillInRegister later — see drillIn handler block.
+// Poll /api/alpha-job/{jobId} once to pick up the server-side exit_code that
+// SSE itself never publishes — used after the stream closes (success, cancel,
+// or crash) so the popout can transition to a terminal/failure state.
+function _alphaPollExitState(jobId, done) {
+  fetch('/api/alpha-job/' + encodeURIComponent(jobId), { cache: 'no-store' })
+    .then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(data) {
+      if (data && data.ok && data.job) {
+        const local = window._alphaJobs[jobId] || (window._alphaJobs[jobId] = { events: [] });
+        if (typeof data.job.exit_code !== 'undefined') local.exit_code = data.job.exit_code;
+        if (data.job.completed_at) local.completed_at = data.job.completed_at;
+      }
+      if (typeof done === 'function') done();
+    })
+    .catch(function() { if (typeof done === 'function') done(); });
+}
+
+// Cancel an in-flight alpha-spawned job. Server SIGTERMs and SIGKILLs 5s
+// after if the child ignores. Mitchell's cost-confirmation contract:
+// if the job has already burned ≥ POLISH_CANCEL_WARN_USD, prompt before sending.
+window.alphaCancelJob = function(jobId) {
+  const job = window._alphaJobs && window._alphaJobs[jobId];
+  if (!job) return;
+  if (job.cancel_state === 'sent') return;
+  const cumulative = _alphaCumulativeCost(job);
+  const warnAt = (window.__POLISH_CANCEL_WARN_USD || 10);
+  if (cumulative >= warnAt) {
+    const msg = '$' + cumulative.toFixed(2) + ' already spent on this polish — cancel anyway? Polished artifacts up to this point are saved either way.';
+    if (!confirm(msg)) return;
+  }
+  job.cancel_state = 'sent';
+  job.cancel_requested_at = new Date().toISOString();
+  if (typeof window._renderAlphaJob === 'function') window._renderAlphaJob(jobId);
+  fetch('/api/apply-pack/jobs/' + encodeURIComponent(jobId) + '/cancel', { method: 'POST' })
+    .then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(data) {
+      if (data && data.exitState === 'already-exited') {
+        job.exit_code = data.exitCode;
+      }
+      if (typeof window._renderAlphaJob === 'function') window._renderAlphaJob(jobId);
+    })
+    .catch(function() {
+      job.cancel_state = 'error';
+      if (typeof window._renderAlphaJob === 'function') window._renderAlphaJob(jobId);
+    });
+};
+
+function _alphaCumulativeCost(job) {
+  const evts = (job && job.events) || [];
+  for (let i = evts.length - 1; i >= 0; i--) {
+    if (typeof evts[i].cumulative_cost_usd === 'number') return evts[i].cumulative_cost_usd;
+  }
+  // Phase 1 only — use its cost_usd field
+  const p1 = evts.find(function(e) { return e.phase === 'phase-1' && e.step === 'signals-ready'; });
+  if (p1 && typeof p1.cost_usd === 'number') return p1.cost_usd;
+  return 0;
+}
+
+function _alphaEsc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function _alphaClock(ms) {
+  if (ms == null || ms < 0) ms = 0;
+  const total = Math.floor(ms / 1000);
+  const mm = Math.floor(total / 60);
+  const ss = total % 60;
+  return (mm < 10 ? '0' : '') + mm + ':' + (ss < 10 ? '0' : '') + ss;
+}
+
+// Renders the alpha-job popout body. Kind-aware:
+//   polish  → 3-phase named-step bar + Cancel + failure/Copy Diagnostics panel
+//   intel   → row-by-row counter + Cancel
+//   rebuild → activity ticker
+//   *       → raw NDJSON event tail (legacy fallback)
+// Side effect: writes its return value into the live popout element if open,
+// so live SSE updates surface without re-opening the popout.
 window._renderAlphaJob = function(jobId) {
   const job = window._alphaJobs && window._alphaJobs[jobId];
   if (!job) return '';
+  const kind = job.kind || 'polish';
+  let html;
+  if (kind === 'polish')      html = _renderPolishJob(job, jobId);
+  else if (kind === 'intel')  html = _renderIntelJob(job, jobId);
+  else if (kind === 'rebuild') html = _renderRebuildJob(job, jobId);
+  else                         html = _renderRawAlphaLog(job);
+  const root = document.querySelector('[data-drill-target="alpha-job:' + jobId + '"]');
+  if (root) root.innerHTML = html;
+  return html;
+};
+
+function _renderPolishJob(job, jobId) {
+  const evts = job.events || [];
+  let init = null;
+  let hasP1Start = false, hasP1Done = false;
+  let p2Started = 0, p2Done = 0;
+  let hasP3Start = false, hasP3Done = false;
+  let lastArtifact = '', lastRoundsHint = '', lastConfidence = null;
+  let p3Recommendation = null, p3Blocking = 0;
+  for (let i = 0; i < evts.length; i++) {
+    const e = evts[i];
+    if (e.phase === 'init' && !init) init = e;
+    if (e.phase === 'phase-1' && e.step === 'harvesting-signals') hasP1Start = true;
+    if (e.phase === 'phase-1' && e.step === 'signals-ready') hasP1Done = true;
+    if (e.phase === 'phase-2' && e.step === 'polish-loop-start') { p2Started++; if (e.artifact) lastArtifact = e.artifact; }
+    if (e.phase === 'phase-2' && e.step === 'polish-loop-done') {
+      p2Done++;
+      if (e.artifact) lastArtifact = e.artifact;
+      if (typeof e.rounds === 'number') lastRoundsHint = 'round ' + e.rounds;
+      if (typeof e.confidence === 'number') lastConfidence = e.confidence;
+    }
+    if (e.phase === 'phase-3' && e.step === 'coherence-checks-start') hasP3Start = true;
+    if (e.phase === 'phase-3' && e.step === 'coherence-done') {
+      hasP3Done = true;
+      p3Recommendation = e.final_recommendation || null;
+      p3Blocking = e.blocking || 0;
+    }
+  }
+  const totalArtifacts = (init && Array.isArray(init.artifacts)) ? init.artifacts.length : (p2Started || 6);
+  const costCap = init && init.cost_cap_usd ? init.cost_cap_usd : null;
+  const packLabel = init && init.pack ? init.pack : '';
+  const cumulativeCost = _alphaCumulativeCost(job);
+
+  let step = 0;
+  let headline = 'Starting polish…';
+  let substep = '';
+  if (hasP3Done) {
+    step = 3;
+    const tag = p3Recommendation || 'COMPLETE';
+    headline = 'Polish complete · ' + tag;
+    if (p3Blocking) substep = p3Blocking + ' blocking issue' + (p3Blocking === 1 ? '' : 's') + ' — open the pack to review';
+  } else if (hasP3Start) {
+    step = 3; headline = 'Checking cross-artifact coherence'; substep = 'Final pass before handoff';
+  } else if (p2Started > 0) {
+    step = 2; headline = 'Polishing artifacts';
+    const artLabel = lastArtifact ? lastArtifact.replace(/-/g, ' ') : 'next artifact';
+    const roundFrag = lastRoundsHint ? ' · ' + lastRoundsHint : '';
+    substep = '↳ ' + artLabel + roundFrag + ' · ' + p2Done + ' of ' + totalArtifacts + ' done';
+  } else if (hasP1Done) {
+    step = 2; headline = 'Polishing artifacts'; substep = 'Loading source bullets';
+  } else if (hasP1Start) {
+    step = 1; headline = 'Harvesting hiring signals'; substep = 'Reading JD + HM intel · ranking dealbreakers';
+  }
+
+  const cancelSent = job.cancel_state === 'sent' || job.cancel_state === 'error';
+  const failed = (job.exit_code != null && job.exit_code !== 0) && !hasP3Done;
+  const cancelledAndExited = cancelSent && (job.exit_code != null);
+
+  if (failed || cancelledAndExited) {
+    return _renderPolishFailurePanel(job, jobId, evts, headline, step, cumulativeCost);
+  }
+
+  const startMs = job.started_at ? Date.parse(job.started_at) : Date.now();
+  const elapsed = Date.now() - startMs;
+  const elapsedStr = _alphaClock(elapsed);
+  const running = !hasP3Done;
+
+  let stepBar = '';
+  for (let s = 1; s <= 3; s++) {
+    const filled = step >= s;
+    const isActive = step === s && running;
+    const bg = filled ? 'var(--green-fg,#16a34a)' : 'var(--border)';
+    const opacity = isActive ? ';opacity:.7' : '';
+    stepBar += '<span style="display:inline-block;flex:1;height:6px;border-radius:3px;background:' + bg + opacity + '"></span>';
+  }
+  const stepLabels = '<div style="display:flex;gap:6px;font-size:10px;color:var(--text-4);text-transform:uppercase;letter-spacing:.04em;margin-top:5px">'
+    + '<span style="flex:1;text-align:left' + (step === 1 ? ';color:var(--text-2);font-weight:600' : '') + '">Signals</span>'
+    + '<span style="flex:1;text-align:center' + (step === 2 ? ';color:var(--text-2);font-weight:600' : '') + '">Polish</span>'
+    + '<span style="flex:1;text-align:right' + (step === 3 ? ';color:var(--text-2);font-weight:600' : '') + '">Coherence</span>'
+    + '</div>';
+
+  let metaRow = '';
+  const metaParts = [];
+  if (running) metaParts.push('<span style="font-family:monospace">running ' + _alphaEsc(elapsedStr) + '</span>');
+  if (cumulativeCost > 0) {
+    let costStr = '$' + cumulativeCost.toFixed(2);
+    if (costCap) costStr += ' of $' + costCap;
+    metaParts.push('<span style="font-family:monospace">' + costStr + '</span>');
+  }
+  if (lastConfidence != null && !hasP3Done) metaParts.push('<span style="font-family:monospace">conf ' + lastConfidence.toFixed(2) + '</span>');
+  if (metaParts.length) {
+    metaRow = '<div style="font-size:11px;color:var(--text-3);margin-bottom:12px">' + metaParts.join(' · ') + '</div>';
+  }
+
+  const cancelBlock = running
+    ? '<div style="display:flex;gap:10px;align-items:center;padding-top:10px;margin-top:14px;border-top:1px solid var(--border)">'
+    +   (cancelSent
+       ? '<button type="button" disabled style="padding:6px 14px;font-size:12px;background:transparent;border:1px solid var(--border);color:var(--text-4);border-radius:5px;cursor:not-allowed">Stopping…</button>'
+       :  '<button type="button" id="alpha-cancel-' + _alphaEsc(jobId) + '" onclick="window.alphaCancelJob(\\'' + _alphaEsc(jobId) + '\\')" style="padding:6px 14px;font-size:12px;background:transparent;border:1px solid var(--border);color:var(--text-2);border-radius:5px;cursor:pointer">Cancel</button>')
+    +   '<span style="font-size:11px;color:var(--text-4);line-height:1.4">Cancelling stops the job before any submission is made. Already-polished artifacts are saved.</span>'
+    + '</div>'
+    : '';
+
+  const completedBlock = hasP3Done
+    ? '<div style="padding-top:10px;margin-top:14px;border-top:1px solid var(--border);font-size:11.5px;color:var(--text-3);line-height:1.5">'
+    +   'Polished in ' + _alphaEsc(elapsedStr) + (packLabel ? ' · ' + _alphaEsc(packLabel) : '') + (job.rowId ? ' · row ' + _alphaEsc(String(job.rowId)) : '') + '. '
+    +   'Open the apply-pack drawer to review the polished artifacts before submitting.'
+    + '</div>'
+    : '';
+
+  return ''
+    + '<div class="np-polish-job" style="padding:4px 0">'
+    +   '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:10px">'
+    +     '<span style="font-size:11px;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:.05em">Step ' + Math.max(1, step) + ' of 3</span>'
+    +     (packLabel ? '<span style="font-size:11px;color:var(--text-4);font-family:monospace">' + _alphaEsc(packLabel) + '</span>' : '')
+    +   '</div>'
+    +   '<div style="display:flex;gap:6px;margin-bottom:0">' + stepBar + '</div>'
+    +   stepLabels
+    +   '<div style="font-size:15px;font-weight:600;color:var(--text);line-height:1.4;margin:14px 0 6px">' + _alphaEsc(headline) + '</div>'
+    +   (substep ? '<div style="font-size:12.5px;color:var(--text-3);line-height:1.45;margin-bottom:14px">' + _alphaEsc(substep) + '</div>' : '<div style="margin-bottom:14px"></div>')
+    +   metaRow
+    +   cancelBlock
+    +   completedBlock
+    + '</div>';
+}
+
+function _renderPolishFailurePanel(job, jobId, evts, lastHeadline, lastStep, cumulativeCost) {
+  const tailCount = 20;
+  const tail = evts.slice(-tailCount);
+  const cancelled = job.cancel_state === 'sent' || job.cancel_state === 'error';
+  const headline = cancelled ? 'Polish cancelled before completion' : "Polish didn't finish";
+  const sub = cancelled
+    ? 'No submission was made. Already-polished artifacts are saved in the apply-pack directory.'
+    : 'The polish process exited before reaching the coherence check. No submission was made; the partial output is still in the apply-pack directory.';
+
+  const lastLines = tail.map(function(e) {
+    const ts = (e.t || '').slice(11, 19);
+    const ph = e.phase || '?';
+    const stepStr = e.step || e.artifact || '';
+    const errStr = e.error ? ' err=' + e.error : '';
+    const warnStr = e.warning ? ' warn=' + e.warning : '';
+    return '<div style="font-family:monospace;font-size:10.5px;color:var(--text-3);line-height:1.5">' + _alphaEsc(ts) + ' · ' + _alphaEsc(ph + ' / ' + stepStr + errStr + warnStr) + '</div>';
+  }).join('');
+
+  const rowId = job.rowId || '';
+  const rowFrag = rowId ? ', row ' + rowId : '';
+
+  return ''
+    + '<div class="np-polish-failure" style="padding:4px 0">'
+    +   '<div style="padding:14px;background:color-mix(in srgb, var(--amber-fg,#d97706) 8%, var(--surface));border:1px solid color-mix(in srgb, var(--amber-fg,#d97706) 28%, var(--border));border-radius:6px;margin-bottom:14px">'
+    +     '<div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px">' + _alphaEsc(headline) + '</div>'
+    +     '<div style="font-size:12.5px;color:var(--text-2);line-height:1.5">' + _alphaEsc(sub) + '</div>'
+    +     (cumulativeCost > 0 ? '<div style="font-size:11px;color:var(--text-3);margin-top:8px;font-family:monospace">spent so far · $' + cumulativeCost.toFixed(2) + '</div>' : '')
+    +   '</div>'
+    +   '<div style="display:flex;gap:10px;margin-bottom:14px">'
+    +     '<button type="button" onclick="window.alphaPolishPack(\\'' + _alphaEsc(String(rowId)) + '\\')" style="padding:7px 14px;font-size:12.5px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:5px;cursor:pointer">Retry polish</button>'
+    +     '<button type="button" id="alpha-diag-' + _alphaEsc(jobId) + '" onclick="window.alphaCopyDiagnostics(\\'' + _alphaEsc(jobId) + '\\', this)" style="padding:7px 14px;font-size:12.5px;background:transparent;border:1px solid var(--border);color:var(--text-2);border-radius:5px;cursor:pointer">Copy diagnostics</button>'
+    +   '</div>'
+    +   '<div style="font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Last ' + tail.length + ' events</div>'
+    +   '<div style="max-height:30vh;overflow:auto;padding:8px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:5px">' + (lastLines || '<em style="font-size:11px;color:var(--text-4)">no events captured before exit</em>') + '</div>'
+    + '</div>';
+}
+
+window.alphaCopyDiagnostics = function(jobId, btnEl) {
+  const job = window._alphaJobs && window._alphaJobs[jobId];
+  if (!job) return;
+  const evts = job.events || [];
+  const init = evts.find(function(e) { return e.phase === 'init'; }) || {};
+  const tail = evts.slice(-50);
+  const NL = String.fromCharCode(10);
+  const payload =
+    'Apply pack did not finish.' + NL +
+    'Row: ' + (job.rowId || '?') + (init.pack ? ' — ' + init.pack : '') + NL +
+    'Job ID: ' + jobId + NL +
+    'Kind: ' + (job.kind || '?') + NL +
+    'Started: ' + (job.started_at || '?') + NL +
+    'Cancel state: ' + (job.cancel_state || 'none') + NL +
+    'Exit code: ' + (job.exit_code == null ? 'unknown' : job.exit_code) + NL +
+    'Cumulative cost: $' + _alphaCumulativeCost(job).toFixed(2) + NL +
+    'Last ' + tail.length + ' NDJSON events:' + NL +
+    tail.map(function(e) { try { return JSON.stringify(e); } catch (_) { return '[unserializable]'; } }).join(NL);
+  const fallback = function() {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = payload;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      _alphaFlashBtn(btnEl, 'Copied');
+    } catch (_) { _alphaFlashBtn(btnEl, 'Copy failed'); }
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(payload).then(function() { _alphaFlashBtn(btnEl, 'Copied'); }, fallback);
+  } else {
+    fallback();
+  }
+};
+function _alphaFlashBtn(btnEl, text) {
+  if (!btnEl) return;
+  const prev = btnEl.textContent;
+  btnEl.textContent = text;
+  btnEl.disabled = true;
+  setTimeout(function() { btnEl.textContent = prev; btnEl.disabled = false; }, 1500);
+}
+
+function _renderIntelJob(job, jobId) {
+  const evts = job.events || [];
+  let totalRows = 0;
+  let started = 0, done = 0, errors = 0;
+  let lastRow = '';
+  for (let i = 0; i < evts.length; i++) {
+    const e = evts[i];
+    if (e.phase === 'init' && typeof e.rows === 'number') totalRows = e.rows;
+    if (e.phase === 'row-start') { started++; lastRow = (e.row || '') + (e.company ? ' — ' + e.company : ''); }
+    if (e.phase === 'row-done') done++;
+    if (e.phase === 'row-error') errors++;
+  }
+  const startMs = job.started_at ? Date.parse(job.started_at) : Date.now();
+  const elapsedStr = _alphaClock(Date.now() - startMs);
+  const complete = evts.some(function(e) { return e.phase === 'complete'; });
+  const running = !complete && job.exit_code == null;
+  const cancelSent = job.cancel_state === 'sent';
+  const cancelBtn = running
+    ? (cancelSent
+        ? '<button type="button" disabled style="padding:6px 14px;font-size:12px;background:transparent;border:1px solid var(--border);color:var(--text-4);border-radius:5px;cursor:not-allowed">Stopping…</button>'
+        : '<button type="button" onclick="window.alphaCancelJob(\\'' + _alphaEsc(jobId) + '\\')" style="padding:6px 14px;font-size:12px;background:transparent;border:1px solid var(--border);color:var(--text-2);border-radius:5px;cursor:pointer">Cancel</button>')
+    : '';
+  const headline = complete ? 'Intel refresh complete' : 'Refreshing intel';
+  const sub = lastRow ? '↳ row ' + _alphaEsc(lastRow) : '';
+  return ''
+    + '<div class="np-intel-job" style="padding:4px 0">'
+    +   '<div style="font-size:11px;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">' + (totalRows ? done + ' of ' + totalRows + ' rows' : done + ' rows complete') + (errors ? ' · ' + errors + ' errors' : '') + '</div>'
+    +   '<div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:6px">' + headline + '</div>'
+    +   (sub ? '<div style="font-size:12.5px;color:var(--text-3);line-height:1.4;margin-bottom:14px">' + sub + '</div>' : '')
+    +   '<div style="font-size:11px;color:var(--text-3);font-family:monospace;margin-bottom:10px">running ' + _alphaEsc(elapsedStr) + '</div>'
+    +   cancelBtn
+    + '</div>';
+}
+
+function _renderRebuildJob(job, jobId) {
+  const evts = job.events || [];
+  const last = evts.length ? (evts[evts.length - 1].step || evts[evts.length - 1].phase || '') : '';
+  const startMs = job.started_at ? Date.parse(job.started_at) : Date.now();
+  const elapsedStr = _alphaClock(Date.now() - startMs);
+  const complete = job.exit_code === 0;
+  return ''
+    + '<div class="np-rebuild-job" style="padding:4px 0">'
+    +   '<div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:6px">' + (complete ? 'Rebuild complete' : '↻ Rebuilding dashboard') + '</div>'
+    +   (last ? '<div style="font-size:12px;color:var(--text-3);margin-bottom:10px">' + _alphaEsc(last) + '</div>' : '')
+    +   '<div style="font-size:11px;color:var(--text-3);font-family:monospace">elapsed ' + _alphaEsc(elapsedStr) + '</div>'
+    + '</div>';
+}
+
+function _renderRawAlphaLog(job) {
   const events = (job.events || []).slice(-50);
   const evHtml = events.map(function(e) {
     const phase = e.phase || '?';
@@ -26285,10 +26648,25 @@ window._renderAlphaJob = function(jobId) {
     const cost = (typeof e.cumulative_cost_usd === 'number') ? ' cost=$' + e.cumulative_cost_usd.toFixed(2) : '';
     const ts = (e.t || '').slice(11, 19);
     const txt = phase + ' · ' + step + conf + cost;
-    return '<div class="alpha-job-evt" style="font-family:monospace;font-size:11px;padding:2px 4px;border-bottom:1px solid var(--border)"><span style="color:var(--text-3)">' + ts + '</span> ' + (txt.replace(/</g, '&lt;')) + '</div>';
+    return '<div style="font-family:monospace;font-size:11px;padding:2px 4px;border-bottom:1px solid var(--border)"><span style="color:var(--text-3)">' + ts + '</span> ' + _alphaEsc(txt) + '</div>';
   }).join('');
   return '<div style="max-height:60vh;overflow:auto">' + evHtml + '</div>';
-};
+}
+
+// Lightweight ticker so the elapsed clock updates while the popout is open
+// even when no SSE event has arrived for a few seconds.
+if (typeof window._alphaTickerStarted === 'undefined') {
+  window._alphaTickerStarted = true;
+  setInterval(function() {
+    const jobs = window._alphaJobs || {};
+    Object.keys(jobs).forEach(function(id) {
+      const j = jobs[id];
+      if (!j || j.exit_code != null) return;
+      const root = document.querySelector('[data-drill-target="alpha-job:' + id + '"]');
+      if (root && typeof window._renderAlphaJob === 'function') window._renderAlphaJob(id);
+    });
+  }, 1000);
+}
 
 // ── D10: Inline edit — status pill + notes (Wave G1) ─────────────
 // Click status pill → inline <select>; click notes cell → inline <input>

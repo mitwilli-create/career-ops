@@ -1,0 +1,359 @@
+{
+  "$schema": "career-ops-tokens-master-v1",
+  "$description": "Canonical source-of-truth for all career-ops design tokens. DO NOT EDIT derived files (lib/heartbeat-tokens.json, lib/dashboard-tokens.mjs, dashboard/css/tokens.css) directly — edit this file, then run `node scripts/transform-tokens.mjs` to regenerate all consumers. A CI gate (.github/workflows/test-all.yml step 'tokens-drift-check') enforces this: any derived file that diverges from what the transform would produce will fail the build. See AGENTS.md § token-sources-of-truth.",
+  "$schemaVersion": "1.0.0",
+  "$generatedBy": "finding-007-token-unification (2026-05-20)",
+  "_provenance": {
+    "captured_at": "2026-05-19T01:14:57.760Z",
+    "captured_url": "https://staging-dashboard.careers-ops.com/",
+    "captured_method": "Chrome MCP javascript_tool — getComputedStyle on body + element samples",
+    "captured_body_class": "dark density-normal",
+    "note": "Provenance data preserved from former lib/heartbeat-tokens.raw.json. Transform strips any key beginning with `_` when emitting derived files."
+  },
+  "_reconciliation": {
+    "color.dark.bg.app": { "winner": "#06070d", "won_from": "lib/heartbeat-tokens.json", "normalized": ["lib/dashboard-shell.mjs (#0a0a0f)", "dashboard/network-database.html (#0b0f17)"] },
+    "color.dark.bg.panel": { "winner": "#11131c", "won_from": "lib/heartbeat-tokens.json", "normalized": ["dashboard/network-database.html (#111827)"] },
+    "color.dark.bg.panel_strong": { "winner": "#181b27", "won_from": "lib/heartbeat-tokens.json", "normalized": ["dashboard/network-database.html (#1f2937)"] },
+    "color.dark.border.default": { "winner": "#232737", "won_from": "lib/heartbeat-tokens.json", "normalized": ["dashboard/network-database.html (#1f2937)"] },
+    "color.dark.text.t1": { "winner": "#fafafa", "won_from": "lib/heartbeat-tokens.json", "normalized": ["dashboard/network-database.html (#f9fafb)"] },
+    "color.dark.accent.green_fg": { "winner": "#86efac", "won_from": "lib/dashboard-tokens.mjs (matches lib/dashboard-shell.mjs)", "normalized": ["dashboard/network-database.html (#6ee7b7)"] },
+    "color.dark.chip.amber_fg": { "winner": "#d4ba84", "won_from": "lib/heartbeat-tokens.json (dashboard subtree)", "normalized": ["dashboard/network-database.html (#fcd34d)"] },
+    "color.dark.chip.blue_fg": { "winner": "#94a3b8", "won_from": "lib/heartbeat-tokens.json (semantic.info)", "normalized": ["dashboard/network-database.html (#93c5fd)"] },
+    "color.light.bg.panel": { "winner": "#f8f9fb", "won_from": "lib/heartbeat-tokens.json", "normalized": ["lib/dashboard-shell.mjs (#f7f8fa)"] },
+    "color.light.text.t1": { "winner": "#111827", "won_from": "lib/heartbeat-tokens.json", "normalized": ["lib/dashboard-shell.mjs (#0f172a)"] },
+    "color.light.brand.primary": { "winner": "#15803d", "won_from": "lib/heartbeat-tokens.json:96 (per dealbreaker Edit 1)", "normalized": ["was #2563eb (blue) in researcher synthesis — undocumented re-brand reverted"] },
+    "focus.ring.dark": { "winner_source": "lib/dashboard-shell.mjs", "note": "Only source defining this. Preserved verbatim." },
+    "focus.ring.light": { "winner_source": "lib/dashboard-shell.mjs", "note": "Only source defining this. Preserved verbatim." },
+    "spacing": { "decision": "Keep xs/sm/md/lg/xl/2xl/3xl/4xl aliases (S1) as primary API. ADD linear-geometric numeric scale 0-10 for future consumers. `--space-10/12/16` Wave-G1 holdovers stay inline in build-dashboard.mjs (collide with scale.10=128px)." },
+    "deferred_out_of_scope": "76 production vars (typography --font-*/--fs-*/--text-*/--lh-*, motion --motion-*/--dur-*/--ease-*, layout --sidebar-*/--section-gap, spacing --space-10/12/16, ring --ring*/--focus-ring-color) remain inline per dealbreaker Edit 2 / Path B. ARCH.42/43/45 inherit."
+  },
+  "color": {
+    "dark": {
+      "bg": {
+        "app": "#06070d",
+        "panel": "#11131c",
+        "panel_strong": "#181b27",
+        "panel_subtle": "rgba(255,255,255,0.02)"
+      },
+      "border": {
+        "default": "#232737",
+        "strong": "#353a52"
+      },
+      "text": {
+        "t1": "#fafafa",
+        "t2": "#e4e4e7",
+        "t3": "#b8b8c0",
+        "t4": "#9a9aa6"
+      },
+      "accent": {
+        "green": "#4ade80",
+        "green_fg": "#86efac",
+        "green_fg_dark": "#bbf7d0",
+        "green_bg": "rgba(22,163,74,0.12)",
+        "green_border": "rgba(22,163,74,0.30)",
+        "green_glow": "rgba(74,222,128,0.35)"
+      },
+      "semantic": {
+        "success": "#4ade80",
+        "success_fg": "#86efac",
+        "success_bg": "rgba(22,163,74,0.12)",
+        "warning": "#c2a571",
+        "warning_fg": "#d4ba84",
+        "warning_bg": "rgba(168,123,72,0.14)",
+        "danger": "#f87171",
+        "danger_fg": "#fca5a5",
+        "danger_bg": "rgba(220,38,38,0.12)",
+        "info": "#94a3b8",
+        "info_fg": "#cbd5e1",
+        "info_bg": "rgba(100,116,139,0.14)"
+      },
+      "brand": {
+        "primary": "#4ade80",
+        "primary_soft": "rgba(22,163,74,0.12)"
+      },
+      "link": {
+        "default": "#86efac",
+        "hover": "#bbf7d0"
+      },
+      "chip": {
+        "blue_fg": "#94a3b8",
+        "blue_bg": "rgba(100,116,139,0.14)",
+        "amber_fg": "#d4ba84",
+        "amber_bg": "rgba(168,123,72,0.14)",
+        "red_fg": "#fca5a5",
+        "red_bg": "rgba(220,38,38,0.12)",
+        "purple_fg": "#a39db5",
+        "purple_bg": "rgba(132,122,153,0.14)"
+      }
+    },
+    "light": {
+      "bg": {
+        "app": "#ffffff",
+        "panel": "#f8f9fb",
+        "panel_strong": "#f1f5f9",
+        "panel_subtle": "#fafafa"
+      },
+      "border": {
+        "default": "#e5e7eb",
+        "strong": "#d1d5db"
+      },
+      "text": {
+        "t1": "#111827",
+        "t2": "#374151",
+        "t3": "#475569",
+        "t4": "#6b7280"
+      },
+      "accent": {
+        "green": "#15803d",
+        "green_fg": "#166534",
+        "green_fg_dark": "#14532d",
+        "green_bg": "#dcfce7",
+        "green_border": "#86efac",
+        "green_glow": "rgba(22,163,74,0.18)"
+      },
+      "semantic": {
+        "success": "#15803d",
+        "success_fg": "#166534",
+        "success_bg": "#dcfce7",
+        "warning": "#8a6840",
+        "warning_fg": "#6b5430",
+        "warning_bg": "#f4ede1",
+        "danger": "#b91c1c",
+        "danger_fg": "#991b1b",
+        "danger_bg": "#fee2e2",
+        "info": "#5a76a6",
+        "info_fg": "#3d4f6b",
+        "info_bg": "#e8edf4"
+      },
+      "brand": {
+        "primary": "#15803d",
+        "primary_soft": "rgba(22,163,74,0.12)"
+      },
+      "link": {
+        "default": "#0969da",
+        "hover": "#0550ae"
+      },
+      "chip": {
+        "blue_fg": "#5a76a6",
+        "blue_bg": "#e8edf4",
+        "amber_fg": "#a87b48",
+        "amber_bg": "#f4ede1",
+        "red_fg": "#dc2626",
+        "red_bg": "#fee2e2",
+        "purple_fg": "#847a99",
+        "purple_bg": "#ecebf0"
+      }
+    }
+  },
+  "spacing": {
+    "scale": {
+      "0": "0px",
+      "1": "4px",
+      "2": "8px",
+      "3": "12px",
+      "4": "16px",
+      "5": "24px",
+      "6": "32px",
+      "7": "48px",
+      "8": "64px",
+      "9": "96px",
+      "10": "128px"
+    },
+    "alias": {
+      "xs": "4px",
+      "sm": "8px",
+      "md": "12px",
+      "lg": "16px",
+      "xl": "24px",
+      "2xl": "32px",
+      "3xl": "48px",
+      "4xl": "64px"
+    }
+  },
+  "radius": {
+    "sm": "6px",
+    "md": "8px",
+    "lg": "12px",
+    "xl": "16px",
+    "pill": "9999px"
+  },
+  "focus": {
+    "ring": {
+      "dark": "0 0 0 2px rgba(10,10,11,.95), 0 0 0 4px rgba(148,163,184,.55), 0 0 12px rgba(148,163,184,.18)",
+      "light": "0 0 0 2px rgba(255,255,255,.95), 0 0 0 4px rgba(37,99,235,.55), 0 0 12px rgba(37,99,235,.18)"
+    }
+  },
+  "shadow": {
+    "sm": "0 1px 2px 0 rgba(0,0,0,0.05)",
+    "md": "0 4px 6px -1px rgba(0,0,0,0.10)",
+    "lg": "0 10px 15px -3px rgba(0,0,0,0.10)"
+  },
+  "backdrop": {
+    "dark": [
+      "radial-gradient(ellipse 1200px 600px at 12% -10%, rgba(64, 224, 208, 0.06), transparent 60%)",
+      "radial-gradient(ellipse 900px 500px at 88% 110%, rgba(139, 92, 246, 0.05), transparent 65%)",
+      "radial-gradient(ellipse 700px 400px at 50% 50%, rgba(0, 255, 157, 0.025), transparent 70%)"
+    ]
+  },
+  "email": {
+    "$comment": "PRESERVED VERBATIM from lib/heartbeat-tokens.json email subtree. Out of scope for ARCH.41 modification. When updating, edit master.json — heartbeat consumer reads from derived lib/heartbeat-tokens.json which carries this subtree unchanged.",
+    "dark": {
+      "body_bg": "#06070d",
+      "panel_bg": "#11131c",
+      "panel_strong_bg": "#181b27",
+      "panel_strong_accent": "#86efac",
+      "border": "#232737",
+      "border_strong": "#353a52",
+      "body_color": "#e4e4e7",
+      "muted_color": "#b8b8c0",
+      "chrome_color": "#9a9aa6",
+      "h1_color": "#bbf7d0",
+      "h2_color": "#fafafa",
+      "h3_color": "#86efac",
+      "accent": "#86efac",
+      "accent_deep": "#4ade80",
+      "accent_bg": "rgba(22,163,74,0.12)",
+      "accent_border": "rgba(22,163,74,0.30)",
+      "link_color": "#86efac",
+      "button_bg": "#238636",
+      "button_text": "#ffffff",
+      "button_border": "#2a7f3f",
+      "danger_bg": "rgba(220,38,38,0.18)",
+      "danger_fg": "#fca5a5",
+      "warning_bg": "rgba(168,123,72,0.22)",
+      "warning_fg": "#d4ba84",
+      "success_bg": "rgba(22,163,74,0.18)",
+      "success_fg": "#86efac",
+      "info_bg": "rgba(100,116,139,0.22)",
+      "info_fg": "#cbd5e1"
+    },
+    "light": {
+      "body_bg": "#f8f9fb",
+      "panel_bg": "#ffffff",
+      "panel_strong_bg": "#f1f5f9",
+      "panel_strong_accent": "#15803d",
+      "border": "#e5e7eb",
+      "border_strong": "#d1d5db",
+      "body_color": "#374151",
+      "muted_color": "#475569",
+      "chrome_color": "#6b7280",
+      "h1_color": "#14532d",
+      "h2_color": "#111827",
+      "h3_color": "#15803d",
+      "accent": "#15803d",
+      "accent_deep": "#166534",
+      "accent_bg": "#dcfce7",
+      "accent_border": "#86efac",
+      "link_color": "#0969da",
+      "button_bg": "#15803d",
+      "button_text": "#ffffff",
+      "button_border": "#166534",
+      "danger_bg": "#fee2e2",
+      "danger_fg": "#991b1b",
+      "warning_bg": "#f4ede1",
+      "warning_fg": "#6b5430",
+      "success_bg": "#dcfce7",
+      "success_fg": "#166534",
+      "info_bg": "#e8edf4",
+      "info_fg": "#3d4f6b"
+    },
+    "morning_dispatch": {
+      "$comment": "Phase F-5 Vogue+Bloomberg editorial palette — ivory paper, charcoal ink, oxidized brass. AAA contrast on #1a1816 on #f4f1e8 = 14.8:1.",
+      "paper": "#f4f1e8",
+      "paper_shadow": "#ede9dd",
+      "ink": "#1a1816",
+      "ink_2": "#3a3530",
+      "ink_3": "#5a5048",
+      "ink_4": "#8a8378",
+      "accent": "#a48a4f",
+      "accent_deep": "#7d6735",
+      "rule": "rgba(26,24,22,0.12)",
+      "rule_strong": "rgba(26,24,22,0.28)",
+      "positive": "#2d6b40",
+      "negative": "#8a3a2a"
+    },
+    "evening_dispatch": {
+      "$comment": "Phase F-5 Vogue+Bloomberg editorial palette — anthracite paper, ash-cream ink, single-malt amber. AAA contrast on #e8e4d8 on #0d0e10 = 14.6:1.",
+      "paper": "#0d0e10",
+      "paper_shadow": "#15171a",
+      "ink": "#e8e4d8",
+      "ink_2": "#d4cdb8",
+      "ink_3": "#a8a39a",
+      "ink_4": "#7a7468",
+      "accent": "#c89a4a",
+      "accent_deep": "#a87f30",
+      "accent_soft": "rgba(200,154,74,0.10)",
+      "rule": "rgba(212,205,184,0.10)",
+      "rule_strong": "rgba(212,205,184,0.26)",
+      "positive": "#9bbc8e",
+      "negative": "#c47860"
+    }
+  },
+  "typography": {
+    "$reserved": "ARCH.42 to populate typography.role.* — DO NOT populate in this finding's transform. The transform passes any keys under typography unchanged. Tests assert the typography.role.$reserved sentinel is present.",
+    "fontFamily": {
+      "sans": "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif",
+      "mono": "'JetBrains Mono', 'IBM Plex Mono', 'SF Mono', SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+    },
+    "size": {
+      "h1": "22px",
+      "h2_email": "16px",
+      "h2_dashboard": "16px",
+      "h2_dashboard_large": "18px",
+      "h3": "13px",
+      "h4": "15px",
+      "body": "14px",
+      "small": "13px",
+      "caption": "12px",
+      "meta": "11px",
+      "badge": "10px"
+    },
+    "weight": {
+      "regular": "400",
+      "medium": "500",
+      "semibold": "600",
+      "bold": "700"
+    },
+    "letterSpacing": {
+      "tight": "-0.3px",
+      "tighter": "-0.4px",
+      "normal": "0",
+      "wide": "0.04em",
+      "wider": "0.06em",
+      "widest": "0.18em"
+    },
+    "lineHeight": {
+      "tight": "1.2",
+      "snug": "1.3",
+      "normal": "1.5",
+      "relaxed": "1.625"
+    },
+    "h2_email_spec": {
+      "$comment": "Council Decision C — apply this to <h2> emissions in the heartbeat MJML template.",
+      "font_size": "16px",
+      "font_weight": "700",
+      "letter_spacing": "-0.3px",
+      "text_transform": "none",
+      "line_height": "1.3",
+      "margin": "22px 0 10px",
+      "border_left": "none",
+      "color_token": "h2_color"
+    },
+    "h3_email_spec": {
+      "$comment": "Council Decision C — apply this to <h3> emissions (demoted from old console-style 'section' treatment).",
+      "font_size": "13px",
+      "font_weight": "700",
+      "letter_spacing": "0.04em",
+      "text_transform": "uppercase",
+      "line_height": "1.3",
+      "margin": "16px 0 8px",
+      "border_left": "3px solid",
+      "border_left_color_token": "accent",
+      "padding_left": "10px",
+      "color_token": "h3_color"
+    },
+    "role": {
+      "$reserved": "ARCH.42 populates this object. Empty until ARCH.42 lands. The transform asserts this key contains only `$reserved` — adding sibling keys here fails CI."
+    }
+  }
+}

@@ -16,4 +16,16 @@ jobs:
         with:
           go-version: '1.26'
       - run: npm install
+      - name: Tokens drift check (finding-007 ARCH.41)
+        # Verifies lib/heartbeat-tokens.json, lib/dashboard-tokens.mjs
+        # (+ its .sha256 lockfile), and dashboard/css/tokens.css are in sync
+        # with tokens/master.json.
+        #
+        # If this step fails, run `node scripts/transform-tokens.mjs` locally
+        # and commit the regenerated files.
+        #
+        # Bypass (EMERGENCY ONLY): set TOKENS_SKIP_CI_GATE=1 in workflow env.
+        # Always file a follow-up issue to remove the bypass within 24h.
+        if: ${{ env.TOKENS_SKIP_CI_GATE != '1' }}
+        run: node scripts/transform-tokens.mjs --check
       - run: node test-all.mjs --quick

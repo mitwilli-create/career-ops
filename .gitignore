@@ -286,3 +286,6 @@ data/applications/
 data/system-health-*.md
 data/system-maintenance-decision-doc-*.md
 data/system-maintenance-log-*.md
+
+# 2026-05-20 overnight DECISION_2 — apply-pack archive (mirrors apply-pack/ + data/apply-packs/ gitignores; contains personal apply-pack content)
+data/apply-pack-archive-2026-05-20/

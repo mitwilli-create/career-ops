@@ -267,3 +267,22 @@ data/hang-watchdog-state.json
 data/next-moves.json
 data/signal-monitor-state.json
 data/tpgm-history.json
+
+# Overnight 2026-05-20 — additional runtime state surfaced post-tokens-merge.
+data/pipeline-process-state.json
+batch/batches-api-state.json
+# Per-batch triage-advance snapshots (one .tsv per batch run, hash-named).
+# Useful for audit forensics but grows unboundedly. Keep on disk, never commit.
+batch/triage-advance-archive/
+
+# data/applications/ — apply-pack content (cover letters, decisions, references).
+# Highly personal; same rationale as data/hm-intel/, apply-pack/.
+data/applications/
+
+# system-maintainer regenerated daily by 03:00 PT launchd. Dated reports
+# rotate daily and would create constant-diff noise. Mitchell reads them on
+# disk via the daily decision-doc pattern. Older reports stay on disk for
+# audit history; never commit dated copies.
+data/system-health-*.md
+data/system-maintenance-decision-doc-*.md
+data/system-maintenance-log-*.md

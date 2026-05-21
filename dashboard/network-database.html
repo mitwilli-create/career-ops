@@ -20,10 +20,14 @@
       --amber-fg: #fcd34d; --red-fg: #fca5a5;
       --blue-fg: #93c5fd; --blue-bg: rgba(59,130,246,0.12);
     }
-    @media (prefers-color-scheme: light) and (not (data-theme: dark)) {
-      /* Opt-out for users who explicitly prefer light AND haven't been
-         force-themed dark. Currently no force-dark toggle, so the @media
-         alone is the opt-out. */
+    /* P3.25 iter6 2026-05-20 — light-mode opt-out for users whose OS
+       prefers light. Previous syntax was `@media (prefers-color-scheme:
+       light) and (not (data-theme: dark))` — invalid because data-theme
+       is an HTML attribute, not a media feature, so the rule never matched
+       and the page rendered always-dark in practice. Dropped the
+       data-theme clause; if a force-dark JS toggle is added later, wrap
+       the override with `body:not(.force-dark)` or similar selector. */
+    @media (prefers-color-scheme: light) {
       :root {
         --bg: #f7f8fa; --surface: #ffffff; --surface-2: #f0f2f5;
         --border: #e2e6eb; --text: #0f172a; --text-2: #334155;
@@ -150,18 +154,19 @@
     .conf-badge { display: inline-block; padding: 1px 7px; border-radius: 999px;
       font-size: 10.5px; font-weight: 600; margin-left: 6px; }
     .conf-high { background: var(--green-bg); color: var(--green-fg); }
-    /* P3.25 iter5 2026-05-20 — network-database.html is always dark in
-       practice (the light-mode opt-out @media block at line 23 has
-       invalid syntax — `(not (data-theme: dark))` is non-standard, so
-       the rule never matches and --surface stays #111827 even in
-       light-pref browsers). The badge bg is therefore always dark; use
-       #fbbf24 (light amber) which clears 9:1+ contrast. If someone fixes
-       the light-mode @media later, add a .conf-medium light-mode override
-       at that point. Previous comment about AA via #92400e on light bg
-       was correct in principle but irrelevant under the current always-
-       dark rendering. */
+    /* Dark-mode default: #fbbf24 (light amber) on the amber-tinted dark
+       --surface gives 9:1+ contrast. Light-mode override below swaps to
+       #92400e (dark amber) for AA on light --surface. */
     .conf-medium { background: color-mix(in srgb, var(--amber-fg) 12%, var(--surface));
       color: #fbbf24; }
+    @media (prefers-color-scheme: light) {
+      /* Source-order tiebreaker: must live AFTER .conf-medium so this
+         override wins. The @media :root vars block at the top of the
+         file flips bg/text tokens; the badge text color is hardcoded
+         to a literal hex (no token), so the override has to be a literal
+         too. ~5.4:1 contrast vs the amber-tinted light bg from color-mix. */
+      .conf-medium { color: #92400e; }
+    }
     .conf-low { background: var(--surface-2); color: var(--text-4); }
     .pill { display: inline-block; padding: 1px 7px; margin: 1px 4px 1px 0;
       border-radius: 999px; background: var(--surface-2); color: var(--text-2);

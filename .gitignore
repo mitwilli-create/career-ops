@@ -6,6 +6,7 @@ data/scan-history.tsv
 data/vimeo-inventory-*.md
 data/heartbeat-*.md
 data/heartbeat-archive/*.html
+data/baselines/
 .claude/knowledge/brain/personality-*.md
 data/triage-batch.tsv
 data/curator-mentions.md

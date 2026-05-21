@@ -35,6 +35,10 @@ import { marked } from 'marked';
 import mjml2html from 'mjml';
 import { buildSummary as buildOutreachSummary, listContacts as listOutreachContacts } from '../lib/outreach-tracker.mjs';
 import { renderSystemBanner, renderDiscardPatternSection, renderRunwayAlert } from '../lib/heartbeat-system-banner.mjs';
+// ARCH.42 (2026-05-21) — typography role helpers (Q1 evening rollout).
+// Currently used only by sectionLabel below; expand to h2/h3/th regex
+// replacements only after Friday morning eval confirms the plumbing.
+import { TYPE_ROLES, styleString } from '../lib/typography-roles.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
@@ -202,8 +206,22 @@ function renderContentHtml(markdownBody) {
 }
 
 // ── Section label helper ───────────────────────────────────────────────────
+// ARCH.42 Q1 evening rollout (2026-05-21): migrated to TYPE_ROLES.sectionLabel
+// + styleString. Currently dead code (no callers in heartbeat-evening.mjs);
+// the migration validates the plumbing for Friday's morning sectionLabel
+// rollout in scripts/heartbeat.mjs (which has 8 callers).
+//
+// Behavioral delta vs the prior inline style: fontFamily order swaps Inter
+// from 3rd → 1st in the stack (canonical sans), and an explicit
+// line-height:1.3 is added (was implicit ~1.5 from MJML body). Both render
+// byte-identical in the evening pipeline because sectionLabel has zero
+// callers; Friday morning rollout is where the visible delta first appears.
 function sectionLabel(text) {
-  return `<div style="font-size:10px;font-weight:700;letter-spacing:0.10em;text-transform:uppercase;color:${BRAND.text4};margin:14px 0 3px;font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif">${text}</div>`;
+  const style = styleString(TYPE_ROLES.sectionLabel, {
+    color: BRAND.text4,
+    margin: '14px 0 3px',
+  });
+  return `<div style="${style}">${text}</div>`;
 }
 
 // ── Runway density (same inline compute as heartbeat.mjs) ──────────────────

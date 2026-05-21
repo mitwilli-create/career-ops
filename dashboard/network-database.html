@@ -208,14 +208,12 @@
 :root {
   --sidebar-w: 200px;
   --sidebar-w-collapsed: 56px;
-  --radius-sm: 6px;
   --radius-full: 9999px;
-  --focus-ring: 0 0 0 3px var(--blue-bg);
   --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Helvetica, Arial, sans-serif;
 }
-/* ARCH.41 (2026-05-21) — --border-strong is now sourced from
-   /dashboard/css/tokens.css for all 3 theme states (was inline above with
-   drift in light: #cbd5e1 → canonical #d1d5db). */
+/* ARCH.41 (2026-05-21) Q3 close-out — --border-strong, --focus-ring,
+   --radius-sm, color tokens all sourced from /dashboard/css/tokens.css for
+   all 3 theme states. Single source of truth; no page-local overrides. */
 body { display: block; }
 .netdb-page-wrap {
   display: grid;

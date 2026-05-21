@@ -4010,8 +4010,44 @@ function _clearSseIntervals() {
   try { clearInterval(_sseBroadcastInterval); } catch {}
   try { clearInterval(_sseKeepaliveInterval); } catch {}
 }
-process.on('SIGTERM', _clearSseIntervals);
-process.on('SIGINT', _clearSseIntervals);
+
+// B3.3 (2026-05-20) — graceful shutdown. Without this, SIGTERM only cleared
+// intervals; the HTTP server kept the event loop alive (still accepting new
+// requests + holding open SSE streams). After launchd's graceful timeout it
+// would escalate to SIGKILL → last_exit = -9 in `launchctl list`. With this
+// handler, SIGTERM closes the HTTP listener, drains SSE clients, then exits 0
+// — launchd reads 0 and treats the restart as healthy.
+let _shuttingDown = false;
+function _gracefulShutdown(signal) {
+  if (_shuttingDown) return;
+  _shuttingDown = true;
+  process.stderr.write(`[dashboard-server] received ${signal} — graceful shutdown starting\n`);
+  _clearSseIntervals();
+  // End all SSE client streams so their open HTTP responses don't hold the
+  // event loop alive past server.close().
+  for (const client of _sseClients) {
+    try { client.res.end(); } catch {}
+  }
+  _sseClients.clear();
+  // Stop accepting new connections + wait for in-flight to finish.
+  if (typeof server !== 'undefined' && server && server.close) {
+    server.close((err) => {
+      if (err) process.stderr.write(`[dashboard-server] server.close error: ${err.message}\n`);
+      process.exit(0);
+    });
+    // Hard-exit safety net: if server.close() hangs (rare; usually due to a
+    // long-running response), force-exit after 8s. launchd's graceful timeout
+    // is 20s on macOS Tahoe, so 8s leaves headroom.
+    setTimeout(() => {
+      process.stderr.write('[dashboard-server] graceful timeout — forcing exit\n');
+      process.exit(0);
+    }, 8000).unref();
+  } else {
+    process.exit(0);
+  }
+}
+process.on('SIGTERM', () => _gracefulShutdown('SIGTERM'));
+process.on('SIGINT',  () => _gracefulShutdown('SIGINT'));
 
 // ── HTTP server ────────────────────────────────────────────────
 

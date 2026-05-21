@@ -264,6 +264,27 @@ next_report_num_unlocked() {
 update_state_unlocked() {
   local id="$1" url="$2" status="$3" started="$4" completed="$5" report_num="$6" score="$7" error="$8" retries="$9"
 
+  # iter9 (2026-05-20): defense-in-depth — strip embedded TAB / CR / LF from each
+  # column value before printf. Iter8 surfaced failure rows in batch-state.tsv
+  # with shifted columns (score column held the API error string, error column
+  # held the retry count). The most likely cause is a TAB inside $error
+  # (tail-5 of the worker log doesn't strip tabs, only newlines). Sanitizing at
+  # the printf boundary is cheap insurance against any future column-shift bug
+  # regardless of which arg gets contaminated.
+  _bs_sanitize() {
+    # tr operates on stdin; strip \t \r \n → space so the field stays valid TSV.
+    printf '%s' "$1" | tr '\t\r\n' '   '
+  }
+  id=$(_bs_sanitize "$id")
+  url=$(_bs_sanitize "$url")
+  status=$(_bs_sanitize "$status")
+  started=$(_bs_sanitize "$started")
+  completed=$(_bs_sanitize "$completed")
+  report_num=$(_bs_sanitize "$report_num")
+  score=$(_bs_sanitize "$score")
+  error=$(_bs_sanitize "$error")
+  retries=$(_bs_sanitize "$retries")
+
   if [[ ! -f "$STATE_FILE" ]]; then
     init_state
   fi
@@ -401,7 +422,10 @@ process_offer() {
   else
     retries=$((retries + 1))
     local error_msg
-    error_msg=$(tail -5 "$log_file" 2>/dev/null | tr '\n' ' ' | cut -c1-200 || echo "Unknown error (exit code $exit_code)")
+    # iter9 (2026-05-20): also strip TAB + CR so embedded whitespace in claude -p
+    # stderr can't shift TSV columns downstream. update_state_unlocked sanitizes
+    # again at the printf boundary as defense-in-depth.
+    error_msg=$(tail -5 "$log_file" 2>/dev/null | tr '\t\r\n' '   ' | cut -c1-200 || echo "Unknown error (exit code $exit_code)")
     update_state "$id" "$url" "failed" "$started_at" "$completed_at" "$report_num" "-" "$error_msg" "$retries"
     echo "    ❌ Failed (attempt $retries, exit code $exit_code)"
   fi

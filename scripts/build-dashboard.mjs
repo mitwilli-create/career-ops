@@ -5270,6 +5270,10 @@ async function build() {
     --green-fg-dark: #166534;
     --green-bg: #dcfce7;
     --green-border: #86efac;
+    /* P3.25 iter6 — orange semantic for cost-of-living delta badges
+       (negative delta on apply-now rows). Was undefined → inline-style
+       fallback #b45309 was used, which passes AA on white (5:1). */
+    --orange-fg: #b45309;
     /* ── P0-4 (Council 2026-05-17): button + link tokens. ────────────
        The previous --green-fg (#16a34a) was overloaded for both filled-action
        backgrounds (where white text fails AA at 2.85:1) and positive-trend
@@ -5451,6 +5455,11 @@ async function build() {
     --green-fg-dark: #bbf7d0;
     --green-bg: rgba(22,163,74,.12);
     --green-border: rgba(22,163,74,.3);
+    /* P3.25 iter6 — orange semantic for cost-of-living delta badges
+       (negative delta on apply-now rows). Was undefined → inline-style
+       fallback #b45309 was used, which fails AA contrast on dark
+       surface (3.68:1). #fb923c (orange-400) clears ~7:1 on #11131c. */
+    --orange-fg: #fb923c;
     /* P0-4 dark-mode button + link tokens (Council 2026-05-17).
        Source: data/council-design-tokens-2026-05-18.md */
     --action: #238636;
@@ -7667,20 +7676,22 @@ async function build() {
   .tier-legend-examples { font-size: 11.5px; color: var(--text-3); line-height: 1.5; font-style: italic; }
 
   /* ── Throttle row visual states ──────────────────────────────── */
-  /* BRAVO followup 2026-05-20 Item 9 / AA-11 — opacity-dimmed rows are the
-     design intent (visual deprioritization signal). axe-core computes
-     contrast on the opacity-blended values, which can dip below AA on
-     inline badges. Tried td:not(.muted-text) scoping; it just shifted
-     violations elsewhere. Decision: keep semantic dimming, exclude these
-     row classes from the a11y audit via scripts/a11y-audit.mjs. The
-     content remains parseable; the dimming itself signals "not actionable
-     right now" — that IS the user-facing accessibility affordance. */
+  /* P3.25 iter6 2026-05-20 — replaced opacity-based dimming with explicit
+     muted text-color tokens on the row's <td> children. Opacity blended
+     the entire row's contrast (including inline pills/badges) through a
+     0.4-0.6 multiplier, which axe-core correctly counted as a contrast
+     failure. Token-mute keeps the "this row is deprioritized" affordance
+     without distorting child contrast: text tones step down (--text-3 for
+     defer, --text-4 for blocked/cooldown) while badges with their own
+     color rules retain semantic color (status pills, score chips). The
+     colored box-shadow accent on td:first-child remains as the structural
+     signal. Replaces the 3 axe-audit excludes that this used to require. */
   tr.row-throttle-pickone > td:first-child { box-shadow: inset 3px 0 0 var(--amber-fg); }
-  tr.row-throttle-defer { opacity: .6; }
+  tr.row-throttle-defer > td { color: var(--text-3); }
   tr.row-throttle-defer > td:first-child { box-shadow: inset 3px 0 0 var(--text-4); }
-  tr.row-throttle-blocked { opacity: .4; }
+  tr.row-throttle-blocked > td { color: var(--text-4); }
   tr.row-throttle-blocked > td:first-child { box-shadow: inset 3px 0 0 var(--red-fg); }
-  tr.row-throttle-cooldown { opacity: .45; }
+  tr.row-throttle-cooldown > td { color: var(--text-4); }
   tr.row-throttle-cooldown > td:first-child { box-shadow: inset 3px 0 0 var(--red-fg); }
   tr.row-throttle-open > td:first-child { box-shadow: inset 3px 0 0 var(--green-fg); }
   .throttle-banner { padding: 11px 14px; border-radius: var(--radius-sm); margin: 4px 0 12px; font-weight: 500; font-size: 13px; line-height: 1.5; }

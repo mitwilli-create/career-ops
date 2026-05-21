@@ -151,6 +151,16 @@
       vertical-align: top; }
     tbody tr { cursor: pointer; }
     tbody tr:hover { background: var(--surface-2); }
+    /* P3.25 iter6 — explicit link colors for table anchors (LinkedIn, email,
+       etc). Without this, :visited falls through to Chrome's UA default
+       purple (#9e9eff) which fails AA contrast on the now-light --bg in
+       light-pref OS (was hidden when the page was always-dark, surfaced
+       after the @media fix on the same iter). Bound to var(--blue-fg) so
+       both modes inherit a token-managed color. */
+    tbody tr a,
+    tbody tr a:visited { color: var(--blue-fg); text-decoration: none; }
+    tbody tr a:hover,
+    tbody tr a:focus-visible { text-decoration: underline; }
     .conf-badge { display: inline-block; padding: 1px 7px; border-radius: 999px;
       font-size: 10.5px; font-weight: 600; margin-left: 6px; }
     .conf-high { background: var(--green-bg); color: var(--green-fg); }

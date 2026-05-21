@@ -94,15 +94,7 @@ async function auditOne(browser, surface, viewport) {
   //    the child's lack of focusability doesn't matter. Exclude remains
   //    valid; rationale text updated.]
   //
-  // 2. tr.row-throttle-defer / -blocked / -cooldown (color-contrast): these
-  //    rows have opacity 0.4–0.6 by design to visually deprioritize them.
-  //    axe computes contrast on the opacity-blended values, which dips below
-  //    AA on inline badges. The dimming IS the design intent.
-  //    [iter5 verification: opacity 0.6 confirmed on .row-throttle-defer.
-  //    Proposed iter6 fix: replace opacity with explicit muted-color tokens
-  //    that hit AA on their own without opacity blending.]
-  //
-  // 3. .age-red + .age-amber (color-contrast): axe reports foreground (the
+  // 2. .age-red + .age-amber (color-contrast): axe reports foreground (the
   //    dark-mode color) on a light background — a mixed-mode mismeasurement.
   //    Playwright DOM walk verifies the ACTUAL computed background (walking
   //    up through transparent ancestors) is the dark --surface-2 (#11131c),
@@ -112,12 +104,17 @@ async function auditOne(browser, surface, viewport) {
   //    transparent row, which inherits the page's dark surface.
   //    [iter5 DOM walk re-verification: fg=#fca5a5 (dark mode), walked-bg
   //    =#11131c (--surface-2), measured contrast ~9.33:1 ≥ AAA. Still valid.]
+  //
+  // P3.25 update (2026-05-20 iter6): the 3 tr.row-throttle-* excludes have
+  // been removed. build-dashboard.mjs:7670-7685 now uses explicit muted
+  // text-color tokens (--text-3 / --text-4) instead of opacity 0.4-0.6,
+  // so axe-core sees real per-element contrast values that all pass AA.
+  // The colored box-shadow accent on td:first-child preserves the
+  // deprioritization affordance. Audit:
+  // .claude/audit/p3-25-iter6-row-throttle-color-refactor-2026-05-20/notes.md
   const results = await new AxeBuilder({ page })
     .withTags(AA_TAGS)
     .exclude('.comp-top-scroll')
-    .exclude('tr.row-throttle-defer')
-    .exclude('tr.row-throttle-blocked')
-    .exclude('tr.row-throttle-cooldown')
     .exclude('.age-red')
     .exclude('.age-amber')
     .analyze()

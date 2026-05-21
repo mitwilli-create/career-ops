@@ -408,6 +408,232 @@ function renderReviewMarkdown(findings) {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// --decision-doc (B4.1 / 2026-05-20) — force-ranked findings + recommendations
+// + Decisions Required block. Matches the pattern of the 2026-05-20 completion
+// audit so Mitchell receives one consolidated decision doc per weekly run
+// instead of having to read 4 separate dated snapshots.
+// ───────────────────────────────────────────────────────────────────────────
+
+function rankSeverity(s) {
+  return { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 }[s] ?? 9;
+}
+
+function buildDecisionFindings(snap, reviewFindings) {
+  const out = [];
+
+  // launchd findings — unloaded source plists are surfaced as MEDIUM unless
+  // the unloaded count climbs above 15 (then HIGH — drift accelerating).
+  const unloadedCount = snap.launchd.total - snap.launchd.loaded;
+  if (unloadedCount > 0) {
+    out.push({
+      severity: unloadedCount > 15 ? 'HIGH' : 'MEDIUM',
+      area: 'launchd',
+      finding: `${unloadedCount} source plist(s) NOT loaded in ~/Library/LaunchAgents/`,
+      recommendation: `Review data/launchd-deferred-*.md OR bootstrap via the documented Tahoe sequence`,
+      decisionPrompt: `For each unloaded plist: KEEP_DEFERRED, BOOTSTRAP_NOW, or ARCHIVE_SOURCE.`,
+    });
+  }
+
+  // Flapping plists — always CRITICAL, indicates a job is hard-failing
+  for (const lbl of snap.launchd.flapping || []) {
+    out.push({
+      severity: 'CRITICAL',
+      area: 'launchd',
+      finding: `Plist flapping (non-zero exit on last run): ${lbl}`,
+      recommendation: `Tail data/logs/${lbl.replace('com.mitchell.career-ops.','')}-launchd.err for stack trace`,
+      decisionPrompt: `Decision: FIX_SCRIPT, BOOTOUT_AND_DEFER, or RUN_MANUALLY?`,
+    });
+  }
+
+  // Tracker findings
+  if ((snap.tracker.duplicateIds ?? []).length > 0) {
+    out.push({
+      severity: 'HIGH',
+      area: 'tracker',
+      finding: `${snap.tracker.duplicateIds.length} duplicate row IDs in data/applications.md`,
+      recommendation: `node scripts/dedup-tracker.mjs --dry-run, then commit if clean`,
+      decisionPrompt: `Run dedup now or batch with next tracker maintenance pass?`,
+    });
+  }
+
+  // HM intel age
+  const stale = snap.hmIntel.staleCount ?? 0;
+  if (stale > 5) {
+    out.push({
+      severity: 'MEDIUM',
+      area: 'hm-intel',
+      finding: `${stale} HM intel file(s) > 30d old (in data/hm-intel/)`,
+      recommendation: `Re-run /intel-refresh per row (~$35 each) OR archive the rows out of apply-now if no longer pursuing`,
+      decisionPrompt: `Refresh now (LLM spend) or defer until row reaches Tier-A?`,
+    });
+  }
+
+  // Report orphans
+  const ro = (snap.orphans.reverseOrphans ?? []).length;
+  if (ro > 0) {
+    out.push({
+      severity: 'LOW',
+      area: 'reports',
+      finding: `${ro} dashboard reverse-orphan HTML reports (no corresponding .md)`,
+      recommendation: `Run --cleanup to archive`,
+      decisionPrompt: `(--cleanup auto-fires nightly; usually safe to ignore unless count climbs above 50)`,
+    });
+  }
+
+  // Apply-pack orphans
+  const no = (snap.applyPacks.noTrackerRef ?? []).length;
+  if (no > 0) {
+    out.push({
+      severity: 'LOW',
+      area: 'apply-packs',
+      finding: `${no} apply-pack folder(s) with no matching tracker row`,
+      recommendation: `Run --cleanup to archive (preserves to .claude/audit/)`,
+      decisionPrompt: `Archive now or wait for next --cleanup nightly run?`,
+    });
+  }
+
+  // /tmp leaks
+  if (snap.tmpLeaks.leakedCount > 5) {
+    out.push({
+      severity: snap.tmpLeaks.leakedCount > 20 ? 'HIGH' : 'MEDIUM',
+      area: '/tmp',
+      finding: `${snap.tmpLeaks.leakedCount} career-ops /tmp leak(s) detected`,
+      recommendation: `--cleanup auto-sweeps; if leaks persist daily, find the leaking script`,
+      decisionPrompt: `Investigate source, or rely on auto-sweep?`,
+    });
+  }
+
+  // Dashboard server liveness
+  if (!snap.dashboardServer.listening) {
+    out.push({
+      severity: 'CRITICAL',
+      area: 'dashboard-server',
+      finding: `dashboard-server.mjs not listening on :3097`,
+      recommendation: `launchctl kickstart -k gui/$(id -u)/com.mitchell.career-ops.dashboard-server`,
+      decisionPrompt: `Restart now or investigate launchd state first?`,
+    });
+  }
+
+  // Review findings (security regressions in dashboard-server)
+  for (const f of (reviewFindings || [])) {
+    out.push({
+      severity: f.severity,
+      area: 'security',
+      finding: `${f.file} — ${f.issue}`,
+      recommendation: `Patch the regression in the indicated file`,
+      decisionPrompt: `Fix immediately or open a tracking issue?`,
+    });
+  }
+
+  // Sort: CRITICAL → HIGH → MEDIUM → LOW
+  out.sort((a, b) => rankSeverity(a.severity) - rankSeverity(b.severity));
+  return out;
+}
+
+function renderDecisionDoc(snap, reviewFindings) {
+  const findings = buildDecisionFindings(snap, reviewFindings);
+  const tally = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
+  for (const f of findings) tally[f.severity] = (tally[f.severity] || 0) + 1;
+  const totalActionable = findings.length;
+
+  const lines = [];
+  lines.push(`# System-Maintenance Decision Doc — ${dateStamp}`);
+  lines.push('');
+  lines.push(`**Captured:** ${snap.capturedAt}`);
+  lines.push(`**Tool:** scripts/agents/system-maintainer.mjs --decision-doc`);
+  lines.push(`**Companion snapshots:** data/system-health-${dateStamp}.md · data/system-maintenance-log-${dateStamp}.md · data/system-review-findings-${dateStamp}.md`);
+  lines.push('');
+
+  // TL;DR
+  lines.push('## TL;DR');
+  lines.push('');
+  if (totalActionable === 0) {
+    lines.push(`All snapshots green. ${snap.launchd.loaded}/${snap.launchd.total} plists loaded, 0 flapping, 0 duplicate tracker IDs, dashboard-server listening. No decisions required.`);
+  } else {
+    const summaryBits = [];
+    if (tally.CRITICAL) summaryBits.push(`${tally.CRITICAL} CRITICAL`);
+    if (tally.HIGH)     summaryBits.push(`${tally.HIGH} HIGH`);
+    if (tally.MEDIUM)   summaryBits.push(`${tally.MEDIUM} MEDIUM`);
+    if (tally.LOW)      summaryBits.push(`${tally.LOW} LOW`);
+    lines.push(`**${totalActionable} actionable finding(s)** — ${summaryBits.join(' · ')}.`);
+    lines.push('');
+    lines.push('See the Findings table below for full rankings. Decisions Required block at end of doc.');
+  }
+  lines.push('');
+
+  // Wins (force-positive framing per Win-Burial counter-protocol)
+  lines.push('## Wins');
+  lines.push('');
+  const wins = [];
+  wins.push(`✓ ${snap.launchd.loaded}/${snap.launchd.total} launchd plists loaded, ${snap.launchd.flapping.length} flapping`);
+  if (snap.dashboardServer.listening) wins.push(`✓ dashboard-server listening on :3097`);
+  if ((snap.tracker.duplicateIds ?? []).length === 0) wins.push(`✓ Tracker has zero duplicate row IDs (${snap.tracker.totalRows ?? '?'} rows)`);
+  if (snap.tmpLeaks.leakedCount === 0) wins.push(`✓ /tmp clean — no career-ops leaks`);
+  if ((reviewFindings || []).length === 0) wins.push(`✓ Code-review: 0 security regressions in dashboard-server.mjs`);
+  if (wins.length === 0) wins.push(`(none — investigate findings below before declaring health)`);
+  for (const w of wins) lines.push(`- ${w}`);
+  lines.push('');
+
+  // Findings table (force-ranked)
+  if (totalActionable > 0) {
+    lines.push('## Findings (force-ranked)');
+    lines.push('');
+    lines.push('| # | Severity | Area | Finding | Recommendation |');
+    lines.push('|---|---|---|---|---|');
+    for (let i = 0; i < findings.length; i++) {
+      const f = findings[i];
+      // Pipe-safe cells: escape `|` in user-facing text
+      const cell = (s) => String(s).replace(/\|/g, '\\|');
+      lines.push(`| ${i + 1} | ${f.severity} | ${f.area} | ${cell(f.finding)} | ${cell(f.recommendation)} |`);
+    }
+    lines.push('');
+
+    // Decisions Required — copy-paste-back format
+    lines.push('## Decisions Required');
+    lines.push('');
+    lines.push('Paste back to executor with your decisions inline. Default is the recommendation in the table above.');
+    lines.push('');
+    lines.push('```');
+    for (let i = 0; i < findings.length; i++) {
+      const f = findings[i];
+      lines.push(`# ${i + 1}. [${f.severity}] ${f.area}: ${f.finding}`);
+      lines.push(`#    ${f.decisionPrompt}`);
+      lines.push(`DECISION_${i + 1}=____`);
+      lines.push('');
+    }
+    lines.push('```');
+    lines.push('');
+  }
+
+  // Health snapshot rollup
+  lines.push('## Snapshot rollup');
+  lines.push('');
+  lines.push(`- launchd: ${snap.launchd.loaded}/${snap.launchd.total} loaded · ${snap.launchd.flapping.length} flapping`);
+  lines.push(`- tracker: ${snap.tracker.totalRows ?? '?'} rows · ${(snap.tracker.duplicateIds ?? []).length} dupe IDs`);
+  lines.push(`- hm-intel: ${snap.hmIntel.totalFiles ?? '?'} files · ${snap.hmIntel.staleCount ?? '?'} stale (>30d)`);
+  lines.push(`- reports: ${snap.orphans.mdCount ?? '?'} md · ${snap.orphans.htmlCount ?? '?'} html · ${(snap.orphans.reverseOrphans ?? []).length} reverse-orphan`);
+  lines.push(`- apply-packs: ${snap.applyPacks.totalPacks ?? '?'} · ${(snap.applyPacks.noTrackerRef ?? []).length} no-tracker-ref`);
+  lines.push(`- /tmp leaks: ${snap.tmpLeaks.leakedCount}`);
+  lines.push(`- dashboard-server listening on :3097: ${snap.dashboardServer.listening}`);
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+async function runDecisionDoc(snap, reviewFindings) {
+  log('▶ --decision-doc: consolidating findings into decision doc');
+  if (!snap) snap = await runHealth();
+  // If reviewFindings wasn't passed in, re-run --review to get fresh findings.
+  // runReview() returns its array even when --all dispatched it earlier.
+  if (!reviewFindings) reviewFindings = await runReview();
+  const outPath = join(ROOT, `data/system-maintenance-decision-doc-${dateStamp}.md`);
+  const md = renderDecisionDoc(snap, reviewFindings);
+  writeFileSync(outPath, md);
+  log(`✓ wrote ${outPath} (${md.length} chars, ${(md.match(/^\| \d+/gm) || []).length} findings)`);
+  return outPath;
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // --expand (LLM, $$$) — wraps researcher subprocess
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -473,12 +699,13 @@ Usage:
   node scripts/agents/system-maintainer.mjs [flags]
 
 Flags:
-  --health       System-health snapshot
-  --cleanup      Reversible archive + /tmp sweep
-  --review       Re-scan dashboard-server.mjs for security regressions
-  --expand       Stub — see --help body
-  --ats-watch    Stub — see --help body
-  --all          Run --health → --cleanup → --review
+  --health         System-health snapshot
+  --cleanup        Reversible archive + /tmp sweep
+  --review         Re-scan dashboard-server.mjs for security regressions
+  --decision-doc   Consolidated force-ranked findings + Decisions Required (B4.1)
+  --expand         Stub — see --help body
+  --ats-watch      Stub — see --help body
+  --all            Run --health → --cleanup → --review → --decision-doc
 
 Always logs to data/logs/system-maintainer-<DATE>.log
 `);
@@ -488,6 +715,7 @@ Always logs to data/logs/system-maintainer-<DATE>.log
   log(`system-maintainer started — flags: [${[...flags].join(', ')}]`);
 
   let snap = null;
+  let reviewFindings = null;
 
   if (flags.has('--all') || flags.has('--health')) {
     snap = await runHealth();
@@ -496,7 +724,10 @@ Always logs to data/logs/system-maintainer-<DATE>.log
     await runCleanup(snap);
   }
   if (flags.has('--all') || flags.has('--review')) {
-    await runReview();
+    reviewFindings = await runReview();
+  }
+  if (flags.has('--all') || flags.has('--decision-doc')) {
+    await runDecisionDoc(snap, reviewFindings);
   }
   if (flags.has('--expand')) {
     await runExpand();

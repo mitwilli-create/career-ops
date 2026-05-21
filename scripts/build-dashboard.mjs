@@ -15018,17 +15018,26 @@ function initAlphaPollingSweep() {
     targets.forEach(function(t) {
       var host = document.querySelector(t.selector);
       if (!host) return;
-      if (host.querySelector('.alpha-rebuild-mini-btn')) return; // idempotent
+      // If host is itself a button (or contains other interactive content
+      // we shouldn't nest inside), promote the rebuild button to a sibling
+      // — closes the axe nested-interactive false-positive that previously
+      // required #mc-funnel-chip to be excluded.
+      var nestingHost = host;
+      if (host.tagName === 'BUTTON' || host.tagName === 'A') {
+        nestingHost = host.parentElement || host;
+      }
+      if (nestingHost.querySelector('.alpha-rebuild-mini-btn[data-target="' + t.selector + '"]')) return; // idempotent
       var btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'alpha-rebuild-mini-btn';
+      btn.dataset.target = t.selector;
       btn.title = t.label + ' (full dashboard rebuild)';
       btn.setAttribute('aria-label', t.label);
       btn.textContent = '↻';
       btn.style.cssText = 'position:absolute;top:4px;right:4px;background:transparent;color:var(--text-3);border:1px solid var(--border);border-radius:3px;font-size:10px;padding:1px 5px;cursor:pointer;opacity:0;transition:opacity .15s;z-index:5';
       // Show on hover of the host
-      if (host.style.position !== 'absolute' && host.style.position !== 'relative') host.style.position = 'relative';
-      host.appendChild(btn);
+      if (nestingHost.style.position !== 'absolute' && nestingHost.style.position !== 'relative') nestingHost.style.position = 'relative';
+      nestingHost.appendChild(btn);
       host.addEventListener('mouseenter', function() { btn.style.opacity = '0.85'; });
       host.addEventListener('mouseleave', function() { btn.style.opacity = '0'; });
       btn.addEventListener('click', function(ev) {

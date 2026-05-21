@@ -77,22 +77,32 @@ async function auditOne(browser, surface, viewport) {
   await page.waitForTimeout(4000);
 
   // ─── Documented false-positive ignores (2026-05-20 BRAVO followup) ─────────
-  // Excluded selectors and the rationale for each:
+  // P3.25 update (2026-05-20 iter5): #mc-funnel-chip exclude removed after
+  // shipping the genuine fix — `_alphaInjectRebuildBtns()` in build-dashboard.mjs
+  // now promotes the rebuild ↻ button to a SIBLING when the host is itself a
+  // BUTTON/A, eliminating the nested-interactive case that previously
+  // required the exclude. Audit: .claude/audit/p3-25-axe-excludes-2026-05-20/notes.md
   //
-  // 1. #mc-funnel-chip (nested-interactive): axe reports "Element has focusable
-  //    descendants" but the <button> contains only a <span aria-hidden="true">
-  //    and text. Verified via DOM walk — no nested focusable element.
+  // Remaining 6 excluded selectors and the rationale for each:
   //
-  // 2. .comp-top-scroll (scrollable-region-focusable): axe reports a child
+  // 1. .comp-top-scroll (scrollable-region-focusable): axe reports a child
   //    .table-scroll selector that doesn't exist in the rendered DOM. The
   //    .comp-top-scroll wrapper has tabindex=0 + role=region + aria-label.
+  //    [iter5 DOM walk re-verification: wrapper still has tabindex=0 +
+  //    role=region + aria-label, AND there IS now a child .table-scroll
+  //    — but the wrapper's own a11y attrs make the parent focusable, so
+  //    the child's lack of focusability doesn't matter. Exclude remains
+  //    valid; rationale text updated.]
   //
-  // 3. tr.row-throttle-defer / -blocked / -cooldown (color-contrast): these
+  // 2. tr.row-throttle-defer / -blocked / -cooldown (color-contrast): these
   //    rows have opacity 0.4–0.6 by design to visually deprioritize them.
   //    axe computes contrast on the opacity-blended values, which dips below
   //    AA on inline badges. The dimming IS the design intent.
+  //    [iter5 verification: opacity 0.6 confirmed on .row-throttle-defer.
+  //    Proposed iter6 fix: replace opacity with explicit muted-color tokens
+  //    that hit AA on their own without opacity blending.]
   //
-  // 4. .age-red + .age-amber (color-contrast): axe reports foreground (the
+  // 3. .age-red + .age-amber (color-contrast): axe reports foreground (the
   //    dark-mode color) on a light background — a mixed-mode mismeasurement.
   //    Playwright DOM walk verifies the ACTUAL computed background (walking
   //    up through transparent ancestors) is the dark --surface-2 (#11131c),
@@ -100,11 +110,10 @@ async function auditOne(browser, surface, viewport) {
   //    bg from an unrelated rule (likely a sibling staleness-badge with
   //    inline bg). The age-red/age-amber text is rendered against the
   //    transparent row, which inherits the page's dark surface.
-  //
-  // All four are documented in data/bravo-followup-impl-2026-05-20.md.
+  //    [iter5 DOM walk re-verification: fg=#fca5a5 (dark mode), walked-bg
+  //    =#11131c (--surface-2), measured contrast ~9.33:1 ≥ AAA. Still valid.]
   const results = await new AxeBuilder({ page })
     .withTags(AA_TAGS)
-    .exclude('#mc-funnel-chip')
     .exclude('.comp-top-scroll')
     .exclude('tr.row-throttle-defer')
     .exclude('tr.row-throttle-blocked')

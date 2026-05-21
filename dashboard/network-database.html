@@ -150,10 +150,18 @@
     .conf-badge { display: inline-block; padding: 1px 7px; border-radius: 999px;
       font-size: 10.5px; font-weight: 600; margin-left: 6px; }
     .conf-high { background: var(--green-bg); color: var(--green-fg); }
-    /* BRAVO followup 2026-05-20 Item 9 / AA-11 — --amber-fg (#b45309) on the
-       muted bg (#f6eae1) gives 4.25:1; #92400e gives ~6.5:1, clears AA 4.5:1. */
+    /* P3.25 iter5 2026-05-20 — network-database.html is always dark in
+       practice (the light-mode opt-out @media block at line 23 has
+       invalid syntax — `(not (data-theme: dark))` is non-standard, so
+       the rule never matches and --surface stays #111827 even in
+       light-pref browsers). The badge bg is therefore always dark; use
+       #fbbf24 (light amber) which clears 9:1+ contrast. If someone fixes
+       the light-mode @media later, add a .conf-medium light-mode override
+       at that point. Previous comment about AA via #92400e on light bg
+       was correct in principle but irrelevant under the current always-
+       dark rendering. */
     .conf-medium { background: color-mix(in srgb, var(--amber-fg) 12%, var(--surface));
-      color: #92400e; }
+      color: #fbbf24; }
     .conf-low { background: var(--surface-2); color: var(--text-4); }
     .pill { display: inline-block; padding: 1px 7px; margin: 1px 4px 1px 0;
       border-radius: 999px; background: var(--surface-2); color: var(--text-2);
@@ -620,11 +628,12 @@ textarea:focus-visible {
 <div class="toolbar">
   <!-- P0.8 (2026-05-20) — in-page Table|Cards switcher per researcher
        convergence. Table is the active sub-surface here; Cards links to
-       /contacts.html. aria-pressed (NOT aria-current — that lives on the
-       sidebar's unified Network entry). -->
+       /contacts.html. aria-current="page" on the active link (per WAI-ARIA
+       spec for navigation; aria-pressed is button-only and axe-flags on
+       <a>). P3.25 iter5 2026-05-20 — replaced aria-pressed → aria-current. -->
   <div class="view-switcher" role="group" aria-label="Network view">
-    <a href="/network-database.html" class="vs-tab vs-tab-active" aria-pressed="true">Table</a>
-    <a href="/contacts.html" class="vs-tab" aria-pressed="false">Cards</a>
+    <a href="/network-database.html" class="vs-tab vs-tab-active" aria-current="page">Table</a>
+    <a href="/contacts.html" class="vs-tab">Cards</a>
   </div>
   <input id="search" type="search" placeholder="Search name, company, role, email…   /  to focus" autocomplete="off" aria-label="Search the network database">
   <select id="sort" aria-label="Sort order">

@@ -780,7 +780,8 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
 
   // Cron-health watchdog (added 2026-05-19). Auto-suppresses when all
   // tracked jobs (scan / scan-rss / scan-email) are healthy; lights up
-  // a red/amber banner when one is failing or stale.
+  // a red/amber banner when one is failing or stale. Goal: surface
+  // silent failures within 24h instead of 4 days.
   let cronHealthHtml = '';
   try { cronHealthHtml = renderCronHealthBanner({ format: 'html' }) || ''; } catch {}
 

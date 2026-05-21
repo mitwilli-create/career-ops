@@ -79,7 +79,7 @@ if (doProbe) {
   }
 }
 
-const report = await callCouncil({ prompt, models, opts: { maxTokens, retryOnRefusal } });
+const report = await callCouncil({ prompt, models, opts: { timeoutMs: 180000, maxTokens, retryOnRefusal } });
 if (probeResults) report.probe = probeResults;
 writeFileSync(outPath, JSON.stringify(report, null, 2));
 

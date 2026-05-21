@@ -589,7 +589,7 @@ async function processCompany({ company, slug, sample_role }, runState) {
   logLine(`COUNCIL FIRE ${company} (${slug}) — ${prompt.length} char brief`);
   let council;
   try {
-    council = await callCouncil({ prompt, opts: { maxTokens: 4000 } });
+    council = await callCouncil({ prompt, opts: { timeoutMs: 180000, maxTokens: 4000 } });
   } catch (e) {
     logLine(`COUNCIL ERROR ${company}: ${e.message}`);
     return { slug, company, outcome: 'council_error', cost_usd: 0, error: e.message, models_used: [], models_failed: [] };

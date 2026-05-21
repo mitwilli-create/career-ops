@@ -197,7 +197,7 @@ async function enrichOne(person) {
   const { results } = await callCouncil({
     prompt,
     models: ['perplexity:sonar-pro', 'anthropic:claude-sonnet-4-6'],
-    opts: { maxTokens: 2000, retryOnRefusal: false },
+    opts: { timeoutMs: 180000, maxTokens: 2000, retryOnRefusal: false },
   });
 
   // Pick the first successful, schema-valid response.

@@ -116,7 +116,10 @@ data/strategy-cache/
 .claude/settings.local.json
 .claude/memory/
 career-dashboard
-package-lock.json
+# package-lock.json — TRACKED (2026-05-21): GitHub Actions portal-scan workflow
+# uses actions/setup-node@v4 with `cache: 'npm'` and `npm ci`, both of which
+# require a tracked lock file. Was ignored 2026-05-04 in a bulk commit;
+# untracking caused 24+ hours of consecutive portal-scan failures.
 article-digest.md
 
 # Weekly intel output (user-specific, date-stamped)

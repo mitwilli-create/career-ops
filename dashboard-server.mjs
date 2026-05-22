@@ -3,7 +3,7 @@
 // Usage: node dashboard-server.mjs [--port=3000]
 
 import { createServer } from 'http';
-import { readFileSync, existsSync, statSync, readdirSync, appendFileSync, writeFileSync, renameSync, mkdirSync, watch as fsWatch } from 'fs';
+import { readFileSync, existsSync, statSync, readdirSync, appendFileSync, writeFileSync, renameSync, mkdirSync, unlinkSync, watch as fsWatch } from 'fs';
 import { join, extname, basename } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -6975,6 +6975,92 @@ const server = createServer((req, res) => {
         });
         const { createReadStream } = await import('node:fs');
         createReadStream(resolved).pipe(res);
+      } catch (err) {
+        try { return json({ ok: false, error: err.message }, 500); } catch (_) {}
+      }
+    })();
+    return;
+  }
+
+  // ── GET /api/apply-pack-zip?slug=<slug> ──────────────────────────────────
+  // 09 Part 2 Item B (2026-05-22) — stream a fresh zip of every artifact in
+  // an apply-pack as a single download. The browser fires a download with
+  // filename `<company>-<role>-<YYYY-MM-DD>.zip` containing every file in
+  // the pack. Reuses the same E1 merge logic as /api/finalize-apply-pack
+  // (apply-pack/ wins on collision, falls back to data/apply-packs/).
+  if (url.startsWith('/api/apply-pack-zip') && req.method === 'GET') {
+    (async () => {
+      try {
+        const slug = String(query.slug || '').trim();
+        if (!slug || !/^[A-Za-z0-9_.-]+$/.test(slug)) {
+          return json({ ok: false, error: 'invalid slug' }, 400);
+        }
+        const createDir = join(ROOT, 'apply-pack', slug);
+        const polishDir = join(ROOT, 'data', 'apply-packs', slug);
+        const haveCreate = existsSync(createDir);
+        const havePolish = existsSync(polishDir);
+        if (!haveCreate && !havePolish) {
+          return json({ ok: false, error: 'pack not found at apply-pack/' + slug + ' or data/apply-packs/' + slug }, 404);
+        }
+        const { execFile } = await import('child_process');
+        const execFileP = (cmd, args, opts = {}) => new Promise((resolve, reject) => {
+          execFile(cmd, args, { timeout: 60000, ...opts }, (err, stdout, stderr) => {
+            if (err) reject(new Error(`${cmd} failed: ${err.message}${stderr ? ' · ' + stderr.toString().slice(0, 240) : ''}`));
+            else resolve({ stdout, stderr });
+          });
+        });
+
+        // Stage temp merge dir same way as /api/finalize-apply-pack does.
+        let zipSourceDir;
+        let tempDirToCleanup = null;
+        if (haveCreate && havePolish) {
+          const tmpRoot = join(ROOT, 'data', 'tmp');
+          mkdirSync(tmpRoot, { recursive: true });
+          tempDirToCleanup = join(tmpRoot, `zip-stream-${slug}-${Date.now()}`);
+          mkdirSync(tempDirToCleanup, { recursive: true });
+          await execFileP('cp', ['-R', `${polishDir}/.`, tempDirToCleanup]);
+          await execFileP('cp', ['-R', `${createDir}/.`, tempDirToCleanup]);
+          zipSourceDir = tempDirToCleanup;
+        } else if (haveCreate) {
+          zipSourceDir = createDir;
+        } else {
+          zipSourceDir = polishDir;
+        }
+
+        // Build the zip in a temp file, then stream it.
+        const tmpRoot2 = join(ROOT, 'data', 'tmp');
+        mkdirSync(tmpRoot2, { recursive: true });
+        const tmpZip = join(tmpRoot2, `pack-${slug}-${Date.now()}.zip`);
+        try {
+          await execFileP('zip', ['-r', '-q', tmpZip, '.'], { cwd: zipSourceDir });
+        } finally {
+          if (tempDirToCleanup) {
+            try { await execFileP('rm', ['-rf', tempDirToCleanup]); } catch {}
+          }
+        }
+        if (!existsSync(tmpZip)) {
+          return json({ ok: false, error: 'zip creation failed' }, 500);
+        }
+        const stat = statSync(tmpZip);
+        // Derive download filename: slug is num-company-role; strip the
+        // num prefix to make the download name cleaner.
+        const date = new Date().toISOString().slice(0, 10);
+        const downloadName = `${slug}-${date}.zip`;
+        res.writeHead(200, {
+          'Content-Type': 'application/zip',
+          'Content-Length': stat.size,
+          'Content-Disposition': `attachment; filename="${downloadName}"`,
+          'Cache-Control': 'private, no-cache',
+        });
+        const { createReadStream } = await import('node:fs');
+        const stream = createReadStream(tmpZip);
+        stream.on('end', () => {
+          try { unlinkSync(tmpZip); } catch (_) {}
+        });
+        stream.on('error', () => {
+          try { unlinkSync(tmpZip); } catch (_) {}
+        });
+        stream.pipe(res);
       } catch (err) {
         try { return json({ ok: false, error: err.message }, 500); } catch (_) {}
       }

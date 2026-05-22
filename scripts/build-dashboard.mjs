@@ -20710,8 +20710,14 @@ async function _drawerLoadArtifactManifest(num, mountEl) {
         + (bytes ? '<span class="drawer-artifact-size">' + bytes + '</span>' : '')
         + '</a>';
     }
+    // 09 Part 2 Item B (2026-05-22) — "Download all" CTA streams the entire
+    // pack as a single zip via /api/apply-pack-zip?slug=<slug>.
+    const zipHref = '/api/apply-pack-zip?slug=' + encodeURIComponent(slug);
     let html = '<div class="drawer-artifact-section" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">';
-    html +=   '<div class="drawer-artifact-title" style="font-size:11px;font-weight:600;color:var(--text-3);margin-bottom:6px;letter-spacing:0.05em;text-transform:uppercase">Apply-pack files <span style="color:var(--text-4);font-weight:400;text-transform:none">· ' + data.files.length + ' file' + (data.files.length === 1 ? '' : 's') + '</span></div>';
+    html +=   '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">';
+    html +=     '<div class="drawer-artifact-title" style="font-size:11px;font-weight:600;color:var(--text-3);letter-spacing:0.05em;text-transform:uppercase">Apply-pack files <span style="color:var(--text-4);font-weight:400;text-transform:none">· ' + data.files.length + ' file' + (data.files.length === 1 ? '' : 's') + '</span></div>';
+    html +=     '<a class="drawer-artifact-zipall" href="' + _esc(zipHref) + '" download style="font-size:11px;padding:3px 10px;border:1px solid var(--border);border-radius:4px;color:var(--text-2);text-decoration:none;background:var(--surface-2,transparent)" title="Download every artifact in one zip">' + String.fromCharCode(0x2913) + ' Download all</a>';
+    html +=   '</div>';
     if (consumer.length) {
       html += '<div class="drawer-artifact-list">' + consumer.map(_row).join('') + '</div>';
     }

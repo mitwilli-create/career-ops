@@ -8356,9 +8356,12 @@ async function generatePack(){
       if (!POLISH_MODES[mode]) return json({ ok: false, error: 'mode must be lite|smart|heavy' }, 400);
       // Lazy-load dotenv — the launchd-wrapped dashboard-server doesn't source
       // .env at startup. Idempotent + low-cost on repeated calls.
+      // override:true is REQUIRED: Mitchell's shell pre-sets ANTHROPIC_API_KEY
+      // to empty, so dotenv without override would skip the real .env value.
+      // See ~/.claude/projects/.../memory/reference_env_secrets.md.
       try {
         const dotenv = await import('dotenv');
-        dotenv.config({ path: join(ROOT, '.env'), override: false });
+        dotenv.config({ path: join(ROOT, '.env'), override: true });
       } catch {}
       const apiKey = process.env.ANTHROPIC_API_KEY;
       if (!apiKey) return json({ ok: false, error: 'ANTHROPIC_API_KEY not set' }, 500);

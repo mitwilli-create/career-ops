@@ -6379,10 +6379,55 @@ const server = createServer((req, res) => {
         }
         const padded = String(rowId).padStart(3, '0');
         const slugify = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-        const sourceDir = join(ROOT, 'data', 'apply-packs', `${padded}-${slugify(company)}-${slugify(role)}`);
-        if (!existsSync(sourceDir)) {
-          return json({ ok: false, error: `Source dir not found: ${sourceDir}` }, 404);
+        const slug = `${padded}-${slugify(company)}-${slugify(role)}`;
+        // E1 fix (2026-05-21): CREATE writes to apply-pack/<slug>/ (singular,
+        // canonical artifact home), POLISH ALSO writes to data/apply-packs/<slug>/
+        // (working dir for quarantine + polish-trace metadata) and mirrors
+        // confidence≥target files back to apply-pack/. Previously this endpoint
+        // ONLY looked in data/apply-packs/, so freshly-created (un-polished) packs
+        // returned 404 on download. Fix: prefer apply-pack/<slug>/ as the primary
+        // source, and when both exist, merge so polish-only artifacts
+        // (impact-doc / references / referrals before mirror) still ship.
+        const createDir = join(ROOT, 'apply-pack', slug);
+        const polishDir = join(ROOT, 'data', 'apply-packs', slug);
+        const haveCreate = existsSync(createDir);
+        const havePolish = existsSync(polishDir);
+        if (!haveCreate && !havePolish) {
+          return json({
+            ok: false,
+            error: `No pack found at apply-pack/${slug}/ or data/apply-packs/${slug}/`,
+            tried: [createDir, polishDir],
+          }, 404);
         }
+        const { execFile } = await import('child_process');
+        const execFileP = (cmd, args, opts = {}) => new Promise((resolve, reject) => {
+          execFile(cmd, args, { timeout: 60000, ...opts }, (err, stdout, stderr) => {
+            if (err) reject(new Error(`${cmd} failed: ${err.message}${stderr ? ' · ' + stderr.toString().slice(0, 240) : ''}`));
+            else resolve({ stdout, stderr });
+          });
+        });
+        // Determine the zip source dir. Single source → zip directly. Both
+        // exist → stage a temp merge dir so apply-pack/ wins on conflict and
+        // polish-only artifacts (impact-doc, references, referrals before
+        // mirroring) still ship in the zip.
+        let zipSourceDir;
+        let tempDirToCleanup = null;
+        if (haveCreate && havePolish) {
+          const tmpRoot = join(ROOT, 'data', 'tmp');
+          mkdirSync(tmpRoot, { recursive: true });
+          tempDirToCleanup = join(tmpRoot, `zip-merge-${slug}-${Date.now()}`);
+          mkdirSync(tempDirToCleanup, { recursive: true });
+          // 1) Copy polish artifacts first.
+          await execFileP('cp', ['-R', `${polishDir}/.`, tempDirToCleanup]);
+          // 2) Overlay CREATE files — they win on filename collision per spec.
+          await execFileP('cp', ['-R', `${createDir}/.`, tempDirToCleanup]);
+          zipSourceDir = tempDirToCleanup;
+        } else if (haveCreate) {
+          zipSourceDir = createDir;
+        } else {
+          zipSourceDir = polishDir;
+        }
+        const sourceDir = zipSourceDir;  // preserved for response payload
         const home = process.env.HOME || homedir();
         const destDir = join(home, 'Documents', 'Apply Packs');
         if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true });
@@ -6397,15 +6442,16 @@ const server = createServer((req, res) => {
           .trim();
         const zipName = `${_sanitizeZip(company)} - ${_sanitizeZip(role)} (${date}).zip`;
         const zipPath = join(destDir, zipName);
-        const { execFile } = await import('child_process');
-        // zip -r {destZip} . — run inside sourceDir so the archive contains
-        // the pack files at the top level (not nested under data/apply-packs/...).
-        await new Promise((resolve, reject) => {
-          execFile('zip', ['-r', '-q', zipPath, '.'], { cwd: sourceDir, timeout: 60000 }, (err, stdout, stderr) => {
-            if (err) reject(new Error(`zip failed: ${err.message}${stderr ? ' · ' + stderr : ''}`));
-            else resolve();
-          });
-        });
+        // zip -r {destZip} . — run inside zipSourceDir so the archive contains
+        // the pack files at the top level.
+        try {
+          await execFileP('zip', ['-r', '-q', zipPath, '.'], { cwd: zipSourceDir });
+        } finally {
+          // Clean up any merge tempdir even if zip failed.
+          if (tempDirToCleanup) {
+            try { await execFileP('rm', ['-rf', tempDirToCleanup]); } catch {}
+          }
+        }
         // Force Spotlight to index the new file immediately. Best-effort —
         // mdimport returns 0 on success, but we don't block on it.
         try {

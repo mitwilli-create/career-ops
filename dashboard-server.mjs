@@ -8807,7 +8807,10 @@ async function generatePack(){
       const snippetText = chunks.slice(0, 8).map((c, i) =>
         '## Snippet ' + (i + 1) + ' [source: ' + (c.source || 'unknown') + ']\n' + ((c.text || '').slice(0, 600))
       ).join('\n\n');
-      const systemPrompt = "You are Mitchell's career strategist. Given a target role and the most relevant chunks from his career corpus (cv.md, article-digest.md, project stories), write a 1-2 sentence contextual note that calls out: (a) which 1-2 corpus signals best support the application, (b) one specific gap or risk to address. Be direct, specific, and grounded — cite source files inline like [cv.md] or [article-digest.md]. Maximum 280 characters total. No preamble.";
+      // 09 Part 1 Item A (2026-05-22) — switch to "Screen for / Lead with"
+      // format per the user's ask. The note appears above the Next-move CTA
+      // cluster and tells Mitchell what to focus on as he applies.
+      const systemPrompt = "You are Mitchell's career strategist. Given a target role and the most relevant chunks from his career corpus (cv.md, article-digest.md, project stories), write a contextual note in EXACTLY this two-line format:\n\n  Screen for: <3-5 word phrase that captures what makes Mitchell distinctively qualified for this role>.\n  Lead with: <a specific story or proof point from the corpus to open with>.\n\nGround both lines in the provided corpus chunks. Cite source files inline like [cv.md] or [article-digest.md]. Maximum 240 characters total. No preamble, no extra lines.";
       const userPrompt = `# Role\n${row.company || ''} — ${row.role || ''}\n\n# Corpus chunks (top-${chunks.length})\n${snippetText}`;
       let note = '';
       let citations = [];

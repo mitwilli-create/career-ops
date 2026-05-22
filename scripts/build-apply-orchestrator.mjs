@@ -585,13 +585,27 @@ export async function humanizeGate({ drafts, aiPolicy, dryRun = true, outDir = n
   // `FAIL` is reserved for the band-aware gateBlocks=true case. Legacy
   // passes=false without gateBlocks=true surfaces as `ADVISORY` (the gate
   // didn't actively block; the score is informational).
+  // 09 Part 1 Item I (2026-05-22) — render detector bands as plain-language
+  // text so the user-facing ledger doesn't show jargon like "band=CRIT". The
+  // raw band is still preserved in the JSON ledger (humanize field below).
+  function _bandPhrase(r) {
+    if (!r?.band) return '';
+    const flagged = r?.gptzero_highlights_count ?? r?.highlighted_count ?? r?.sentence_signals?.highlighted_count;
+    const sentCount = (typeof flagged === 'number' && flagged > 0)
+      ? ` (${flagged} sentence${flagged === 1 ? '' : 's'} flagged)`
+      : '';
+    if (r.band === 'CRIT') return ` — likely reads AI-generated to detectors${sentCount}`;
+    if (r.band === 'HIGH') return ` — borderline AI-detector read${sentCount}`;
+    if (r.band === 'MED')  return ` — minor detector signal${sentCount}`;
+    return ` — voice match strong`; // CLEAR or anything else
+  }
   const detectionDetail = Object.entries(aiDetectionResults)
     .map(([k, r]) => {
       if (r?.skipped) return `${k}: skipped (${r.reason || 'budget'})`;
       if (r?.error) return `${k}: error (${r.error.slice(0, 60)})`;
       const gz = r?.gptzero_prob != null ? `GPTZero ${Math.round(r.gptzero_prob * 100)}%` : 'GPTZero n/a';
       const orig = r?.originality_prob != null ? `Originality ${Math.round(r.originality_prob * 100)}%` : 'Originality n/a';
-      const band = r?.band ? ` band=${r.band}` : '';
+      const band = _bandPhrase(r);
       const sig  = (r?.gptzero_signal_quality || r?.originality_signal_quality)
         ? ` sig=${r?.gptzero_signal_quality || 'n/a'}/${r?.originality_signal_quality || 'n/a'}`
         : '';

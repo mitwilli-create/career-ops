@@ -20766,17 +20766,27 @@ function _renderLifecycleRow(s, driveEnabled, num) {
   if (s.applied) { applyState = 'done'; applyTitle = 'This role has been marked Applied/Responded/Interview/Offer'; }
   else if (s.pack_exists && s.polished) { applyState = 'active'; applyTitle = 'Open the JD URL + mark as Applied'; }
 
+  // 09 Part 1 Item A (2026-05-22) — header renamed "Lifecycle" → "Next move".
+  // Primary CTA cluster simplified to 3 buttons (Create apply pack / Polish
+  // materials / Apply). Sync + Pre-apply demoted to secondary row below;
+  // they remain accessible but don't clutter the primary action target.
+  // Contextual alignment note is populated by /api/context-note (lib at
+  // dashboard-server.mjs:8755) which queries the corpus index and runs Sonnet
+  // for a 1-2 sentence "Screen for: X / Lead with: Y" note grounded in
+  // cv.md + hm-intel + cv-tailored highlights.
   const rowHtml =
+    '<div class="drawer-lifecycle-note" style="font-size:11.5px;color:var(--text-3,#6b7280);margin-bottom:8px;font-style:italic">' + String.fromCharCode(8230) + '</div>' +
     '<div class="drawer-lifecycle-buttons">' +
-      btn('Create', createState, createTitle) +
-      btn('Sync edits', syncState, syncTitle) +
-      btn('Pre-apply', preApplyState, preApplyTitle) +
-      btn('Polish', polishState, polishTitle) +
-      btn('Apply', applyState, applyTitle) +
+      btn('Create apply pack', createState, createTitle) +
+      btn('Polish materials',  polishState, polishTitle) +
+      btn('Apply',             applyState,  applyTitle) +
     '</div>' +
-    '<div class="drawer-lifecycle-note">' + String.fromCharCode(8230) + '</div>';
+    '<div class="drawer-lifecycle-buttons-secondary" style="display:flex;gap:6px;margin-top:6px;font-size:11px;opacity:0.7">' +
+      btn('Sync edits', syncState, syncTitle) +
+      btn('Pre-apply',  preApplyState, preApplyTitle) +
+    '</div>';
   return '<div class="drawer-lifecycle-section">' +
-    '<div class="drawer-lifecycle-header">Lifecycle</div>' +
+    '<div class="drawer-lifecycle-header">Next move</div>' +
     rowHtml +
     '</div>';
 }

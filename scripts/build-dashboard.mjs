@@ -21318,6 +21318,92 @@ function _bsEsc(s) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
+// Plain-language batch error translator. Pattern-matches the raw error string
+// against a fixed set of regexes and returns a Mitchell-readable message.
+// Used by the batch failure modal + apply-pack failure widget (Closure E).
+// NOTE on outer-template-unescape: this function is inside the dashboard's
+// big backtick template literal AND the resulting inline-script JS string,
+// so any regex shorthand (slash-d, slash-s, slash-w, slash-b) gets eaten
+// twice. We avoid the issue entirely by using explicit character classes
+// ([0-9], [a-zA-Z], [ ]) instead of shorthand classes, and skipping word
+// boundaries (substring match is good enough for error keyword detection).
+function _bsTranslateError(raw) {
+  if (!raw) return 'Unknown error — check logs for details.';
+  var s = String(raw);
+  // band crit / band X flagged — AI-detection language. Translate first
+  // so the broader 'flagged' pattern below does not swallow it.
+  var bandFlagged = s.match(new RegExp('band[ ]+[a-z]+[ ]*[-—:][ ]*([0-9]+)[ ]+flagged', 'i'));
+  if (bandFlagged) {
+    var n = parseInt(bandFlagged[1], 10) || 0;
+    return n + ' sentence' + (n === 1 ? '' : 's') + ' flagged as potentially AI-written. Review highlighted sections before submitting.';
+  }
+  var anyFlagged = s.match(new RegExp('([0-9]+)[ ]+flagged', 'i'));
+  if (anyFlagged) {
+    var nf = parseInt(anyFlagged[1], 10) || 0;
+    return nf + ' section' + (nf === 1 ? '' : 's') + ' flagged for review.';
+  }
+  var patterns = [
+    [new RegExp('timeout|ETIMEDOUT|ECONNRESET|aborted', 'i'),
+      'Connection timed out. The API took too long to respond. This usually resolves on retry.'],
+    [new RegExp('rate.?limit|429|quota.?(exceed|reached)', 'i'),
+      'API rate limit hit. Too many requests in a short window. Wait 60 seconds and retry.'],
+    [new RegExp('(OPENAI|ANTHROPIC|GEMINI|PERPLEXITY|XAI)_API_KEY|unauthorized|invalid.*api.*key|401', 'i'),
+      'API key missing or invalid. Check your .env file has the correct key set.'],
+    [new RegExp('ENOENT|no such file|cannot find module', 'i'),
+      'A required file was not found. The apply-pack directory may be missing or incomplete.'],
+    [new RegExp('JSON|SyntaxError|parse', 'i'),
+      'Response parsing failed. The API returned an unexpected format. Retry usually fixes this.'],
+    [new RegExp('memory|heap|OOM|out of memory', 'i'),
+      'Out of memory. Too many items processing at once. Reduce batch size and retry.'],
+    [new RegExp('network|ENOTFOUND|DNS|EHOSTUNREACH', 'i'),
+      'Network error. Check your internet connection and try again.'],
+    [new RegExp('permission|EACCES|EPERM', 'i'),
+      'Permission denied. The script lacks access to a required file or directory.'],
+    [new RegExp('disk.?full|ENOSPC', 'i'),
+      'Disk full. Free up space on the volume and retry.'],
+    [new RegExp('5[0-9][0-9]|internal server|bad gateway|service unavailable', 'i'),
+      'Upstream service error (5xx). The API server is having trouble. Retry in a minute.'],
+  ];
+  for (var i = 0; i < patterns.length; i++) {
+    if (patterns[i][0].test(s)) return patterns[i][1];
+  }
+  // Fallback: normalize whitespace, truncate to 120 chars. Build the
+  // whitespace charset from String.fromCharCode() so the LF/CR/TAB
+  // chars survive the outer template literal intact.
+  var ws = new RegExp('[' + String.fromCharCode(13) + String.fromCharCode(10) + String.fromCharCode(9) + ']+', 'g');
+  var multi = new RegExp('[ ]{2,}', 'g');
+  var cleaned = s.replace(ws, ' ').replace(multi, ' ').trim();
+  return 'Error: ' + cleaned.slice(0, 120) + (cleaned.length > 120 ? '…' : '');
+}
+// Fix-guidance text for a raw batch error. Keys mirror _bsTranslateError
+// patterns so the user sees what to DO, not just what went wrong.
+function _bsFixGuidance(raw) {
+  if (!raw) return 'Check data/errors.log for the full stack trace.';
+  var s = String(raw);
+  if (new RegExp('timeout|ETIMEDOUT|ECONNRESET|aborted', 'i').test(s))
+    return '1. Wait 30 seconds for any pending connections to drain. 2. Click "Run Batch" again. 3. If it repeats more than twice, reduce the batch size to 10 items.';
+  if (new RegExp('rate.?limit|429|quota.?(exceed|reached)', 'i').test(s))
+    return '1. Wait 60 seconds. 2. Reduce batch size to 10 items. 3. If you hit this again, switch the model in batch-runner.mjs to Haiku for a few items, then revert.';
+  if (new RegExp('(OPENAI|ANTHROPIC|GEMINI|PERPLEXITY|XAI)_API_KEY|unauthorized|invalid.*api.*key|401', 'i').test(s))
+    return '1. Open .env in this repo. 2. Verify the key referenced in the error exists and is not empty. 3. Test the key with a single eval before retrying.';
+  if (new RegExp('ENOENT|no such file|cannot find module', 'i').test(s))
+    return '1. Identify the missing file from the error. 2. Re-run /apply-pack-polish for that row to regenerate. 3. If it is a script file, run npm install / git status to spot a missing dep.';
+  if (new RegExp('JSON|SyntaxError|parse', 'i').test(s))
+    return '1. Retry — most parse failures are transient model output drift. 2. If retry fails, capture the raw response from data/errors.log and check for trailing markdown fences.';
+  if (new RegExp('memory|heap|OOM|out of memory', 'i').test(s))
+    return '1. Reduce batch size to 10 items. 2. Close other heavy processes (Chrome tabs with screenshots). 3. If still failing, restart node + dashboard server.';
+  if (new RegExp('network|ENOTFOUND|DNS|EHOSTUNREACH', 'i').test(s))
+    return '1. Check your internet (ping anthropic.com). 2. If on a VPN, try disabling it. 3. Retry the batch.';
+  if (new RegExp('permission|EACCES|EPERM', 'i').test(s))
+    return '1. Check file permissions on the apply-pack directory. 2. If on macOS Tahoe, the Sandbox may be blocking — see bug-class-catalog Pattern F. 3. Move logs to ~/Library/Logs/career-ops if relevant.';
+  if (new RegExp('disk.?full|ENOSPC', 'i').test(s))
+    return '1. Free up disk space (clear output/, archives older than 30d). 2. Retry.';
+  if (new RegExp('5[0-9][0-9]|internal server|bad gateway|service unavailable', 'i').test(s))
+    return '1. Wait 1 minute for the upstream API to recover. 2. Retry. 3. If sustained, the provider may have an incident — check their status page.';
+  if (new RegExp('band[ ]+[a-z]+[ ]*[-—:][ ]*[0-9]+[ ]+flagged|[0-9]+[ ]+flagged', 'i').test(s))
+    return '1. Open the affected artifact (cover-letter.md / cv-tailored.md). 2. Rewrite the highlighted sentences in your own voice. 3. Re-run /apply-pack-polish for that row.';
+  return 'No automated fix available. Check data/errors.log for the full context, or paste the raw error into the Claude Code prompt for diagnosis.';
+}
 function _bsUpdateStamp() {
   const el = document.getElementById('batch-status-updated');
   if (!el || !_batchStatusLastFetchMs) return;
@@ -21446,13 +21532,26 @@ function _bsRenderBody(data, changed) {
       '</div>' +
     '</div>';
 
-  // Section D: Recent failures (collapsible)
+  // Section D: Recent failures (collapsible) — Closure B 2026-05-22:
+  // plain-language translation of raw error strings + a "How to fix →"
+  // expandable that surfaces specific remediation steps per error pattern.
   const fails = data.most_recent_failures || [];
   let sectionD = '';
   if (fails.length) {
-    const items = fails.map(f =>
-      '<div class="batch-status-failure-item" title="' + _bsEsc(f.error) + '"><strong>' + _bsEsc(f.ts || '?') + '</strong>' + _bsEsc(f.error) + '</div>'
-    ).join('');
+    const items = fails.map(f => {
+      const friendly = _bsTranslateError(f.error);
+      const fix = _bsFixGuidance(f.error);
+      const rawTooltip = _bsEsc(f.error);
+      return '<div class="batch-status-failure-item" title="' + rawTooltip + '">' +
+        '<strong>' + _bsEsc(f.ts || '?') + '</strong>' +
+        '<div class="batch-error-friendly">' + _bsEsc(friendly) + '</div>' +
+        '<details class="batch-error-fix">' +
+          '<summary class="batch-error-fix-toggle">How to fix →</summary>' +
+          '<div class="batch-error-fix-detail">' + _bsEsc(fix) + '</div>' +
+          '<div class="batch-error-fix-raw">Raw: <code>' + rawTooltip + '</code></div>' +
+        '</details>' +
+      '</div>';
+    }).join('');
     sectionD =
       '<div class="batch-status-section">' +
         '<h4 class="batch-status-section-title">Recent failures</h4>' +
@@ -28858,6 +28957,39 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   .batch-status-failure-item strong {
     display: inline-block; color: var(--red-fg, #cf222e);
     margin-right: 8px; font-family: inherit;
+  }
+  /* Closure B (2026-05-22): plain-language translation + How-to-fix expandable */
+  .batch-error-friendly {
+    display: block; margin-top: 4px;
+    font-family: var(--font-system, system-ui, sans-serif);
+    font-size: 12.5px; color: var(--text-2);
+    line-height: 1.45;
+  }
+  .batch-error-fix {
+    margin-top: 6px;
+    font-family: var(--font-system, system-ui, sans-serif);
+  }
+  .batch-error-fix-toggle {
+    cursor: pointer; font-size: 11.5px; font-weight: 600;
+    color: var(--blue-fg, #2563eb); padding: 2px 0;
+    user-select: none; list-style: none;
+  }
+  .batch-error-fix-toggle::-webkit-details-marker { display: none; }
+  .batch-error-fix[open] .batch-error-fix-toggle::after { content: ' ↓'; }
+  .batch-error-fix-detail {
+    margin-top: 4px; padding: 8px 10px;
+    border-left: 3px solid var(--green-fg, #16a34a);
+    background: var(--surface-3, rgba(22,163,74,0.06));
+    border-radius: 4px;
+    font-size: 12px; color: var(--text-2); line-height: 1.5;
+  }
+  .batch-error-fix-raw {
+    margin-top: 6px; font-size: 10.5px; color: var(--text-4);
+    word-break: break-all;
+  }
+  .batch-error-fix-raw code {
+    font-family: ui-monospace, monospace;
+    background: var(--surface-2); padding: 1px 4px; border-radius: 3px;
   }
 
   /* Change-flash: brief highlight on any value that changed since last poll */

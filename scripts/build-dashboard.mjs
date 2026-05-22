@@ -15088,10 +15088,10 @@ function openRightRailForDetail(idx, detailRow) {
     };
     const tierTitle = tierLabelMap[tierLetter];
     if (tierTitle) {
-      if (/\btitle=/.test(tierHtml)) {
-        tierHtml = tierHtml.replace(/\btitle="[^"]*"/, 'title="' + _drawerEscape(tierTitle) + '"');
+      if (/\\btitle=/.test(tierHtml)) {
+        tierHtml = tierHtml.replace(/\\btitle="[^"]*"/, 'title="' + _drawerEscape(tierTitle) + '"');
       } else {
-        tierHtml = tierHtml.replace(/^<(\w+)/, '<$1 title="' + _drawerEscape(tierTitle) + '"');
+        tierHtml = tierHtml.replace(/^<(\\w+)/, '<$1 title="' + _drawerEscape(tierTitle) + '"');
       }
     }
   }
@@ -15707,7 +15707,7 @@ async function loadSidebarRecentUpdates() {
       const date = _updateDrawerEscape((e.date || '').slice(0, 10));
       const tag = _updateDrawerEscape(e.tag || '');
       const fullText = _updateDrawerEscape(e.text || '');
-      const trimmed = (e.text || '').replace(/\s+/g, ' ').trim();
+      const trimmed = (e.text || '').replace(/\\s+/g, ' ').trim();
       const preview = _updateDrawerEscape(trimmed.length > 60 ? trimmed.slice(0, 60) + '…' : trimmed);
       return '<button type="button" class="sidebar-recent-update-row" ' +
         'data-text="' + fullText + '" ' +
@@ -16124,7 +16124,7 @@ function _populateDrawerRibbon(currentRow) {
     if (!tr) return '';
     var company = (tr.querySelector('a.company-link strong, td strong') || {}).textContent || '';
     var role = (tr.querySelector('td.role-cell a.role-link, td.role-cell') || {}).textContent || '';
-    var text = (company + ' — ' + role).replace(/\s+/g, ' ').trim();
+    var text = (company + ' — ' + role).replace(/\\s+/g, ' ').trim();
     return text.slice(0, 60);
   }
 
@@ -21860,11 +21860,11 @@ const _FX = { USD: 1, EUR: 1.12, GBP: 1.28, CAD: 0.73, SGD: 0.75, CHF: 1.15 };
 
 function _detectCurrency(comp) {
   if (!comp) return 'USD';
-  if (comp.includes('€') || /\bEUR\b/.test(comp)) return 'EUR';
-  if (comp.includes('£') || /\bGBP\b/.test(comp)) return 'GBP';
-  if (/\bCAD\b/.test(comp)) return 'CAD';
-  if (/\bSGD\b/.test(comp)) return 'SGD';
-  if (/\bCHF\b/.test(comp)) return 'CHF';
+  if (comp.includes('€') || /\\bEUR\\b/.test(comp)) return 'EUR';
+  if (comp.includes('£') || /\\bGBP\\b/.test(comp)) return 'GBP';
+  if (/\\bCAD\\b/.test(comp)) return 'CAD';
+  if (/\\bSGD\\b/.test(comp)) return 'SGD';
+  if (/\\bCHF\\b/.test(comp)) return 'CHF';
   return 'USD';
 }
 
@@ -21876,8 +21876,8 @@ function colBadge(comp, location) {
   // Extract numeric salary (handle K notation, ranges → midpoint)
   const raw = (comp || '').replace(/,/g, '');
   const nums = [];
-  for (const m of raw.matchAll(/([\d.]+)\s*[Kk]/g)) nums.push(parseFloat(m[1]) * 1000);
-  if (!nums.length) for (const m of raw.matchAll(/([\d]{4,7})/g)) nums.push(parseFloat(m[1]));
+  for (const m of raw.matchAll(/([\\d.]+)\\s*[Kk]/g)) nums.push(parseFloat(m[1]) * 1000);
+  if (!nums.length) for (const m of raw.matchAll(/([\\d]{4,7})/g)) nums.push(parseFloat(m[1]));
   if (!nums.length) return '';
   const mid = nums.length >= 2 ? (nums[0] + nums[1]) / 2 : nums[0];
   const usd = Math.round(mid * fx);
@@ -26674,7 +26674,7 @@ function _emailIncrUsage(id) {
 function _emailFillTemplate(tpl, vars) {
   // Replace {Token} placeholders. Unmatched tokens are left intact so
   // missing values are obvious to the user before they hit Send.
-  const replace = (s) => String(s || '').replace(/\{(\w+)\}/g, (m, k) =>
+  const replace = (s) => String(s || '').replace(/\\{(\\w+)\\}/g, (m, k) =>
     Object.prototype.hasOwnProperty.call(vars, k) && vars[k] != null ? String(vars[k]) : m);
   return { subject: replace(tpl.subject), body: replace(tpl.body) };
 }
@@ -28400,7 +28400,7 @@ window.invokeBuildPackStage = invokeBuildPackStage;
 // Confirms cost ~$25–$50, posts to /api/refresh-deep, opens job popout.
 async function invokeDeepRefresh(rowId, btn) {
   rowId = String(rowId || '').trim();
-  if (!rowId || !/^\d+$/.test(rowId)) {
+  if (!rowId || !/^\\d+$/.test(rowId)) {
     if (window.toast) window.toast('Deep refresh: numeric row required', 'error');
     return;
   }
@@ -28443,7 +28443,7 @@ function _alphaOpenJobPopout(jobId) {
 
 async function alphaPolishPack(rowId, opts) {
   rowId = String(rowId || '').trim();
-  if (!rowId || !/^\d+$/.test(rowId)) {
+  if (!rowId || !/^\\d+$/.test(rowId)) {
     if (window.toast) window.toast('Polish pack: numeric row required', 'error');
     return;
   }
@@ -28471,7 +28471,7 @@ window.alphaPolishPack = alphaPolishPack;
 
 async function alphaIntelRefresh(rowId, slots) {
   rowId = String(rowId || '').trim();
-  if (!rowId || !/^\d+$/.test(rowId)) {
+  if (!rowId || !/^\\d+$/.test(rowId)) {
     if (window.toast) window.toast('Intel refresh: numeric row required', 'error');
     return;
   }
@@ -32678,7 +32678,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
           if (c.touches[i].channel === 'internal_snooze') {
             var s = String(c.touches[i].summary || '');
             // Strip the "[snooze until YYYY-MM-DD]" prefix; show only the user note.
-            var stripped = s.replace(/^\[snooze[^\]]*\]\s*/, '');
+            var stripped = s.replace(/^\\[snooze[^\\]]*\\]\\s*/, '');
             if (stripped) note = ' · ' + escapeHtml(stripped);
             break;
           }
@@ -32911,7 +32911,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     return d.toISOString().slice(0, 10);
   }
   function isoFromDateInput(value) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) return null;
     var picked = Date.parse(value + 'T23:59:59');
     if (Number.isNaN(picked) || picked <= Date.now()) return null;
     return value;

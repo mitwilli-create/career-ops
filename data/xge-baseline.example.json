@@ -1,0 +1,17 @@
+{
+  "_meta": {
+    "owner": "user-managed",
+    "purpose": "Comp comparison baseline for the drawer's side-by-side comp table (4.03). Edit data/xge-baseline.json (gitignored) to override these defaults with your actual current-role numbers. The fields below are public-info approximations of a Google PgM L6/L7 in the xGE org, used as defaults when xge-baseline.json is absent. Update annually or whenever your comp/benefits change.",
+    "schema_version": 1,
+    "last_updated": "2026-05-22"
+  },
+  "role_label": "Mitchell @ Google xGE",
+  "comp_base": "~$130K base (Google L6/L7 PgM range — approximate; edit data/xge-baseline.json to set actual)",
+  "equity_rsus": "Google RSUs on 4-yr vest (25% Y1/Y2/Y3/Y4); GOOGL liquid on vest, no dilution risk",
+  "benefits": "Best-in-class: HMO/PPO health, dental, vision, life, $4K/yr fitness reimbursement, on-site meals + amenities, free transit, Google Wallet perks",
+  "vacation_sick": "20 days vacation + 80 hrs sick/yr (accrues + rolls over); plus 10 paid holidays + 18 wks paid parental leave",
+  "stock_price_valuation": "GOOGL ~$179 (public, fully liquid, vesting at trade price)",
+  "annual_bonuses": "Annual perf bonus (5–15% of base typical for PgM L6); spot bonuses + Google peer bonuses ($100–$500)",
+  "k401_match": "Google matches 50% of contributions up to IRS limit ($23,500 in 2026)",
+  "hybrid_policy": "3 days/wk in-office (Mountain View HQ); 2 days WFH flex; team-dependent"
+}

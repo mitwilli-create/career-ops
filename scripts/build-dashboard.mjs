@@ -105,6 +105,24 @@ const PROFILE_YML_PATH = join(ROOT, 'config/profile.yml');
 const CV_PATH = join(ROOT, 'cv.md');
 const OUTREACH_TEMPLATES_PATH = join(ROOT, 'data/outreach-templates.md');
 const OUT_PATH = join(ROOT, 'dashboard/index.html');
+const XGE_BASELINE_PATH = join(ROOT, 'data/xge-baseline.json');
+const XGE_BASELINE_EXAMPLE_PATH = join(ROOT, 'data/xge-baseline.example.json');
+
+// ── 4.03 (2026-05-22) — xGE baseline for comp comparison table ────
+// Loaded at build time, injected as window._XGE_BASELINE into the dashboard.
+// The user-editable file lives at data/xge-baseline.json (gitignored —
+// contains personal comp). Falls back to data/xge-baseline.example.json
+// (committed defaults) when the user-editable file is missing.
+function loadXgeBaseline() {
+  const path = existsSync(XGE_BASELINE_PATH) ? XGE_BASELINE_PATH : XGE_BASELINE_EXAMPLE_PATH;
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, 'utf-8'));
+  } catch (err) {
+    console.warn('[xge-baseline] parse failed:', err.message);
+    return null;
+  }
+}
 
 // ── Email-launcher build-time data ───────────────────────────────
 // CV headline: first H1 (name) + first H2 (one-sentence lead) from cv.md.
@@ -5404,6 +5422,8 @@ async function build() {
     sender: emailHeadline,
     templates: emailTemplates,
   }).replace(/<\//g, '<\\/');
+  // 4.03 (2026-05-22) — xGE comp-baseline (for drawer comp-comparison table)
+  const xgeBaselineJson = JSON.stringify(loadXgeBaseline() || {}).replace(/<\//g, '<\\/');
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -10941,6 +10961,55 @@ async function build() {
   .hm-trade-summary {
     padding-top: 8px; border-top: 1px solid var(--border);
     font-size: 12.5px; font-style: italic;
+  }
+
+  /* 4.03 (2026-05-22) — comp comparison table (xGE vs target × 8 fields) */
+  .comp-comparison-wrap { margin-top: 6px; }
+  .comp-comparison-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    table-layout: fixed;
+  }
+  .comp-comparison-table th,
+  .comp-comparison-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    line-height: 1.45;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+  }
+  .comp-comparison-table thead th {
+    background: var(--surface-2);
+    font-weight: 700;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--text-2);
+    border-bottom: 2px solid var(--border);
+  }
+  .comp-comparison-table .cc-field {
+    width: 18%;
+    font-weight: 700;
+    color: var(--text-1);
+    background: var(--surface-2);
+  }
+  .comp-comparison-table .cc-current { width: 41%; color: var(--text-1); }
+  .comp-comparison-table .cc-target { width: 41%; color: var(--text-1); }
+  .comp-comparison-table .cc-na { color: var(--text-3); font-style: italic; }
+  .comp-comparison-meta {
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--text-3);
+  }
+  @media (max-width: 720px) {
+    .comp-comparison-table { font-size: 11.5px; }
+    .comp-comparison-table th,
+    .comp-comparison-table td { padding: 6px 8px; }
+    .comp-comparison-table .cc-field { width: 22%; }
+    .comp-comparison-table .cc-current,
+    .comp-comparison-table .cc-target { width: 39%; }
   }
 
   /* Provider disagreements footer block */
@@ -19869,6 +19938,64 @@ function _splitOutreachAvoid(prose) {
   return html;
 }
 
+// 4.03 (2026-05-22) — side-by-side comp comparison table. Two columns
+// (xGE baseline vs target role) × 8 fields (comp, equity, benefits,
+// vacation/sick, stock, bonuses, 401k, hybrid). Fills "Not disclosed"
+// for gaps. xGE side reads from window._XGE_BASELINE (build-injected
+// from data/xge-baseline.json — user-editable). Target side reads from
+// hm-intel tradeoffs_vs_current_role.new_role_specifics + comp_intelligence.
+function _renderCompComparisonTable(d) {
+  if (!d) return '';
+  const xge = (typeof window !== 'undefined' && window._XGE_BASELINE) ? window._XGE_BASELINE : {};
+  if (!xge || !xge.role_label) return '';
+  const t = d.tradeoffs_vs_current_role || {};
+  const ns = t.new_role_specifics || {};
+  const ci = d.comp_intelligence || {};
+  // Target-side resolution. Missing → "Not disclosed".
+  const NA = 'Not disclosed';
+  const targetComp = ns.comp || ci.jd_disclosed_range || ci.synthesized_range || NA;
+  const targetEquity = ns.equity || NA;
+  const targetBenefits = ns.benefits || NA;
+  const targetVacation = ns.vacation_sick || ns.vacation || NA;
+  const targetStock = ns.stock_price || ns.valuation || NA;
+  const targetBonus = ns.annual_bonuses || ns.bonus || NA;
+  const target401k = ns.k401_match || ns['401k_match'] || NA;
+  const targetHybrid = ns.remote || ns.location || ns.hybrid_policy || NA;
+  const rows = [
+    ['Comp (base/total)', xge.comp_base, targetComp],
+    ['Equity / RSUs', xge.equity_rsus, targetEquity],
+    ['Benefits', xge.benefits, targetBenefits],
+    ['Vacation + sick', xge.vacation_sick, targetVacation],
+    ['Stock price / valuation', xge.stock_price_valuation, targetStock],
+    ['Annual bonuses', xge.annual_bonuses, targetBonus],
+    ['401k match', xge.k401_match, target401k],
+    ['Hybrid / WFH policy', xge.hybrid_policy, targetHybrid],
+  ];
+  const targetLabel = (d.company_meta && d.company_meta.name) || d.company || 'Target role';
+  let html = '<div class="comp-comparison-wrap">';
+  html +=   '<table class="comp-comparison-table">';
+  html +=     '<thead><tr>';
+  html +=       '<th>Field</th>';
+  html +=       '<th>' + _hmEsc(xge.role_label) + '</th>';
+  html +=       '<th>' + _hmEsc(targetLabel) + '</th>';
+  html +=     '</tr></thead>';
+  html +=     '<tbody>';
+  for (const r of rows) {
+    const cur = r[1] || NA;
+    const tgt = r[2] || NA;
+    html += '<tr>';
+    html +=   '<td class="cc-field">' + _hmEsc(r[0]) + '</td>';
+    html +=   '<td class="cc-current' + (cur === NA ? ' cc-na' : '') + '">' + _hmEsc(cur) + '</td>';
+    html +=   '<td class="cc-target' + (tgt === NA ? ' cc-na' : '') + '">' + _hmEsc(tgt) + '</td>';
+    html += '</tr>';
+  }
+  html +=     '</tbody>';
+  html +=   '</table>';
+  html +=   '<div class="comp-comparison-meta">xGE baseline editable at data/xge-baseline.json · Target values from hm-intel + JD disclosure</div>';
+  html += '</div>';
+  return html;
+}
+
 // FIX 4 (2026-05-17) — 2-column "Going to {Company}" vs "Staying at Google xGE"
 // comparison grid. Left column: new role specifics (comp/equity/location/
 // benefits/remote). Right column: current_role_baseline split into bullets.
@@ -19957,6 +20084,9 @@ function _renderHMIntel(d, slug) {
 
     // FIX 4 (2026-05-17) — 2-column comparison grid (new role / Google xGE).
     + (d.tradeoffs_vs_current_role ? '<section class="hm-section"><h4>Tradeoffs vs current Google xGE role</h4>' + _hmTradeoffsGrid(d.tradeoffs_vs_current_role) + '</section>' : '')
+
+    // 4.03 (2026-05-22) — comp comparison table (xGE × target × 8 fields).
+    + '<section class="hm-section"><h4>Comp comparison — full picture</h4>' + _renderCompComparisonTable(d) + '</section>'
 
     + (d.company_signals_90d   ? '<section class="hm-section"><h4>90-day company signals</h4>' + _hmProseBullets(d.company_signals_90d) + '</section>' : '')
     // Comp intelligence removed from HM-intel block 2026-05-18 Wave B —
@@ -28932,6 +29062,10 @@ function renderNetworkGraphSvg(contacts, cx, cy, r) {
 window.renderNetworkGraphSvg = renderNetworkGraphSvg;
 
 // ── Contacts directory (2026-05-18, externalized 2026-05-20) ────────────
+// 4.03 (2026-05-22) — xGE baseline injected at build time. Tiny (~1KB)
+// so we inline rather than fetch async. Used by _renderCompComparisonTable.
+window._XGE_BASELINE = ${xgeBaselineJson};
+
 // Sidebar Contacts modal renders this list. Sources: outreach-state +
 // LinkedIn Connections.csv merged at build time. ~2.9k rows ≈ 2.36MB.
 // Previously inlined into block 2 — caused ~5-10s parse delay on cold load.

@@ -8309,6 +8309,21 @@ async function build() {
   }
   #pill-popover .network-contact-row:last-child { border-bottom: none; padding-bottom: 0; }
   #pill-popover .network-contact-name { font-size: 12.5px; font-weight: 500; }
+  /* A6 — drawer contact link (LinkedIn external + internal directory) */
+  #pill-popover .contact-link {
+    color: var(--blue-fg);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--blue-fg);
+  }
+  #pill-popover .contact-link:hover {
+    text-decoration: underline;
+    color: var(--blue-fg-strong, #1d4ed8);
+  }
+  #pill-popover .contact-link-internal {
+    color: #6d28d9;
+    border-color: #c4b5fd;
+  }
+  body.dark #pill-popover .contact-link-internal { color: #a78bfa; border-color: #7c3aed; }
   #pill-popover .network-contact-title {
     font-size: 11px; color: var(--text-3); line-height: 1.3;
     margin-top: 1px;
@@ -26377,14 +26392,41 @@ function _renderNetworkBlock(n) {
     const overflow = resolved.length > 3 ? ' + ' + (resolved.length - 3) + ' more' : '';
     return '<div class="network-warm-intro">→ ask ' + top + overflow + ' to intro</div>';
   };
+  // A6 (2026-05-22) — resolve drawer contact against window._CONTACTS_DATA
+  // so internal-only contacts (no LinkedIn URL) link to the contacts modal
+  // instead of degrading to plain text. Returns the directory entry id if
+  // the contact display name matches a directory record (case-insensitive,
+  // trimmed). Defensive: returns empty string if data unavailable.
+  const _resolveDirectoryId = (displayName) => {
+    if (!displayName) return '';
+    try {
+      const norm = String(displayName).toLowerCase().trim().replace(/\s+/g, ' ');
+      const directory = (typeof window !== 'undefined' && Array.isArray(window._CONTACTS_DATA)) ? window._CONTACTS_DATA : [];
+      for (let i = 0; i < directory.length; i++) {
+        const dc = directory[i];
+        if (!dc || !dc.name) continue;
+        const dcNorm = String(dc.name).toLowerCase().trim().replace(/\s+/g, ' ');
+        if (dcNorm === norm) return dc.id || '';
+      }
+    } catch (_) { /* ignore */ }
+    return '';
+  };
   const contactRow = (c) => {
     const name = ((c.first || '') + ' ' + (c.last || '')).trim() || (c.name || '');
     const url = c.url || '';
     const title = c.position || c.title || '';
     const when = c.when ? ' · ' + c.when : '';
-    const link = url
-      ? '<a href="' + esc(url) + '" target="_blank" rel="noopener" class="pill-popover-linkedin-link">' + esc(name) + ' →</a>'
-      : esc(name);
+    let link;
+    if (url) {
+      link = '<a href="' + esc(url) + '" target="_blank" rel="noopener" class="pill-popover-linkedin-link contact-link" title="View on LinkedIn">' + esc(name) + ' ↗</a>';
+    } else {
+      const internalId = _resolveDirectoryId(name);
+      if (internalId) {
+        link = '<a href="javascript:void(0)" class="contact-link contact-link-internal" data-contact-id="' + esc(internalId) + '" onclick="if(typeof window.openContactsDirectoryModal===\\'function\\'){window.openContactsDirectoryModal();setTimeout(function(){if(typeof window._focusContactById===\\'function\\')window._focusContactById(\\'' + esc(internalId) + '\\');},120)};event.stopPropagation()" title="View in contacts directory">' + esc(name) + ' →</a>';
+      } else {
+        link = esc(name);
+      }
+    }
     return '<div class="network-contact-row">'
       +   '<div class="network-contact-name">' + link + '</div>'
       +   (title ? '<div class="network-contact-title">' + esc(title) + esc(when) + '</div>' : '')

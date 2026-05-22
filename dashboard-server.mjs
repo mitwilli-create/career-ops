@@ -8467,15 +8467,113 @@ async function generatePack(){
   // ── A1 — contextual note for the drawer ──────────────────────────────────
   // Stubbed in Part 1 closure (2026-05-21). The full implementation pipes
   // corpus snippets (lib/corpus-index.mjs indexQuery) through a 150-token
-  // Sonnet synthesis pass. Stub returns a placeholder until Cluster H
-  // wiring lands in the Part 3 closure (~$0.01/call when live).
+  // /api/context-note?num=<row-num>
+  // A1 contextual gap-analysis note — wired 2026-05-22 (Closure 3.01 gap audit).
+  // Pulls the row from data/apply-now-queue.json, queries the sqlite-vec
+  // corpus index (lib/corpus-index.mjs) for the top-10 chunks most relevant
+  // to the role title + company, and asks Sonnet for a 1-2 sentence
+  // contextual note grounded in the cited chunks. Cached to
+  // data/context-notes/<num>.json with 24h TTL to keep cost flat (~$0.005/call,
+  // ~$0.10/day at 19 apply-now rows × hot-reload variance).
   if (url === '/api/context-note') {
-    return json({
-      ok: true,
-      note: '(Contextual gap-analysis note coming soon — sqlite-vec corpus index is live, Sonnet synthesis wiring pending.)',
-      citations: [],
-      stub: true,
-    });
+    const num = String(query.num || '').trim();
+    if (!num) return json({ ok: false, error: 'num required' }, 400);
+    (async () => {
+    try {
+      const cacheDir = join(ROOT, 'data', 'context-notes');
+      try { mkdirSync(cacheDir, { recursive: true }); } catch (_) {}
+      const cachePath = join(cacheDir, num + '.json');
+      const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+      if (existsSync(cachePath)) {
+        try {
+          const cached = JSON.parse(readFileSync(cachePath, 'utf-8'));
+          if (cached.cachedAt && (Date.now() - Date.parse(cached.cachedAt)) < CACHE_TTL_MS) {
+            return json({ ok: true, note: cached.note, citations: cached.citations || [], cached: true });
+          }
+        } catch (_) { /* refall through to regen */ }
+      }
+      // Look up the row by num. apply-now-queue.json wraps rows in .ranked[].
+      const queuePath = join(ROOT, 'data', 'apply-now-queue.json');
+      if (!existsSync(queuePath)) return json({ ok: false, error: 'apply-now-queue not found' }, 404);
+      const queue = JSON.parse(readFileSync(queuePath, 'utf-8'));
+      const numInt = parseInt(num, 10);
+      const rows = Array.isArray(queue) ? queue : (queue.ranked || queue.queue || []);
+      const row = rows.find(r => parseInt(r.num, 10) === numInt);
+      if (!row) return json({ ok: true, note: '(row not found in apply-now-queue — context unavailable)', citations: [], stub: true });
+      // Lazy-load .env so launchd-spawned servers (which don't source shell
+      // rc files) still have ANTHROPIC_API_KEY available. override:true is
+      // required because Mitchell's shell pre-sets ANTHROPIC_API_KEY to empty
+      // — without override the .env value never wins. See memory
+      // ~/.claude/projects/.../memory/feedback_env_secrets.md.
+      if (!process.env.ANTHROPIC_API_KEY) {
+        try {
+          const dotenv = await import('dotenv');
+          dotenv.config({ path: join(ROOT, '.env'), override: true });
+        } catch (_) { /* dotenv optional */ }
+      }
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) {
+        return json({ ok: true, note: '(ANTHROPIC_API_KEY missing — context note generation unavailable)', citations: [], stub: true });
+      }
+      // Query the corpus index for the role + company.
+      const queryStr = `${row.role || ''} at ${row.company || ''} — what makes Mitchell distinctively qualified, and what gaps should he address?`;
+      let chunks = [];
+      try {
+        const { indexQuery } = await import('./lib/corpus-index.mjs');
+        chunks = await indexQuery({ query: queryStr, topK: 10 });
+      } catch (e) {
+        return json({ ok: true, note: '(corpus index unavailable: ' + (e.message || 'unknown').slice(0, 80) + ')', citations: [], stub: true });
+      }
+      if (!chunks || chunks.length === 0) {
+        return json({ ok: true, note: '(corpus index returned 0 chunks for this role)', citations: [], stub: true });
+      }
+      const snippetText = chunks.slice(0, 8).map((c, i) =>
+        '## Snippet ' + (i + 1) + ' [source: ' + (c.source || 'unknown') + ']\n' + ((c.text || '').slice(0, 600))
+      ).join('\n\n');
+      const systemPrompt = "You are Mitchell's career strategist. Given a target role and the most relevant chunks from his career corpus (cv.md, article-digest.md, project stories), write a 1-2 sentence contextual note that calls out: (a) which 1-2 corpus signals best support the application, (b) one specific gap or risk to address. Be direct, specific, and grounded — cite source files inline like [cv.md] or [article-digest.md]. Maximum 280 characters total. No preamble.";
+      const userPrompt = `# Role\n${row.company || ''} — ${row.role || ''}\n\n# Corpus chunks (top-${chunks.length})\n${snippetText}`;
+      let note = '';
+      let citations = [];
+      try {
+        const { fetchJson } = await import('./lib/safe-fetch.mjs');
+        const j = await fetchJson('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          signal: AbortSignal.timeout(15000),
+          headers: {
+            'content-type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-5',
+            max_tokens: 150,
+            system: systemPrompt,
+            messages: [{ role: 'user', content: userPrompt }],
+          }),
+        }, { bodyTimeoutMs: 12000, errPrefix: 'context-note' });
+        note = (j.content && j.content[0] && j.content[0].text || '').trim();
+        const sources = new Set();
+        for (const c of chunks.slice(0, 8)) if (c.source) sources.add(c.source);
+        citations = Array.from(sources);
+      } catch (e) {
+        return json({ ok: true, note: '(Sonnet synthesis timed out: ' + (e.message || 'unknown').slice(0, 80) + ')', citations: [], stub: true });
+      }
+      const payload = {
+        cachedAt: new Date().toISOString(),
+        num: numInt,
+        company: row.company || '',
+        role: row.role || '',
+        note,
+        citations,
+        chunkCount: chunks.length,
+      };
+      try { writeFileSync(cachePath, JSON.stringify(payload, null, 2)); } catch (_) {}
+      return json({ ok: true, note, citations, cached: false });
+    } catch (e) {
+      return json({ ok: false, error: e.message || 'unknown', note: '(context-note error — see server log)', citations: [] }, 500);
+    }
+    })();
+    return;
   }
 
   // Static files from dashboard/

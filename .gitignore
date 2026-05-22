@@ -325,3 +325,9 @@ data/*-calibration-prev.json
 # *.bak files anywhere — stale backups; never commit. Real backups live in
 # data/cv-archives/ (gitignored separately) or in git history itself.
 *.bak
+
+# Auth state files — interview decision 2026-05-21. Regenerable via setup-auth.mjs
+# / identity-bootstrap. Constant-diff in git status when kept tracked; cross-fork
+# leak risk if a PR accidentally targets santifer.
+data/cdp-auth-state.json
+data/identity-lock-state.json

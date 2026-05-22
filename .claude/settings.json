@@ -22,6 +22,15 @@
             "command": "bash /Users/mitchellwilliams/Documents/career-ops/scripts/hooks/commit-ui-verify-gate.sh"
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/mitchellwilliams/Documents/career-ops/scripts/hooks/protected-paths-refuse.sh"
+          }
+        ]
       }
     ]
   }

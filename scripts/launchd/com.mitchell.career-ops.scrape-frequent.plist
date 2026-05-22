@@ -30,11 +30,20 @@
     <key>RunAtLoad</key>
     <false/>
 
+    <!-- Tahoe Sandbox fix (2026-05-21): macOS xpcproxy can't write to plist
+         StandardOut/ErrorPath under ~/Documents/ (Sandbox System Policy
+         deny(1) file-read-data on xpcproxy). Symptom: spawn fails with
+         exit code 78 EX_CONFIG, runs=1 forever, dated `data/logs/scrape-*.log`
+         files stop updating. Same bug-class as Pattern F (~/.claude/knowledge/
+         brain/bug-class-catalog.md § launchd-keepalive-tahoe) but for one-shot
+         StartCalendarInterval jobs. Fix: move stdout/stderr OUTSIDE ~/Documents/.
+         The script itself (scripts/scrape-only.mjs) stays in Documents because
+         it's invoked via NODE_BIN (already TCC-granted), not /bin/bash. -->
     <key>StandardOutPath</key>
-    <string>/Users/mitchellwilliams/Documents/career-ops/data/logs/scrape-frequent-launchd.out</string>
+    <string>/Users/mitchellwilliams/Library/Logs/career-ops/scrape-frequent-launchd.out</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/mitchellwilliams/Documents/career-ops/data/logs/scrape-frequent-launchd.err</string>
+    <string>/Users/mitchellwilliams/Library/Logs/career-ops/scrape-frequent-launchd.err</string>
 
     <key>EnvironmentVariables</key>
     <dict>

@@ -10502,6 +10502,28 @@ async function build() {
     font-size: 11px;
     padding: 10px 0;
   }
+  /* Closure G (2026-05-22): per-artifact download links in drawer. */
+  .drawer-artifact-list { display: flex; flex-direction: column; gap: 4px; }
+  .drawer-artifact-link {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; padding: 6px 10px;
+    border: 1px solid var(--border, #d0d7de);
+    border-radius: 6px;
+    background: var(--surface, #fff);
+    color: var(--text-1);
+    font-size: 12px;
+    text-decoration: none;
+    transition: background .12s, border-color .12s;
+  }
+  .drawer-artifact-link:hover {
+    background: var(--surface-hover, rgba(0,0,0,0.04));
+    border-color: var(--link, #0969da);
+    color: var(--link, #0969da);
+  }
+  body.dark .drawer-artifact-link { background: var(--surface-2, #11131a); }
+  body.dark .drawer-artifact-link:hover { background: rgba(56,139,253,0.08); }
+  .drawer-artifact-name { font-family: ui-monospace, monospace; font-size: 11.5px; }
+  .drawer-artifact-size { color: var(--text-4); font-size: 10.5px; font-variant-numeric: tabular-nums; }
   /* Inventory #10 (2026-05-18): deeplink pulse for ?focus= targets.
      Brief glow so the user knows where the heartbeat link landed them. */
   .deeplink-target {
@@ -14700,6 +14722,14 @@ function openRightRailForDetail(idx, detailRow) {
       lifecycleMount.innerHTML = '<div class="drawer-lifecycle-loading" style="color:var(--text-3);font-size:11px;padding:10px 0">Loading lifecycle' + String.fromCharCode(8230) + '</div>';
       bodyEl.appendChild(lifecycleMount);
       _drawerLoadLifecycle(num, company, lifecycleMount);
+      // Closure G (2026-05-22) — per-artifact download links. The mount
+      // fetches /api/artifact-manifest?row=<num>; renders nothing if the
+      // row has no pack on disk yet.
+      const artifactMount = document.createElement('div');
+      artifactMount.className = 'drawer-artifact-mount';
+      artifactMount.setAttribute('data-row-num', String(num));
+      bodyEl.appendChild(artifactMount);
+      _drawerLoadArtifactManifest(num, artifactMount);
     }
 
     bodyEl.scrollTop = 0;
@@ -19543,6 +19573,62 @@ async function _drawerLoadLifecycle(num, company, mountEl) {
   }
 }
 window._drawerLoadLifecycle = _drawerLoadLifecycle;
+
+// Closure G (2026-05-22) — per-artifact download links.
+// Fetches /api/artifact-manifest?row=<num> and renders a clickable list of
+// every file in the pack. Each link hits /api/artifact?slug=&file= which
+// streams a single file with Content-Disposition: attachment.
+async function _drawerLoadArtifactManifest(num, mountEl) {
+  if (!mountEl || !num) return;
+  try {
+    const res = await fetch('/api/artifact-manifest?row=' + encodeURIComponent(String(num)), { cache: 'no-store' });
+    if (!res.ok) {
+      // 404 = no pack yet; render nothing (silent fallback).
+      if (res.status === 404) { mountEl.innerHTML = ''; return; }
+      throw new Error('HTTP ' + res.status);
+    }
+    const data = await res.json();
+    if (!data || !data.ok || !Array.isArray(data.files) || data.files.length === 0) {
+      mountEl.innerHTML = '';
+      return;
+    }
+    const slug = data.slug;
+    function _fmtBytes(n) {
+      if (!n) return '';
+      if (n < 1024) return n + 'B';
+      if (n < 1024 * 1024) return Math.round(n / 1024) + 'KB';
+      return (n / (1024 * 1024)).toFixed(1) + 'MB';
+    }
+    function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+    // Categorize: consumer-facing (top-level) vs internal (subdirs).
+    const consumer = data.files.filter(f => f.rel.indexOf('/') < 0);
+    const internal = data.files.filter(f => f.rel.indexOf('/') >= 0);
+    function _row(f) {
+      const href = '/api/artifact?slug=' + encodeURIComponent(slug) + '&file=' + encodeURIComponent(f.rel);
+      const bytes = _fmtBytes(f.size);
+      return '<a class="drawer-artifact-link" href="' + _esc(href) + '" download="' + _esc(f.rel.split('/').pop()) + '" title="Download ' + _esc(f.rel) + '">'
+        + '<span class="drawer-artifact-name">' + _esc(f.rel) + '</span>'
+        + (bytes ? '<span class="drawer-artifact-size">' + bytes + '</span>' : '')
+        + '</a>';
+    }
+    let html = '<div class="drawer-artifact-section" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">';
+    html +=   '<div class="drawer-artifact-title" style="font-size:11px;font-weight:600;color:var(--text-3);margin-bottom:6px;letter-spacing:0.05em;text-transform:uppercase">Apply-pack files <span style="color:var(--text-4);font-weight:400;text-transform:none">· ' + data.files.length + ' file' + (data.files.length === 1 ? '' : 's') + '</span></div>';
+    if (consumer.length) {
+      html += '<div class="drawer-artifact-list">' + consumer.map(_row).join('') + '</div>';
+    }
+    if (internal.length) {
+      html += '<details class="drawer-artifact-internal" style="margin-top:6px"><summary style="cursor:pointer;font-size:11px;color:var(--text-4)">' + internal.length + ' internal file' + (internal.length === 1 ? '' : 's') + ' →</summary>';
+      html +=   '<div class="drawer-artifact-list" style="margin-top:6px">' + internal.map(_row).join('') + '</div>';
+      html += '</details>';
+    }
+    html += '</div>';
+    mountEl.innerHTML = html;
+  } catch (err) {
+    // Quiet on errors — the drawer is best-effort here.
+    mountEl.innerHTML = '';
+  }
+}
+window._drawerLoadArtifactManifest = _drawerLoadArtifactManifest;
 
 function _renderLifecycleRow(s, driveEnabled, num) {
   // 5 button states: 'active' (green solid), 'done' (outlined), 'disabled'

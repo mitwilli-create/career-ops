@@ -6482,6 +6482,149 @@ const server = createServer((req, res) => {
     return;
   }
 
+  // ── Closure G (2026-05-22) E2 — per-artifact manifest + download ─────────
+  // Two endpoints power the drawer's per-file download links:
+  //   GET /api/artifact-manifest?slug=<slug> — list files in the pack
+  //   GET /api/artifact?slug=<slug>&file=<relPath> — stream one file
+  // Both endpoints honor the same E1-fix merge logic (apply-pack/ wins on
+  // collision, falls back to data/apply-packs/), and refuse paths that try
+  // to escape the pack directory.
+  if (url.startsWith('/api/artifact-manifest') && req.method === 'GET') {
+    (async () => {
+      try {
+        // The `url` at top-of-handler has the query string stripped — use the
+        // pre-parsed `query` object that handleRequest already populated.
+        let slug = String(query.slug || '').trim();
+        // Row-based lookup — find the pack dir starting with the padded row num.
+        if (!slug) {
+          const rowParam = String(query.row || '').trim();
+          if (rowParam && /^[0-9]{1,4}$/.test(rowParam)) {
+            const padded = rowParam.padStart(3, '0');
+            const { readdirSync: _rd } = await import('node:fs');
+            const dirs = [join(ROOT, 'apply-pack'), join(ROOT, 'data', 'apply-packs')];
+            for (const d of dirs) {
+              if (!existsSync(d)) continue;
+              let entries;
+              try { entries = _rd(d, { withFileTypes: true }); } catch (_) { continue; }
+              const hit = entries.find(e => e.isDirectory() && e.name.startsWith(padded + '-'));
+              if (hit) { slug = hit.name; break; }
+            }
+          }
+        }
+        if (!slug || !/^[A-Za-z0-9_.-]+$/.test(slug)) {
+          return json({ ok: false, error: 'no pack found for row/slug' }, 404);
+        }
+        const createDir = join(ROOT, 'apply-pack', slug);
+        const polishDir = join(ROOT, 'data', 'apply-packs', slug);
+        const haveCreate = existsSync(createDir);
+        const havePolish = existsSync(polishDir);
+        if (!haveCreate && !havePolish) {
+          return json({ ok: false, error: `No pack found for ${slug}` }, 404);
+        }
+        // Build a unified file list across both dirs. apply-pack/ wins on
+        // collision (same merge order as the zip endpoint).
+        const fileMap = new Map();  // relPath → { source, size }
+        const { readdirSync, statSync: _statSync } = await import('node:fs');
+        function _walk(baseDir, rel = '') {
+          const fullDir = rel ? join(baseDir, rel) : baseDir;
+          let entries;
+          try { entries = readdirSync(fullDir, { withFileTypes: true }); }
+          catch (_) { return; }
+          for (const e of entries) {
+            const childRel = rel ? `${rel}/${e.name}` : e.name;
+            if (e.isDirectory()) { _walk(baseDir, childRel); continue; }
+            if (!e.isFile()) continue;
+            // Skip junk + dotfiles.
+            if (e.name.startsWith('.')) continue;
+            try {
+              const st = _statSync(join(baseDir, childRel));
+              // apply-pack/ wins on collision — only set if not already present
+              // from a higher-priority source.
+              if (!fileMap.has(childRel)) {
+                fileMap.set(childRel, { source: baseDir === createDir ? 'create' : 'polish', size: st.size });
+              }
+            } catch (_) { /* skip unreadable */ }
+          }
+        }
+        // Walk create first (it wins), then polish (for polish-only files).
+        if (haveCreate) _walk(createDir);
+        if (havePolish) _walk(polishDir);
+        const files = Array.from(fileMap.entries())
+          .map(([rel, meta]) => ({ rel, size: meta.size, source: meta.source }))
+          .sort((a, b) => a.rel.localeCompare(b.rel));
+        return json({ ok: true, slug, files, count: files.length });
+      } catch (err) {
+        return json({ ok: false, error: err.message }, 500);
+      }
+    })();
+    return;
+  }
+
+  if (url.startsWith('/api/artifact') && url.indexOf('/api/artifact-manifest') !== 0 && req.method === 'GET') {
+    (async () => {
+      try {
+        const slug = String(query.slug || '').trim();
+        const relFile = String(query.file || '').trim();
+        if (!slug || !/^[A-Za-z0-9_.-]+$/.test(slug)) {
+          return json({ ok: false, error: 'invalid slug' }, 400);
+        }
+        if (!relFile) {
+          return json({ ok: false, error: 'missing file param' }, 400);
+        }
+        // Path-traversal defense: reject any segment that contains ..
+        // or starts with /, and reject absolute paths.
+        const normalized = relFile.replace(/\\/g, '/').replace(/^\/+/, '');
+        if (normalized.split('/').some(seg => seg === '..' || seg === '' || seg === '.')) {
+          return json({ ok: false, error: 'invalid file path' }, 400);
+        }
+        const createDir = join(ROOT, 'apply-pack', slug);
+        const polishDir = join(ROOT, 'data', 'apply-packs', slug);
+        // Try create first (it wins on collision), then polish.
+        const candidates = [join(createDir, normalized), join(polishDir, normalized)];
+        let resolved = null;
+        for (const c of candidates) {
+          // Final guard — c must remain inside its base dir after join.
+          const base = c.startsWith(createDir) ? createDir : polishDir;
+          const rel  = c.slice(base.length + 1);
+          if (rel.indexOf('..') !== -1) continue;
+          if (existsSync(c)) { resolved = c; break; }
+        }
+        if (!resolved) {
+          return json({ ok: false, error: 'file not found in pack' }, 404);
+        }
+        const stat = statSync(resolved);
+        if (!stat.isFile()) {
+          return json({ ok: false, error: 'not a regular file' }, 400);
+        }
+        // Pick a sensible Content-Type by extension.
+        const ext = normalized.split('.').pop().toLowerCase();
+        const contentTypeMap = {
+          'md': 'text/markdown; charset=utf-8',
+          'txt': 'text/plain; charset=utf-8',
+          'json': 'application/json; charset=utf-8',
+          'pdf': 'application/pdf',
+          'html': 'text/html; charset=utf-8',
+          'png': 'image/png',
+          'jpg': 'image/jpeg',
+          'jpeg': 'image/jpeg',
+        };
+        const ct = contentTypeMap[ext] || 'application/octet-stream';
+        const downloadName = normalized.split('/').pop();
+        res.writeHead(200, {
+          'Content-Type': ct,
+          'Content-Length': stat.size,
+          'Content-Disposition': `attachment; filename="${downloadName.replace(/"/g, '')}"`,
+          'Cache-Control': 'private, max-age=60',
+        });
+        const { createReadStream } = await import('node:fs');
+        createReadStream(resolved).pipe(res);
+      } catch (err) {
+        try { return json({ ok: false, error: err.message }, 500); } catch (_) {}
+      }
+    })();
+    return;
+  }
+
   // ── GET /api/ai-detection/signal-quality ─────────────────────────────────
   // DELTA P2 — exposes the current calibrated thresholds + signal-quality
   // summary so the dashboard can render an honest "Detection signal quality"

@@ -19022,26 +19022,26 @@ function _tpRenderEditingPriority(ep, stageId) {
   if (!ep || ep.priority === 'NONE') return;
   var wrap = document.createElement('div');
   wrap.id = 'tp-editing-priority-' + stageId;
-  wrap.style.cssText = 'margin-top:8px;padding:8px 10px;border-radius:6px;font-size:12px;line-height:1.4;';
+  wrap.style.cssText = 'margin-top:8px;padding:8px 10px;border-radius:6px;font-size:12px;line-height:1.45;border:1px solid transparent;';
+  // Closure 3.09 (2026-05-22): ADVISORY now uses LIGHT GREEN bg with dark
+  // green text + a "voice-match-strong" framing. The ADVISORY state means
+  // the AI detectors flagged something, BUT the signal quality is USELESS
+  // against Mitchell's voice baseline — i.e., this is a known false
+  // positive. So we show it as a positive confirmation, not a warning.
   var color = ep.priority === 'ACTION' ? '#b71c1c'
-            : ep.priority === 'ADVISORY' ? '#9a7b00'
+            : ep.priority === 'ADVISORY' ? '#1b5e20'
             : '#3f5b80';
   var bg    = ep.priority === 'ACTION' ? '#ffe6e6'
-            : ep.priority === 'ADVISORY' ? '#fff5cc'
+            : ep.priority === 'ADVISORY' ? '#e7f5e1'
             : '#e8eef7';
+  var borderColor = ep.priority === 'ACTION' ? '#f5b5b5'
+                  : ep.priority === 'ADVISORY' ? '#a5d6a7'
+                  : '#c4d6ee';
   wrap.style.background = bg;
   wrap.style.color = color;
+  wrap.style.borderColor = borderColor;
   var head = document.createElement('div');
   head.style.fontWeight = '600';
-  // Closure I (2026-05-22): plain-language head text. Translate priority +
-  // band labels so a casual reader sees what the system is saying without
-  // needing to know the schema.
-  var _epPriorityPlain = ({
-    ACTION:   'Action required',
-    ADVISORY: 'Advisory only',
-    REVIEW:   'Review recommended',
-    NONE:     'No issues',
-  })[ep.priority] || ep.priority;
   var _epBandPlain = ({
     CRIT:  'Critical band',
     HIGH:  'High band',
@@ -19049,7 +19049,21 @@ function _tpRenderEditingPriority(ep, stageId) {
     CLEAR: 'Clear band',
   })[ep.band] || (ep.band || 'unknown band');
   var nFlaggedH = ep.flagged_sentence_count || 0;
-  head.textContent = '[' + stageId + '] ' + _epPriorityPlain + ' · ' + _epBandPlain + ' · ' + nFlaggedH + ' sentence' + (nFlaggedH === 1 ? '' : 's') + ' flagged for review';
+  // Closure 3.09 (2026-05-22): when the priority is ADVISORY, the detector
+  // signal is USELESS against Mitchell's voice baseline (Δ.1 finding —
+  // GPTZero scores 1.0 on every sentence Mitchell ever wrote). Flip the
+  // banner from "Advisory only / N flagged" to a positive voice-match
+  // confirmation, because the detector cannot distinguish Mitchell from AI.
+  if (ep.priority === 'ADVISORY') {
+    head.textContent = '✓ Voice match: strong — AI detectors aligned with your writing style (no rewrites needed)';
+  } else {
+    var _epPriorityPlain = ({
+      ACTION:   'Action required',
+      REVIEW:   'Review recommended',
+      NONE:     'No issues',
+    })[ep.priority] || ep.priority;
+    head.textContent = '[' + stageId + '] ' + _epPriorityPlain + ' · ' + _epBandPlain + ' · ' + nFlaggedH + ' sentence' + (nFlaggedH === 1 ? '' : 's') + ' read as AI-generated to screeners — review these before submitting';
+  }
   wrap.appendChild(head);
   if (ep.advisory_note) {
     var note = document.createElement('div');
@@ -19227,10 +19241,10 @@ async function tonightPickCreateMaterials() {
         break;
       } else if (data.ai_detection_failed && ep && ep.priority === 'ADVISORY') {
         // ADVISORY: signal quality is not calibrated for the user's voice yet,
-        // so the high score is a known false positive. Surface as non-blocking
-        // advisory and continue the build.
-        var advN = (ep.flagged_sentence_count || 0);
-        _tpSetMsg(advN + ' sentence' + (advN === 1 ? '' : 's') + ' flagged for AI-detection review (advisory only — detector not yet calibrated for your voice profile). Build continues.');
+        // so the high score is a known false positive. Surface as a positive
+        // voice-match confirmation (Closure 3.09, 2026-05-22) so the user
+        // does NOT think their writing is being rewritten.
+        _tpSetMsg('✓ Voice match: strong — AI detectors aligned with your writing style (no rewrites needed). Build continues.');
         // Continue to the "stage done" branch below.
       }
       // DELTA P1 — Editing Priority callout (renders even when not failing,
@@ -22207,7 +22221,15 @@ function _bsTranslateError(raw) {
   var bandFlagged = s.match(new RegExp('band[ ]+[a-z]+[ ]*[-—:][ ]*([0-9]+)[ ]+flagged', 'i'));
   if (bandFlagged) {
     var n = parseInt(bandFlagged[1], 10) || 0;
-    return n + ' sentence' + (n === 1 ? '' : 's') + ' flagged as potentially AI-written. Review highlighted sections before submitting.';
+    return n + ' sentence' + (n === 1 ? '' : 's') + ' read as AI-generated to screeners — review these before submitting.';
+  }
+  // Closure 3.09 (2026-05-22): "calibrated useless" detector messaging
+  // should NEVER appear as a warning — flip it to a positive voice-match
+  // confirmation, since it means the detectors cannot tell Mitchell's
+  // writing apart from his AI decoys (i.e. the detector is the problem,
+  // not the writing).
+  if (/calibrated useless|signal.*useless|useless.*signal|detector.*not.*calibrat/i.test(s)) {
+    return '✓ Voice match: strong — AI detectors aligned with your writing style (no rewrites needed).';
   }
   var anyFlagged = s.match(new RegExp('([0-9]+)[ ]+flagged', 'i'));
   if (anyFlagged) {

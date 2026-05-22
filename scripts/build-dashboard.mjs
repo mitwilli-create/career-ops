@@ -34633,6 +34633,24 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     console.log(`  ⚠ Network-DB enforcement check failed: ${err.message}`);
   }
 
+  // 09 Part 4 Item G (2026-05-22) — Content density linter. Scans the
+  // built HTML for paragraphs that exceed policy thresholds. WARNINGS
+  // only; never fails the build. See data/content-density-policy-2026-05-22.md
+  try {
+    const { lintHtml, summarize } = await import('../lib/content-density-linter.mjs');
+    const result = lintHtml(html);
+    console.log(`  ${summarize(result)}`);
+    if (result.violations.length > 0 && result.violations.length <= 5) {
+      for (const v of result.violations) {
+        console.log(`    - ${v.kind}: "${v.sample}..."`);
+      }
+    } else if (result.violations.length > 5) {
+      console.log(`    (first 3) ${result.violations.slice(0, 3).map(v => v.kind).join(', ')}`);
+    }
+  } catch (err) {
+    console.log(`  ⚠ Content density linter failed: ${err.message}`);
+  }
+
   console.log(`  Page weight:       ${rawBytes.toLocaleString()} bytes raw → ${minBytes.toLocaleString()} bytes (−${(rawBytes - minBytes).toLocaleString()} bytes, ${Math.round((rawBytes - minBytes) / rawBytes * 100)}%)`);
 
   // P2.16 (2026-05-20) — build-weight gate. The inline-payload-bloat bug

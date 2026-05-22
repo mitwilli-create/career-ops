@@ -4146,6 +4146,73 @@ const server = createServer((req, res) => {
     return;
   }
 
+  // GET /api/enrichment-queue → returns the build-time generated queue of
+  // contacts awaiting an enrichment refresh. Closure 18 (2026-05-22).
+  if (url === '/api/enrichment-queue' && req.method === 'GET') {
+    try {
+      const fp = join(ROOT, 'data', 'enrichment-queue.json');
+      if (!existsSync(fp)) {
+        return json({ _meta: { generated_at: null, total: 0 }, queue: [] });
+      }
+      const data = JSON.parse(readFileSync(fp, 'utf-8'));
+      return json(data);
+    } catch (e) {
+      return json({ ok: false, error: e.message }, 500);
+    }
+  }
+
+  // POST /api/enrichment-queue/process → reads pending entries from the
+  // enrichment queue and appends each to data/refresh-master-queue.jsonl
+  // so the next refresh-master tick picks them up. Caps at 10 per call to
+  // avoid runaway spend. Marks entries as 'queued' in the queue file so
+  // subsequent calls don't double-process. Closure 18 (2026-05-22).
+  if (url === '/api/enrichment-queue/process' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; if (body.length > 10_000) req.connection.destroy(); });
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const limit = Math.min(10, Math.max(1, parseInt(payload.limit, 10) || 10));
+        const fp = join(ROOT, 'data', 'enrichment-queue.json');
+        if (!existsSync(fp)) return json({ ok: false, error: 'enrichment-queue.json not found — run build-dashboard first' }, 404);
+        const data = JSON.parse(readFileSync(fp, 'utf-8'));
+        const pending = (data.queue || []).filter(q => q.status === 'pending');
+        const toProcess = pending.slice(0, limit);
+        const masterQueuePath = join(ROOT, 'data', 'refresh-master-queue.jsonl');
+        const dispatched = [];
+        for (const entry of toProcess) {
+          const job_id = randomBytes(6).toString('hex');
+          const rec = {
+            job_id,
+            cache: 'contact_enrichment',
+            key: entry.contactId,
+            priority: 'enrichment-queue',
+            queued_at: new Date().toISOString(),
+            source: 'enrichment-queue/process',
+            reason: entry.reason,
+          };
+          appendFileSync(masterQueuePath, JSON.stringify(rec) + '\n');
+          entry.status = 'queued';
+          entry.dispatchedAt = new Date().toISOString();
+          entry.jobId = job_id;
+          dispatched.push({ contactId: entry.contactId, name: entry.name, job_id });
+        }
+        // Persist updated queue state so /api/enrichment-queue reflects dispatch
+        writeFileSync(fp, JSON.stringify(data, null, 2));
+        return json({
+          ok: true,
+          dispatched: dispatched.length,
+          contacts: dispatched,
+          remaining_pending: pending.length - dispatched.length,
+          eta_minutes: 360,
+        });
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500);
+      }
+    });
+    return;
+  }
+
   // POST /api/refresh-cache → body { cache, key, priority? }
   // Queues a single cache key for the next refresh-master tick with optional priority bump.
   if (url === '/api/refresh-cache' && req.method === 'POST') {

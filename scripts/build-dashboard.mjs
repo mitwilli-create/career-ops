@@ -4302,6 +4302,74 @@ async function build() {
     pre_ipo: contactsDirectory.filter(c => c.goal_alignment && c.goal_alignment.pre_ipo_match).length,
   };
 
+  // 2026-05-22 — Closure 18 (A6 enrichment auto-queue). Surfaces contacts the
+  // drawer marks as recommended-for-outreach so they can be re-enriched
+  // before Mitchell reaches out. Persisted to data/enrichment-queue.json AND
+  // dashboard/data/enrichment-queue.json (for fetch). POST
+  // /api/enrichment-queue/process appends each pending entry to the existing
+  // data/refresh-master-queue.jsonl so the 6-hourly refresh-master tick picks
+  // them up (cache=contact_enrichment, key=contactId).
+  const ENRICH_STALE_DAYS = 7;
+  const enrichmentQueue = (() => {
+    const now = Date.now();
+    const out = [];
+    for (const c of contactsDirectory) {
+      let reason = null;
+      if (c.in_outreach) {
+        if (c.enrichment_status !== 'complete' || !c.enrichment_fetched_at) {
+          reason = 'active-outreach-missing-enrichment';
+        } else {
+          const enrichTs = Date.parse(c.enrichment_fetched_at) || 0;
+          if (now - enrichTs > ENRICH_STALE_DAYS * 86400000) {
+            reason = 'active-outreach-stale-enrichment';
+          }
+        }
+      } else if (c.outreach_recommendation && c.outreach_recommendation.best_channel && !c.last_touch_ts) {
+        reason = 'recommended-but-not-touched';
+      } else if (c.goal_alignment && c.goal_alignment.pre_ipo_match && c.goal_alignment.archetype_match && c.enrichment_status !== 'complete') {
+        reason = 'high-alignment-missing-enrichment';
+      }
+      if (reason) {
+        out.push({
+          contactId: c.id,
+          name: c.name,
+          company: c.company || '',
+          linkedinUrl: c.linkedin_url || '',
+          queuedAt: new Date().toISOString(),
+          reason,
+          status: 'pending',
+          lastEnriched: c.enrichment_fetched_at || null,
+          tier: c.tier || '',
+        });
+      }
+    }
+    const reasonPriority = {
+      'active-outreach-missing-enrichment': 0,
+      'active-outreach-stale-enrichment': 1,
+      'recommended-but-not-touched': 2,
+      'high-alignment-missing-enrichment': 3,
+    };
+    out.sort((a, b) => (reasonPriority[a.reason] ?? 9) - (reasonPriority[b.reason] ?? 9));
+    return out;
+  })();
+  try {
+    const queueDir = join(ROOT, 'dashboard/data');
+    mkdirSync(queueDir, { recursive: true });
+    const queuePayload = {
+      _meta: {
+        owner: 'scripts/build-dashboard.mjs',
+        generated_at: new Date().toISOString(),
+        stale_threshold_days: ENRICH_STALE_DAYS,
+        total: enrichmentQueue.length,
+      },
+      queue: enrichmentQueue,
+    };
+    writeFileSync(join(ROOT, 'data/enrichment-queue.json'), JSON.stringify(queuePayload, null, 2));
+    writeFileSync(join(queueDir, 'enrichment-queue.json'), JSON.stringify(queuePayload));
+  } catch (qErr) {
+    console.warn('[build] enrichment-queue write failed:', qErr.message);
+  }
+
   const reportsToday = countTodaysReports(today);
   // Build a company-slug → top-scored evaluated row map for ticker role enrichment.
   // Used by loadLiveScanEvents so the ticker can surface a specific role title.
@@ -8324,6 +8392,26 @@ async function build() {
     border-color: #c4b5fd;
   }
   body.dark #pill-popover .contact-link-internal { color: #a78bfa; border-color: #7c3aed; }
+  /* Closure 18 — enrich-queued badge */
+  #pill-popover .enrich-queued-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 500;
+    padding: 1px 6px;
+    margin-left: 4px;
+    border-radius: 10px;
+    background: rgba(245, 158, 11, 0.12);
+    color: #b45309;
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    vertical-align: middle;
+    line-height: 1.4;
+    cursor: help;
+  }
+  body.dark #pill-popover .enrich-queued-badge {
+    background: rgba(245, 158, 11, 0.18);
+    color: #fbbf24;
+    border-color: rgba(245, 158, 11, 0.5);
+  }
   #pill-popover .network-contact-title {
     font-size: 11px; color: var(--text-3); line-height: 1.3;
     margin-top: 1px;
@@ -26411,24 +26499,35 @@ function _renderNetworkBlock(n) {
     } catch (_) { /* ignore */ }
     return '';
   };
+  // Closure 18 — drawer-side badge resolver. Looks up the contact in the
+  // build-time enrichment queue. Returns true if this contact is awaiting
+  // an enrichment refresh.
+  const _isQueuedForEnrichment = (internalId) => {
+    if (!internalId) return false;
+    try {
+      const q = (typeof window !== 'undefined' && Array.isArray(window._ENRICH_QUEUE)) ? window._ENRICH_QUEUE : null;
+      return !!(q && q.indexOf(internalId) >= 0);
+    } catch (_) { return false; }
+  };
   const contactRow = (c) => {
     const name = ((c.first || '') + ' ' + (c.last || '')).trim() || (c.name || '');
     const url = c.url || '';
     const title = c.position || c.title || '';
     const when = c.when ? ' · ' + c.when : '';
+    const internalId = _resolveDirectoryId(name);
     let link;
     if (url) {
       link = '<a href="' + esc(url) + '" target="_blank" rel="noopener" class="pill-popover-linkedin-link contact-link" title="View on LinkedIn">' + esc(name) + ' ↗</a>';
+    } else if (internalId) {
+      link = '<a href="javascript:void(0)" class="contact-link contact-link-internal" data-contact-id="' + esc(internalId) + '" onclick="if(typeof window.openContactsDirectoryModal===\\'function\\'){window.openContactsDirectoryModal();setTimeout(function(){if(typeof window._focusContactById===\\'function\\')window._focusContactById(\\'' + esc(internalId) + '\\');},120)};event.stopPropagation()" title="View in contacts directory">' + esc(name) + ' →</a>';
     } else {
-      const internalId = _resolveDirectoryId(name);
-      if (internalId) {
-        link = '<a href="javascript:void(0)" class="contact-link contact-link-internal" data-contact-id="' + esc(internalId) + '" onclick="if(typeof window.openContactsDirectoryModal===\\'function\\'){window.openContactsDirectoryModal();setTimeout(function(){if(typeof window._focusContactById===\\'function\\')window._focusContactById(\\'' + esc(internalId) + '\\');},120)};event.stopPropagation()" title="View in contacts directory">' + esc(name) + ' →</a>';
-      } else {
-        link = esc(name);
-      }
+      link = esc(name);
     }
+    const queuedBadge = _isQueuedForEnrichment(internalId)
+      ? ' <span class="enrich-queued-badge" title="Queued for enrichment refresh — fresh data lands on the next refresh-master tick (within hours)">📋 queued</span>'
+      : '';
     return '<div class="network-contact-row">'
-      +   '<div class="network-contact-name">' + link + '</div>'
+      +   '<div class="network-contact-name">' + link + queuedBadge + '</div>'
       +   (title ? '<div class="network-contact-title">' + esc(title) + esc(when) + '</div>' : '')
       +   introsLine(c)
       + '</div>';
@@ -28618,6 +28717,22 @@ window._contactsReadyPromise = fetch('/data/contacts.json', { cache: 'no-cache' 
     if (typeof _updateContactsChip === 'function') _updateContactsChip();
   })
   .catch(function(err){ console.warn('[contacts] fetch failed:', err.message); });
+
+// 2026-05-22 — Closure 18: enrichment auto-queue. Build-time generated list
+// of contacts queued for enrichment refresh, fetched here so the drawer can
+// render a small queued-badge next to recommended-outreach contacts.
+window._ENRICH_QUEUE = [];
+window._ENRICH_QUEUE_META = null;
+window._enrichQueueReadyPromise = fetch('/data/enrichment-queue.json', { cache: 'no-cache' })
+  .then(function(r){ return r.ok ? r.json() : null; })
+  .then(function(payload){
+    if (!payload) return;
+    window._ENRICH_QUEUE_META = payload._meta || null;
+    var pending = (payload.queue || []).filter(function(q){ return q.status === 'pending'; });
+    window._ENRICH_QUEUE = pending.map(function(q){ return q.contactId; });
+    window._ENRICH_QUEUE_FULL = pending;
+  })
+  .catch(function(err){ console.warn('[enrich-queue] fetch failed:', err.message); });
 
 // 2026-05-20 — Pill payload map. Build-time externalizer extracts
 // data-pill='...' JSON blobs from every chip (equity / base / location /

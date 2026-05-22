@@ -12366,7 +12366,11 @@ async function build() {
       <div class="quickadd-body">
         <form id="quickadd-form" onsubmit="submitQuickAdd(event); return false;">
           <input id="quickadd-url" type="text" placeholder="Paste role URL or search term" autocomplete="off" spellcheck="false" required />
-          <p class="quickadd-hint">Appends to <code>data/pipeline.md</code> with today's date. Auto-detects ATS pattern (Greenhouse / Ashby / Lever / Workday / LinkedIn). Skips duplicates already in scan history.</p>
+          <ul class="quickadd-hint" style="list-style:disc;padding-left:18px;margin:6px 0 10px;display:flex;flex-direction:column;gap:2px">
+            <li>Appends to <code>data/pipeline.md</code> with today's date</li>
+            <li>Auto-detects ATS pattern (Greenhouse / Ashby / Lever / Workday / LinkedIn)</li>
+            <li>Skips duplicates already in scan history</li>
+          </ul>
           <div class="quickadd-actions">
             <button type="button" class="toolbar-btn" onclick="closeQuickAdd()">Cancel</button>
             <button type="submit" class="toolbar-btn quickadd-submit" id="quickadd-submit-btn">Add to pipeline</button>
@@ -12838,7 +12842,7 @@ async function build() {
         aria-haspopup="dialog" aria-controls="be-stat-modal">${L.commits} · ${L.streak}d</button>
       <span class="panel-chevron">▾</span>
     </h2>
-    <p class="panel-subtitle">Skills, APIs, bug classes, PM signals — extracted from git history, last ${htmlEscape(sinceLabel)}. Updated nightly at 03:30 PT by <code>scripts/agents/builder-log.mjs</code>. <span class="be-subtitle-hint">Click any tile for detail.</span></p>
+    <p class="panel-subtitle">Skills, APIs, bug classes, PM signals from git history (last ${htmlEscape(sinceLabel)}) · nightly 03:30 PT · <code>scripts/agents/builder-log.mjs</code> · <span class="be-subtitle-hint">click any tile for detail</span></p>
 
     <div class="builder-evo-grid">
       <button type="button" class="be-stat-tile be-stat-tile-clickable" data-be-stat="apis" aria-label="Open APIs and tools detail drawer" aria-haspopup="dialog" aria-controls="be-stat-modal" title="Click to open the full Tier-A gating stack and gap-closure plan">

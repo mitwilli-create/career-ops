@@ -10949,6 +10949,45 @@ async function build() {
     border-color: rgba(245,158,11,.3);
   }
 
+  /* 4.10 (2026-05-22) — outreach-section content density */
+  .outreach-tracks {
+    margin-top: 8px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .outreach-intro {
+    margin: 4px 0;
+    font-size: 12.5px;
+    color: var(--text-1);
+  }
+  .outreach-track {
+    padding: 8px 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    border-left: 3px solid var(--blue-fg-dark);
+  }
+  .outreach-track-label {
+    font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .04em;
+    color: var(--blue-fg-dark);
+    margin-bottom: 4px;
+  }
+  .outreach-track-body { font-size: 12.5px; line-height: 1.45; }
+  .outreach-avoid {
+    margin-top: 8px; padding: 8px 10px;
+    background: rgba(245,158,11,.06);
+    border: 1px solid rgba(245,158,11,.3);
+    border-radius: var(--radius-sm);
+  }
+  .outreach-avoid-label {
+    font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .04em;
+    color: var(--amber-fg, #b45309);
+    margin-bottom: 4px;
+  }
+  .outreach-avoid ul { margin: 0; padding-left: 18px; }
+  .outreach-avoid li { font-size: 12px; color: var(--text-2); margin: 2px 0; }
+
   /* FIX 3 (2026-05-17) — high-confidence contact filter footnote. */
   .hm-filter-footnote {
     margin: 6px 0 12px;
@@ -19643,11 +19682,11 @@ function _hmPersonCard(p) {
     +   (p.provider_consensus ? '<span class="hm-consensus" title="Provider consensus">' + _hmEsc(p.provider_consensus) + '</span>' : '')
     + '</div>'
     + '<div class="hm-person-title">' + _hmEsc(p.title || '') + '</div>'
-    + (p.why_owns_this_req ? '<div class="hm-person-why"><strong>Why:</strong> ' + _hmEsc(p.why_owns_this_req) + '</div>' : '')
+    + (p.why_owns_this_req ? '<div class="hm-person-why"><strong>Why:</strong> ' + _hmEsc(_cleanOutreachProse(p.why_owns_this_req)) + '</div>' : '')
     + (links.length ? '<div class="hm-person-links">' + links.join(' · ') + '</div>' : '')
     + (emails.length ? '<div class="hm-person-emails">' + emails.join('<br>') + '</div>' : '')
     + (activityHtml ? '<div class="hm-person-activity"><strong>Recent activity:</strong><ul>' + activityHtml + '</ul></div>' : '')
-    + (p.outreach_hook ? '<div class="hm-person-hook"><strong>Hook:</strong> ' + _hmEsc(p.outreach_hook) + '</div>' : '')
+    + (p.outreach_hook ? '<div class="hm-person-hook"><strong>Hook:</strong> ' + _hmEsc(_cleanOutreachProse(p.outreach_hook)) + '</div>' : '')
     + '</div>';
 }
 
@@ -19743,6 +19782,93 @@ function _hmProseBullets(prose) {
   return blocks.join('<hr class="dcard-divider">');
 }
 
+// 4.10 (2026-05-22) — strip stiff/robotic phrasing from outreach prose.
+// Reused by _formatOutreachSection (for outreach_strategy) and _hmPersonCard
+// (for short outreach_hook / why_owns_this_req strings).
+// Regex backslashes are doubled because this function lives inside the
+// giant outer build-dashboard template — single \s / \b would be stripped
+// to literal s / b (bug-class catalog Pattern A).
+function _cleanOutreachProse(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/^It is recommended (?:that |to )/i, '')
+    .replace(/^It would be (?:beneficial|advisable) to /i, '')
+    .replace(/^(?:It is suggested |It is advised )(?:that |to )/i, '')
+    .replace(/\\bplease (?:consider|be advised|note)\\b\\s*/gi, '')
+    .replace(/\\s{2,}/g, ' ')
+    .trim();
+}
+// 4.10 (2026-05-22) — content density helper for outreach prose. Detects
+// structural markers (Track N, Do not X) in long outreach prose and splits
+// into labeled micro-sections. Conservatively cleans robotic phrasing.
+// Falls back to a cleaned <p> for prose that lacks clear structure.
+// Browser-side helper — invoked from _renderHMIntel at runtime (async fetch).
+function _formatOutreachSection(prose) {
+  if (!prose) return '';
+  const raw = String(prose).trim();
+  if (!raw) return '';
+  const cleaned = _cleanOutreachProse(raw);
+  const wordCount = cleaned.split(/\\s+/).filter(Boolean).length;
+  let html;
+  if (wordCount < 50) {
+    html = '<p>' + _hmEsc(cleaned) + '</p>';
+  } else {
+    // Track-pattern split — biggest density win for outreach_strategy.
+    // Doubled backslashes per Pattern A (outer template strips singles).
+    const TRACK_RE = /(?=Track \\d+ \\(Day \\d+\\)\\s*[—-]\\s*)/g;
+    const parts = cleaned.split(TRACK_RE).map(p => p.trim()).filter(Boolean);
+    if (parts.length >= 3) {
+      html = _renderOutreachTracks(parts[0], parts.slice(1));
+    } else {
+      const avoidSplit = _splitOutreachAvoid(cleaned);
+      html = avoidSplit || ('<p>' + _hmEsc(cleaned) + '</p>');
+    }
+  }
+  // Linkify embedded directory names if the helper is available.
+  if (typeof window._personLinkifyProse === 'function') {
+    try { html = window._personLinkifyProse(html); } catch (_) { /* keep original */ }
+  }
+  return html;
+}
+function _renderOutreachTracks(intro, tracks) {
+  let html = '';
+  if (intro) html += '<p class="outreach-intro">' + _hmEsc(intro) + '</p>';
+  html += '<div class="outreach-tracks">';
+  for (const t of tracks) {
+    const m = t.match(/^(Track \\d+ \\(Day \\d+\\))\\s*[—-]\\s*(.+)$/);
+    if (m) {
+      html += '<div class="outreach-track">';
+      html +=   '<div class="outreach-track-label">' + _hmEsc(m[1]) + '</div>';
+      html +=   '<div class="outreach-track-body">' + _hmEsc(m[2].trim()) + '</div>';
+      html += '</div>';
+    } else {
+      html += '<div class="outreach-track"><div class="outreach-track-body">' + _hmEsc(t) + '</div></div>';
+    }
+  }
+  html += '</div>';
+  return html;
+}
+function _splitOutreachAvoid(prose) {
+  const sentences = prose.match(/[^.!?]+[.!?]/g) || [];
+  if (sentences.length < 3) return null;
+  const avoid = [];
+  const rest = [];
+  for (const s of sentences) {
+    const t = s.trim();
+    if (/^(?:Do not|Don't|Avoid)\\b/i.test(t)) avoid.push(t);
+    else rest.push(t);
+  }
+  if (avoid.length === 0) return null;
+  let html = '<p>' + _hmEsc(rest.join(' ').trim()) + '</p>';
+  html += '<div class="outreach-avoid">';
+  html +=   '<div class="outreach-avoid-label">⚠ Avoid</div>';
+  html +=   '<ul>';
+  for (const a of avoid) html += '<li>' + _hmEsc(a) + '</li>';
+  html +=   '</ul>';
+  html += '</div>';
+  return html;
+}
+
 // FIX 4 (2026-05-17) — 2-column "Going to {Company}" vs "Staying at Google xGE"
 // comparison grid. Left column: new role specifics (comp/equity/location/
 // benefits/remote). Right column: current_role_baseline split into bullets.
@@ -19823,7 +19949,7 @@ function _renderHMIntel(d, slug) {
     + (recCards ? '<section class="hm-section"><h4>Likely recruiters (' + recHigh.length + ')</h4>' + recCards + '</section>' : '')
     + filterFootnote
 
-    + (d.outreach_strategy     ? '<section class="hm-section"><h4>Outreach tactic</h4><p>' + _hmEsc(d.outreach_strategy) + '</p></section>' : '')
+    + (d.outreach_strategy     ? '<section class="hm-section"><h4>Outreach tactic</h4>' + _formatOutreachSection(d.outreach_strategy) + '</section>' : '')
     // FIX 4 (2026-05-17) — clump prose broken into scannable bullets.
     + (d.team_gap_analysis     ? '<section class="hm-section"><h4>Team gaps I fill</h4>' + _hmProseBullets(d.team_gap_analysis) + '</section>' : '')
 
@@ -20067,7 +20193,7 @@ function _drawerRenderIntelChips(data, mountEl) {
       h += '</ul>';
     }
     if (m.outreach_hook) {
-      h += '<div class="pop-divider"></div><div class="pop-label">Outreach hook</div><div class="pop-quote">' + _esc(m.outreach_hook) + '</div>';
+      h += '<div class="pop-divider"></div><div class="pop-label">Outreach hook</div><div class="pop-quote">' + _esc(_cleanOutreachProse(m.outreach_hook)) + '</div>';
     }
     if (Array.isArray(m.other_hms) && m.other_hms.length) {
       h += '<div class="pop-label" style="margin-top:8px">Other contacts</div><ul class="pop-list">';
@@ -26516,12 +26642,12 @@ function _renderPillPopover(d) {
 window._personResolveDirectoryId = function (displayName) {
   if (!displayName) return '';
   try {
-    var norm = String(displayName).toLowerCase().trim().replace(/\s+/g, ' ');
+    var norm = String(displayName).toLowerCase().trim().replace(/\\s+/g, ' ');
     var directory = (typeof window !== 'undefined' && Array.isArray(window._CONTACTS_DATA)) ? window._CONTACTS_DATA : [];
     for (var i = 0; i < directory.length; i++) {
       var dc = directory[i];
       if (!dc || !dc.name) continue;
-      var dcNorm = String(dc.name).toLowerCase().trim().replace(/\s+/g, ' ');
+      var dcNorm = String(dc.name).toLowerCase().trim().replace(/\\s+/g, ' ');
       if (dcNorm === norm) return dc.id || '';
     }
   } catch (_) { /* ignore */ }
@@ -26591,8 +26717,8 @@ window._personLinkifyProse = function (escapedHtml) {
       // Escape regex meta-chars likely to appear in real names ('.' for
       // initials, '(' ')' for parentheticals). Backslash-dollar in the
       // char class stops the outer build template from interpolating.
-      var escName = nm.replace(/[.*+?^\${}()|[\]\\]/g, '\\$&');
-      var re = new RegExp('\\b' + escName + '\\b', 'g');
+      var escName = nm.replace(/[.*+?^\${}()|[\\]\\\\]/g, '\\\\$&');
+      var re = new RegExp('\\\\b' + escName + '\\\\b', 'g');
       result = result.replace(re, function (match) {
         return window._personLinkify(match, { skipQueuedBadge: true });
       });

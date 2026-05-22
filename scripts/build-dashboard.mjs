@@ -3362,8 +3362,6 @@ function renderRow(r, idx) {
         } catch (_epErr) { return ''; /* never break drawer on editing priority error */ }
       })()}
       <div class="drawer-slash-cmds" style="display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);flex-wrap:wrap">
-        <button type="button" class="dcard-btn" onclick="invokeBuildPackStage(${htmlEscape(String(r.num||''))}, 'cover-letter', this);event.stopPropagation()" title="Draft cover letter via /api/build-pack-stage">/cover-letter</button>
-        <button type="button" class="dcard-btn" onclick="invokeBuildPackStage(${htmlEscape(String(r.num||''))}, 'linkedin-dm', this);event.stopPropagation()" title="Draft LinkedIn DM via /api/build-pack-stage">/linkedin-dm</button>
         <!-- refresh-master Phase 3 deliverable 6: ↻ Deep refresh CTA. Fires
              full council-7 Layer-3 research. Confirm modal shows ~$25-$50 cost. -->
         <button type="button" class="dcard-btn" style="background:linear-gradient(180deg,#1f2a44,#162035);border-color:#3b4f7a;color:#dbe4ff" onclick="invokeDeepRefresh(${htmlEscape(String(r.num||''))}, this);event.stopPropagation()" title="Phase 3 Layer-3 deep research: 7-model council, $25–$50 per fire. Confirm modal will appear.">↻ Deep refresh</button>

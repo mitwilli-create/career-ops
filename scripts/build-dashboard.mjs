@@ -22899,6 +22899,14 @@ function _renderProcessAllPhaseA(pAgg, pCmp) {
     if (t === 3) return '<span title="Premium quality — highest judgment fidelity" style="color:#fbbf24;margin-right:4px;font-size:13px">★</span>';
     return '';
   }
+  // Closure H (2026-05-22): tier-price formatter. Returns "$X.XX" for any
+  // finite number, "—" for undefined / null / NaN / Infinity. Prevents
+  // "undefined" or "NaN" from leaking into the modal when a tier estimate
+  // is partially populated (e.g. during a server-side schema migration).
+  function _fmtTierPrice(v) {
+    if (typeof v !== 'number' || !Number.isFinite(v)) return '—';
+    return '$' + v.toFixed(2);
+  }
   const tierPickerLine = (tEst && tEst[1] && tEst[2] && tEst[3])
     ? '<div id="pcp-tier-picker" style="margin-top:8px;padding:10px 12px;border:1px dashed rgba(255,255,255,0.18);border-radius:6px;font-size:12px">'
       + '<div style="font-weight:600;margin-bottom:6px">Quality tier '
@@ -22906,17 +22914,17 @@ function _renderProcessAllPhaseA(pAgg, pCmp) {
       + '</div>'
       + '<label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer">'
       +   '<input type="radio" name="pcp-tier" value="1"' + _tierChecked(1) + ' onchange="_pcpUpdateTier(this.value)">'
-      +   '<span>' + _tierStar(1) + '<strong>1 · Standard</strong> · Haiku triage + Sonnet eval · <strong>$' + tEst[1].total_cost_usd.toFixed(2) + '</strong>'
-      +     '<span style="opacity:0.6;font-size:11px"> · triage $' + tEst[1].breakdown.triage_cost_usd.toFixed(2) + ' + eval $' + tEst[1].breakdown.eval_cost_usd.toFixed(2) + ' + auto-escalate $' + (tEst[1].breakdown.pregen_cost_usd + tEst[1].breakdown.polish_cost_usd).toFixed(2) + '</span>' + _tierBadge(1) + '</span>'
+      +   '<span>' + _tierStar(1) + '<strong>1 · Standard</strong> · Haiku triage + Sonnet eval · <strong>' + _fmtTierPrice(tEst[1].total_cost_usd) + '</strong>'
+      +     '<span style="opacity:0.6;font-size:11px"> · triage ' + _fmtTierPrice(tEst[1].breakdown && tEst[1].breakdown.triage_cost_usd) + ' + eval ' + _fmtTierPrice(tEst[1].breakdown && tEst[1].breakdown.eval_cost_usd) + ' + auto-escalate ' + _fmtTierPrice(tEst[1].breakdown ? ((tEst[1].breakdown.pregen_cost_usd || 0) + (tEst[1].breakdown.polish_cost_usd || 0)) : undefined) + '</span>' + _tierBadge(1) + '</span>'
       + '</label>'
       + '<label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer">'
       +   '<input type="radio" name="pcp-tier" value="2"' + _tierChecked(2) + ' onchange="_pcpUpdateTier(this.value)">'
-      +   '<span>' + _tierStar(2) + '<strong>2 · Premium Triage</strong> · Sonnet triage + Sonnet eval · <strong>$' + tEst[2].total_cost_usd.toFixed(2) + '</strong>'
+      +   '<span>' + _tierStar(2) + '<strong>2 · Premium Triage</strong> · Sonnet triage + Sonnet eval · <strong>' + _fmtTierPrice(tEst[2].total_cost_usd) + '</strong>'
       +     '<span style="opacity:0.6;font-size:11px"> · fewer false-skips at the gate</span>' + _tierBadge(2) + '</span>'
       + '</label>'
       + '<label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer">'
       +   '<input type="radio" name="pcp-tier" value="3"' + _tierChecked(3) + ' onchange="_pcpUpdateTier(this.value)">'
-      +   '<span>' + _tierStar(3) + '<strong>3 · Premium Eval</strong> · Sonnet triage + <strong>Opus</strong> eval · <strong>$' + tEst[3].total_cost_usd.toFixed(2) + '</strong>'
+      +   '<span>' + _tierStar(3) + '<strong>3 · Premium Eval</strong> · Sonnet triage + <strong>Opus</strong> eval · <strong>' + _fmtTierPrice(tEst[3].total_cost_usd) + '</strong>'
       +     '<span style="opacity:0.6;font-size:11px"> · highest-quality A–G reports, esp. for borderline 3.8–4.4</span>' + _tierBadge(3) + '</span>'
       + '</label>'
       + '</div>'
@@ -23014,7 +23022,19 @@ function _renderPerCompanyPreview(pCmp) {
     +     '<span class="pcp-summary-val" id="pcp-scoped-count">' + pCmp.actionable_count + '</span>'
     +   '</div>'
     +   '<div style="margin-top:8px;padding:8px 10px;background:rgba(59,130,246,.08);border-left:3px solid var(--blue-fg,#2563eb);border-radius:4px;font-size:11.5px;line-height:1.5;color:var(--text-2)">'
-    +     '<strong>What you pay:</strong> the tier you select below ($' + _esc((tEst && tEst[1] && tEst[1].total_cost_usd.toFixed(2)) || '?') + ' Standard / $' + _esc((tEst && tEst[2] && tEst[2].total_cost_usd.toFixed(2)) || '?') + ' Premium Triage / $' + _esc((tEst && tEst[3] && tEst[3].total_cost_usd.toFixed(2)) || '?') + ' Premium Eval). '
+    +     '<strong>What you pay:</strong> the tier you select below ('
+    +       (function _safeTierStr(t) {
+            const v = (tEst && tEst[t] && tEst[t].total_cost_usd);
+            return (typeof v === 'number' && Number.isFinite(v)) ? '$' + v.toFixed(2) : '—';
+          })(1) + ' Standard / '
+    +       (function _safeTierStr(t) {
+            const v = (tEst && tEst[t] && tEst[t].total_cost_usd);
+            return (typeof v === 'number' && Number.isFinite(v)) ? '$' + v.toFixed(2) : '—';
+          })(2) + ' Premium Triage / '
+    +       (function _safeTierStr(t) {
+            const v = (tEst && tEst[t] && tEst[t].total_cost_usd);
+            return (typeof v === 'number' && Number.isFinite(v)) ? '$' + v.toFixed(2) : '—';
+          })(3) + ' Premium Eval). '
     +     'The per-company drilldown above is the company-level breakdown of what those tiers process — it is not a separate charge.'
     +   '</div>'
     + '</div>';
@@ -23802,9 +23822,14 @@ window._pcpUpdateTier = function (tier) {
   if (!_pipelinePreview) return;
   const tEst = _pipelinePreview.process_all && _pipelinePreview.process_all.tier_estimates;
   if (!tEst || !tEst[tier]) return;
-  // Update the headline cost to reflect the selected tier
+  // Closure H (2026-05-22): use _fmtTierPrice to avoid "undefined"/"NaN"
+  // leakage if total_cost_usd is missing from a freshly-rolled tier estimate.
+  function _safeFmt(v) {
+    if (typeof v !== 'number' || !Number.isFinite(v)) return '—';
+    return '$' + v.toFixed(2);
+  }
   const costEl = document.getElementById('pcp-headline-cost');
-  if (costEl) costEl.textContent = '$' + tEst[tier].total_cost_usd.toFixed(2);
+  if (costEl) costEl.textContent = _safeFmt(tEst[tier].total_cost_usd);
 };
 // Closure D (2026-05-22): seed _pcpSelectedTier from the recommended tier
 // when the preview modal opens. Mutation observer is the simplest way to

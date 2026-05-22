@@ -134,6 +134,38 @@ function cleanupOrphanState() {
   }
 }
 
+// Closure H (2026-05-22): NDJSON heartbeat. Fires every 30s during long
+// operations so the hang-watchdog (scripts/agents/hang-watchdog.mjs) and
+// the dashboard's stall-detection (Closure D) can see the orchestrator
+// is alive even when a phase is mid-stream and not writing to LOG_PATH.
+// Heartbeat lines go to stderr (separate channel from spawned child output)
+// and are picked up by the launchd plist's StandardError redirect.
+let _heartbeatTimer = null;
+let _heartbeatCurrentPhase = 'init';
+function _emitHeartbeat() {
+  try {
+    const beat = {
+      t: new Date().toISOString(),
+      jobId: typeof JOB_ID !== 'undefined' ? JOB_ID : null,
+      phase: _heartbeatCurrentPhase,
+      pid: process.pid,
+      uptime_s: Math.round(process.uptime()),
+      mem_rss_mb: Math.round(process.memoryUsage().rss / 1024 / 1024),
+    };
+    process.stderr.write('[heartbeat] ' + JSON.stringify(beat) + '\n');
+  } catch (_) { /* never break orchestrator on heartbeat error */ }
+}
+function _startHeartbeat() {
+  if (_heartbeatTimer) return;
+  _emitHeartbeat();
+  _heartbeatTimer = setInterval(_emitHeartbeat, 30000);
+  _heartbeatTimer.unref();
+}
+function _stopHeartbeat() {
+  if (_heartbeatTimer) { clearInterval(_heartbeatTimer); _heartbeatTimer = null; }
+}
+function _setHeartbeatPhase(p) { _heartbeatCurrentPhase = String(p || 'unknown'); }
+
 function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}`;
   console.log(line);
@@ -536,18 +568,26 @@ async function main() {
   log(`  dry_run: ${DRY_RUN}`);
   log(`  company scope: ${COMPANIES_ARG || '(none — full drain)'}`);
 
+  // Closure H (2026-05-22): NDJSON heartbeat for stall detection.
+  _setHeartbeatPhase('triage');
+  _startHeartbeat();
+  process.on('exit', _stopHeartbeat);
+
   const phases = {};
+  _setHeartbeatPhase('triage');
   phases.triage  = await phaseTriage();
   if (!phases.triage.ok) {
     updateJob({ status: 'failed', failed_at: new Date().toISOString(), failure_phase: 'triage' });
     process.exit(2);
   }
+  _setHeartbeatPhase('batch');
   phases.batch   = await phaseBatch();
   if (!phases.batch.ok) {
     updateJob({ status: 'failed', failed_at: new Date().toISOString(), failure_phase: 'batch' });
     process.exit(2);
   }
   // α ALPHA 2026-05-19 — opt-in polish stage (POLISH_PACK_ENABLED=1)
+  _setHeartbeatPhase('polish');
   phases.polish = await phasePolish();
   if (!phases.polish.ok) {
     // Soft-fail: log and continue. Polish failures shouldn't block the rest.
@@ -555,17 +595,21 @@ async function main() {
   }
   // Tier-5 only — apply-pack pregen for top-N high-confidence rows.
   // Soft-fail: pregen failure does not block merge/rebuild.
+  _setHeartbeatPhase('pregen');
   phases.pregen = await phasePregen();
+  _setHeartbeatPhase('merge');
   phases.merge   = await phaseMergeTracker();
   if (!phases.merge.ok) {
     // Non-fatal — tracker merge failure shouldn't block rebuild
     log('⚠️  merge-tracker failed but continuing to rebuild');
   }
+  _setHeartbeatPhase('rebuild');
   phases.rebuild = await phaseRebuild();
   if (!phases.rebuild.ok) {
     updateJob({ status: 'failed', failed_at: new Date().toISOString(), failure_phase: 'rebuild' });
     process.exit(2);
   }
+  _setHeartbeatPhase('email');
   phases.email   = await phaseEmail();
   // email failure is non-fatal — the work IS done; only the notification didn't go out
 

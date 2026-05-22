@@ -96,9 +96,20 @@ async function refreshHmIntel(row, opts = {}) {
   // research pipeline. Shell out to it with --row so it writes the canonical
   // cache file. We do NOT replicate its logic here — that script is the source
   // of truth for hm-intel research.
+  // 2026-05-22 P4 fix: the canonical script was removed/renamed. If it's
+  // missing, gracefully skip this slot (cached data stays). Without this
+  // guard, the spawnSync exits 1 silently and the deep refresh appears to
+  // "succeed" while doing nothing for hm-intel. Surface the missing-script
+  // condition explicitly so the caller can decide whether to rebuild it.
+  const scriptPath = join(ROOT, 'scripts', 'hiring-manager-research.mjs');
+  if (!existsSync(scriptPath)) {
+    emit({ slot: 'hm-intel', row: row.num, step: 'skipped-missing-script', script: scriptPath });
+    const hasCache = existsSync(target);
+    return { ok: hasCache, cache: hasCache ? 'kept_due_to_missing_script' : 'no_cache_and_no_script', path: target, missing_script: true };
+  }
   emit({ slot: 'hm-intel', row: row.num, step: 'starting-research', no_skip_deep: true });
   const { spawnSync } = await import('child_process');
-  const args = [join(ROOT, 'scripts', 'hiring-manager-research.mjs'), '--role', String(row.num), '--no-skip-deep'];
+  const args = [scriptPath, '--role', String(row.num), '--no-skip-deep'];
   const result = spawnSync('node', args, { cwd: ROOT, stdio: 'inherit', env: process.env, timeout: 1200_000 });
   const ok = result.status === 0;
   emit({ slot: 'hm-intel', row: row.num, step: 'research-done', exit_code: result.status, path: target });

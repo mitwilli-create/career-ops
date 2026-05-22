@@ -29,7 +29,7 @@
         border-radius="0"
         inner-padding="11px 18px"
       />
-      <mj-section padding="0 0 4px 0" />
+      <mj-section padding="0 0 2px 0" />
     </mj-attributes>
 
     <mj-style>
@@ -78,7 +78,7 @@
          MASTHEAD — Vogue wordmark left + meta caps right, hairline rules
          above and below. Matches mid-century magazine fold pattern.
          ════════════════════════════════════════════════════════════════════ -->
-    <mj-section padding="20px 12px 0 12px">
+    <mj-section padding="10px 12px 0 12px">
       <mj-column>
         <mj-text padding="0">{{mastheadHtml}}</mj-text>
       </mj-column>
@@ -89,7 +89,7 @@
          date reads as type, not as a system header. e.g.
          "twentieth of may, two thousand twenty-six".
          ════════════════════════════════════════════════════════════════════ -->
-    <mj-section padding="6px 12px 6px 12px">
+    <mj-section padding="2px 12px 2px 12px">
       <mj-column>
         <mj-text padding="0">{{heroDateHtml}}</mj-text>
       </mj-column>
@@ -99,7 +99,7 @@
          EDITORIAL LEDE — 1 paragraph in italic serif, anchored to today's
          hero event.
          ════════════════════════════════════════════════════════════════════ -->
-    <mj-section padding="2px 12px 14px 12px">
+    <mj-section padding="0 12px 6px 12px">
       <mj-column>
         <mj-text padding="0">{{ledeHtml}}</mj-text>
       </mj-column>
@@ -110,7 +110,7 @@
          magazine article: italic serif headline, italic sans sub, bordered
          link CTA (NOT a button).
          ════════════════════════════════════════════════════════════════════ -->
-    <mj-section padding="6px 12px 8px 12px">
+    <mj-section padding="2px 12px 4px 12px">
       <mj-column>
         <mj-text padding="0">{{heroStoryHtml}}</mj-text>
       </mj-column>
@@ -120,7 +120,7 @@
          EARNED IMAGE — one rotation image per email via CID attachment.
          Centered, brief mono caption below.
          ════════════════════════════════════════════════════════════════════ -->
-    <mj-section padding="6px 12px 10px 12px">
+    <mj-section padding="2px 12px 4px 12px">
       <mj-column>
         <mj-image
           src="cid:dispatchHero"
@@ -128,7 +128,7 @@
           width="600px"
           padding="0"
         />
-        <mj-text padding="6px 0 0 0" align="center">{{heroCaptionHtml}}</mj-text>
+        <mj-text padding="4px 0 0 0" align="center">{{heroCaptionHtml}}</mj-text>
       </mj-column>
     </mj-section>
 
@@ -137,7 +137,7 @@
          Reuters discipline: tabular-num rows, hairline rules, italic-serif
          footer summary.
          ════════════════════════════════════════════════════════════════════ -->
-    <mj-section padding="6px 12px 10px 12px">
+    <mj-section padding="2px 12px 4px 12px">
       <mj-column>
         <mj-text padding="0">{{tickerHtml}}</mj-text>
       </mj-column>
@@ -147,7 +147,7 @@
          TODAY'S FOCUS — italic serif pull-quote, centered, generous
          tracking, top + bottom hairline rules.
          ════════════════════════════════════════════════════════════════════ -->
-    <mj-section padding="6px 12px 10px 12px">
+    <mj-section padding="2px 12px 4px 12px">
       <mj-column>
         <mj-text padding="0">{{focusPullquoteHtml}}</mj-text>
       </mj-column>
@@ -157,18 +157,18 @@
          KPI STRIP — 4 horizontal tiles (Ready · Evaluated · Tracked ·
          Runway), tabular monospace numerals, top + bottom rules.
          ════════════════════════════════════════════════════════════════════ -->
-    <mj-section padding="10px 12px 8px 12px" border-top="1px solid {{ruleStrong}}" border-bottom="1px solid {{ruleStrong}}" css-class="masthead-rule">
-      <mj-column padding="6px 4px">
-        <mj-text padding="0" align="center"><span class="editorial-grotesk" style="display:block;font-size:9px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:{{ink4}};margin-bottom:4px">Ready</span><span class="editorial-mono" style="display:block;font-size:24px;font-weight:600;color:{{ink}};letter-spacing:-0.02em">{{kpiQueueCount}}</span></mj-text>
+    <mj-section padding="6px 12px 4px 12px" border-top="1px solid {{ruleStrong}}" border-bottom="1px solid {{ruleStrong}}" css-class="masthead-rule">
+      <mj-column padding="2px 4px">
+        <mj-text padding="0" align="center"><span class="editorial-grotesk" style="display:block;font-size:9px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:{{ink4}};margin-bottom:2px">Ready</span><span class="editorial-mono" style="display:block;font-size:22px;font-weight:600;color:{{ink}};letter-spacing:-0.02em">{{kpiQueueCount}}</span></mj-text>
       </mj-column>
-      <mj-column padding="6px 4px">
-        <mj-text padding="0" align="center"><span class="editorial-grotesk" style="display:block;font-size:9px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:{{ink4}};margin-bottom:4px">Evaluated</span><span class="editorial-mono" style="display:block;font-size:24px;font-weight:600;color:{{ink}};letter-spacing:-0.02em">{{kpiEvaluatedToday}}</span></mj-text>
+      <mj-column padding="2px 4px">
+        <mj-text padding="0" align="center"><span class="editorial-grotesk" style="display:block;font-size:9px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:{{ink4}};margin-bottom:2px">Evaluated</span><span class="editorial-mono" style="display:block;font-size:22px;font-weight:600;color:{{ink}};letter-spacing:-0.02em">{{kpiEvaluatedToday}}</span></mj-text>
       </mj-column>
-      <mj-column padding="6px 4px">
-        <mj-text padding="0" align="center"><span class="editorial-grotesk" style="display:block;font-size:9px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:{{ink4}};margin-bottom:4px">Tracked</span><span class="editorial-mono" style="display:block;font-size:24px;font-weight:600;color:{{ink}};letter-spacing:-0.02em">{{kpiTrackedCount}}</span></mj-text>
+      <mj-column padding="2px 4px">
+        <mj-text padding="0" align="center"><span class="editorial-grotesk" style="display:block;font-size:9px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:{{ink4}};margin-bottom:2px">Tracked</span><span class="editorial-mono" style="display:block;font-size:22px;font-weight:600;color:{{ink}};letter-spacing:-0.02em">{{kpiTrackedCount}}</span></mj-text>
       </mj-column>
-      <mj-column padding="6px 4px">
-        <mj-text padding="0" align="center"><span class="editorial-grotesk" style="display:block;font-size:9px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:{{ink4}};margin-bottom:4px">Runway</span><span class="editorial-mono" style="display:block;font-size:24px;font-weight:600;color:{{kpiRunwayColor}};letter-spacing:-0.02em">{{kpiRunwayLabel}}</span></mj-text>
+      <mj-column padding="2px 4px">
+        <mj-text padding="0" align="center"><span class="editorial-grotesk" style="display:block;font-size:9px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:{{ink4}};margin-bottom:2px">Runway</span><span class="editorial-mono" style="display:block;font-size:22px;font-weight:600;color:{{kpiRunwayColor}};letter-spacing:-0.02em">{{kpiRunwayLabel}}</span></mj-text>
       </mj-column>
     </mj-section>
 
@@ -176,7 +176,7 @@
          RUNWAY ALERT / SYSTEM STATUS slot — when relevant, brass
          left-rule, italic-serif headline, mono stats.
          ════════════════════════════════════════════════════════════════════ -->
-    <mj-section padding="14px 12px 8px 12px">
+    <mj-section padding="6px 12px 4px 12px">
       <mj-column>
         <mj-text padding="0">{{runwayAlertHtml}}</mj-text>
       </mj-column>
@@ -190,7 +190,7 @@
          action). All blocks are rendered as a single HTML blob from
          heartbeat-dispatch.mjs.
          ════════════════════════════════════════════════════════════════════ -->
-    <mj-section padding="6px 12px 6px 12px">
+    <mj-section padding="2px 12px 2px 12px">
       <mj-column>
         <mj-text padding="0">{{featureBlocksHtml}}</mj-text>
       </mj-column>
@@ -201,7 +201,7 @@
          eyebrow caps. Deterministic-by-day-of-year with 60-day no-repeat
          protection.
          ════════════════════════════════════════════════════════════════════ -->
-    <mj-section padding="14px 12px 6px 12px">
+    <mj-section padding="6px 12px 2px 12px">
       <mj-column>
         <mj-text padding="0">{{quoteHtml}}</mj-text>
       </mj-column>
@@ -212,7 +212,7 @@
          marker is § for evening, ❘ for morning so the two are visually
          distinct in thread view.
          ════════════════════════════════════════════════════════════════════ -->
-    <mj-section padding="20px 12px 8px 12px">
+    <mj-section padding="10px 12px 4px 12px">
       <mj-column>
         <mj-text padding="0">{{closerHtml}}</mj-text>
       </mj-column>
@@ -223,9 +223,9 @@
          PUBLISHED · DISPATCH · DESK · FILED FROM. Carries the
          Generated: timestamp (tracking-critical preservation).
          ════════════════════════════════════════════════════════════════════ -->
-    <mj-section padding="6px 12px 18px 12px" border-top="1px solid {{rule}}" css-class="hairline">
+    <mj-section padding="4px 12px 10px 12px" border-top="1px solid {{rule}}" css-class="hairline">
       <mj-column>
-        <mj-text padding="10px 0 0 0">{{colophonHtml}}</mj-text>
+        <mj-text padding="6px 0 0 0">{{colophonHtml}}</mj-text>
       </mj-column>
     </mj-section>
 

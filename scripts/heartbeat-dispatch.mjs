@@ -436,7 +436,7 @@ function renderHeroDate(iso, palette) {
   // direction in the dashboard hardening sprint. The dateLongWords helper
   // stays defined + exported for re-introduction if the editorial direction
   // reverts; this call site uses iso directly.
-  return `<p style="margin:14px 0 0 0;font-family:'Fraunces','GT Sectra','Bodoni 72',Georgia,serif;font-weight:500;font-size:48px;line-height:1.05;color:${palette.ink};letter-spacing:-0.02em;font-feature-settings:'tnum' 1">${escapeHtml(iso)}</p>`;
+  return `<p style="margin:6px 0 0 0;font-family:'Fraunces','GT Sectra','Bodoni 72',Georgia,serif;font-weight:500;font-size:44px;line-height:1.05;color:${palette.ink};letter-spacing:-0.02em;font-feature-settings:'tnum' 1">${escapeHtml(iso)}</p>`;
 }
 
 // ── Render: editorial lede ────────────────────────────────────────────────
@@ -461,7 +461,7 @@ function renderLede(state, surface, palette) {
       lines.push(`A quiet evening on the wire. Systems ran unattended; the runway holds.`);
     }
   }
-  return `<p style="margin:14px 0 0 0;font-family:'Fraunces','GT Sectra',Georgia,serif;font-style:italic;font-weight:400;font-size:17px;line-height:1.55;color:${palette.ink_2}">${lines.join(' ')}</p>`;
+  return `<p style="margin:4px 0 0 0;font-family:'Fraunces','GT Sectra',Georgia,serif;font-style:italic;font-weight:400;font-size:16px;line-height:1.45;color:${palette.ink_2}">${lines.join(' ')}</p>`;
 }
 
 // ── Render: hero story ────────────────────────────────────────────────────
@@ -475,7 +475,7 @@ function renderHeroStory(state, surface, palette) {
 function renderTonightsApply(state, palette) {
   if (!state.tonightsApply) {
     return `
-<div style="margin:14px 0;padding:18px 0;border-top:1px solid ${palette.rule_strong}">
+<div style="margin:6px 0;padding:10px 0;border-top:1px solid ${palette.rule_strong}">
   <div style="font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;font-size:10px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:${palette.accent};margin-bottom:8px">Tonight's Apply</div>
   <p style="margin:0 0 12px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:28px;line-height:1.2;color:${palette.ink};letter-spacing:-0.01em">No queue — the morning belongs to outreach.</p>
   <p style="margin:0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:14px;line-height:1.5;color:${palette.ink_3}">Nothing above the apply-now floor sits in the queue today. The leverage moves upstream: one warm intro path, one new portal scanned, one publishable write-up drafted.</p>
@@ -499,7 +499,7 @@ function renderTonightsApply(state, palette) {
   const packUrl = `${DASHBOARD_PUBLIC_URL}/apply-pack/${num}/`;
 
   return `
-<div style="margin:14px 0;padding:18px 0;border-top:1px solid ${palette.rule_strong}">
+<div style="margin:6px 0;padding:10px 0;border-top:1px solid ${palette.rule_strong}">
   <div style="font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;font-size:10px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:${palette.accent};margin-bottom:8px">Tonight's Apply &middot; № ${num}</div>
   <p style="margin:0 0 8px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:600;font-size:32px;line-height:1.15;color:${palette.ink};letter-spacing:-0.012em">${escapeHtml(co)} &mdash; ${escapeHtml(role)}</p>
   <p style="margin:0 0 12px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:15px;line-height:1.5;color:${palette.ink_3}">
@@ -519,7 +519,7 @@ function renderTodaysResult(state, palette) {
   const result = state.todaysResult;
   if (!result) {
     return `
-<div style="margin:14px 0;padding:18px 0;border-top:1px solid ${palette.rule_strong}">
+<div style="margin:6px 0;padding:10px 0;border-top:1px solid ${palette.rule_strong}">
   <div style="font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;font-size:10px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:${palette.accent};margin-bottom:8px">Today's Result</div>
   <p style="margin:0 0 12px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:28px;line-height:1.2;color:${palette.ink};letter-spacing:-0.01em">${state.evaluatedToday > 0 ? `${state.evaluatedToday} new evaluation${state.evaluatedToday === 1 ? '' : 's'} on the wire.` : 'Systems ran unattended.'}</p>
   <p style="margin:0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:14px;line-height:1.5;color:${palette.ink_3}">${state.evaluatedToday > 0 ? 'The apply-now table is reordered for the morning. Tomorrow opens with the new ranking.' : 'The runway holds; the queue holds; the systems work continues.'}</p>
@@ -528,7 +528,7 @@ function renderTodaysResult(state, palette) {
   const headline = result.headline || 'Today\'s movement on the board';
   const detail = result.detail || '';
   return `
-<div style="margin:14px 0;padding:18px 0;border-top:1px solid ${palette.rule_strong}">
+<div style="margin:6px 0;padding:10px 0;border-top:1px solid ${palette.rule_strong}">
   <div style="font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;font-size:10px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:${palette.accent};margin-bottom:8px">Today's Result</div>
   <p style="margin:0 0 12px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:600;font-size:32px;line-height:1.15;color:${palette.ink};letter-spacing:-0.012em">${escapeHtml(headline)}</p>
   ${detail ? `<p style="margin:0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:15px;line-height:1.55;color:${palette.ink_3}">${escapeHtml(detail)}</p>` : ''}
@@ -555,7 +555,7 @@ function renderTicker(state, surface, palette) {
 }
 
 function renderApplyNowTicker(state, palette) {
-  const rows = state.applyNow.slice(0, 8);
+  const rows = state.applyNow.slice(0, 6);
   if (rows.length === 0) {
     return `
 <div style="margin:6px 0;padding:14px 0">
@@ -572,9 +572,9 @@ function renderApplyNowTicker(state, palette) {
     const reportUrl = r.reportPath ? `${DASHBOARD_PUBLIC_URL}/${r.reportPath.replace(/^\.?\//, '')}` : `${DASHBOARD_PUBLIC_URL}/?focus=row:${num}`;
     return `
 <tr class="ticker-row">
-  <td style="padding:8px 0;border-bottom:1px solid ${palette.rule};font-family:'JetBrains Mono','SF Mono',monospace;font-variant-numeric:tabular-nums;font-size:11px;color:${palette.ink_4};width:54px;vertical-align:top">№ ${num}</td>
-  <td style="padding:8px 0;border-bottom:1px solid ${palette.rule};font-family:'Inter',sans-serif;font-size:13px;color:${palette.ink};vertical-align:top"><a href="${reportUrl}" style="color:${palette.ink};text-decoration:none;border-bottom:1px solid ${palette.rule}">${escapeHtml(company)}</a> <span style="color:${palette.ink_3};font-weight:400">${escapeHtml(role)}</span></td>
-  <td style="padding:8px 0;border-bottom:1px solid ${palette.rule};font-family:'JetBrains Mono','SF Mono',monospace;font-variant-numeric:tabular-nums;font-size:12px;color:${palette.ink_2};text-align:right;width:64px;vertical-align:top">${score} / 5</td>
+  <td style="padding:4px 0;border-bottom:1px solid ${palette.rule};font-family:'JetBrains Mono','SF Mono',monospace;font-variant-numeric:tabular-nums;font-size:11px;color:${palette.ink_4};width:54px;vertical-align:top">№ ${num}</td>
+  <td style="padding:4px 0;border-bottom:1px solid ${palette.rule};font-family:'Inter',sans-serif;font-size:13px;color:${palette.ink};vertical-align:top"><a href="${reportUrl}" style="color:${palette.ink};text-decoration:none;border-bottom:1px solid ${palette.rule}">${escapeHtml(company)}</a> <span style="color:${palette.ink_3};font-weight:400">${escapeHtml(role)}</span></td>
+  <td style="padding:4px 0;border-bottom:1px solid ${palette.rule};font-family:'JetBrains Mono','SF Mono',monospace;font-variant-numeric:tabular-nums;font-size:12px;color:${palette.ink_2};text-align:right;width:64px;vertical-align:top">${score} / 5</td>
 </tr>`.trim();
   }).join('');
 
@@ -637,9 +637,9 @@ function renderFocusPullquote(state, palette) {
   const focus = (state.todaysFocus || '').trim();
   if (!focus) return '';
   return `
-<div style="margin:18px 0 6px 0;padding:18px 0;border-top:1px solid ${palette.rule_strong};border-bottom:1px solid ${palette.rule_strong}">
-  <div class="editorial-grotesk" style="font-family:'Inter',sans-serif;font-size:9px;font-weight:700;letter-spacing:0.20em;text-transform:uppercase;color:${palette.ink_4};text-align:center;margin-bottom:10px">Today's Focus</div>
-  <p style="margin:0;font-family:'Fraunces','GT Sectra',Georgia,serif;font-style:italic;font-weight:400;font-size:22px;line-height:1.45;color:${palette.ink};text-align:center;letter-spacing:-0.005em">&ldquo;${escapeHtml(focus)}&rdquo;</p>
+<div style="margin:6px 0 4px 0;padding:10px 0;border-top:1px solid ${palette.rule_strong};border-bottom:1px solid ${palette.rule_strong}">
+  <div class="editorial-grotesk" style="font-family:'Inter',sans-serif;font-size:9px;font-weight:700;letter-spacing:0.20em;text-transform:uppercase;color:${palette.ink_4};text-align:center;margin-bottom:6px">Today's Focus</div>
+  <p style="margin:0;font-family:'Fraunces','GT Sectra',Georgia,serif;font-style:italic;font-weight:400;font-size:18px;line-height:1.35;color:${palette.ink};text-align:center;letter-spacing:-0.005em">&ldquo;${escapeHtml(focus)}&rdquo;</p>
 </div>`.trim();
 }
 
@@ -647,7 +647,7 @@ function renderFocusPullquote(state, palette) {
 function renderRunwayAlertEditorial(state, surface, palette) {
   const d = state.density;
   if (!d || !d.ok) {
-    return `<div style="margin:14px 0;padding:14px 0 14px 18px;border-left:3px solid ${palette.rule_strong};color:${palette.ink_3};font-family:'Fraunces',Georgia,serif;font-style:italic;font-size:14px">Runway data unavailable &middot; outreach tracker may be offline.</div>`;
+    return `<div style="margin:6px 0;padding:8px 0 8px 18px;border-left:3px solid ${palette.rule_strong};color:${palette.ink_3};font-family:'Fraunces',Georgia,serif;font-style:italic;font-size:14px">Runway data unavailable &middot; outreach tracker may be offline.</div>`;
   }
   const { health, runway_alert, contacts, velocity, runway_weeks } = d;
   const headlineMap = {
@@ -659,10 +659,10 @@ function renderRunwayAlertEditorial(state, surface, palette) {
   const accentColor = health === 'critical' ? palette.negative : health === 'stretched' ? palette.accent : palette.positive;
 
   return `
-<div style="margin:14px 0;padding:14px 0 14px 18px;border-left:3px solid ${accentColor}">
+<div style="margin:6px 0;padding:8px 0 8px 18px;border-left:3px solid ${accentColor}">
   <div class="editorial-grotesk" style="font-family:'Inter',sans-serif;font-size:9px;font-weight:700;letter-spacing:0.20em;text-transform:uppercase;color:${accentColor};margin-bottom:6px">Runway &middot; ${runway_weeks}-week window</div>
-  <p style="margin:0 0 6px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:600;font-size:18px;line-height:1.35;color:${palette.ink}">${escapeHtml(headline)}</p>
-  <p style="margin:0 0 10px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:14px;line-height:1.5;color:${palette.ink_2}">${escapeHtml(runway_alert.replace(/^[^\w]+/, ''))}</p>
+  <p style="margin:0 0 4px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:600;font-size:16px;line-height:1.3;color:${palette.ink}">${escapeHtml(headline)}</p>
+  <p style="margin:0 0 6px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:13px;line-height:1.4;color:${palette.ink_2}">${escapeHtml(runway_alert.replace(/^[^\w]+/, ''))}</p>
   <p style="margin:0;font-family:'JetBrains Mono','SF Mono',monospace;font-variant-numeric:tabular-nums;font-size:11px;color:${palette.ink_3}">
     <span style="color:${palette.ink_2}">${contacts.active}</span> active &middot;
     <span style="color:${palette.ink_2}">${contacts.responded}</span> replied (${Math.round(contacts.response_rate * 100)}%) &middot;
@@ -695,8 +695,8 @@ function renderSystemStatus(state, palette) {
 </tr>`.trim()).join('');
 
   return `
-<div style="margin:14px 0;padding:0">
-  <div class="editorial-grotesk" style="font-family:'Inter',sans-serif;font-size:9px;font-weight:700;letter-spacing:0.20em;text-transform:uppercase;color:${palette.ink_4};margin-bottom:8px">System Status</div>
+<div style="margin:6px 0;padding:0">
+  <div class="editorial-grotesk" style="font-family:'Inter',sans-serif;font-size:9px;font-weight:700;letter-spacing:0.20em;text-transform:uppercase;color:${palette.ink_4};margin-bottom:6px">System Status</div>
   <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;border-top:1px solid ${palette.rule_strong}">
     ${rowsHtml}
   </table>
@@ -737,24 +737,24 @@ function renderFeatureBlocks(state, surface, palette) {
 
 function renderBuilderStanding(stat, palette) {
   return `
-<div style="margin:18px 0 12px 0">
-  <div class="editorial-grotesk" style="font-family:'Inter',sans-serif;font-size:9px;font-weight:700;letter-spacing:0.20em;text-transform:uppercase;color:${palette.ink_4};margin-bottom:10px">Builder Standing</div>
-  <p style="margin:0 0 8px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:600;font-size:18px;line-height:1.35;color:${palette.ink}">${escapeHtml(stat.claim || '')}</p>
-  <p style="margin:0 0 8px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:14px;line-height:1.55;color:${palette.ink_2}">${escapeHtml(stat.context_for_mitchell || '')}</p>
-  <p style="margin:0 0 8px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:13px;line-height:1.5;color:${palette.ink_3}">${escapeHtml(stat.applies_to_position || '')}</p>
-  ${stat.source_url ? `<p style="margin:0;font-family:'Inter',sans-serif;font-size:11px"><a href="${escapeHtml(stat.source_url)}" style="color:${palette.accent};text-decoration:none;border-bottom:1px solid ${palette.rule}">${escapeHtml(prettyUrl(stat.source_url))}</a></p>` : ''}
+<div style="margin:8px 0 6px 0">
+  <div class="editorial-grotesk" style="font-family:'Inter',sans-serif;font-size:9px;font-weight:700;letter-spacing:0.20em;text-transform:uppercase;color:${palette.ink_4};margin-bottom:6px">Builder Standing</div>
+  <p style="margin:0 0 4px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:600;font-size:16px;line-height:1.3;color:${palette.ink}">${escapeHtml(stat.claim || '')}</p>
+  <p style="margin:0 0 4px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:13px;line-height:1.45;color:${palette.ink_2}">${escapeHtml(stat.context_for_mitchell || '')}</p>
+  <p style="margin:0 0 4px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:12px;line-height:1.4;color:${palette.ink_3}">${escapeHtml(stat.applies_to_position || '')}</p>
+  ${stat.source_url ? `<p style="margin:0;font-family:'Inter',sans-serif;font-size:10px"><a href="${escapeHtml(stat.source_url)}" style="color:${palette.accent};text-decoration:none;border-bottom:1px solid ${palette.rule}">${escapeHtml(prettyUrl(stat.source_url))}</a></p>` : ''}
 </div>`.trim();
 }
 
 function renderOnTheCounter(rec, palette) {
   return `
-<div style="margin:18px 0 12px 0">
-  <div class="editorial-grotesk" style="font-family:'Inter',sans-serif;font-size:9px;font-weight:700;letter-spacing:0.20em;text-transform:uppercase;color:${palette.ink_4};margin-bottom:10px">On the Counter &middot; Training</div>
-  <p style="margin:0 0 4px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:600;font-size:18px;line-height:1.3;color:${palette.ink}">${escapeHtml(rec.title || '')}</p>
-  ${rec.estimated_time_minutes ? `<p style="margin:0 0 8px 0;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;letter-spacing:0.10em;text-transform:uppercase;color:${palette.ink_4}">~${rec.estimated_time_minutes} min &middot; ${escapeHtml(rec.type || 'reading')}</p>` : ''}
-  <p style="margin:0 0 8px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:14px;line-height:1.55;color:${palette.ink_2}">${escapeHtml(rec.summary || '')}</p>
-  ${rec.pairs_with_mitchell_work ? `<p style="margin:0 0 8px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:13px;line-height:1.5;color:${palette.ink_3}">${escapeHtml(rec.pairs_with_mitchell_work)}</p>` : ''}
-  ${rec.url ? `<p style="margin:0;font-family:'Inter',sans-serif;font-size:11px"><a href="${escapeHtml(rec.url)}" style="color:${palette.accent};text-decoration:none;border-bottom:1px solid ${palette.rule};font-weight:700;letter-spacing:0.10em;text-transform:uppercase">Open &rarr;</a></p>` : ''}
+<div style="margin:8px 0 6px 0">
+  <div class="editorial-grotesk" style="font-family:'Inter',sans-serif;font-size:9px;font-weight:700;letter-spacing:0.20em;text-transform:uppercase;color:${palette.ink_4};margin-bottom:6px">On the Counter &middot; Training</div>
+  <p style="margin:0 0 2px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:600;font-size:16px;line-height:1.25;color:${palette.ink}">${escapeHtml(rec.title || '')}</p>
+  ${rec.estimated_time_minutes ? `<p style="margin:0 0 4px 0;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;letter-spacing:0.10em;text-transform:uppercase;color:${palette.ink_4}">~${rec.estimated_time_minutes} min &middot; ${escapeHtml(rec.type || 'reading')}</p>` : ''}
+  <p style="margin:0 0 4px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:13px;line-height:1.45;color:${palette.ink_2}">${escapeHtml(rec.summary || '')}</p>
+  ${rec.pairs_with_mitchell_work ? `<p style="margin:0 0 4px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:12px;line-height:1.4;color:${palette.ink_3}">${escapeHtml(rec.pairs_with_mitchell_work)}</p>` : ''}
+  ${rec.url ? `<p style="margin:0;font-family:'Inter',sans-serif;font-size:10px"><a href="${escapeHtml(rec.url)}" style="color:${palette.accent};text-decoration:none;border-bottom:1px solid ${palette.rule};font-weight:700;letter-spacing:0.10em;text-transform:uppercase">Open &rarr;</a></p>` : ''}
 </div>`.trim();
 }
 
@@ -766,21 +766,21 @@ function renderInThePnw(event, palette) {
     } catch { return event.date; }
   })();
   return `
-<div style="margin:18px 0 12px 0">
-  <div class="editorial-grotesk" style="font-family:'Inter',sans-serif;font-size:9px;font-weight:700;letter-spacing:0.20em;text-transform:uppercase;color:${palette.ink_4};margin-bottom:10px">In the PNW &middot; Networking</div>
-  <p style="margin:0 0 4px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:600;font-size:17px;line-height:1.3;color:${palette.ink}">${escapeHtml(event.name || '')}</p>
-  <p style="margin:0 0 8px 0;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;letter-spacing:0.10em;text-transform:uppercase;color:${palette.ink_4}">${escapeHtml(niceDate)} &middot; ${escapeHtml(event.venue || event.address || 'venue on event page')}</p>
-  ${event.fit_for_mitchell ? `<p style="margin:0 0 8px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:13px;line-height:1.5;color:${palette.ink_3}">${escapeHtml(event.fit_for_mitchell)}</p>` : ''}
-  ${event.rsvp_url ? `<p style="margin:0;font-family:'Inter',sans-serif;font-size:11px"><a href="${escapeHtml(event.rsvp_url)}" style="color:${palette.accent};text-decoration:none;border-bottom:1px solid ${palette.rule};font-weight:700;letter-spacing:0.10em;text-transform:uppercase">RSVP &rarr;</a></p>` : ''}
+<div style="margin:8px 0 6px 0">
+  <div class="editorial-grotesk" style="font-family:'Inter',sans-serif;font-size:9px;font-weight:700;letter-spacing:0.20em;text-transform:uppercase;color:${palette.ink_4};margin-bottom:6px">In the PNW &middot; Networking</div>
+  <p style="margin:0 0 2px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:600;font-size:15px;line-height:1.25;color:${palette.ink}">${escapeHtml(event.name || '')}</p>
+  <p style="margin:0 0 4px 0;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;letter-spacing:0.10em;text-transform:uppercase;color:${palette.ink_4}">${escapeHtml(niceDate)} &middot; ${escapeHtml(event.venue || event.address || 'venue on event page')}</p>
+  ${event.fit_for_mitchell ? `<p style="margin:0 0 4px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:12px;line-height:1.4;color:${palette.ink_3}">${escapeHtml(event.fit_for_mitchell)}</p>` : ''}
+  ${event.rsvp_url ? `<p style="margin:0;font-family:'Inter',sans-serif;font-size:10px"><a href="${escapeHtml(event.rsvp_url)}" style="color:${palette.accent};text-decoration:none;border-bottom:1px solid ${palette.rule};font-weight:700;letter-spacing:0.10em;text-transform:uppercase">RSVP &rarr;</a></p>` : ''}
 </div>`.trim();
 }
 
 function renderForecast(forecastText, surface, palette) {
   const label = surface === 'morning' ? "Today's Forecast" : 'Evening Reflection';
   return `
-<div style="margin:18px 0 12px 0;padding:14px 0 14px 18px;border-left:3px solid ${palette.accent}">
-  <div class="editorial-grotesk" style="font-family:'Inter',sans-serif;font-size:9px;font-weight:700;letter-spacing:0.20em;text-transform:uppercase;color:${palette.accent};margin-bottom:8px">${label}</div>
-  <p style="margin:0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:15px;line-height:1.6;color:${palette.ink_2}">${escapeHtml(forecastText)}</p>
+<div style="margin:8px 0 6px 0;padding:6px 0 6px 18px;border-left:3px solid ${palette.accent}">
+  <div class="editorial-grotesk" style="font-family:'Inter',sans-serif;font-size:9px;font-weight:700;letter-spacing:0.20em;text-transform:uppercase;color:${palette.accent};margin-bottom:4px">${label}</div>
+  <p style="margin:0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:14px;line-height:1.45;color:${palette.ink_2}">${escapeHtml(forecastText)}</p>
 </div>`.trim();
 }
 
@@ -792,7 +792,7 @@ function renderTomorrow(state, palette) {
     ? `Tomorrow opens with <span style="font-style:normal;color:${palette.ink}">${escapeHtml(pick.company || '')}</span> &mdash; ${(pick.score || 0).toFixed(2)} / 5 sits at the top of the table. The morning pack is ready.`
     : 'Tomorrow opens upstream — one portal scanned, one outreach drafted, one publishable note refined.';
   return `
-<div style="margin:18px 0 12px 0">
+<div style="margin:8px 0 6px 0">
   <div class="editorial-grotesk" style="font-family:'Inter',sans-serif;font-size:9px;font-weight:700;letter-spacing:0.20em;text-transform:uppercase;color:${palette.ink_4};margin-bottom:10px">Tomorrow</div>
   <p style="margin:0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:15px;line-height:1.55;color:${palette.ink_2}">${body}</p>
 </div>`.trim();
@@ -812,8 +812,8 @@ function renderQuote(quote, palette) {
   const source = quote.source || '';
   const year = quote.year ? `, ${quote.year}` : '';
   return `
-<div style="margin:20px 0 8px 0;text-align:center">
-  <p style="margin:0 0 14px 0;font-family:'Fraunces','GT Sectra',Georgia,serif;font-style:italic;font-weight:400;font-size:18px;line-height:1.55;color:${palette.ink_2};letter-spacing:-0.005em">&ldquo;${escapeHtml(quote.text || '')}&rdquo;</p>
+<div style="margin:10px 0 4px 0;text-align:center">
+  <p style="margin:0 0 8px 0;font-family:'Fraunces','GT Sectra',Georgia,serif;font-style:italic;font-weight:400;font-size:17px;line-height:1.5;color:${palette.ink_2};letter-spacing:-0.005em">&ldquo;${escapeHtml(quote.text || '')}&rdquo;</p>
   <p class="editorial-grotesk" style="margin:0;font-family:'Inter',sans-serif;font-size:9px;font-weight:700;letter-spacing:0.22em;text-transform:uppercase;color:${palette.ink_4}">&mdash; ${escapeHtml(author)}${source ? ` &middot; ${escapeHtml(source)}` : ''}${year}</p>
 </div>`.trim();
 }

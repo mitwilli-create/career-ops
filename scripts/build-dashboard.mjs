@@ -2927,6 +2927,57 @@ function formatTrackerNote(text) {
 // Pre-loaded from data/apply-packs/<slug>/polish-orchestrator-summary.json files.
 let _polishStatusMap = { byRowId: new Map(), bySlug: new Map(), all: [] };
 
+// 4.02 Part B (2026-05-22) — pasteable Claude Code interview prompt for the
+// gap-chip modal. Template-based seed-question routing by gap-title keywords.
+// No build-time LLM call (saves ~$0.20/build); the prompt itself instructs
+// Claude Code to read Mitchell's corpus + ask one question at a time.
+function _buildGapInterviewPrompt({ title, detail, severity, company, role, reportPath }) {
+  const t = String(title || '').toLowerCase();
+  let seed;
+  if (/(no direct|missing experience|never used|no exposure|no rep)/.test(t)) {
+    seed = "What's the closest adjacent experience you have to the product/system in this gap? Pick one: (a) a related product at the same company, (b) the same problem class at a different company, (c) external use as a power user, or (d) no obvious adjacent — let's draft a learn-fast plan.";
+  } else if (/(pr agency|press|reporter|media|publicist)/.test(t)) {
+    seed = "When you needed PR coverage at xGE / Google, who did you partner with — internal Comms, external PR firm, both? Was that you driving the brief or executing on someone else's?";
+  } else if (/(jd|unreadable|js-gated|js gated|scrape)/.test(t)) {
+    seed = "I'll re-scrape the JD via Playwright first. Want me to also pull the role from the company's career page if a search by title finds it? (yes / no)";
+  } else if (/(no.*relationship|named.*contact|cold|inbound|outreach)/.test(t)) {
+    seed = "Which of these scenarios best describes your reporter / outlet relationships? (a) regular off-the-record contact with named beat reporters, (b) one-off coverage from a handful of outlets, (c) inbound press from your viral work, (d) no direct relationships yet.";
+  } else if (/(stack|language|framework|python|typescript|react|node)/.test(t)) {
+    seed = "What's your honest rep with this stack — pick one: (a) shipped production code in it, (b) used it for a personal/learning project, (c) read about it but never wrote it, (d) zero exposure. We'll work the answer into the application based on what you say.";
+  } else if (/(years|tenure|seniority|level|principal|staff|junior|mid)/.test(t)) {
+    seed = "What's the longest single-track tenure you've held where you owned a similar scope of work? Give me the role + duration; I'll map it against the JD's level expectation and tell you whether to lead with the years or lead with the scope.";
+  } else {
+    seed = "Tell me one concrete example from your background that demonstrates the underlying skill behind this gap. Keep it to 1-2 sentences; I'll ask follow-ups based on what you share.";
+  }
+  const corpus = [
+    'cv.md',
+    'article-digest.md',
+    'data/applications.md',
+    reportPath ? `reports/${reportPath.replace(/^reports\//, '')}` : '',
+    'interview-prep/story-bank.md',
+  ].filter(Boolean).join(', ');
+  const detailClipped = String(detail || '').slice(0, 280);
+  return [
+    `Mitchell — I'm helping you address a specific gap in your application to ${company} for the ${role} role. The gap is:`,
+    '',
+    `  "${title}"`,
+    `  Severity: ${severity}`,
+    `  Detail: ${detailClipped}`,
+    '',
+    "I'm going to ask you 4–6 questions, one at a time. Each answer will inform the next question. After we're done, I'll write a 1-paragraph cover-letter narrative AND a 2-line impact-doc bullet you can drop into the apply pack.",
+    '',
+    "Constraints I'll enforce:",
+    `- I will read ${corpus} for adjacent evidence before asking`,
+    "- I will not fabricate any claim that isn't in your corpus",
+    "- Each question fits in a single sentence + ≤3 multiple-choice options OR an open-ended prompt",
+    "- I'll skip questions if the answer is already obvious from your corpus",
+    "- After your last answer, I'll show you the draft narrative + bullet and we can iterate",
+    '',
+    'Question 1 of ~5:',
+    seed,
+  ].join('\n');
+}
+
 function renderRow(r, idx) {
   const archetype = getReportArchetype(r.reportPath);
   const url = getReportUrl(r.reportPath);
@@ -3242,6 +3293,16 @@ function renderRow(r, idx) {
       const whyHtml = whyOk ? marked.parse(whyOk) : '';
       const gapKey = _slugifyGap(g.title);
       const gapDrillId = `${_rowDrillNum}:${gapKey}`;
+      // 4.02B (2026-05-22) — pasteable interview prompt for Claude Code.
+      // Template-based seed question selection (no LLM call at build time).
+      const interviewPrompt = _buildGapInterviewPrompt({
+        title: g.title,
+        detail: (g.detail || '').replace(/<[^>]+>/g, '').trim(),
+        severity: g.severity || 'medium',
+        company: r.company || 'this company',
+        role: r.role || 'this role',
+        reportPath: r.reportPath || '',
+      });
       return `<span class="gap-chip gap-chip-interactive drill-trigger"
         data-drill="gap:${htmlEscape(gapDrillId)}"
         onclick="window.drillIn('gap','${htmlEscape(gapDrillId)}',event);openGapModal(this);event.stopPropagation()"
@@ -3251,6 +3312,7 @@ function renderRow(r, idx) {
         data-detail="${htmlEscape(detailHtml)}"
         data-strategy="${htmlEscape(strategyHtml)}"
         data-why="${htmlEscape(whyHtml)}"
+        data-interview-prompt="${htmlEscape(interviewPrompt)}"
         title="Click for gap-closing strategy">⚠ ${htmlEscape(g.title)}</span>`;
     }).join('')}</div>` : ''}
     ${_honestGaps.length ? `<div class="dcard-honest-gaps" style="margin-top:${gaps.length ? '12' : '0'}px">
@@ -9840,6 +9902,52 @@ async function build() {
     overflow-x: auto; font-size: 12px; margin: 6px 0;
   }
   .gap-section-body pre code { background: none; padding: 0; }
+
+  /* 4.02 Part B (2026-05-22) — pasteable Claude Code interview prompt */
+  .gap-interview .gap-section-label {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px;
+  }
+  .gap-interview-copy {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-1);
+    border-radius: 4px;
+    padding: 3px 9px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+    cursor: pointer;
+    line-height: 1.4;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .gap-interview-copy:hover { background: var(--surface-2); border-color: var(--blue-fg-dark, #58a6ff); color: var(--blue-fg-dark, #58a6ff); }
+  .gap-interview-copy.copied { background: rgba(16,185,129,0.14); color: #10b981; border-color: rgba(16,185,129,0.32); }
+  .gap-interview-copy.copy-err { background: rgba(220,38,38,0.14); color: #dc2626; border-color: rgba(220,38,38,0.32); }
+  .gap-interview-details { padding: 0; }
+  .gap-interview-details summary {
+    padding: 8px 14px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--text-3);
+    user-select: none;
+  }
+  .gap-interview-details summary:hover { color: var(--text-1); }
+  .gap-interview-details[open] summary { border-bottom: 1px solid var(--border); }
+  .gap-interview-prompt {
+    margin: 0;
+    padding: 14px;
+    background: var(--surface-2);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--text-2);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-height: 50vh;
+    overflow-y: auto;
+  }
   .gap-section-body strong { color: var(--text); font-weight: 600; }
   .gap-section-body a { color: var(--blue-fg); }
   .gap-section.gap-ok { border-color: var(--green-border); }
@@ -25973,6 +26081,8 @@ function openGapModal(el) {
   const detail = el.dataset.detail || '';
   const strategy = el.dataset.strategy || '';
   const why = el.dataset.why || '';
+  // 4.02B (2026-05-22) — interview prompt for pasting into Claude Code.
+  const interviewPrompt = el.dataset.interviewPrompt || '';
 
   document.getElementById('gap-modal-title').textContent = title;
 
@@ -25999,11 +26109,35 @@ function openGapModal(el) {
     </div>\`);
   }
 
+  // 4.02B (2026-05-22) — pasteable Claude Code interview prompt section.
+  if (interviewPrompt) {
+    // ESC the prompt for HTML rendering inside <pre>. We use textContent in
+    // a moment to keep the actual copy-paste payload exact (no double-escape).
+    var promptEscaped = String(interviewPrompt)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    sections.push(\`<div class="gap-section gap-interview">
+      <div class="gap-section-label">Interview prompt for Claude Code
+        <button type="button" class="gap-interview-copy" onclick="window._copyGapInterviewPrompt(this)" title="Copy this prompt — paste it into a fresh Claude Code session to start a guided interview that closes this gap">📋 Copy</button>
+      </div>
+      <details class="gap-interview-details">
+        <summary>Show prompt</summary>
+        <pre class="gap-interview-prompt">\${promptEscaped}</pre>
+      </details>
+    </div>\`);
+  }
+
   if (!sections.length) {
     sections.push(\`<p class="gap-empty">No additional detail available for this gap.</p>\`);
   }
 
   document.getElementById('gap-modal-body').innerHTML = sections.join('');
+  // After innerHTML write, attach the raw (un-escaped) prompt string to the
+  // copy button so navigator.clipboard.writeText sends the exact payload.
+  if (interviewPrompt) {
+    var copyBtn = document.querySelector('#gap-modal-body .gap-interview-copy');
+    if (copyBtn) copyBtn._gapPromptText = interviewPrompt;
+  }
   const _gapBd = document.getElementById('gap-backdrop');
   _gapBd.classList.add('visible');
   _gapBd.setAttribute('aria-hidden', 'false');
@@ -26015,6 +26149,59 @@ function closeGapModal() {
   if (_gapBd && _gapBd._dpClose) _gapBd._dpClose();
   if (_gapBd) { _gapBd.classList.remove('visible'); _gapBd.setAttribute('aria-hidden', 'true'); }
 }
+
+// 4.02 Part B (2026-05-22) — copy the gap-interview prompt to clipboard.
+// The raw prompt string was attached to the button via _gapPromptText after
+// openGapModal's innerHTML write. Falls back to selecting the <pre> if
+// clipboard API is unavailable (older browsers / non-HTTPS).
+window._copyGapInterviewPrompt = function (btn) {
+  if (!btn) return;
+  var text = btn._gapPromptText || '';
+  if (!text) {
+    var pre = btn.closest('.gap-interview')?.querySelector('.gap-interview-prompt');
+    text = pre ? pre.textContent : '';
+  }
+  if (!text) return;
+  function flashOk() {
+    var prev = btn.textContent;
+    btn.textContent = '✓ Copied';
+    btn.classList.add('copied');
+    setTimeout(function () {
+      btn.textContent = prev;
+      btn.classList.remove('copied');
+    }, 1600);
+  }
+  function flashErr(msg) {
+    var prev = btn.textContent;
+    btn.textContent = '✗ ' + (msg || 'Failed');
+    btn.classList.add('copy-err');
+    setTimeout(function () {
+      btn.textContent = prev;
+      btn.classList.remove('copy-err');
+    }, 2400);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(flashOk).catch(function (e) {
+      flashErr(e && e.message ? e.message.slice(0, 40) : 'Failed');
+    });
+    return;
+  }
+  // Legacy fallback for non-HTTPS / older browsers.
+  try {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'absolute';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = document.execCommand('copy');
+    ta.remove();
+    if (ok) flashOk(); else flashErr('Copy blocked');
+  } catch (e) {
+    flashErr('No clipboard');
+  }
+};
 
 // ── Tier-legend modal ──────────────────────────────────────────
 const TIER_LEGEND = ${JSON.stringify(TIER_LEGEND)};

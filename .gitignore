@@ -293,3 +293,35 @@ data/system-maintenance-log-*.md
 
 # 2026-05-20 overnight DECISION_2 — apply-pack archive (mirrors apply-pack/ + data/apply-packs/ gitignores; contains personal apply-pack content)
 data/apply-pack-archive-2026-05-20/
+
+# 2026-05-21 hygiene sweep (Cluster G) — additional runtime state, dated
+# reports, and per-row caches that accumulated without explicit gitignore
+# entries. All regenerable on next run; all contain references to personal
+# pipeline state. Patterns prefer * over specific dates so future-day
+# variants are covered.
+batch/triage-advance-expired/
+data/archived-apply-packs-*/
+data/builder-log-2026-*.md
+data/builder-log-tagging-cache.json
+data/buttons-smoke-test-2026-*.md
+data/company-toxicity-cache/
+data/discard-log.json
+data/hang-postmortem-*.md
+data/intel-refresh-state.json
+data/metric-drift-state.json
+data/positioning-cache/
+data/refresh-master-state.json
+data/strategy-ceiling/
+data/system-review-findings-*.md
+data/integrity-state.json
+data/pipeline-ingress-state.json
+data/quarantine/
+data/tmp/
+# -prev calibration snapshots are seeded by scripts/integrity-check-nightly.mjs
+# on first run; drift detection compares current vs prev locally. Gitignored
+# because on fresh clone the integrity-check seeds from the tracked canonical
+# file (no false-positive drift on first nightly run after a checkout).
+data/*-calibration-prev.json
+# *.bak files anywhere — stale backups; never commit. Real backups live in
+# data/cv-archives/ (gitignored separately) or in git history itself.
+*.bak

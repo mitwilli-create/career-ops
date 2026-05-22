@@ -195,6 +195,55 @@ function loadEmailTemplates() {
   return out.length ? out : EMAIL_TEMPLATE_FALLBACKS;
 }
 
+// ── Cluster A7 — Today's Pipeline Activity panel data (2026-05-22) ──
+// Reads the three live state files produced by the launchd integrity-check,
+// pipeline-ingress-monitor, and background-sweep-daily jobs. The build
+// embeds whatever's on disk at build time; the runtime SSE refresh picks up
+// later changes via /api/pipeline-activity (no-op fallback if absent).
+function loadPipelineActivity() {
+  function tryRead(rel) {
+    try {
+      const fp = join(ROOT, rel);
+      if (!existsSync(fp)) return null;
+      const raw = readFileSync(fp, 'utf-8');
+      return JSON.parse(raw);
+    } catch (_) { return null; }
+  }
+  const integrity = tryRead('data/integrity-state.json');
+  const ingress   = tryRead('data/pipeline-ingress-state.json');
+  const sweep     = tryRead('data/background-sweep-state.json');  // may be absent on day 1
+  // Compute a single epoch ms for "newest data point" so the runtime UI
+  // can show "Updated X min ago" without re-parsing the embedded JSON.
+  function asMs(iso) {
+    if (!iso) return 0;
+    const t = Date.parse(iso);
+    return Number.isFinite(t) ? t : 0;
+  }
+  const newestMs = Math.max(
+    asMs(integrity && integrity.generated_at),
+    asMs(ingress && ingress.generated_at),
+    asMs(sweep && sweep.generated_at),
+  );
+  return {
+    integrity: integrity ? {
+      overall_status: integrity.overall_status || 'unknown',
+      generated_at: integrity.generated_at || null,
+      summary: integrity.summary || null,
+      checks_count: integrity.checks ? Object.keys(integrity.checks).length : 0,
+    } : null,
+    ingress: ingress ? {
+      generated_at: ingress.generated_at || null,
+      summary: ingress.summary || null,
+      scanner_count: Array.isArray(ingress.scanners) ? ingress.scanners.length : 0,
+    } : null,
+    sweep: sweep ? {
+      generated_at: sweep.generated_at || null,
+      summary: sweep.summary || null,
+    } : null,
+    newest_ms: newestMs,
+  };
+}
+
 // ── Data extraction ───────────────────────────────────────────────
 
 function parseApplications() {
@@ -3618,6 +3667,10 @@ async function build() {
   }
 
   const apps = parseApplications();
+  // Cluster A7 (2026-05-22): pre-load pipeline activity state for the
+  // top-of-dashboard health strip. Build-time snapshot; SSE refreshes
+  // the strip at runtime via the existing batch-live channel.
+  const pipelineActivity = loadPipelineActivity();
   const today = new Date().toISOString().slice(0, 10);
   const generated = new Date().toISOString();
   const generatedShort = new Date(generated).toLocaleTimeString('en-US', {
@@ -12303,6 +12356,15 @@ async function build() {
     <button class="overnight-dismiss" onclick="this.closest('#overnight-card').hidden=true;localStorage.setItem('overnight-dismissed',Date.now())" aria-label="Dismiss overnight summary">✕</button>
   </div>
 
+  <!-- Cluster A7 (2026-05-22) — Today's Pipeline Activity strip.
+       Embeds the build-time snapshot of integrity / scanner / sweep state.
+       Auto-refreshes via the existing batch-live SSE channel (handler at
+       _pipelineActivityRefresh in the inline script below). -->
+  <div id="pipeline-activity" class="pipeline-activity" role="region" aria-label="Today's pipeline activity">
+    <div class="pa-chips" id="pa-chips"></div>
+    <div class="pa-stamp" id="pa-stamp" title="Time since the newest source state file was generated">—</div>
+  </div>
+
   <!-- Wave C-A Item 7 — Top of your pipe right now.
        Auto-hides when empty or all items dismissed.
        data-item-num used by JS for per-row dismiss + drill-in. -->
@@ -12679,6 +12741,13 @@ async function build() {
   })()};
   </script>`;
   })() : ''}
+
+  <!-- Cluster A7 (2026-05-22): Today's Pipeline Activity panel data.
+       Independent of the builderLog conditional above so the strip data is
+       always available, even when builderLog.latest is empty (first run). -->
+  <script>
+  window.__PIPELINE_ACTIVITY__ = ${JSON.stringify(pipelineActivity)};
+  </script>
 
   ${applyNow.length > 0 ? `
   <div class="panel panel-strong" id="apply-now-section">
@@ -23678,6 +23747,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Real-time freshness + health chips
   refreshHealthChip();
   startFreshnessTicker();
+  // Cluster A7 (2026-05-22): render the Today's Pipeline Activity strip
+  // from the build-time snapshot embedded as window.__PIPELINE_ACTIVITY__.
+  try { _renderPipelineActivity(); _startPipelineActivityTicker(); } catch (_) {}
 });
 document.addEventListener('careerops:status-changed', () => { refreshPipelineBadges(); });
 // Re-check for active jobs every 30s so a user sitting on the dashboard
@@ -23739,6 +23811,94 @@ function updateFreshnessChip() {
 }
 function startFreshnessTicker() {
   setInterval(updateFreshnessChip, 1000);
+}
+
+// Cluster A7 (2026-05-22): Today's Pipeline Activity strip renderer.
+// Reads window.__PIPELINE_ACTIVITY__ (build-time snapshot) plus accepts a
+// runtime-fresh object (passed in from /api/pipeline-activity when the
+// endpoint exists). Renders a compact horizontal strip of chips:
+// integrity status / scanner health / overnight sweep / "Updated X ago".
+function _renderPipelineActivity(data) {
+  var chips = document.getElementById('pa-chips');
+  var stamp = document.getElementById('pa-stamp');
+  var host  = document.getElementById('pipeline-activity');
+  if (!chips || !stamp || !host) return;
+  data = data || window.__PIPELINE_ACTIVITY__ || {};
+
+  function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function _chip(cls, label, tip) {
+    return '<span class="pa-chip ' + cls + '" title="' + _esc(tip || label) + '">' + _esc(label) + '</span>';
+  }
+
+  var html = '';
+  // Integrity chip
+  if (data.integrity) {
+    var status = String(data.integrity.overall_status || 'unknown');
+    var sum = data.integrity.summary || {};
+    var bad = (sum.silent_reverts || 0) + (sum.calibration_drift || 0) + (sum.schemas_malformed || 0);
+    var cls = (status === 'healthy' && bad === 0) ? 'pa-chip-ok'
+      : (status === 'healthy') ? 'pa-chip-warn'
+      : 'pa-chip-bad';
+    var label = status === 'healthy' && bad === 0
+      ? '✓ Integrity (' + (data.integrity.checks_count || 0) + ' checks)'
+      : 'Integrity: ' + status + (bad ? ' · ' + bad + ' issue' + (bad === 1 ? '' : 's') : '');
+    var tip = 'data/integrity-state.json · ' + (data.integrity.generated_at || 'no timestamp');
+    html += _chip(cls, label, tip);
+  } else {
+    html += _chip('pa-chip-muted', 'Integrity: —', 'data/integrity-state.json not generated yet');
+  }
+  // Scanner chip
+  if (data.ingress && data.ingress.summary) {
+    var s = data.ingress.summary;
+    var g = s.green || 0, y = s.yellow || 0, r = s.red || 0;
+    var scls = r > 0 ? 'pa-chip-bad' : (y > 0 ? 'pa-chip-warn' : 'pa-chip-ok');
+    var slabel = 'Scanners ' + g + 'g · ' + y + 'y · ' + r + 'r';
+    var stip = 'data/pipeline-ingress-state.json · ' + (data.ingress.generated_at || 'no timestamp') + ' · ' + (data.ingress.scanner_count || 0) + ' scanners total';
+    html += _chip(scls, slabel, stip);
+  } else {
+    html += _chip('pa-chip-muted', 'Scanners: —', 'data/pipeline-ingress-state.json not generated yet');
+  }
+  // Overnight sweep chip
+  if (data.sweep && data.sweep.summary) {
+    var sw = data.sweep.summary;
+    var checked = sw.checked || sw.items_checked || sw.rows_checked || 0;
+    var swl = 'Overnight sweep: ' + checked + ' checked';
+    if (sw.flagged != null) swl += ' · ' + sw.flagged + ' flagged';
+    html += _chip('pa-chip-ok', swl, 'data/background-sweep-state.json · ' + (data.sweep.generated_at || 'no timestamp'));
+  } else {
+    html += _chip('pa-chip-muted', 'Overnight sweep: —', 'data/background-sweep-state.json absent — first sweep runs at 03:00 PT');
+  }
+  chips.innerHTML = html;
+
+  // "Updated X min ago" stamp based on the newest source-file timestamp.
+  var newest = (data.newest_ms || 0);
+  if (newest > 0) {
+    var ageSec = Math.max(0, Math.floor((Date.now() - newest) / 1000));
+    var ageLbl;
+    if (ageSec < 60) ageLbl = ageSec + 's ago';
+    else if (ageSec < 3600) ageLbl = Math.floor(ageSec / 60) + 'm ago';
+    else ageLbl = Math.floor(ageSec / 3600) + 'h ago';
+    stamp.textContent = 'Updated ' + ageLbl;
+    // Older than 12h = stale visually
+    stamp.classList.toggle('pa-stamp-stale', ageSec > 12 * 3600);
+  } else {
+    stamp.textContent = '—';
+  }
+}
+// Ticker keeps the "Updated X ago" text current without re-fetching.
+function _startPipelineActivityTicker() {
+  setInterval(function () {
+    var data = window.__PIPELINE_ACTIVITY__ || {};
+    if (!data.newest_ms) return;
+    var stamp = document.getElementById('pa-stamp');
+    if (!stamp) return;
+    var ageSec = Math.max(0, Math.floor((Date.now() - data.newest_ms) / 1000));
+    var ageLbl;
+    if (ageSec < 60) ageLbl = ageSec + 's ago';
+    else if (ageSec < 3600) ageLbl = Math.floor(ageSec / 60) + 'm ago';
+    else ageLbl = Math.floor(ageSec / 3600) + 'h ago';
+    stamp.textContent = 'Updated ' + ageLbl;
+  }, 30000);
 }
 
 // Health chip — reads /api/pipeline/health-status (written every 5 min by
@@ -29629,6 +29789,38 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   #right-rail-backdrop.visible {
     display: block;
     background: rgba(0,0,0,0.45); /* --overlay-dim */
+  }
+
+  /* ── Cluster A7 (2026-05-22): Today's Pipeline Activity strip ────── */
+  .pipeline-activity {
+    margin: 0 0 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 11.5px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  body.dark .pipeline-activity { background: var(--surface-2, #11131a); }
+  .pa-chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .pa-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 9px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
+    border: 1px solid transparent; line-height: 1.4;
+  }
+  .pa-chip-ok    { background: rgba(16,185,129,0.14); color: #10b981; border-color: rgba(16,185,129,0.32); }
+  .pa-chip-warn  { background: rgba(245,158,11,0.14); color: #f59e0b; border-color: rgba(245,158,11,0.32); }
+  .pa-chip-bad   { background: rgba(220,38,38,0.14);  color: #dc2626; border-color: rgba(220,38,38,0.32); }
+  .pa-chip-muted { background: rgba(148,163,184,0.10); color: var(--text-4); border-color: rgba(148,163,184,0.18); }
+  .pa-stamp { font-size: 10.5px; color: var(--text-4); white-space: nowrap; }
+  .pa-stamp.pa-stamp-stale { color: var(--amber-fg, #f59e0b); }
+  @media (max-width: 720px) {
+    .pipeline-activity { flex-direction: column; align-items: flex-start; }
   }
 
   /* ── Wave C-A Item 7: Top-of-pipe section ─────────────────────── */

@@ -3376,7 +3376,6 @@ function renderRow(r, idx) {
 
           // Compute editing priority from the sidecar (mirrors dashboard-server.mjs computeEditingPriority)
           const band = sidecar.band || null;
-          if (!band || band === 'CLEAR') return '';
           const sentences = Array.isArray(sidecar.sentences) ? sidecar.sentences : [];
           const top_flagged = sentences
             .filter(s => typeof s?.generated_prob === 'number')
@@ -3384,24 +3383,66 @@ function renderRow(r, idx) {
             .sort((a, b) => b.prob - a.prob)
             .slice(0, 3);
 
-          if (top_flagged.length === 0) return '';
-
           const gz  = sidecar.gptzero_signal_quality     || 'UNCALIBRATED';
           const orig = sidecar.originality_signal_quality || 'UNCALIBRATED';
           const pang = sidecar.pangram_signal_quality     || 'UNCALIBRATED';
           const useless = gz === 'USELESS' && orig === 'USELESS' && pang === 'USELESS';
 
-          // When ALL detectors are USELESS, show the advisory note explaining this is likely a false positive
-          const advisoryNote = useless
-            ? ' (detectors USELESS — likely false positive on authentic prose)'
-            : '';
+          // Closure I (2026-05-22): plain-language translation of band labels +
+          // light-green CLEAR-band banner so the user always sees an AI-
+          // detection status (even when it's a clean pass). The previous
+          // behavior returned '' silently for CLEAR — that hid the system's
+          // good news from the user. Now we surface a small green banner.
+          const bandPlainMap = {
+            CRIT:  'Critical — flagged sections need review before submitting',
+            HIGH:  'High concern — review the highlighted sentences',
+            MED:   'Moderate — optional review recommended',
+            CLEAR: 'Passes AI-detection check',
+          };
+          const bandPlain = bandPlainMap[band] || ('Band: ' + (band || 'unknown'));
 
-          const colorMap = { CRIT: '#991b1b', HIGH: '#92400e', MED: '#1e40af' };
-          const bgMap    = { CRIT: '#fee2e2', HIGH: '#fde68a', MED: '#dbeafe' };
-          const borderMap = { CRIT: '#fca5a5', HIGH: '#fcd34d', MED: '#93c5fd' };
-          const epColor  = colorMap[band] || '#6b7280';
-          const epBg     = bgMap[band]    || '#f3f4f6';
+          // CLEAR band → light-green banner (high-contrast green-700 text on
+          // light-green-50 bg, WCAG AA compliant). No sentences listed.
+          if (!band || band === 'CLEAR') {
+            return `<div style="margin-bottom:8px;padding:8px 10px;border-radius:6px;border:1px solid #86efac;background:#f0fdf4;color:#166534;font-size:12px;line-height:1.45">
+              <div style="font-weight:700">✓ ${bandPlain}</div>
+            </div>`;
+          }
+
+          if (top_flagged.length === 0) return '';
+
+          // Closure I: replace dark-yellow on light-yellow with high-contrast
+          // pairings. CRIT keeps red (semantic). HIGH switches to amber-700
+          // on light-amber bg (WCAG AA at 4.5:1 contrast). MED keeps blue.
+          // ALL band states get black-on-near-white as the readable fallback.
+          const colorMap  = { CRIT: '#7f1d1d', HIGH: '#7c2d12', MED: '#1e3a8a' };
+          const bgMap     = { CRIT: '#fee2e2', HIGH: '#fef3c7', MED: '#dbeafe' };
+          const borderMap = { CRIT: '#fca5a5', HIGH: '#fbbf24', MED: '#93c5fd' };
+          const epColor  = colorMap[band] || '#1f2937';
+          const epBg     = bgMap[band]    || '#f9fafb';
           const epBorder = borderMap[band] || '#d1d5db';
+
+          // Plain-language signal-quality footnote (replaces the cryptic
+          // "USELESS / GOOD / POOR" labels).
+          function _sqPlain(sq) {
+            const map = {
+              GOOD:         'Passes AI-detection check',
+              POOR:         'Flagged — review before submitting',
+              WEAK:         'Weak signal — review recommended',
+              USELESS:      'Detector not yet calibrated for this voice profile',
+              UNCALIBRATED: 'Detector not yet calibrated for this voice profile',
+            };
+            return map[sq] || sq;
+          }
+          const advisoryNote = useless
+            ? ' (detectors not yet calibrated for your voice — likely false positive on authentic prose)'
+            : '';
+          // Quality footer: which detectors are calibrated vs not.
+          const sqFooter = '<div style="margin-top:6px;font-size:10.5px;opacity:0.75">'
+            + 'Detector status: GPTZero ' + _sqPlain(gz)
+            + ' · Originality ' + _sqPlain(orig)
+            + ' · Pangram ' + _sqPlain(pang)
+            + '</div>';
 
           const sentenceHtml = top_flagged.map(s =>
             `<div style="margin-top:4px;padding:4px 8px;border-radius:4px;background:rgba(0,0,0,0.04);font-size:11px;font-style:italic;color:inherit">
@@ -3411,10 +3452,11 @@ function renderRow(r, idx) {
 
           return `<div style="margin-bottom:8px;padding:8px 10px;border-radius:6px;border:1px solid ${epBorder};background:${epBg};color:${epColor};font-size:12px;line-height:1.45">
             <div style="font-weight:700;margin-bottom:4px">
-              ✏️ ${top_flagged.length} sentence${top_flagged.length !== 1 ? 's' : ''} look AI-y (band: ${band})${advisoryNote}
-              — <em style="font-weight:400">want to rewrite?</em>
+              ✏️ ${top_flagged.length} sentence${top_flagged.length !== 1 ? 's' : ''} flagged for AI-detection review${advisoryNote}
             </div>
+            <div style="font-size:11.5px;margin-bottom:6px;opacity:0.9">${bandPlain} — <em style="font-weight:400">click to rewrite</em></div>
             ${sentenceHtml}
+            ${sqFooter}
           </div>`;
         } catch (_epErr) { return ''; /* never break drawer on editing priority error */ }
       })()}
@@ -18752,7 +18794,23 @@ function _tpRenderEditingPriority(ep, stageId) {
   wrap.style.color = color;
   var head = document.createElement('div');
   head.style.fontWeight = '600';
-  head.textContent = '[' + stageId + '] Editing Priority: ' + ep.priority + ' · band ' + (ep.band || 'n/a') + ' · ' + (ep.flagged_sentence_count || 0) + ' flagged';
+  // Closure I (2026-05-22): plain-language head text. Translate priority +
+  // band labels so a casual reader sees what the system is saying without
+  // needing to know the schema.
+  var _epPriorityPlain = ({
+    ACTION:   'Action required',
+    ADVISORY: 'Advisory only',
+    REVIEW:   'Review recommended',
+    NONE:     'No issues',
+  })[ep.priority] || ep.priority;
+  var _epBandPlain = ({
+    CRIT:  'Critical band',
+    HIGH:  'High band',
+    MED:   'Moderate band',
+    CLEAR: 'Clear band',
+  })[ep.band] || (ep.band || 'unknown band');
+  var nFlaggedH = ep.flagged_sentence_count || 0;
+  head.textContent = '[' + stageId + '] ' + _epPriorityPlain + ' · ' + _epBandPlain + ' · ' + nFlaggedH + ' sentence' + (nFlaggedH === 1 ? '' : 's') + ' flagged for review';
   wrap.appendChild(head);
   if (ep.advisory_note) {
     var note = document.createElement('div');
@@ -18911,19 +18969,29 @@ async function tonightPickCreateMaterials() {
         _tpStopStageTimer(stageId, 'failed');
         stageStates[stageId] = 'failed';
         _tpRenderStages(stageStates);
-        var detMsg = 'AI-detection gate BLOCKING for ' + stageId + ' (' + (ep && ep.band || 'CRIT') + ' band, ' + (ep && ep.flagged_sentence_count || '?') + ' flagged sentences).';
-        if (data.gpt_zero_score) detMsg += ' GPTZero: ' + data.gpt_zero_score + '%.';
-        if (data.originality_score) detMsg += ' Originality: ' + data.originality_score + '%.';
+        // Closure I (2026-05-22): plain-language translation of the
+        // ai-detection-blocking failure. Band labels in plain English.
+        var bandLabelMap = {
+          CRIT: 'Critical — review highlighted sections before submitting',
+          HIGH: 'High concern — review recommended',
+          MED:  'Moderate — optional review',
+        };
+        var bandLabel = bandLabelMap[(ep && ep.band) || 'CRIT'] || 'Flagged';
+        var nFlagged = (ep && ep.flagged_sentence_count) || 0;
+        var detMsg = nFlagged + ' sentence' + (nFlagged === 1 ? '' : 's') + ' flagged as potentially AI-written for ' + stageId + '. ' + bandLabel + '.';
+        if (data.gpt_zero_score) detMsg += ' GPTZero score: ' + data.gpt_zero_score + '%.';
+        if (data.originality_score) detMsg += ' Originality score: ' + data.originality_score + '%.';
         if (data.ai_detection_retry_status) detMsg += ' Retry: ' + data.ai_detection_retry_status + '.';
         _tpSetFailedStageDetail(stageId, detMsg);
         _tpSetFooterRetry(stageId, rowNum, 'Regenerate with stricter constraints');
         failedStage = stageId;
         break;
       } else if (data.ai_detection_failed && ep && ep.priority === 'ADVISORY') {
-        // ADVISORY: signal quality USELESS — surface a non-blocking notice and
-        // continue the build. The Editing Priority callout in the drawer shows
-        // top flagged sentences for optional human review.
-        _tpSetMsg('AI-detection ADVISORY (' + (ep.band || '?') + ' band, ' + (ep.flagged_sentence_count || 0) + ' flagged) — detectors calibrated USELESS vs Mitchell\\'s voice; not blocking.');
+        // ADVISORY: signal quality is not calibrated for the user's voice yet,
+        // so the high score is a known false positive. Surface as non-blocking
+        // advisory and continue the build.
+        var advN = (ep.flagged_sentence_count || 0);
+        _tpSetMsg(advN + ' sentence' + (advN === 1 ? '' : 's') + ' flagged for AI-detection review (advisory only — detector not yet calibrated for your voice profile). Build continues.');
         // Continue to the "stage done" branch below.
       }
       // DELTA P1 — Editing Priority callout (renders even when not failing,

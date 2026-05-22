@@ -3460,10 +3460,11 @@ function renderRow(r, idx) {
           </div>`;
         } catch (_epErr) { return ''; /* never break drawer on editing priority error */ }
       })()}
-      <div class="drawer-slash-cmds" style="display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);flex-wrap:wrap">
+      <div class="drawer-slash-cmds" style="display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
         <!-- refresh-master Phase 3 deliverable 6: ↻ Deep refresh CTA. Fires
-             full council-7 Layer-3 research. Confirm modal shows ~$25-$50 cost. -->
-        <button type="button" class="dcard-btn" style="background:linear-gradient(180deg,#1f2a44,#162035);border-color:#3b4f7a;color:#dbe4ff" onclick="invokeDeepRefresh(${htmlEscape(String(r.num||''))}, this);event.stopPropagation()" title="Phase 3 Layer-3 deep research: 7-model council, $25–$50 per fire. Confirm modal will appear.">↻ Deep refresh</button>
+             full council-7 Layer-3 research. Confirm modal shows ~$25-$50 cost.
+             Closure 3.16 (2026-05-22): full-width horizontal bar per spec. -->
+        <button type="button" class="dcard-btn" style="background:linear-gradient(180deg,#1f2a44,#162035);border-color:#3b4f7a;color:#dbe4ff;width:100%;display:block;padding:8px 14px;font-weight:600" onclick="invokeDeepRefresh(${htmlEscape(String(r.num||''))}, this);event.stopPropagation()" title="Phase 3 Layer-3 deep research: 7-model council, $25–$50 per fire. Confirm modal will appear.">↻ Deep refresh — re-run liveness + JD scrape + HM research + corpus reindex + rebuild</button>
       </div>
     </div>
   </td>

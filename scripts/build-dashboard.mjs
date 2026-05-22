@@ -19631,9 +19631,14 @@ function _hmPersonCard(p) {
     + (a.url ? '<a href="' + _hmEsc(a.url) + '" target="_blank" rel="noopener">' + _hmEsc(a.platform || 'post') + '</a>' : _hmEsc(a.platform || ''))
     + ' — ' + _hmEsc(a.summary || '') + '</li>'
   ).join('');
+  // 4.09 (2026-05-22) — name linkifies via shared helper. Falls through to
+  // _hmEsc if helper isn't loaded yet (defensive; safe at runtime).
+  const nameHtml = (typeof window._personLinkify === 'function')
+    ? window._personLinkify(p.name, { linkedinUrl: p.linkedin_url })
+    : _hmEsc(p.name);
   return '<div class="hm-person">'
     + '<div class="hm-person-head">'
-    +   '<div class="hm-person-name">' + _hmEsc(p.name) + '</div>'
+    +   '<div class="hm-person-name">' + nameHtml + '</div>'
     +   _hmConfChip(p.confidence)
     +   (p.provider_consensus ? '<span class="hm-consensus" title="Provider consensus">' + _hmEsc(p.provider_consensus) + '</span>' : '')
     + '</div>'
@@ -20039,8 +20044,14 @@ function _drawerRenderIntelChips(data, mountEl) {
       return '<div class="intel-chip-pop"><div class="pop-empty">No HM intel yet. ' + _esc(m.reason || '') + '</div></div>';
     }
     const connCls = (m.connection_level || 'LOW').toLowerCase();
+    // 4.09 (2026-05-22) — header name + other_hms entries use shared helper.
+    const hmNameHtml = m.hm_name
+      ? ((typeof window._personLinkify === 'function')
+          ? window._personLinkify(m.hm_name, { linkedinUrl: m.linkedin_url })
+          : _esc(m.hm_name))
+      : '';
     let h = '<div class="intel-chip-pop">';
-    h +=   '<div class="pop-header">HM Visibility' + (m.hm_name ? (' - ' + _esc(m.hm_name)) : '') + '</div>';
+    h +=   '<div class="pop-header">HM Visibility' + (hmNameHtml ? (' - ' + hmNameHtml) : '') + '</div>';
     if (m.hm_title)        h += '<div class="pop-row"><span>Role</span><span>' + _esc(m.hm_title) + '</span></div>';
     if (m.linkedin_url)    h += '<div class="pop-row"><span>LinkedIn</span><span><a class="pop-link" href="' + _esc(m.linkedin_url) + '" target="_blank" rel="noopener">profile</a></span></div>';
     h +=   '<div class="pop-row"><span>Your connection</span><span class="pop-badge ' + connCls + '">' + _esc(m.connection_level || 'LOW') + '</span></div>';
@@ -20061,7 +20072,10 @@ function _drawerRenderIntelChips(data, mountEl) {
     if (Array.isArray(m.other_hms) && m.other_hms.length) {
       h += '<div class="pop-label" style="margin-top:8px">Other contacts</div><ul class="pop-list">';
       h += m.other_hms.map(function (o) {
-        return '<li>' + _esc(o.name || '') + (o.title ? (' — ' + _esc(o.title)) : '') + (o.linkedin_url ? (' <a class="pop-link" href="' + _esc(o.linkedin_url) + '" target="_blank" rel="noopener">[LinkedIn]</a>') : '') + '</li>';
+        var otherName = (typeof window._personLinkify === 'function')
+          ? window._personLinkify(o.name || '', { linkedinUrl: o.linkedin_url })
+          : _esc(o.name || '');
+        return '<li>' + otherName + (o.title ? (' — ' + _esc(o.title)) : '') + '</li>';
       }).join('');
       h += '</ul>';
     }
@@ -26458,18 +26472,24 @@ function _renderPillPopover(d) {
           + (p && p.rationale ? esc(p.rationale.slice(0, 200)) : 'manual LinkedIn search recommended')
           + '</div>';
       }
-      let linkedin;
+      // 4.09 (2026-05-22) — name uses shared linkify (LinkedIn or directory).
+      // For linkedin_kind === 'search' (synthetic search-URL), suppress the
+      // LinkedIn handoff in the helper and surface the search link separately
+      // so the user knows it's a query, not a profile.
+      const usingSearchUrl = p.linkedin_kind === 'search';
+      const personLink = (typeof window !== 'undefined' && typeof window._personLinkify === 'function')
+        ? window._personLinkify(p.name, { linkedinUrl: usingSearchUrl ? '' : p.linkedin_url })
+        : esc(p.name);
+      let suffix;
       if (!p.linkedin_url || p.linkedin_url === 'unknown') {
-        linkedin = esc(p.name) + ' <span class="pill-popover-meta-inline">(LinkedIn unknown)</span>';
-      } else if (p.linkedin_kind === 'search') {
-        // Synthetic URL replaced with a real LinkedIn people-search query.
-        linkedin = esc(p.name) + ' '
-          + '<a href="' + esc(p.linkedin_url) + '" target="_blank" rel="noopener" class="pill-popover-linkedin-link">→ Search LinkedIn</a>';
+        suffix = ' <span class="pill-popover-meta-inline">(LinkedIn unknown)</span>';
+      } else if (usingSearchUrl) {
+        suffix = ' <a href="' + esc(p.linkedin_url) + '" target="_blank" rel="noopener" class="pill-popover-linkedin-link">→ Search LinkedIn</a>';
       } else {
-        linkedin = '<a href="' + esc(p.linkedin_url) + '" target="_blank" rel="noopener" class="pill-popover-linkedin-link">' + esc(p.name) + ' → LinkedIn</a>';
+        suffix = '';
       }
       return '<div class="pill-popover-section-label">' + esc(label) + '</div>'
-        + '<div class="pill-popover-body">' + linkedin + '</div>'
+        + '<div class="pill-popover-body">' + personLink + suffix + '</div>'
         + (p.rationale ? '<div class="pill-popover-meta-inline">' + esc(p.rationale) + '</div>' : '');
     };
     return '<div class="pill-popover-kind">People · ' + esc(d.company || '') + '</div>'
@@ -26487,6 +26507,102 @@ function _renderPillPopover(d) {
 // Network block — Mitchell's 1st-degree LinkedIn contacts at this company
 // (from data/linkedin/Connections.csv) and 2nd-degree (from a Chrome-scrape
 // pass against linkedin.com/company/{slug}/people?facetNetwork=S).
+
+// ── 4.09 (2026-05-22) — shared person-linkify helpers ─────────────────────
+// Extracted from _renderNetworkBlock's inline closures into window-scope so
+// that HM intel (_hmPersonCard, _renderHmPop), social corroboration, and the
+// pill-popover personBlock can all linkify person names consistently. The
+// resolution + enrichment-queue badge behavior is preserved exactly.
+window._personResolveDirectoryId = function (displayName) {
+  if (!displayName) return '';
+  try {
+    var norm = String(displayName).toLowerCase().trim().replace(/\s+/g, ' ');
+    var directory = (typeof window !== 'undefined' && Array.isArray(window._CONTACTS_DATA)) ? window._CONTACTS_DATA : [];
+    for (var i = 0; i < directory.length; i++) {
+      var dc = directory[i];
+      if (!dc || !dc.name) continue;
+      var dcNorm = String(dc.name).toLowerCase().trim().replace(/\s+/g, ' ');
+      if (dcNorm === norm) return dc.id || '';
+    }
+  } catch (_) { /* ignore */ }
+  return '';
+};
+window._personIsQueuedForEnrichment = function (internalId) {
+  if (!internalId) return false;
+  try {
+    var q = (typeof window !== 'undefined' && Array.isArray(window._ENRICH_QUEUE)) ? window._ENRICH_QUEUE : null;
+    return !!(q && q.indexOf(internalId) >= 0);
+  } catch (_) { return false; }
+};
+// Returns an HTML link for a person name. Resolves against the contacts
+// directory + enrichment queue. Options:
+//   linkedinUrl   — preferred external link target
+//   skipQueuedBadge — omit the 📋 queued enrichment indicator
+//   trailingMark  — override the link suffix (default: ↗ for linkedin, → for internal)
+window._personLinkify = function (name, options) {
+  options = options || {};
+  if (!name) return '';
+  var ESC = function (s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  };
+  var internalId = window._personResolveDirectoryId(name);
+  var url = options.linkedinUrl || '';
+  var validLinkedin = url && url !== 'unknown' && url !== 'no public signal' && url !== 'none';
+  var mark, link;
+  if (validLinkedin) {
+    mark = options.trailingMark || ' ↗';
+    link = '<a href="' + ESC(url) + '" target="_blank" rel="noopener" class="contact-link contact-link-linkedin" title="View on LinkedIn">' + ESC(name) + mark + '</a>';
+  } else if (internalId) {
+    mark = options.trailingMark || ' →';
+    link = '<a href="javascript:void(0)" class="contact-link contact-link-internal" data-contact-id="' + ESC(internalId) + '" onclick="if(typeof window.openContactsDirectoryModal===\\'function\\'){window.openContactsDirectoryModal();setTimeout(function(){if(typeof window._focusContactById===\\'function\\')window._focusContactById(\\'' + ESC(internalId) + '\\');},120)};event.stopPropagation()" title="View in contacts directory">' + ESC(name) + mark + '</a>';
+  } else {
+    link = ESC(name);
+  }
+  if (options.skipQueuedBadge) return link;
+  var queued = window._personIsQueuedForEnrichment(internalId);
+  if (queued) {
+    link += ' <span class="enrich-queued-badge" title="Queued for enrichment refresh — fresh data lands on the next refresh-master tick (within hours)">📋 queued</span>';
+  }
+  return link;
+};
+// Post-process already-escaped HTML to linkify any directory-known person
+// name found in the prose. Used for social-corroboration fields where the
+// name is embedded mid-sentence ("Reach out to Pedram Navid on LinkedIn").
+// Skips names containing apostrophes/quotes that get HTML-escaped (rare).
+window._personLinkifyProse = function (escapedHtml) {
+  if (!escapedHtml || typeof escapedHtml !== 'string') return escapedHtml || '';
+  try {
+    var directory = (typeof window !== 'undefined' && Array.isArray(window._CONTACTS_DATA)) ? window._CONTACTS_DATA : [];
+    if (!directory.length) return escapedHtml;
+    var names = [];
+    for (var i = 0; i < directory.length; i++) {
+      var c = directory[i];
+      if (!c || !c.name || !c.id) continue;
+      if (c.name.indexOf(' ') <= 0) continue;
+      if (/[<>"'&]/.test(c.name)) continue;
+      names.push({ name: c.name, id: c.id });
+    }
+    names.sort(function (a, b) { return b.name.length - a.name.length; });
+    var result = escapedHtml;
+    for (var k = 0; k < names.length; k++) {
+      var nm = names[k].name;
+      // Escape regex meta-chars likely to appear in real names ('.' for
+      // initials, '(' ')' for parentheticals). Backslash-dollar in the
+      // char class stops the outer build template from interpolating.
+      var escName = nm.replace(/[.*+?^\${}()|[\]\\]/g, '\\$&');
+      var re = new RegExp('\\b' + escName + '\\b', 'g');
+      result = result.replace(re, function (match) {
+        return window._personLinkify(match, { skipQueuedBadge: true });
+      });
+    }
+    return result;
+  } catch (_) {
+    return escapedHtml;
+  }
+};
+
 function _renderNetworkBlock(n) {
   if (!n || (n.firstDegreeCount === 0 && n.secondDegreeCount === 0)) return '';
   const esc = (str) => String(str == null ? '' : str)
@@ -26507,54 +26623,20 @@ function _renderNetworkBlock(n) {
     const overflow = resolved.length > 3 ? ' + ' + (resolved.length - 3) + ' more' : '';
     return '<div class="network-warm-intro">→ ask ' + top + overflow + ' to intro</div>';
   };
-  // A6 (2026-05-22) — resolve drawer contact against window._CONTACTS_DATA
-  // so internal-only contacts (no LinkedIn URL) link to the contacts modal
-  // instead of degrading to plain text. Returns the directory entry id if
-  // the contact display name matches a directory record (case-insensitive,
-  // trimmed). Defensive: returns empty string if data unavailable.
-  const _resolveDirectoryId = (displayName) => {
-    if (!displayName) return '';
-    try {
-      const norm = String(displayName).toLowerCase().trim().replace(/\s+/g, ' ');
-      const directory = (typeof window !== 'undefined' && Array.isArray(window._CONTACTS_DATA)) ? window._CONTACTS_DATA : [];
-      for (let i = 0; i < directory.length; i++) {
-        const dc = directory[i];
-        if (!dc || !dc.name) continue;
-        const dcNorm = String(dc.name).toLowerCase().trim().replace(/\s+/g, ' ');
-        if (dcNorm === norm) return dc.id || '';
-      }
-    } catch (_) { /* ignore */ }
-    return '';
-  };
-  // Closure 18 — drawer-side badge resolver. Looks up the contact in the
-  // build-time enrichment queue. Returns true if this contact is awaiting
-  // an enrichment refresh.
-  const _isQueuedForEnrichment = (internalId) => {
-    if (!internalId) return false;
-    try {
-      const q = (typeof window !== 'undefined' && Array.isArray(window._ENRICH_QUEUE)) ? window._ENRICH_QUEUE : null;
-      return !!(q && q.indexOf(internalId) >= 0);
-    } catch (_) { return false; }
-  };
+  // A6 (2026-05-22) — link drawer contact to LinkedIn or the contacts modal
+  // via the shared window._personLinkify helper. The queued-enrichment badge
+  // is appended by the helper itself when the contact appears in
+  // window._ENRICH_QUEUE.
   const contactRow = (c) => {
     const name = ((c.first || '') + ' ' + (c.last || '')).trim() || (c.name || '');
     const url = c.url || '';
     const title = c.position || c.title || '';
     const when = c.when ? ' · ' + c.when : '';
-    const internalId = _resolveDirectoryId(name);
-    let link;
-    if (url) {
-      link = '<a href="' + esc(url) + '" target="_blank" rel="noopener" class="pill-popover-linkedin-link contact-link" title="View on LinkedIn">' + esc(name) + ' ↗</a>';
-    } else if (internalId) {
-      link = '<a href="javascript:void(0)" class="contact-link contact-link-internal" data-contact-id="' + esc(internalId) + '" onclick="if(typeof window.openContactsDirectoryModal===\\'function\\'){window.openContactsDirectoryModal();setTimeout(function(){if(typeof window._focusContactById===\\'function\\')window._focusContactById(\\'' + esc(internalId) + '\\');},120)};event.stopPropagation()" title="View in contacts directory">' + esc(name) + ' →</a>';
-    } else {
-      link = esc(name);
-    }
-    const queuedBadge = _isQueuedForEnrichment(internalId)
-      ? ' <span class="enrich-queued-badge" title="Queued for enrichment refresh — fresh data lands on the next refresh-master tick (within hours)">📋 queued</span>'
-      : '';
+    const link = (typeof window !== 'undefined' && typeof window._personLinkify === 'function')
+      ? window._personLinkify(name, { linkedinUrl: url })
+      : esc(name);
     return '<div class="network-contact-row">'
-      +   '<div class="network-contact-name">' + link + queuedBadge + '</div>'
+      +   '<div class="network-contact-name">' + link + '</div>'
       +   (title ? '<div class="network-contact-title">' + esc(title) + esc(when) + '</div>' : '')
       +   introsLine(c)
       + '</div>';
@@ -26613,6 +26695,16 @@ function _renderSocialCorroborationBlock(s) {
   const row = (label, val) => has(val)
     ? '<div class="pill-popover-row"><dt>' + esc(label) + '</dt><dd>' + esc(String(val).slice(0, 360)) + '</dd></div>'
     : '';
+  // 4.09 (2026-05-22) — linkifyRow runs people-aware prose through the
+  // shared linkifier so embedded directory names become clickable.
+  const linkifyRow = (label, val) => {
+    if (!has(val)) return '';
+    const escaped = esc(String(val).slice(0, 360));
+    const linked = (typeof window !== 'undefined' && typeof window._personLinkifyProse === 'function')
+      ? window._personLinkifyProse(escaped)
+      : escaped;
+    return '<div class="pill-popover-row"><dt>' + esc(label) + '</dt><dd>' + linked + '</dd></div>';
+  };
   const comp = s.comp_corroboration || {};
   const ben = s.benefits_corroboration || {};
   const sent = s.sentiment_corroboration || {};
@@ -26655,9 +26747,9 @@ function _renderSocialCorroborationBlock(s) {
         : '')
     + (has(ppl.recommended_outreach_target) || has(ppl.named_employees_posting)
         ? '<div class="pill-popover-section-label">People intel</div><dl class="pill-popover-body">'
-          + row('Outreach target', ppl.recommended_outreach_target)
-          + row('Posting employees', ppl.named_employees_posting)
-          + row('Team visibility', ppl.hiring_team_visibility)
+          + linkifyRow('Outreach target', ppl.recommended_outreach_target)
+          + linkifyRow('Posting employees', ppl.named_employees_posting)
+          + linkifyRow('Team visibility', ppl.hiring_team_visibility)
           + '</dl>'
         : '');
 }

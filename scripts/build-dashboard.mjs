@@ -22979,7 +22979,45 @@ function _bsRenderBody(data, changed) {
       '<style>@keyframes bs-pa-pulse { 0%,100% { opacity: 1 } 50% { opacity: .4 } }</style>';
   }
 
-  body.innerHTML = sectionP + sectionA + sectionB + sectionC + sectionD;
+  // Closure 08.3 (2026-05-22) — Section R: cancelled jobs with Resume CTA.
+  // Renders only when data.recent_cancelled_jobs is non-empty.
+  let sectionR = '';
+  const cancelledJobs = Array.isArray(data.recent_cancelled_jobs) ? data.recent_cancelled_jobs : [];
+  if (cancelledJobs.length) {
+    const rows = cancelledJobs.map(j => {
+      const cancelledAgo = j.cancelled_at
+        ? Math.max(0, Math.round((Date.now() - Date.parse(j.cancelled_at)) / 60000)) + 'm ago'
+        : '?';
+      const startedTxt = j.started_at ? _bsFmtTimestamp(j.started_at) : '?';
+      const typeLabel = j.type === 'process-all' ? 'Process All' : 'Run Batch';
+      const idEsc = _bsEsc(j.jobId);
+      return '<div class="bs-cancelled-row" style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border,#e5e7eb)">' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-size:12.5px;color:var(--text-1,#1f2937);font-weight:600">' + _bsEsc(typeLabel) + ' cancelled ' + _bsEsc(cancelledAgo) + '</div>' +
+          '<div style="font-size:10.5px;color:var(--text-3,#6b7280);margin-top:2px">' +
+            'started ' + _bsEsc(startedTxt) + ' · job <code style="font-size:10px">' + idEsc + '</code>' +
+          '</div>' +
+        '</div>' +
+        '<button type="button" id="bs-resume-' + idEsc + '" ' +
+          'onclick="window.resumeBatchJob(\\'' + idEsc + '\\')" ' +
+          'style="padding:5px 12px;font-size:11.5px;background:transparent;border:1px solid var(--green-fg,#16a34a);' +
+          'color:var(--green-fg,#16a34a);border-radius:5px;cursor:pointer" ' +
+          'title="Spawn a new batch with the rows the cancelled job did NOT complete">' +
+          String.fromCharCode(0x21BB) + ' Resume' +
+        '</button>' +
+      '</div>';
+    }).join('');
+    sectionR =
+      '<div class="batch-status-section" style="border-left:3px solid var(--green-fg,#16a34a);padding-left:12px">' +
+        '<h4 class="batch-status-section-title">Cancelled jobs — last 7 days</h4>' +
+        '<div class="bs-cancelled-list">' + rows + '</div>' +
+        '<div style="font-size:10.5px;color:var(--text-4,#9ca3af);margin-top:6px">' +
+          'Resume re-queues only the rows the cancelled job did NOT complete and spawns a new batch.' +
+        '</div>' +
+      '</div>';
+  }
+
+  body.innerHTML = sectionP + sectionR + sectionA + sectionB + sectionC + sectionD;
   // Invariant #8 — apply the universal table baseline (dbl-click expand,
   // [title] tooltips, column-resize handles) to every freshly rendered
   // table inside the batch-status modal body.
@@ -28609,6 +28647,47 @@ window.cancelBatchJob = function(jobId, spendSoFarUsd, warnThresholdUsd) {
         btn.title = String(err && err.message || 'cancel error');
       }
       try { console.warn('cancelBatchJob error:', err && err.message); } catch (_) {}
+    });
+};
+
+// Closure 08.3 (2026-05-22) — Resume a cancelled batch job. POSTs to
+// /api/batch/resume which writes batch/batch-input-resume-<originalJobId>.tsv,
+// appends non-completed URLs to batch/triage-advance.tsv, and spawns a new
+// batch-only job. Refreshes the batch-status modal on success.
+window.resumeBatchJob = function(originalJobId) {
+  if (!originalJobId) return;
+  var btn = document.getElementById('bs-resume-' + originalJobId);
+  if (btn && btn.disabled) return;
+  if (btn) { btn.disabled = true; btn.textContent = String.fromCharCode(0x21BB) + ' Spawning' + String.fromCharCode(8230); }
+  fetch('/api/batch/resume', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jobId: originalJobId }),
+  })
+    .then(function(r) { return r.ok ? r.json() : r.json().then(function(j){ throw new Error(j.error || 'resume failed (HTTP ' + r.status + ')'); }); })
+    .then(function(data) {
+      if (btn) {
+        btn.textContent = String.fromCharCode(0x2713) + ' Resumed (' + (data.rowsRequeued || 0) + ' rows)';
+        btn.title = 'New job ' + (data.newJobId || '?');
+      }
+      if (window.toast) {
+        window.toast('Resume started — ' + (data.rowsRequeued || 0) + ' rows requeued as job ' + (data.newJobId || '?'), 'info');
+      }
+      // Force-refresh the modal so the new running job appears in Section P.
+      if (typeof window._bsFetchAndRender === 'function') {
+        setTimeout(function() { try { window._bsFetchAndRender(); } catch (_) {} }, 700);
+      }
+    })
+    .catch(function(err) {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = String.fromCharCode(0x21BB) + ' Resume';
+        btn.title = String(err && err.message || 'resume error');
+      }
+      if (window.toast) {
+        window.toast('Resume failed: ' + (err && err.message || 'unknown'), 'error');
+      }
+      try { console.warn('resumeBatchJob error:', err && err.message); } catch (_) {}
     });
 };
 

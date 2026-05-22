@@ -3072,6 +3072,33 @@ function _buildBatchStatusDetailedUncached() {
     }
   } catch (_) { /* state file unreadable — fall through with process_all_active=null */ }
 
+  // Closure 08.3 (2026-05-22) — surface recent cancelled jobs so the modal
+  // can render a Resume button per cancelled job. Window: last 7 days.
+  let recent_cancelled_jobs = [];
+  try {
+    const stateFp2 = join(ROOT, 'data/pipeline-process-state.json');
+    if (existsSync(stateFp2)) {
+      const state = JSON.parse(readFileSync(stateFp2, 'utf-8'));
+      const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      recent_cancelled_jobs = Object.values(state.jobs || {})
+        .filter(j => j && j.status === 'cancelled')
+        .filter(j => {
+          const ts = j.cancelled_at ? Date.parse(j.cancelled_at) : 0;
+          return Number.isFinite(ts) && ts >= since;
+        })
+        .map(j => ({
+          jobId:        j.jobId,
+          type:         j.type || 'batch-only',
+          started_at:   j.started_at,
+          cancelled_at: j.cancelled_at,
+          send_email:   !!j.send_email,
+          resumed_from: j.resumed_from || null,
+        }))
+        .sort((a, b) => String(b.cancelled_at || '').localeCompare(String(a.cancelled_at || '')))
+        .slice(0, 5);
+    }
+  } catch (_) { /* state file unreadable — empty list */ }
+
   return {
     ok: true,
     current_summary: {
@@ -3091,6 +3118,7 @@ function _buildBatchStatusDetailedUncached() {
     cost_today_usd: Math.round(cost_today_usd * 100) / 100,
     cost_30d_usd:   Math.round(cost_30d_usd * 100) / 100,
     most_recent_failures,
+    recent_cancelled_jobs,
     generated_at: new Date().toISOString(),
   };
 }
@@ -5823,6 +5851,201 @@ const server = createServer((req, res) => {
       return json({ ok: true, jobId, signalSent, exitState, sigkill_at_ms: timeoutMs });
     });
     return;
+  }
+
+  // Closure 08.3 (2026-05-22) — Resume a cancelled batch job. Reads the
+  // cancelled job's incomplete rows from batch/batch-state.tsv, looks up
+  // their full row data in batch/batch-input.tsv, writes an audit
+  // resume-input file at batch/batch-input-resume-<originalJobId>.tsv,
+  // appends any URLs not currently queued back into batch/triage-advance.tsv,
+  // then spawns a NEW batch-only-pipeline job. The new job's state-file
+  // entry is annotated with `resumed_from: <originalJobId>`.
+  //   body: { jobId }
+  //   returns: { ok, newJobId, originalJobId, rowsRequeued, resumeInputPath }
+  if (url === '/api/batch/resume' && req.method === 'POST') {
+    let body = '';
+    let total = 0;
+    req.on('data', c => { total += c.length; if (total > 4 * 1024) { req.destroy(); return; } body += c; });
+    req.on('end', () => {
+      let parsed;
+      try { parsed = JSON.parse(body || '{}'); }
+      catch (_) { return json({ ok: false, error: 'invalid JSON body' }, 400); }
+      const originalJobId = String(parsed.jobId || parsed.job_id || query.job_id || '').trim();
+      if (!originalJobId) return json({ ok: false, error: 'jobId required' }, 400);
+
+      const state = loadPipelineProcessState();
+      const job = state.jobs?.[originalJobId];
+      if (!job) return json({ ok: false, error: 'job not found' }, 404);
+      if (job.status !== 'cancelled') {
+        return json({ ok: false, error: 'only cancelled jobs are resumable; job is in status: ' + job.status }, 409);
+      }
+
+      // Identify rows belonging to this job that are NOT completed. The
+      // batch-state.tsv lacks an explicit jobId column — we identify by
+      // started_at falling within the job's lifecycle window
+      // (job.started_at ≤ row.started_at ≤ job.cancelled_at OR row has no
+      // completed_at if status=running).
+      const stateFp = join(ROOT, 'batch/batch-state.tsv');
+      const inputFp = join(ROOT, 'batch/batch-input.tsv');
+      const triageFp = join(ROOT, 'batch/triage-advance.tsv');
+
+      if (!existsSync(stateFp)) {
+        return json({ ok: false, error: 'batch-state.tsv not found — no batch run state to resume from' }, 409);
+      }
+
+      const jobStartMs = job.started_at ? Date.parse(job.started_at) : 0;
+      const jobCancelledMs = job.cancelled_at ? Date.parse(job.cancelled_at) : Date.now();
+      // Use a 30-min look-back from cancelled_at as a generous floor for the
+      // job's lifecycle window. Same gap heuristic as detailBatches() uses.
+      const lookbackMs = 30 * 60 * 1000;
+      const windowStartMs = Math.max(0, jobStartMs - 1000) || (jobCancelledMs - lookbackMs);
+
+      const incomplete = [];
+      try {
+        const rows = readFileSync(stateFp, 'utf8').split('\n')
+          .filter(l => l.trim() && !l.startsWith('id\t'));
+        for (const ln of rows) {
+          const [id, rowUrl, status, started_at] = ln.split('\t');
+          if (status === 'completed') continue;
+          if (!started_at) continue;
+          const ts = Date.parse(started_at);
+          if (!Number.isFinite(ts)) continue;
+          if (ts >= windowStartMs && ts <= jobCancelledMs + lookbackMs) {
+            incomplete.push({ id: id.trim(), url: (rowUrl || '').trim(), status: (status || '').trim() });
+          }
+        }
+      } catch (err) {
+        return json({ ok: false, error: 'failed to parse batch-state.tsv: ' + err.message }, 500);
+      }
+
+      // Look up notes/source from batch-input.tsv for the audit resume-input file.
+      const inputByUrl = new Map();
+      if (existsSync(inputFp)) {
+        try {
+          const lines = readFileSync(inputFp, 'utf8').split('\n')
+            .filter(l => l.trim() && !l.startsWith('id\t'));
+          for (const ln of lines) {
+            const parts = ln.split('\t');
+            const id = (parts[0] || '').trim();
+            const inUrl = (parts[1] || '').trim();
+            const source = (parts[2] || 'resume').trim();
+            const notes = (parts[3] || '').trim();
+            if (inUrl) inputByUrl.set(inUrl, { id, url: inUrl, source, notes });
+          }
+        } catch (_) { /* best-effort */ }
+      }
+
+      // Write the audit resume-input file.
+      const resumeFp = join(ROOT, `batch/batch-input-resume-${originalJobId}.tsv`);
+      const resumeRows = ['id\turl\tsource\tnotes'];
+      for (const r of incomplete) {
+        const inputRow = inputByUrl.get(r.url) || { id: r.id, url: r.url, source: 'resume', notes: 'resumed-from-' + originalJobId };
+        resumeRows.push(`${inputRow.id}\t${inputRow.url}\t${inputRow.source}\t${inputRow.notes}`);
+      }
+      try {
+        writeFileSync(resumeFp, resumeRows.join('\n') + '\n');
+      } catch (err) {
+        return json({ ok: false, error: 'failed to write resume-input file: ' + err.message }, 500);
+      }
+
+      // Re-inject URLs into triage-advance.tsv (the batch runner's input queue).
+      // The runner reads url, tier, score, archetype, reason. We don't have
+      // the original tier/score/archetype from batch-state.tsv, so use
+      // placeholders that flag the row as a resume.
+      const triageHeader = 'url\ttier\tscore\tarchetype\treason';
+      const existingTriage = new Set();
+      let existingTriageContent = '';
+      if (existsSync(triageFp)) {
+        existingTriageContent = readFileSync(triageFp, 'utf8');
+        const triageLines = existingTriageContent.split('\n')
+          .filter(l => l.trim() && !l.startsWith('url\t'));
+        for (const ln of triageLines) {
+          const url = (ln.split('\t')[0] || '').trim();
+          if (url) existingTriage.add(url);
+        }
+      }
+      const newTriageLines = [];
+      let appended = 0;
+      for (const r of incomplete) {
+        if (!r.url || existingTriage.has(r.url)) continue;
+        newTriageLines.push(`${r.url}\t?\t?\tresume\tresumed from cancelled job ${originalJobId}`);
+        appended++;
+      }
+      if (newTriageLines.length) {
+        try {
+          let combined = existingTriageContent;
+          if (!combined.includes('url\ttier\tscore\tarchetype\treason')) {
+            combined = triageHeader + '\n' + combined;
+          }
+          if (combined && !combined.endsWith('\n')) combined += '\n';
+          combined += newTriageLines.join('\n') + '\n';
+          writeFileSync(triageFp, combined);
+        } catch (err) {
+          return json({ ok: false, error: 'failed to append to triage-advance.tsv: ' + err.message }, 500);
+        }
+      }
+
+      // Spawn a new batch-only-pipeline job. Reuse spawnBatchOnly so we
+      // don't duplicate cap-enforcement / state-init logic. Force=true
+      // is appropriate since the user explicitly clicked Resume.
+      const spawnResult = spawnBatchOnly({
+        sendEmail: !!job.send_email,
+        force: true,
+      });
+      if (!spawnResult.ok) {
+        return json({ ok: false, error: 'failed to spawn resume batch: ' + spawnResult.error }, 500);
+      }
+
+      // Annotate the new job with resumed_from.
+      try {
+        const post = loadPipelineProcessState();
+        if (post.jobs[spawnResult.jobId]) {
+          post.jobs[spawnResult.jobId].resumed_from = originalJobId;
+          post.jobs[spawnResult.jobId].resume_rows_requeued = incomplete.length;
+          writeFileSync(join(ROOT, 'data/pipeline-process-state.json'), JSON.stringify(post, null, 2));
+        }
+      } catch (_) { /* annotation is best-effort */ }
+
+      return json({
+        ok:                  true,
+        newJobId:            spawnResult.jobId,
+        originalJobId,
+        rowsRequeued:        incomplete.length,
+        rowsAppendedToQueue: appended,
+        resumeInputPath:     `batch/batch-input-resume-${originalJobId}.tsv`,
+        statusUrl:           spawnResult.status_url,
+      });
+    });
+    return;
+  }
+
+  // Closure 08.3 (2026-05-22) — List recent cancelled jobs for the
+  // batch-status modal so the UI can render Resume buttons.
+  //   returns: { ok, cancelled_jobs: [{ jobId, type, cancelled_at, ... }] }
+  if (url === '/api/batch/cancelled-jobs') {
+    try {
+      const state = loadPipelineProcessState();
+      const since = Date.now() - 7 * 24 * 60 * 60 * 1000; // last 7 days
+      const cancelled = Object.values(state.jobs || {})
+        .filter(j => j.status === 'cancelled')
+        .filter(j => {
+          const ts = j.cancelled_at ? Date.parse(j.cancelled_at) : 0;
+          return Number.isFinite(ts) && ts >= since;
+        })
+        .map(j => ({
+          jobId:        j.jobId,
+          type:         j.type || 'batch-only',
+          started_at:   j.started_at,
+          cancelled_at: j.cancelled_at,
+          send_email:   !!j.send_email,
+          cancel_note:  j.cancel_note || null,
+        }))
+        .sort((a, b) => String(b.cancelled_at || '').localeCompare(String(a.cancelled_at || '')))
+        .slice(0, 10);
+      return json({ ok: true, cancelled_jobs: cancelled });
+    } catch (err) {
+      return json({ ok: false, error: err.message }, 500);
+    }
   }
 
   const verifyMatch = url.match(/^\/api\/verify\/(.+\.md)$/);

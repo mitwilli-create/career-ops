@@ -10348,6 +10348,77 @@ async function build() {
   tr.row.row-selected > td:first-child {
     box-shadow: inset 3px 0 0 var(--green-fg);
   }
+  /* A1 (2026-05-21) — drawer lifecycle row + contextual note.
+     Lives inside #right-rail-body (NOT the static action bar). 5 buttons
+     in a row; each carries one of 3 states: active (solid green), done
+     (outlined green), disabled (greyed). Contextual note sits below as a
+     2-3 sentence synthesis from the corpus index (Sonnet wiring pending). */
+  .drawer-lifecycle-section {
+    margin: 16px 0 10px 0;
+    padding: 12px 0;
+    border-top: 1px solid var(--border);
+  }
+  .drawer-lifecycle-header {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin-bottom: 8px;
+  }
+  .drawer-lifecycle-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .drawer-lifecycle-btn {
+    height: 32px;
+    padding: 0 12px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: filter 0.12s, opacity 0.12s;
+    line-height: 30px;
+    box-sizing: border-box;
+  }
+  .drawer-lifecycle-btn-active {
+    background: #15803d;
+    color: #ffffff;
+    border-color: #15803d;
+  }
+  .drawer-lifecycle-btn-active:hover { filter: brightness(1.08); }
+  .drawer-lifecycle-btn-done {
+    background: transparent;
+    color: #15803d;
+    border-color: #15803d;
+    border-width: 2px;
+    line-height: 28px;
+  }
+  .drawer-lifecycle-btn-done:hover { background: color-mix(in srgb, #15803d 8%, transparent); }
+  .drawer-lifecycle-btn-disabled {
+    background: var(--surface-2, #f6f8fa);
+    color: var(--text-3, #57606a);
+    border-color: var(--border, #d0d7de);
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .drawer-lifecycle-note {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-2, #57606a);
+    padding: 8px 10px;
+    background: var(--surface-2, #f6f8fa);
+    border-radius: 6px;
+    border-left: 2px solid var(--border, #d0d7de);
+  }
+  .drawer-lifecycle-loading {
+    color: var(--text-3, #6e7781);
+    font-size: 11px;
+    padding: 10px 0;
+  }
   /* Inventory #10 (2026-05-18): deeplink pulse for ?focus= targets.
      Brief glow so the user knows where the heartbeat link landed them. */
   .deeplink-target {
@@ -14517,6 +14588,21 @@ function openRightRailForDetail(idx, detailRow) {
     hmMount.className = 'hm-intel-mount';
     bodyEl.appendChild(hmMount);
     if (company && role) _loadHMIntel(company, role, hmMount);
+
+    // ── A1 (2026-05-21) — drawer lifecycle row + contextual note ─────────
+    // 5-button row (Create / Sync edits / Pre-apply / Polish / Apply) keyed
+    // off /api/lifecycle-state. Sits BELOW HM Intel, above the static
+    // action bar (#right-rail-actions). Context note is a stub in Part 1;
+    // Sonnet synthesis wiring lands in Part 3 closure.
+    if (num) {
+      const lifecycleMount = document.createElement('div');
+      lifecycleMount.className = 'drawer-lifecycle-mount';
+      lifecycleMount.setAttribute('data-row-num', String(num));
+      lifecycleMount.innerHTML = '<div class="drawer-lifecycle-loading" style="color:var(--text-3);font-size:11px;padding:10px 0">Loading lifecycle' + String.fromCharCode(8230) + '</div>';
+      bodyEl.appendChild(lifecycleMount);
+      _drawerLoadLifecycle(num, company, lifecycleMount);
+    }
+
     bodyEl.scrollTop = 0;
   }
   if (actionsEl) {
@@ -19274,6 +19360,91 @@ async function _loadHMIntel(company, role, mountEl) {
   }
 }
 window._loadHMIntel = _loadHMIntel;
+
+// ── A1 (2026-05-21) — drawer lifecycle row renderer ───────────────────────
+// Hits /api/lifecycle-state?num=N to get 4 booleans (pack_exists,
+// drive_synced, polished, applied) and renders the 5-button lifecycle row +
+// contextual note placeholder. Pure string-concat (no backticks, no
+// dollar-brace interpolation — outer-template-unescape-safe per Pattern A
+// in bug-class-catalog.md).
+async function _drawerLoadLifecycle(num, company, mountEl) {
+  if (!mountEl) return;
+  try {
+    const res = await fetch('/api/lifecycle-state?num=' + encodeURIComponent(String(num)), { cache: 'no-store' });
+    if (!res.ok) {
+      mountEl.innerHTML = '';
+      return;
+    }
+    const d = await res.json();
+    const s = (d && d.states) || { pack_exists: false, drive_synced: false, polished: false, applied: false };
+    const driveEnabled = !!d.drive_enabled;
+    mountEl.innerHTML = _renderLifecycleRow(s, driveEnabled, num);
+    // Fetch + inject contextual note (best-effort; failures hide silently).
+    fetch('/api/context-note?num=' + encodeURIComponent(String(num)), { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (cn) {
+        if (!cn || !cn.note) return;
+        const noteEl = mountEl.querySelector('.drawer-lifecycle-note');
+        if (noteEl) noteEl.textContent = cn.note;
+      })
+      .catch(function () { /* silent */ });
+  } catch (err) {
+    mountEl.innerHTML = '';
+  }
+}
+window._drawerLoadLifecycle = _drawerLoadLifecycle;
+
+function _renderLifecycleRow(s, driveEnabled, num) {
+  // 5 button states: 'active' (green solid), 'done' (outlined), 'disabled'
+  // (greyed). Map per-button below.
+  function btn(label, state, title) {
+    const cls = 'drawer-lifecycle-btn drawer-lifecycle-btn-' + state;
+    const t = title ? ' title="' + title.replace(/"/g, '&quot;') + '"' : '';
+    return '<button type="button" class="' + cls + '"' + t +
+      (state === 'disabled' ? ' disabled' : '') +
+      ' data-drill="lifecycle:' + label.toLowerCase().replace(/[^a-z]+/g, '-') + ':' + (num || '') + '">' +
+      label + '</button>';
+  }
+  // Create — done if pack_exists, otherwise active (prompts to create)
+  const createState = s.pack_exists ? 'done' : 'active';
+  const createTitle = s.pack_exists ? 'Apply pack exists' : 'Generate apply pack — CV + cover letter + outreach + intel';
+  // Sync edits — active if pack_exists + drive_synced + drive_enabled; otherwise disabled
+  let syncState = 'disabled';
+  let syncTitle = 'Drive sync requires DRIVE_SYNC_ENABLED=true + pack created + Drive folder synced';
+  if (s.pack_exists && driveEnabled) {
+    if (s.drive_synced) { syncState = 'active'; syncTitle = 'Pull latest edits from the Drive Doc into the apply-pack'; }
+    else { syncState = 'disabled'; syncTitle = 'Sync after first push to Drive — generate apply pack first to provision the Drive folder'; }
+  }
+  // Pre-apply — stub until Cluster K is wired (handoff says render as Coming soon)
+  const preApplyState = s.pack_exists ? 'disabled' : 'disabled';
+  const preApplyTitle = 'Coming soon — 7-dimension readiness check (Cluster K)';
+  // Polish — active if pack exists, done if polished
+  let polishState = 'disabled';
+  let polishTitle = 'Polish requires the apply pack to exist';
+  if (s.pack_exists) {
+    polishState = s.polished ? 'done' : 'active';
+    polishTitle = s.polished ? 'Polish run complete' : 'Run the apply-pack-polish skill (~$3.50, 8-12 min)';
+  }
+  // Apply — done if applied, active if polished + pack exists
+  let applyState = 'disabled';
+  let applyTitle = 'Apply opens the original JD URL';
+  if (s.applied) { applyState = 'done'; applyTitle = 'This role has been marked Applied/Responded/Interview/Offer'; }
+  else if (s.pack_exists && s.polished) { applyState = 'active'; applyTitle = 'Open the JD URL + mark as Applied'; }
+
+  const rowHtml =
+    '<div class="drawer-lifecycle-buttons">' +
+      btn('Create', createState, createTitle) +
+      btn('Sync edits', syncState, syncTitle) +
+      btn('Pre-apply', preApplyState, preApplyTitle) +
+      btn('Polish', polishState, polishTitle) +
+      btn('Apply', applyState, applyTitle) +
+    '</div>' +
+    '<div class="drawer-lifecycle-note">' + String.fromCharCode(8230) + '</div>';
+  return '<div class="drawer-lifecycle-section">' +
+    '<div class="drawer-lifecycle-header">Lifecycle</div>' +
+    rowHtml +
+    '</div>';
+}
 
 // Notes & activity client code scrubbed 2026-05-19 — UI removed earlier
 // same day; the renderNoteEntry / hydrateNotesIn / updateNotesCounter /

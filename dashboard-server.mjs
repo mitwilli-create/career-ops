@@ -254,6 +254,14 @@ function enrichOutreachSummary(summary) {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
+
+// A1 (2026-05-21) — lifecycle-state default shape (all-false) for /api/lifecycle-state
+// error fallbacks. Keeps the client renderer simple: it can always read the 4
+// booleans without a null-check.
+function emptyLifecycleStates() {
+  return { pack_exists: false, drive_synced: false, polished: false, applied: false };
+}
+
 // 2026-05-18: respect PORT env var first (set by Claude Code preview harness),
 // then fall back to --port= CLI arg, then default 3000. Lets the preview
 // runner pick an available port while the launchd-managed instance keeps
@@ -7770,6 +7778,88 @@ async function generatePack(){
     } catch (err) {
       return json({ ok: false, error: err.message }, 500);
     }
+  }
+
+  // ── A1 (2026-05-21) — drawer lifecycle row state ─────────────────────────
+  // Reports per-slug pipeline state: pack_exists / drive_synced / polished /
+  // applied. Client renders the 5-button lifecycle row (Create / Sync edits /
+  // Pre-apply / Polish / Apply) using these booleans for enabled/done state.
+  //
+  // The slug accepted is either the apply-pack folder name (e.g.
+  // "048-anthropic-engineering-editorial-lead") OR a row num (we resolve to
+  // the matching apply-pack dir prefix by reading apply-pack/*).
+  if (url === '/api/lifecycle-state') {
+    try {
+      const slugParam = query.slug || '';
+      const numParam = query.num || '';
+      let resolvedSlug = slugParam;
+      if (!resolvedSlug && numParam) {
+        const packsDir = join(ROOT, 'apply-pack');
+        if (existsSync(packsDir)) {
+          const padded = String(numParam).padStart(3, '0');
+          const found = readdirSync(packsDir).find(d => d.startsWith(padded + '-'));
+          if (found) resolvedSlug = found;
+        }
+      }
+      if (!resolvedSlug) {
+        return json({ ok: false, error: 'slug or num required', states: emptyLifecycleStates() });
+      }
+      const packDir = join(ROOT, 'apply-pack', resolvedSlug);
+      const pack_exists = existsSync(packDir);
+      let drive_synced = false;
+      try {
+        const cachePath = join(ROOT, 'data/drive-folder-cache.json');
+        if (existsSync(cachePath)) {
+          const cache = JSON.parse(readFileSync(cachePath, 'utf-8'));
+          drive_synced = !!(cache && cache[resolvedSlug]);
+        }
+      } catch { /* drive cache absent or malformed — treat as not-synced */ }
+      let polished = false;
+      if (pack_exists) {
+        polished = existsSync(join(packDir, 'polished'));
+        if (!polished) {
+          const metaPath = join(packDir, '_meta.json');
+          if (existsSync(metaPath)) {
+            try {
+              const meta = JSON.parse(readFileSync(metaPath, 'utf-8'));
+              polished = !!(meta && meta.polished_at);
+            } catch { /* meta unreadable — treat as not-polished */ }
+          }
+        }
+      }
+      let applied = false;
+      try {
+        const numFromSlug = (resolvedSlug.match(/^(\d{1,4})-/) || [])[1];
+        const numToCheck = numParam || numFromSlug;
+        if (numToCheck) {
+          const tracker = readFileSync(join(ROOT, 'data/applications.md'), 'utf-8');
+          const re = new RegExp('^\\|\\s*' + Number(numToCheck) + '\\s*\\|[^|]*\\|[^|]*\\|[^|]*\\|[^|]*\\|\\s*(Applied|Responded|Interview|Offer)\\b', 'm');
+          applied = re.test(tracker);
+        }
+      } catch { /* applications.md absent in this env — leave applied=false */ }
+      return json({
+        ok: true,
+        slug: resolvedSlug,
+        states: { pack_exists, drive_synced, polished, applied },
+        drive_enabled: process.env.DRIVE_SYNC_ENABLED === 'true',
+      });
+    } catch (err) {
+      return json({ ok: false, error: err.message, states: emptyLifecycleStates() }, 500);
+    }
+  }
+
+  // ── A1 — contextual note for the drawer ──────────────────────────────────
+  // Stubbed in Part 1 closure (2026-05-21). The full implementation pipes
+  // corpus snippets (lib/corpus-index.mjs indexQuery) through a 150-token
+  // Sonnet synthesis pass. Stub returns a placeholder until Cluster H
+  // wiring lands in the Part 3 closure (~$0.01/call when live).
+  if (url === '/api/context-note') {
+    return json({
+      ok: true,
+      note: '(Contextual gap-analysis note coming soon — sqlite-vec corpus index is live, Sonnet synthesis wiring pending.)',
+      citations: [],
+      stub: true,
+    });
   }
 
   // Static files from dashboard/

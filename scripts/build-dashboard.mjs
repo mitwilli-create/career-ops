@@ -10544,6 +10544,57 @@ async function build() {
     font-size: 11px;
     padding: 10px 0;
   }
+  /* E4 (2026-05-22): 3 polish modes (lite/smart/heavy) — additive widget
+     below the lifecycle row. The existing apply-pack-polish surface is
+     unchanged; this is a lightweight 1-3-pass alternative. */
+  .drawer-polish-modes {
+    margin: 8px 0 4px 0;
+    padding: 10px 0 4px 0;
+    border-top: 1px dashed var(--border);
+  }
+  .drawer-polish-modes-header {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin-bottom: 6px;
+  }
+  .polish-mode-selector { display: flex; gap: 6px; }
+  .polish-btn {
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .polish-btn.lite  { background: #f0f9ff; color: #0369a1; border-color: #bae6fd; }
+  .polish-btn.smart { background: #f5f3ff; color: #6d28d9; border-color: #ddd6fe; }
+  .polish-btn.heavy { background: #fdf4ff; color: #7e22ce; border-color: #f3abff; }
+  .polish-btn:hover { opacity: 0.8; }
+  .polish-btn:disabled { opacity: 0.5; cursor: wait; }
+  .polish-progress { font-size: 12px; color: var(--text-3); margin-top: 6px; }
+  .polish-progress .polish-pass-indicator { font-weight: 600; color: var(--text-2); }
+  .polish-progress-bar {
+    height: 4px; background: var(--surface-2);
+    border-radius: 2px; margin-top: 4px; overflow: hidden;
+  }
+  .polish-progress-bar > span {
+    display: block; height: 100%;
+    background: linear-gradient(90deg, #6d28d9, #7e22ce);
+    transition: width 0.3s;
+  }
+  .polish-result {
+    font-size: 12px; padding: 8px 10px; margin-top: 6px;
+    border-radius: 6px; background: #ecfdf5; color: #065f46;
+    border: 1px solid #a7f3d0;
+  }
+  .polish-result.err {
+    background: #fef2f2; color: #991b1b; border-color: #fecaca;
+  }
+  .polish-result a { color: inherit; text-decoration: underline; }
   /* Closure G (2026-05-22): per-artifact download links in drawer. */
   .drawer-artifact-list { display: flex; flex-direction: column; gap: 4px; }
   .drawer-artifact-link {
@@ -14764,6 +14815,14 @@ function openRightRailForDetail(idx, detailRow) {
       lifecycleMount.innerHTML = '<div class="drawer-lifecycle-loading" style="color:var(--text-3);font-size:11px;padding:10px 0">Loading lifecycle' + String.fromCharCode(8230) + '</div>';
       bodyEl.appendChild(lifecycleMount);
       _drawerLoadLifecycle(num, company, lifecycleMount);
+      // E4 (2026-05-22) — 3 polish modes (lite/smart/heavy). Sits below the
+      // lifecycle row; calls /api/polish (NOT /api/apply-pack-polish, which
+      // is the heavier 4-round critic/author/adjudicator surface).
+      const polishMount = document.createElement('div');
+      polishMount.className = 'drawer-polish-mount';
+      polishMount.setAttribute('data-row-num', String(num));
+      bodyEl.appendChild(polishMount);
+      _drawerRenderPolishModes(num, null, polishMount);
       // Closure G (2026-05-22) — per-artifact download links. The mount
       // fetches /api/artifact-manifest?row=<num>; renders nothing if the
       // row has no pack on disk yet.
@@ -19641,6 +19700,157 @@ async function _drawerLoadLifecycle(num, company, mountEl) {
   }
 }
 window._drawerLoadLifecycle = _drawerLoadLifecycle;
+
+// ── E4 (2026-05-22) — 3 polish modes (lite/smart/heavy) ───────────────────
+// Renders the mode selector + streams NDJSON progress from /api/polish.
+// Outer-template-unescape safe per Pattern A (no backticks, no dollar-brace
+// interpolation in this function body, all escapes via String.fromCharCode
+// or double-backslash).
+function _drawerRenderPolishModes(num, slug, mountEl) {
+  if (!mountEl) return;
+  // Slug is preferred; row is fallback. Build the targeting string for clarity.
+  const targetLabel = slug || (num ? '#' + num : '');
+  if (!num && !slug) { mountEl.innerHTML = ''; return; }
+  function _esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  let html = '<div class="drawer-polish-modes">';
+  html +=   '<div class="drawer-polish-modes-header">Polish modes <span style="color:var(--text-4);font-weight:400;text-transform:none;letter-spacing:0">' + _esc(targetLabel) + '</span></div>';
+  html +=   '<div class="polish-mode-selector">';
+  html +=     '<button type="button" class="polish-btn lite"  data-polish-mode="lite"  title="JD only · Haiku · 1 pass — quick grammar/tone">' + String.fromCharCode(0x26A1) + ' Lite</button>';
+  html +=     '<button type="button" class="polish-btn smart" data-polish-mode="smart" title="Corpus topK=10 · Sonnet · 2 passes — standard polish">' + String.fromCharCode(0x2726) + ' Smart</button>';
+  html +=     '<button type="button" class="polish-btn heavy" data-polish-mode="heavy" title="Corpus topK=20 · Opus · 3 passes (adversarial last) — high-priority roles">' + String.fromCharCode(0x2605) + ' Heavy</button>';
+  html +=   '</div>';
+  html +=   '<div class="polish-progress" style="display:none">Polishing' + String.fromCharCode(0x2026) + ' <span class="polish-pass-indicator"></span><div class="polish-progress-bar"><span style="width:0%"></span></div></div>';
+  html +=   '<div class="polish-result" style="display:none"></div>';
+  html += '</div>';
+  mountEl.innerHTML = html;
+  mountEl.querySelectorAll('button[data-polish-mode]').forEach(function (btn) {
+    btn.addEventListener('click', function () { _drawerRunPolish(num, slug, btn.getAttribute('data-polish-mode'), mountEl); });
+  });
+}
+window._drawerRenderPolishModes = _drawerRenderPolishModes;
+
+async function _drawerRunPolish(num, slug, mode, mountEl) {
+  if (!mountEl) return;
+  const buttons = mountEl.querySelectorAll('button[data-polish-mode]');
+  const progEl = mountEl.querySelector('.polish-progress');
+  const passEl = mountEl.querySelector('.polish-pass-indicator');
+  const barEl  = mountEl.querySelector('.polish-progress-bar > span');
+  const resEl  = mountEl.querySelector('.polish-result');
+  buttons.forEach(function (b) { b.disabled = true; });
+  if (progEl) progEl.style.display = '';
+  if (resEl)  resEl.style.display = 'none';
+  if (passEl) passEl.textContent = 'starting' + String.fromCharCode(0x2026);
+  if (barEl)  barEl.style.width = '4%';
+
+  function _escHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  try {
+    const body = {};
+    if (slug) body.slug = slug;
+    if (num)  body.row  = String(num);
+    body.mode = mode;
+    const r = await fetch('/api/polish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      let errTxt = '';
+      try { errTxt = await r.text(); } catch (_) {}
+      throw new Error('HTTP ' + r.status + (errTxt ? ' ' + errTxt.slice(0, 200) : ''));
+    }
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let totalPasses = null;
+    let done = false;
+    let finalLine = null;
+    const NL = String.fromCharCode(10);
+    while (!done) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      buf += decoder.decode(chunk.value, { stream: true });
+      let nlIdx;
+      while ((nlIdx = buf.indexOf(NL)) !== -1) {
+        const line = buf.slice(0, nlIdx).trim();
+        buf = buf.slice(nlIdx + 1);
+        if (!line) continue;
+        let obj;
+        try { obj = JSON.parse(line); } catch (_) { continue; }
+        if (obj.heartbeat) continue;
+        if (typeof obj.passes === 'number' && totalPasses === null) {
+          totalPasses = obj.passes;
+          if (passEl) passEl.textContent = 'preparing (' + obj.artifactCount + ' artifacts, ' + obj.model + ')';
+          if (barEl)  barEl.style.width = '8%';
+        }
+        if (obj.phase === 'corpus') {
+          if (passEl) passEl.textContent = 'retrieving corpus (topK=' + obj.topK + ')';
+          if (barEl)  barEl.style.width = '15%';
+        } else if (obj.phase === 'corpus_done') {
+          if (passEl) passEl.textContent = 'corpus loaded (' + obj.hits + ' snippets)';
+          if (barEl)  barEl.style.width = '22%';
+        } else if (obj.phase === 'corpus_failed') {
+          if (passEl) passEl.textContent = 'corpus skipped (no index) - using JD only';
+        } else if (typeof obj.pass === 'number' && !obj.status) {
+          const label = obj.isAdversarial ? 'adversarial pass' : 'pass';
+          if (passEl) passEl.textContent = label + ' ' + obj.pass + ' of ' + obj.total;
+          if (barEl)  barEl.style.width = (25 + 60 * ((obj.pass - 1) / Math.max(1, obj.total))) + '%';
+        } else if (typeof obj.pass === 'number' && obj.status === 'done') {
+          if (passEl) passEl.textContent = 'pass ' + obj.pass + ' complete';
+          if (barEl)  barEl.style.width = (25 + 60 * (obj.pass / Math.max(1, totalPasses || obj.pass))) + '%';
+        } else if (obj.phase === 'write_done') {
+          if (passEl) passEl.textContent = 'writing artifacts';
+          if (barEl)  barEl.style.width = '92%';
+        } else if (obj.phase === 'drive_push') {
+          if (passEl) passEl.textContent = 'pushing to Drive';
+          if (barEl)  barEl.style.width = '96%';
+        } else if (obj.done) {
+          finalLine = obj;
+          done = true;
+          if (barEl)  barEl.style.width = '100%';
+          break;
+        }
+      }
+    }
+    if (progEl) progEl.style.display = 'none';
+    if (resEl) {
+      resEl.className = 'polish-result' + (finalLine && finalLine.error ? ' err' : '');
+      if (finalLine && finalLine.error) {
+        resEl.innerHTML = String.fromCharCode(0x2716) + ' Polish failed: ' + _escHtml(finalLine.error);
+      } else if (finalLine) {
+        let msg = String.fromCharCode(0x2713) + ' Polish complete (confidence ' + (finalLine.confidence != null ? finalLine.confidence : '?') + ')';
+        if (finalLine.polishedDir) msg += ' - wrote to <code>' + _escHtml(finalLine.polishedDir) + '</code>';
+        if (finalLine.driveResult && finalLine.driveResult.uploaded && finalLine.driveResult.uploaded.length) {
+          const driveLink = finalLine.driveResult.uploaded[0] && finalLine.driveResult.uploaded[0].webViewLink;
+          if (driveLink) msg += ' - <a href="' + _escHtml(driveLink) + '" target="_blank" rel="noopener">open in Drive</a>';
+        } else if (finalLine.driveResult && finalLine.driveResult.skipped) {
+          msg += ' - Drive: ' + _escHtml(finalLine.driveResult.skipped);
+        }
+        resEl.innerHTML = msg;
+      } else {
+        resEl.innerHTML = String.fromCharCode(0x2716) + ' Polish stream ended without a final result';
+        resEl.className = 'polish-result err';
+      }
+      resEl.style.display = '';
+    }
+  } catch (err) {
+    if (progEl) progEl.style.display = 'none';
+    if (resEl) {
+      resEl.className = 'polish-result err';
+      resEl.innerHTML = String.fromCharCode(0x2716) + ' ' + _escHtml(err && err.message ? err.message : String(err));
+      resEl.style.display = '';
+    }
+  } finally {
+    buttons.forEach(function (b) { b.disabled = false; });
+  }
+}
+window._drawerRunPolish = _drawerRunPolish;
 
 // Closure G (2026-05-22) — per-artifact download links.
 // Fetches /api/artifact-manifest?row=<num> and renders a clickable list of

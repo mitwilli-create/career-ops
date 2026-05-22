@@ -4,7 +4,7 @@
 
 import { createServer } from 'http';
 import { readFileSync, existsSync, statSync, readdirSync, appendFileSync, writeFileSync, renameSync, mkdirSync, watch as fsWatch } from 'fs';
-import { join, extname } from 'path';
+import { join, extname, basename } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { randomBytes } from 'crypto';
@@ -4802,6 +4802,19 @@ const server = createServer((req, res) => {
                 writeFileSync(join(ROOT, 'data/pipeline-process-state.json'), JSON.stringify(state, null, 2));
               }
             } catch {}
+            // E4 (2026-05-22): on successful CREATE, push consumer artifacts to
+            // Drive originals/. Best-effort; failures log + continue.
+            if (code === 0) {
+              import('./lib/drive-sync.mjs').then(({ pushCreateOriginals, driveEnabled }) => {
+                if (!driveEnabled()) return;
+                const localDir = join(ROOT, expectedDir);
+                if (!existsSync(localDir)) return;
+                const slugBase = basename(localDir);
+                pushCreateOriginals({ slug: slugBase, localDir })
+                  .then(r => { try { appendFileSync(logPath, '\n[drive] pushCreateOriginals: ' + JSON.stringify(r) + '\n'); } catch {} })
+                  .catch(e => { try { appendFileSync(logPath, '\n[drive] pushCreateOriginals failed: ' + (e?.message || e) + '\n'); } catch {} });
+              }).catch(() => { /* drive-sync import failed; skip */ });
+            }
           });
           proc.unref();
         });
@@ -7661,6 +7674,228 @@ async function generatePack(){
       }
     }, 5000);
     return json({ ok: true, jobId, signalSent: 'SIGTERM', exitState: 'cancel-requested' });
+  }
+
+  // ── E4 (2026-05-22) — 3 polish modes (lite/smart/heavy) + Drive push ──────
+  // Lightweight alternative to /api/apply-pack-polish. The existing endpoint
+  // spawns a 4-round critic/author/adjudicator loop (heavy spend); /api/polish
+  // runs 1-3 inline passes with mode-gated corpus retrieval and Drive push.
+  // Streams NDJSON. Hang-prevention: AbortSignal.timeout on every Anthropic
+  // call, NDJSON heartbeat every 30s, all body reads via lib/safe-fetch.mjs.
+  if (url === '/api/polish' && req.method === 'POST') {
+    let body = '';
+    let total = 0;
+    req.on('data', c => { total += c.length; if (total > 8 * 1024) { req.destroy(); return; } body += c; });
+    req.on('end', async () => {
+      let parsed;
+      try { parsed = JSON.parse(body || '{}'); }
+      catch { return json({ ok: false, error: 'invalid JSON' }, 400); }
+      const POLISH_MODES = {
+        lite:  { model: 'claude-haiku-4-5',  passes: 1, topK: 0  },
+        smart: { model: 'claude-sonnet-4-6', passes: 2, topK: 10 },
+        heavy: { model: 'claude-opus-4-7',   passes: 3, topK: 20 },
+      };
+      const POLISH_CONSUMER_FILES = [
+        'cover-letter.md',
+        'form-fields.md',
+        'one-pager.md',
+        'interview-prep-teaser.md',
+        'references.md',
+        'referrals.md',
+        'impact-doc.md',
+      ];
+      const slug = String(parsed.slug || '').trim();
+      const row  = parsed.row;
+      const mode = String(parsed.mode || 'lite').trim();
+      if (!POLISH_MODES[mode]) return json({ ok: false, error: 'mode must be lite|smart|heavy' }, 400);
+      // Lazy-load dotenv — the launchd-wrapped dashboard-server doesn't source
+      // .env at startup. Idempotent + low-cost on repeated calls.
+      try {
+        const dotenv = await import('dotenv');
+        dotenv.config({ path: join(ROOT, '.env'), override: false });
+      } catch {}
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) return json({ ok: false, error: 'ANTHROPIC_API_KEY not set' }, 500);
+
+      // Resolve pack dir (slug preferred, row fallback).
+      function _findPackDirForSlug(s) {
+        const cd = join(ROOT, 'apply-pack', s);
+        const pd = join(ROOT, 'data', 'apply-packs', s);
+        if (existsSync(cd)) return cd;
+        if (existsSync(pd)) return pd;
+        return null;
+      }
+      function _findPackDirForRow(r) {
+        const padded = String(r).padStart(3, '0') + '-';
+        for (const base of [join(ROOT, 'apply-pack'), join(ROOT, 'data', 'apply-packs')]) {
+          if (!existsSync(base)) continue;
+          try {
+            const hit = readdirSync(base).find(n => n.startsWith(padded));
+            if (hit) return join(base, hit);
+          } catch {}
+        }
+        return null;
+      }
+      let packDir = null;
+      if (slug && /^[A-Za-z0-9_.-]+$/.test(slug)) packDir = _findPackDirForSlug(slug);
+      if (!packDir && row && /^\d+$/.test(String(row))) packDir = _findPackDirForRow(row);
+      if (!packDir) return json({ ok: false, error: 'pack not found for slug or row' }, 404);
+      const realSlug = basename(packDir);
+
+      // Read JD text + consumer artifacts.
+      function _readJdTextFromPack(d) {
+        const candidates = ['jd.txt', 'jd.md', 'JD.md', 'job-description.md', 'README.md'];
+        for (const f of candidates) {
+          const p = join(d, f);
+          if (existsSync(p)) { try { return readFileSync(p, 'utf-8'); } catch {} }
+        }
+        return '';
+      }
+      const jdText = _readJdTextFromPack(packDir);
+      const artifacts = [];
+      for (const name of POLISH_CONSUMER_FILES) {
+        const p = join(packDir, name);
+        if (existsSync(p)) {
+          try { artifacts.push({ name, content: readFileSync(p, 'utf-8') }); } catch {}
+        }
+      }
+      if (artifacts.length === 0) {
+        return json({ ok: false, error: 'no consumer artifacts to polish in ' + packDir.replace(ROOT + '/', '') }, 404);
+      }
+
+      const cfg = POLISH_MODES[mode];
+      res.writeHead(200, {
+        'Content-Type': 'application/x-ndjson',
+        'Cache-Control': 'no-cache',
+        'X-Accel-Buffering': 'no',
+      });
+      res.flushHeaders?.();
+      const writeLine = (obj) => { try { res.write(JSON.stringify(obj) + '\n'); } catch {} };
+      writeLine({ slug: realSlug, mode, artifactCount: artifacts.length, passes: cfg.passes, model: cfg.model });
+
+      // Mode-gated corpus retrieval (smart/heavy only).
+      let corpus = [];
+      if (cfg.topK > 0 && jdText) {
+        try {
+          writeLine({ phase: 'corpus', topK: cfg.topK });
+          const { indexQuery } = await import('./lib/corpus-index.mjs');
+          corpus = await indexQuery({
+            query: jdText.slice(0, 6000),
+            topK: cfg.topK,
+            filter: { sources: ['cv', 'brain', 'corpus'] },
+          });
+          writeLine({ phase: 'corpus_done', hits: corpus.length });
+        } catch (e) {
+          writeLine({ phase: 'corpus_failed', error: e.message });
+          corpus = [];
+        }
+      }
+
+      // Heartbeat: emit every 30s to keep connection alive.
+      const heartbeatId = setInterval(() => {
+        writeLine({ heartbeat: true, ts: new Date().toISOString() });
+      }, 30_000);
+
+      // polishPass: one round of polish across all artifacts.
+      async function polishPass({ artifacts: arts, adversarial }) {
+        const { fetchJson } = await import('./lib/safe-fetch.mjs');
+        const polished = [];
+        for (const a of arts) {
+          const sysParts = [
+            "You are a polish editor for Mitchell Williams's job-application artifacts.",
+            "Improve clarity, voice consistency, and ATS alignment WITHOUT changing factual claims.",
+            "Preserve markdown structure. Return ONLY the polished artifact text — no preamble, no commentary, no code fences.",
+          ];
+          if (adversarial) {
+            sysParts.push("ADVERSARIAL PASS: Be skeptical. Find weasel words, unsupported claims, and voice drift. Strengthen the text against a hostile reader.");
+          } else {
+            sysParts.push("Apply Mitchell's direct, evidence-backed voice. Cut hedge words. Tighten run-on sentences.");
+          }
+          const systemPrompt = sysParts.join('\n');
+          const userParts = [
+            '# Job description',
+            (jdText && jdText.slice(0, 12000)) || '(JD unavailable)',
+          ];
+          if (corpus && corpus.length) {
+            userParts.push('', '# Corpus snippets (most relevant from Mitchell\'s career corpus)');
+            for (let i = 0; i < corpus.slice(0, 20).length; i++) {
+              const c = corpus[i];
+              userParts.push('## Snippet ' + (i + 1) + ' (' + (c.source || 'unknown') + ')', c.text || '');
+            }
+          }
+          userParts.push('', '# Artifact to polish: ' + a.name, a.content);
+          const userPrompt = userParts.join('\n');
+
+          const j = await fetchJson('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            signal: AbortSignal.timeout(180_000),
+            headers: {
+              'content-type': 'application/json',
+              'x-api-key': apiKey,
+              'anthropic-version': '2023-06-01',
+            },
+            body: JSON.stringify({
+              model: cfg.model,
+              max_tokens: 4096,
+              system: systemPrompt,
+              messages: [{ role: 'user', content: userPrompt }],
+            }),
+          }, { bodyTimeoutMs: 120_000, errPrefix: 'anthropic-polish' });
+
+          const content = (j.content && j.content[0] && j.content[0].text) || a.content;
+          polished.push({ name: a.name, content, confidence: 0.9 });
+        }
+        return polished;
+      }
+
+      let polished = artifacts;
+      try {
+        for (let pass = 0; pass < cfg.passes; pass++) {
+          const isAdversarial = mode === 'heavy' && pass === cfg.passes - 1;
+          writeLine({ pass: pass + 1, total: cfg.passes, isAdversarial });
+          polished = await polishPass({ artifacts: polished, adversarial: isAdversarial });
+          writeLine({ pass: pass + 1, status: 'done' });
+        }
+
+        // Write polished artifacts to disk under polished/<ISO-ts>/.
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        const polishedDir = join(packDir, 'polished', ts);
+        mkdirSync(polishedDir, { recursive: true });
+        for (const a of polished) {
+          writeFileSync(join(polishedDir, a.name), a.content);
+        }
+        writeLine({ phase: 'write_done', dir: polishedDir.replace(ROOT + '/', '') });
+
+        // Drive push (guarded by driveEnabled()).
+        let driveResult = { skipped: 'drive_disabled' };
+        try {
+          const { pushPolishedArtifacts, driveEnabled } = await import('./lib/drive-sync.mjs');
+          if (driveEnabled()) {
+            writeLine({ phase: 'drive_push' });
+            const files = polished.map(a => ({ path: join(polishedDir, a.name), confidence: a.confidence ?? 0.9 }));
+            driveResult = await pushPolishedArtifacts({ slug: realSlug, files, target: 0.92 });
+          }
+        } catch (e) {
+          driveResult = { skipped: 'drive_error', error: e.message };
+        }
+
+        const avgConfidence = polished.length
+          ? polished.reduce((s, p) => s + (p.confidence || 0), 0) / polished.length
+          : 0;
+        writeLine({
+          done: true,
+          confidence: Number(avgConfidence.toFixed(3)),
+          polishedDir: polishedDir.replace(ROOT + '/', ''),
+          driveResult,
+        });
+      } catch (e) {
+        writeLine({ done: true, error: e.message });
+      } finally {
+        clearInterval(heartbeatId);
+        try { res.end(); } catch {}
+      }
+    });
+    return;
   }
 
   // ── POST /api/intel-refresh — refresh cached intel slots for a row ──

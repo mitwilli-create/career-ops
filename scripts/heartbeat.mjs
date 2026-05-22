@@ -18,7 +18,17 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
 import { homedir } from 'os';
+import dotenv from 'dotenv';
 import { installRunRecord } from '../lib/job-runs-ledger.mjs';
+
+// F1b fix (2026-05-21): load .env BEFORE installRunRecord / any consumer.
+// Without this, launchd-fired heartbeats miss HEARTBEAT_DESIGN=dispatch and
+// silently revert to the pre-Phase-F-5 format. Mitchell observed this on
+// the 2026-05-21 09:00 morning email; the 2026-05-20 22:00 evening email
+// he previewed from his shell DID get it because his shell sources .env.
+// override:true matches the project convention (see memory: env_secrets) so
+// the shell's empty ANTHROPIC_API_KEY doesn't clobber the real one in .env.
+dotenv.config({ path: join(dirname(fileURLToPath(import.meta.url)), '..', '.env'), override: true });
 
 const __jobRun = installRunRecord('heartbeat');
 

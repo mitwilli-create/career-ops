@@ -30,6 +30,13 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
 import { homedir } from 'os';
+import dotenv from 'dotenv';
+
+// F1b fix (2026-05-21): load .env BEFORE any consumer of HEARTBEAT_DESIGN.
+// Matches the fix in scripts/heartbeat.mjs — both scripts now read .env so
+// launchd-fired runs see the same env as Mitchell's shell-fired previews.
+dotenv.config({ path: join(dirname(fileURLToPath(import.meta.url)), '..', '.env'), override: true });
+
 import nodemailer from 'nodemailer';
 import { marked } from 'marked';
 import mjml2html from 'mjml';

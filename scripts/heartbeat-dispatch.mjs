@@ -431,8 +431,12 @@ function renderMasthead(surface, iso, palette, issueNumber) {
 
 // ── Render: hero date (large italic serif) ────────────────────────────────
 function renderHeroDate(iso, palette) {
-  const longProse = dateLongWords(iso);
-  return `<p style="margin:14px 0 0 0;font-family:'Fraunces','GT Sectra','Bodoni 72',Georgia,serif;font-style:italic;font-weight:400;font-size:48px;line-height:1.05;color:${palette.ink};letter-spacing:-0.02em">${escapeHtml(longProse)}</p>`;
+  // F1b (2026-05-21): swapped from word-spelled prose ("twenty-first of may,
+  // two thousand twenty-six") to ISO digital ("2026-05-21") per user
+  // direction in the dashboard hardening sprint. The dateLongWords helper
+  // stays defined + exported for re-introduction if the editorial direction
+  // reverts; this call site uses iso directly.
+  return `<p style="margin:14px 0 0 0;font-family:'Fraunces','GT Sectra','Bodoni 72',Georgia,serif;font-weight:500;font-size:48px;line-height:1.05;color:${palette.ink};letter-spacing:-0.02em;font-feature-settings:'tnum' 1">${escapeHtml(iso)}</p>`;
 }
 
 // ── Render: editorial lede ────────────────────────────────────────────────
@@ -817,9 +821,11 @@ function renderQuote(quote, palette) {
 // ── Render: closer ────────────────────────────────────────────────────────
 function renderCloser(surface, palette) {
   const ornament = surface === 'morning' ? '&#10118;' : '&sect;'; // ❘ vs §
+  // F1b (2026-05-21): swapped from word-spelled clock ("nine hundred ·
+  // pacific") to digital ("09:00 PT") per user direction.
   const line = surface === 'morning'
-    ? 'filed at nine hundred &middot; pacific'
-    : 'filed at eighteen hundred &middot; pacific';
+    ? 'filed at 09:00 PT'
+    : 'filed at 18:00 PT';
   return `
 <p style="margin:0;text-align:center">
   <span class="ornament" style="color:${palette.accent};font-family:'Fraunces',Georgia,serif;font-size:20px;letter-spacing:0.3em">${ornament}</span>

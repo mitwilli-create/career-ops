@@ -262,6 +262,76 @@ function loadPipelineActivity() {
   };
 }
 
+// ── 4.13 (2026-05-22) — last-batch reliability summary for A7 ─────
+// Aggregates batch-state.tsv into a small descriptor for the A7 strip's
+// "Last batch" chip. Duration is wall-clock from earliest start to most-
+// recent end (or now if running). Failed-rate is failed/(completed+failed).
+function loadLastBatchSummary() {
+  if (!existsSync(BATCH_STATE_PATH)) {
+    return null;
+  }
+  const lines = readFileSync(BATCH_STATE_PATH, 'utf-8').split('\n').filter(l => l.trim() && !l.startsWith('id'));
+  if (!lines.length) return null;
+  // Take the most recent ~600 rows so an old long-running batch doesn't
+  // skew the duration metric for the latest one.
+  const recent = lines.slice(-600);
+  let completed = 0, failed = 0, running = 0;
+  let earliestStart = null;
+  let latestEnd = null;
+  for (const l of recent) {
+    const cols = l.split('\t');
+    const status = (cols[2] || '').trim();
+    const startedAt = (cols[3] || '').trim();
+    const completedAt = (cols[4] || '').trim();
+    if (status === 'completed') completed++;
+    else if (status === 'failed') failed++;
+    else if (status === 'running') running++;
+    if (startedAt && (!earliestStart || startedAt < earliestStart)) earliestStart = startedAt;
+    if (completedAt && (!latestEnd || completedAt > latestEnd)) latestEnd = completedAt;
+  }
+  // Group recent rows into the "current/latest batch" using a 15-min gap heuristic
+  // on started_at. Walk forward from latest start; rows within 15min of the
+  // previous one belong to the same batch.
+  const sorted = recent
+    .map(l => ({ cols: l.split('\t'), started: l.split('\t')[3], completed: l.split('\t')[4], status: (l.split('\t')[2] || '').trim() }))
+    .filter(r => r.started)
+    .sort((a, b) => (a.started || '').localeCompare(b.started || ''));
+  let lastBatchRows = [];
+  if (sorted.length) {
+    lastBatchRows = [sorted[sorted.length - 1]];
+    for (let i = sorted.length - 2; i >= 0; i--) {
+      const prev = lastBatchRows[lastBatchRows.length - 1];
+      const cur = sorted[i];
+      const gapMs = (new Date(prev.started) - new Date(cur.started));
+      if (gapMs > 15 * 60 * 1000) break;
+      lastBatchRows.push(cur);
+    }
+    lastBatchRows.reverse();
+  }
+  let lbCompleted = 0, lbFailed = 0, lbRunning = 0;
+  for (const r of lastBatchRows) {
+    if (r.status === 'completed') lbCompleted++;
+    else if (r.status === 'failed') lbFailed++;
+    else if (r.status === 'running') lbRunning++;
+  }
+  const lbStart = lastBatchRows.length ? lastBatchRows[0].started : null;
+  const lbEnd = lastBatchRows.length ? lastBatchRows[lastBatchRows.length - 1].completed || null : null;
+  const lbDurationMs = (lbStart && lbEnd) ? Math.max(0, new Date(lbEnd) - new Date(lbStart)) : 0;
+  const lbTotal = lastBatchRows.length;
+  const failedRate = (lbCompleted + lbFailed) > 0 ? (lbFailed / (lbCompleted + lbFailed)) : 0;
+  return {
+    completed: lbCompleted,
+    failed: lbFailed,
+    running: lbRunning,
+    total: lbTotal,
+    duration_ms: lbDurationMs,
+    failed_rate: failedRate,
+    started_at: lbStart,
+    ended_at: lbEnd,
+    state: lbRunning > 0 ? 'running' : (lbFailed > 0 ? 'partial-fail' : 'completed'),
+  };
+}
+
 // ── Data extraction ───────────────────────────────────────────────
 
 function parseApplications() {
@@ -3732,6 +3802,8 @@ async function build() {
   // top-of-dashboard health strip. Build-time snapshot; SSE refreshes
   // the strip at runtime via the existing batch-live channel.
   const pipelineActivity = loadPipelineActivity();
+  // 4.13 (2026-05-22) — last-batch reliability summary for the A7 strip.
+  pipelineActivity.last_batch = loadLastBatchSummary();
   const today = new Date().toISOString().slice(0, 10);
   const generated = new Date().toISOString();
   const generatedShort = new Date(generated).toLocaleTimeString('en-US', {
@@ -24906,6 +24978,30 @@ function _renderPipelineActivity(data) {
   } else {
     html += _chip('pa-chip-muted', 'Overnight sweep: —', 'data/background-sweep-state.json absent — first sweep runs at 03:00 PT');
   }
+  // 4.13 (2026-05-22) — last-batch reliability chip. Click opens the
+  // existing batch-status modal for a fuller breakdown.
+  if (data.last_batch && data.last_batch.total > 0) {
+    var lb = data.last_batch;
+    var durSec = Math.max(0, Math.round((lb.duration_ms || 0) / 1000));
+    var durLabel;
+    if (durSec < 60) durLabel = durSec + 's';
+    else if (durSec < 3600) durLabel = Math.floor(durSec / 60) + 'm ' + (durSec % 60) + 's';
+    else durLabel = Math.floor(durSec / 3600) + 'h ' + Math.floor((durSec % 3600) / 60) + 'm';
+    var failPct = Math.round((lb.failed_rate || 0) * 100);
+    var lbCls = lb.state === 'running' ? 'pa-chip-warn'
+      : (lb.failed > 0 && failPct >= 10 ? 'pa-chip-bad'
+        : (lb.failed > 0 ? 'pa-chip-warn' : 'pa-chip-ok'));
+    var lbLabel;
+    if (lb.state === 'running') {
+      lbLabel = 'Batch running: ' + (lb.completed + lb.failed) + '/' + lb.total + ' · ' + lb.failed + ' failed · ' + durLabel + ' elapsed';
+    } else {
+      lbLabel = 'Last batch: ' + lb.completed + '/' + lb.total + ' · ' + lb.failed + ' failed · ' + durLabel;
+    }
+    var lbTip = 'batch/batch-state.tsv · started ' + (lb.started_at || 'unknown') + (lb.ended_at ? ' · ended ' + lb.ended_at : ' · still running') + ' · click for breakdown';
+    html += '<button type="button" class="pa-chip pa-chip-button ' + lbCls + '" title="' + _esc(lbTip) + '" onclick="if(window.openBatchStatusModal)window.openBatchStatusModal();else if(window.location)window.location.hash=\\'#batch-status\\'">' + _esc(lbLabel) + '</button>';
+  } else {
+    html += _chip('pa-chip-muted', 'Last batch: —', 'batch/batch-state.tsv empty — no batches yet today');
+  }
   chips.innerHTML = html;
 
   // "Updated X min ago" stamp based on the newest source-file timestamp.
@@ -30991,6 +31087,10 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   .pa-chip-warn  { background: rgba(245,158,11,0.14); color: #f59e0b; border-color: rgba(245,158,11,0.32); }
   .pa-chip-bad   { background: rgba(220,38,38,0.14);  color: #dc2626; border-color: rgba(220,38,38,0.32); }
   .pa-chip-muted { background: rgba(148,163,184,0.10); color: var(--text-4); border-color: rgba(148,163,184,0.18); }
+  /* 4.13 (2026-05-22) — clickable batch-status chip */
+  .pa-chip-button { cursor: pointer; font: inherit; }
+  .pa-chip-button:hover { filter: brightness(1.15); }
+  .pa-chip-button:focus-visible { outline: 2px solid var(--blue-fg-dark, #58a6ff); outline-offset: 1px; }
   .pa-stamp { font-size: 10.5px; color: var(--text-4); white-space: nowrap; }
   .pa-stamp.pa-stamp-stale { color: var(--amber-fg, #f59e0b); }
   @media (max-width: 720px) {

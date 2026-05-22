@@ -45,13 +45,30 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gateRow } from '../lib/apply-now-queue-gate.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const QUEUE_PATH = join(ROOT, 'data', 'apply-now-queue.json');
 const APPS_PATH = join(ROOT, 'data', 'applications.md');
+const LIVENESS_PATH = join(ROOT, 'data', 'liveness-state.json');
 
 const DRY_RUN = process.argv.includes('--dry-run');
+
+function loadLivenessState() {
+  try { return JSON.parse(readFileSync(LIVENESS_PATH, 'utf-8')); }
+  catch { return { rows: {} }; }
+}
+
+function annotateGate(row, ctx) {
+  const verdict = gateRow(row, ctx);
+  row._gate_bucket = verdict.bucket;
+  row._gate_pass = verdict.pass;
+  row._gate_reasons = verdict.reasons;
+  row._gate_missing_repositories = verdict.missing_repositories;
+  row._gate_checked_at = new Date().toISOString();
+  return verdict;
+}
 
 async function main() {
   if (!existsSync(QUEUE_PATH)) {
@@ -80,8 +97,12 @@ async function main() {
     statusUpdates: 0,
     droppedFromApplyNow: 0,
     inSyncRows: 0,
+    gate_pass: 0,
+    gate_auto_enrich: 0,
+    gate_remove: 0,
   };
   const log = [];
+  const gateCtx = { livenessState: loadLivenessState() };
 
   // Pass 1: update status on existing queue rows from applications.md
   for (const qrow of ranked) {
@@ -114,6 +135,17 @@ async function main() {
       log.push(`  ↑ rank ${qrow.rank} (#${qrow.num} ${qrow.company}): recovered into apply-now filter`);
     }
     if (prevStatus === app.status && stillEligible) stats.inSyncRows++;
+
+    // Strict gate annotation (does not drop the row — informational + actionable downstream)
+    if (!qrow._dropped) {
+      const enriched = { ...qrow, url: qrow.url || app.url || '', canonical_url: qrow.canonical_url || app.canonical_url || '' };
+      const verdict = annotateGate(qrow, gateCtx);
+      // Mirror enriched URL fields back to qrow for downstream consumers without overwriting curated data
+      if (!qrow.url && app.url) qrow.url = app.url;
+      if (verdict.bucket === 'PASS') stats.gate_pass++;
+      else if (verdict.bucket === 'AUTO_ENRICH') stats.gate_auto_enrich++;
+      else if (verdict.bucket === 'REMOVE') stats.gate_remove++;
+    }
   }
 
   // Pass 2: add applications.md apply-now rows not in queue
@@ -148,9 +180,17 @@ async function main() {
       _auto_added: true,
       _auto_added_at: today,
     };
+    // Run strict gate on the new candidate (annotation only — still added to queue
+    // so refresh-master + auto-enrich workflow can act on AUTO_ENRICH rows)
+    newRow.url = arow.url || '';
+    const verdict = annotateGate(newRow, gateCtx);
+    if (verdict.bucket === 'PASS') stats.gate_pass++;
+    else if (verdict.bucket === 'AUTO_ENRICH') stats.gate_auto_enrich++;
+    else if (verdict.bucket === 'REMOVE') stats.gate_remove++;
+
     ranked.push(newRow);
     stats.addedFromApps++;
-    log.push(`  + rank ${newRow.rank} (#${arow.num} ${arow.company} — ${arow.role.slice(0, 40)}): score=${arow.score} status=${arow.status}`);
+    log.push(`  + rank ${newRow.rank} (#${arow.num} ${arow.company} — ${arow.role.slice(0, 40)}): score=${arow.score} status=${arow.status} gate=${verdict.bucket}`);
   }
 
   // Update queue metadata
@@ -167,6 +207,7 @@ async function main() {
   console.log(`  status updates:       ${stats.statusUpdates}`);
   console.log(`  dropped from filter:  ${stats.droppedFromApplyNow}`);
   console.log(`  in-sync rows:         ${stats.inSyncRows}`);
+  console.log(`  gate verdict:         PASS=${stats.gate_pass} AUTO_ENRICH=${stats.gate_auto_enrich} REMOVE=${stats.gate_remove}`);
   if (log.length) {
     console.log('\nChanges:');
     for (const l of log) console.log(l);

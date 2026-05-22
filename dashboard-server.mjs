@@ -3126,6 +3126,50 @@ function _buildBatchStatusDetailedUncached() {
     }
   } catch (_) { /* state file unreadable — fall through with process_all_active=null */ }
 
+  // 09 Part 6 (2026-05-22) — Process All confidence panel data. Last 5
+  // Process All / batch-only runs with status + duration + completed
+  // counts. Renders in a new modal section so Mitchell can see at a glance
+  // whether the system is shipping cleanly.
+  let process_all_confidence = { runs: [], summary: { total: 0, succeeded: 0, failed: 0, cancelled: 0, success_rate: null } };
+  try {
+    const stateFp3 = join(ROOT, 'data/pipeline-process-state.json');
+    if (existsSync(stateFp3)) {
+      const state = JSON.parse(readFileSync(stateFp3, 'utf-8'));
+      const allRuns = Object.values(state.jobs || {})
+        .filter(j => j && (j.type === 'process-all' || j.type === 'batch-only'))
+        .sort((a, b) => String(b.started_at || '').localeCompare(String(a.started_at || '')))
+        .slice(0, 5);
+      const summary = { total: 0, succeeded: 0, failed: 0, cancelled: 0, running: 0 };
+      const runs = [];
+      for (const j of allRuns) {
+        const startMs = j.started_at ? Date.parse(j.started_at) : null;
+        const endMs = j.finished_at ? Date.parse(j.finished_at)
+                    : j.completed_at ? Date.parse(j.completed_at)
+                    : (j.status === 'running' ? Date.now() : null);
+        const durMs = (startMs && endMs) ? Math.max(0, endMs - startMs) : null;
+        runs.push({
+          jobId: j.jobId,
+          type: j.type || 'batch-only',
+          status: j.status,
+          started_at: j.started_at,
+          finished_at: j.finished_at || j.completed_at || null,
+          duration_ms: durMs,
+          phase: j.phase || null,
+          phases: j.phases || null,
+          resumed_from: j.resumed_from || null,
+        });
+        summary.total++;
+        if (j.status === 'completed') summary.succeeded++;
+        else if (j.status === 'failed') summary.failed++;
+        else if (j.status === 'cancelled') summary.cancelled++;
+        else if (j.status === 'running') summary.running++;
+      }
+      const decisive = summary.succeeded + summary.failed + summary.cancelled;
+      summary.success_rate = decisive > 0 ? Math.round((summary.succeeded / decisive) * 100) : null;
+      process_all_confidence = { runs, summary };
+    }
+  } catch (_) { /* best-effort */ }
+
   // Closure 08.3 (2026-05-22) — surface recent cancelled jobs so the modal
   // can render a Resume button per cancelled job. Window: last 7 days.
   let recent_cancelled_jobs = [];
@@ -3173,6 +3217,7 @@ function _buildBatchStatusDetailedUncached() {
     cost_30d_usd:   Math.round(cost_30d_usd * 100) / 100,
     most_recent_failures,
     recent_cancelled_jobs,
+    process_all_confidence,
     generated_at: new Date().toISOString(),
   };
 }

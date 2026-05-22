@@ -22661,6 +22661,9 @@ let _batchStatusPrev = null;
 
 function _bsFmtDuration(s) {
   if (s === null || s === undefined || !isFinite(s)) return '—';
+  // 09 Part 6 (2026-05-22) — round fractional seconds to avoid
+  // "3m 18.562000000000012s" floating-point overflow display.
+  s = Math.round(s);
   if (s < 60) return s + 's';
   const m = Math.floor(s / 60); const rem = s % 60;
   if (m < 60) return rem ? (m + 'm ' + rem + 's') : (m + 'm');
@@ -23047,7 +23050,55 @@ function _bsRenderBody(data, changed) {
       '</div>';
   }
 
-  body.innerHTML = sectionP + sectionR + sectionA + sectionB + sectionC + sectionD;
+  // 09 Part 6 (2026-05-22) — Process All confidence panel. Renders recent
+  // Process All / batch-only runs with status + duration + success rate.
+  // Builds trust that the system actually delivers on Run Batch / Process
+  // All actions (the user's J + K concerns).
+  let sectionPaC = '';
+  const pac = data.process_all_confidence;
+  if (pac && Array.isArray(pac.runs) && pac.runs.length > 0) {
+    const pacRows = pac.runs.map(r => {
+      const statusEmoji = r.status === 'completed' ? String.fromCharCode(0x2713)
+                       : r.status === 'failed'   ? String.fromCharCode(0x2717)
+                       : r.status === 'cancelled'? String.fromCharCode(0x29B8)
+                       : r.status === 'running'  ? String.fromCharCode(0x25CF)
+                       : '?';
+      const statusColor = r.status === 'completed' ? 'var(--green-fg, #16a34a)'
+                       : r.status === 'failed'   ? 'var(--red-fg, #dc2626)'
+                       : r.status === 'cancelled'? 'var(--text-3, #6b7280)'
+                       : r.status === 'running'  ? 'var(--blue-fg, #2563eb)'
+                       : 'var(--text-4, #9ca3af)';
+      const durLabel = r.duration_ms ? _bsFmtDuration(r.duration_ms / 1000) : '—';
+      const startedAgo = r.started_at ? Math.max(0, Math.round((Date.now() - Date.parse(r.started_at)) / 60000)) + 'm ago' : '?';
+      const typeLabel = r.type === 'process-all' ? 'Process All' : 'Run Batch';
+      const resumeBadge = r.resumed_from
+        ? ' <span style="font-size:9.5px;background:rgba(22,163,74,0.18);color:var(--green-fg,#16a34a);padding:1px 5px;border-radius:3px">resumed</span>'
+        : '';
+      return '<tr>' +
+        '<td style="white-space:nowrap;padding:5px 8px"><span style="color:' + statusColor + ';font-weight:600">' + statusEmoji + '</span> ' + _bsEsc(r.status) + '</td>' +
+        '<td style="padding:5px 8px">' + _bsEsc(typeLabel) + resumeBadge + '</td>' +
+        '<td style="padding:5px 8px;color:var(--text-3,#6b7280)">' + _bsEsc(startedAgo) + '</td>' +
+        '<td style="padding:5px 8px">' + _bsEsc(durLabel) + '</td>' +
+        '</tr>';
+    }).join('');
+    const sum = pac.summary;
+    const sucRate = sum.success_rate !== null
+      ? sum.success_rate + '% success'
+      : 'no decisive runs yet';
+    sectionPaC =
+      '<div class="batch-status-section">' +
+        '<h4 class="batch-status-section-title" style="display:flex;justify-content:space-between;align-items:baseline">' +
+          '<span>Process All confidence — last ' + pac.runs.length + '</span>' +
+          '<span style="font-size:11px;color:var(--text-3,#6b7280);font-weight:400">' + _bsEsc(sucRate) + ' · ' + sum.succeeded + ' ok · ' + sum.failed + ' failed · ' + sum.cancelled + ' cancelled</span>' +
+        '</h4>' +
+        '<table class="batch-status-runs" style="width:100%;font-size:11.5px;margin-top:6px">' +
+          '<thead><tr><th>Status</th><th>Type</th><th>Started</th><th>Duration</th></tr></thead>' +
+          '<tbody>' + pacRows + '</tbody>' +
+        '</table>' +
+      '</div>';
+  }
+
+  body.innerHTML = sectionP + sectionR + sectionPaC + sectionA + sectionB + sectionC + sectionD;
   // Invariant #8 — apply the universal table baseline (dbl-click expand,
   // [title] tooltips, column-resize handles) to every freshly rendered
   // table inside the batch-status modal body.

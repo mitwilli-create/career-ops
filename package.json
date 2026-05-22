@@ -71,6 +71,7 @@
     "mjml": "^5.2.1",
     "nodemailer": "^8.0.7",
     "playwright": "^1.60.0",
+    "sqlite-vec": "^0.1.9",
     "zod": "^4.4.3"
   },
   "devDependencies": {

@@ -34574,6 +34574,65 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   console.log(`  Pipeline pending:  ${pipelinePending}`);
   console.log(`  Reports rendered:  ${renderedCount} → dashboard/reports/`);
   console.log(`  Reports parsed:    ${_reportCache.size} (cache hits: ${_reportCacheHits})`);
+
+  // 09 Part 3 Item F (2026-05-22) — Network-DB enforcement audit.
+  // Scans every hm-intel/<slug>.json file for outreach recommendation
+  // fields, extracts person names from the free-text values, and reports
+  // how many of those names are present in the network database. Missing
+  // names should be added to data/enrichment-queue.json so a future
+  // network-enricher run can fill them in.
+  try {
+    const hmDir = join(ROOT, 'data', 'hm-intel');
+    if (existsSync(hmDir)) {
+      const hmFiles = readdirSync(hmDir).filter(f => f.endsWith('.json') && !f.startsWith('_'));
+      const dbPath = join(ROOT, 'data', 'network-database.json');
+      const dbNames = new Set();
+      if (existsSync(dbPath)) {
+        try {
+          const dbRaw = JSON.parse(readFileSync(dbPath, 'utf-8'));
+          for (const p of (dbRaw.people || [])) {
+            const name = p.full_name || ((p.first || '') + ' ' + (p.last || '')).trim();
+            if (name) dbNames.add(name.toLowerCase());
+          }
+        } catch (_) { /* DB unavailable — treat as 0 names */ }
+      }
+      const nameRe = /\b([A-Z][a-z]+ [A-Z][a-z]+(?:[- ][A-Z][a-z]+)?)\b/g;
+      let totalReco = 0;
+      const missing = new Set();
+      const allMentioned = new Set();
+      for (const f of hmFiles) {
+        let d;
+        try { d = JSON.parse(readFileSync(join(hmDir, f), 'utf-8')); } catch (_) { continue; }
+        const ppl = d.people_corroboration || {};
+        const text = [
+          ppl.recommended_outreach_target,
+          ppl.named_employees_posting,
+          ppl.hiring_team_visibility,
+        ].filter(Boolean).join(' ');
+        if (!text || text.trim() === '' || text === 'unknown') continue;
+        let m;
+        while ((m = nameRe.exec(text)) !== null) {
+          const name = m[1];
+          // Skip common false positives (titles, places, generic phrases)
+          if (/^(Hiring Team|Engineering Editorial|Communications Manager|Product Manager|Software Engineer|San Francisco|New York|Los Angeles|United States|Apply Now|Apply Pack|Bay Area)$/.test(name)) continue;
+          totalReco++;
+          allMentioned.add(name);
+          if (!dbNames.has(name.toLowerCase())) missing.add(name);
+        }
+      }
+      const inDb = allMentioned.size - missing.size;
+      const statusMark = missing.size === 0 ? '✓' : '⚠';
+      console.log(`  ${statusMark} Network-DB enforcement: ${totalReco} outreach recommendations rendered, ${inDb} unique names in DB, ${missing.size} missing`);
+      if (missing.size > 0) {
+        const sample = Array.from(missing).slice(0, 5).join(', ');
+        console.log(`    Missing sample: ${sample}${missing.size > 5 ? ', ...' : ''}`);
+        console.log(`    Fix: run network-enricher on the missing names, or add manually to data/enrichment-queue.json`);
+      }
+    }
+  } catch (err) {
+    console.log(`  ⚠ Network-DB enforcement check failed: ${err.message}`);
+  }
+
   console.log(`  Page weight:       ${rawBytes.toLocaleString()} bytes raw → ${minBytes.toLocaleString()} bytes (−${(rawBytes - minBytes).toLocaleString()} bytes, ${Math.round((rawBytes - minBytes) / rawBytes * 100)}%)`);
 
   // P2.16 (2026-05-20) — build-weight gate. The inline-payload-bloat bug

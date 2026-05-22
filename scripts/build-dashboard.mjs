@@ -105,6 +105,24 @@ const PROFILE_YML_PATH = join(ROOT, 'config/profile.yml');
 const CV_PATH = join(ROOT, 'cv.md');
 const OUTREACH_TEMPLATES_PATH = join(ROOT, 'data/outreach-templates.md');
 const OUT_PATH = join(ROOT, 'dashboard/index.html');
+const XGE_BASELINE_PATH = join(ROOT, 'data/xge-baseline.json');
+const XGE_BASELINE_EXAMPLE_PATH = join(ROOT, 'data/xge-baseline.example.json');
+
+// ── 4.03 (2026-05-22) — xGE baseline for comp comparison table ────
+// Loaded at build time, injected as window._XGE_BASELINE into the dashboard.
+// The user-editable file lives at data/xge-baseline.json (gitignored —
+// contains personal comp). Falls back to data/xge-baseline.example.json
+// (committed defaults) when the user-editable file is missing.
+function loadXgeBaseline() {
+  const path = existsSync(XGE_BASELINE_PATH) ? XGE_BASELINE_PATH : XGE_BASELINE_EXAMPLE_PATH;
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, 'utf-8'));
+  } catch (err) {
+    console.warn('[xge-baseline] parse failed:', err.message);
+    return null;
+  }
+}
 
 // ── Email-launcher build-time data ───────────────────────────────
 // CV headline: first H1 (name) + first H2 (one-sentence lead) from cv.md.
@@ -241,6 +259,76 @@ function loadPipelineActivity() {
       summary: sweep.summary || null,
     } : null,
     newest_ms: newestMs,
+  };
+}
+
+// ── 4.13 (2026-05-22) — last-batch reliability summary for A7 ─────
+// Aggregates batch-state.tsv into a small descriptor for the A7 strip's
+// "Last batch" chip. Duration is wall-clock from earliest start to most-
+// recent end (or now if running). Failed-rate is failed/(completed+failed).
+function loadLastBatchSummary() {
+  if (!existsSync(BATCH_STATE_PATH)) {
+    return null;
+  }
+  const lines = readFileSync(BATCH_STATE_PATH, 'utf-8').split('\n').filter(l => l.trim() && !l.startsWith('id'));
+  if (!lines.length) return null;
+  // Take the most recent ~600 rows so an old long-running batch doesn't
+  // skew the duration metric for the latest one.
+  const recent = lines.slice(-600);
+  let completed = 0, failed = 0, running = 0;
+  let earliestStart = null;
+  let latestEnd = null;
+  for (const l of recent) {
+    const cols = l.split('\t');
+    const status = (cols[2] || '').trim();
+    const startedAt = (cols[3] || '').trim();
+    const completedAt = (cols[4] || '').trim();
+    if (status === 'completed') completed++;
+    else if (status === 'failed') failed++;
+    else if (status === 'running') running++;
+    if (startedAt && (!earliestStart || startedAt < earliestStart)) earliestStart = startedAt;
+    if (completedAt && (!latestEnd || completedAt > latestEnd)) latestEnd = completedAt;
+  }
+  // Group recent rows into the "current/latest batch" using a 15-min gap heuristic
+  // on started_at. Walk forward from latest start; rows within 15min of the
+  // previous one belong to the same batch.
+  const sorted = recent
+    .map(l => ({ cols: l.split('\t'), started: l.split('\t')[3], completed: l.split('\t')[4], status: (l.split('\t')[2] || '').trim() }))
+    .filter(r => r.started)
+    .sort((a, b) => (a.started || '').localeCompare(b.started || ''));
+  let lastBatchRows = [];
+  if (sorted.length) {
+    lastBatchRows = [sorted[sorted.length - 1]];
+    for (let i = sorted.length - 2; i >= 0; i--) {
+      const prev = lastBatchRows[lastBatchRows.length - 1];
+      const cur = sorted[i];
+      const gapMs = (new Date(prev.started) - new Date(cur.started));
+      if (gapMs > 15 * 60 * 1000) break;
+      lastBatchRows.push(cur);
+    }
+    lastBatchRows.reverse();
+  }
+  let lbCompleted = 0, lbFailed = 0, lbRunning = 0;
+  for (const r of lastBatchRows) {
+    if (r.status === 'completed') lbCompleted++;
+    else if (r.status === 'failed') lbFailed++;
+    else if (r.status === 'running') lbRunning++;
+  }
+  const lbStart = lastBatchRows.length ? lastBatchRows[0].started : null;
+  const lbEnd = lastBatchRows.length ? lastBatchRows[lastBatchRows.length - 1].completed || null : null;
+  const lbDurationMs = (lbStart && lbEnd) ? Math.max(0, new Date(lbEnd) - new Date(lbStart)) : 0;
+  const lbTotal = lastBatchRows.length;
+  const failedRate = (lbCompleted + lbFailed) > 0 ? (lbFailed / (lbCompleted + lbFailed)) : 0;
+  return {
+    completed: lbCompleted,
+    failed: lbFailed,
+    running: lbRunning,
+    total: lbTotal,
+    duration_ms: lbDurationMs,
+    failed_rate: failedRate,
+    started_at: lbStart,
+    ended_at: lbEnd,
+    state: lbRunning > 0 ? 'running' : (lbFailed > 0 ? 'partial-fail' : 'completed'),
   };
 }
 
@@ -2839,6 +2927,57 @@ function formatTrackerNote(text) {
 // Pre-loaded from data/apply-packs/<slug>/polish-orchestrator-summary.json files.
 let _polishStatusMap = { byRowId: new Map(), bySlug: new Map(), all: [] };
 
+// 4.02 Part B (2026-05-22) — pasteable Claude Code interview prompt for the
+// gap-chip modal. Template-based seed-question routing by gap-title keywords.
+// No build-time LLM call (saves ~$0.20/build); the prompt itself instructs
+// Claude Code to read Mitchell's corpus + ask one question at a time.
+function _buildGapInterviewPrompt({ title, detail, severity, company, role, reportPath }) {
+  const t = String(title || '').toLowerCase();
+  let seed;
+  if (/(no direct|missing experience|never used|no exposure|no rep)/.test(t)) {
+    seed = "What's the closest adjacent experience you have to the product/system in this gap? Pick one: (a) a related product at the same company, (b) the same problem class at a different company, (c) external use as a power user, or (d) no obvious adjacent — let's draft a learn-fast plan.";
+  } else if (/(pr agency|press|reporter|media|publicist)/.test(t)) {
+    seed = "When you needed PR coverage at xGE / Google, who did you partner with — internal Comms, external PR firm, both? Was that you driving the brief or executing on someone else's?";
+  } else if (/(jd|unreadable|js-gated|js gated|scrape)/.test(t)) {
+    seed = "I'll re-scrape the JD via Playwright first. Want me to also pull the role from the company's career page if a search by title finds it? (yes / no)";
+  } else if (/(no.*relationship|named.*contact|cold|inbound|outreach)/.test(t)) {
+    seed = "Which of these scenarios best describes your reporter / outlet relationships? (a) regular off-the-record contact with named beat reporters, (b) one-off coverage from a handful of outlets, (c) inbound press from your viral work, (d) no direct relationships yet.";
+  } else if (/(stack|language|framework|python|typescript|react|node)/.test(t)) {
+    seed = "What's your honest rep with this stack — pick one: (a) shipped production code in it, (b) used it for a personal/learning project, (c) read about it but never wrote it, (d) zero exposure. We'll work the answer into the application based on what you say.";
+  } else if (/(years|tenure|seniority|level|principal|staff|junior|mid)/.test(t)) {
+    seed = "What's the longest single-track tenure you've held where you owned a similar scope of work? Give me the role + duration; I'll map it against the JD's level expectation and tell you whether to lead with the years or lead with the scope.";
+  } else {
+    seed = "Tell me one concrete example from your background that demonstrates the underlying skill behind this gap. Keep it to 1-2 sentences; I'll ask follow-ups based on what you share.";
+  }
+  const corpus = [
+    'cv.md',
+    'article-digest.md',
+    'data/applications.md',
+    reportPath ? `reports/${reportPath.replace(/^reports\//, '')}` : '',
+    'interview-prep/story-bank.md',
+  ].filter(Boolean).join(', ');
+  const detailClipped = String(detail || '').slice(0, 280);
+  return [
+    `Mitchell — I'm helping you address a specific gap in your application to ${company} for the ${role} role. The gap is:`,
+    '',
+    `  "${title}"`,
+    `  Severity: ${severity}`,
+    `  Detail: ${detailClipped}`,
+    '',
+    "I'm going to ask you 4–6 questions, one at a time. Each answer will inform the next question. After we're done, I'll write a 1-paragraph cover-letter narrative AND a 2-line impact-doc bullet you can drop into the apply pack.",
+    '',
+    "Constraints I'll enforce:",
+    `- I will read ${corpus} for adjacent evidence before asking`,
+    "- I will not fabricate any claim that isn't in your corpus",
+    "- Each question fits in a single sentence + ≤3 multiple-choice options OR an open-ended prompt",
+    "- I'll skip questions if the answer is already obvious from your corpus",
+    "- After your last answer, I'll show you the draft narrative + bullet and we can iterate",
+    '',
+    'Question 1 of ~5:',
+    seed,
+  ].join('\n');
+}
+
 function renderRow(r, idx) {
   const archetype = getReportArchetype(r.reportPath);
   const url = getReportUrl(r.reportPath);
@@ -3154,6 +3293,16 @@ function renderRow(r, idx) {
       const whyHtml = whyOk ? marked.parse(whyOk) : '';
       const gapKey = _slugifyGap(g.title);
       const gapDrillId = `${_rowDrillNum}:${gapKey}`;
+      // 4.02B (2026-05-22) — pasteable interview prompt for Claude Code.
+      // Template-based seed question selection (no LLM call at build time).
+      const interviewPrompt = _buildGapInterviewPrompt({
+        title: g.title,
+        detail: (g.detail || '').replace(/<[^>]+>/g, '').trim(),
+        severity: g.severity || 'medium',
+        company: r.company || 'this company',
+        role: r.role || 'this role',
+        reportPath: r.reportPath || '',
+      });
       return `<span class="gap-chip gap-chip-interactive drill-trigger"
         data-drill="gap:${htmlEscape(gapDrillId)}"
         onclick="window.drillIn('gap','${htmlEscape(gapDrillId)}',event);openGapModal(this);event.stopPropagation()"
@@ -3163,6 +3312,7 @@ function renderRow(r, idx) {
         data-detail="${htmlEscape(detailHtml)}"
         data-strategy="${htmlEscape(strategyHtml)}"
         data-why="${htmlEscape(whyHtml)}"
+        data-interview-prompt="${htmlEscape(interviewPrompt)}"
         title="Click for gap-closing strategy">⚠ ${htmlEscape(g.title)}</span>`;
     }).join('')}</div>` : ''}
     ${_honestGaps.length ? `<div class="dcard-honest-gaps" style="margin-top:${gaps.length ? '12' : '0'}px">
@@ -3714,6 +3864,8 @@ async function build() {
   // top-of-dashboard health strip. Build-time snapshot; SSE refreshes
   // the strip at runtime via the existing batch-live channel.
   const pipelineActivity = loadPipelineActivity();
+  // 4.13 (2026-05-22) — last-batch reliability summary for the A7 strip.
+  pipelineActivity.last_batch = loadLastBatchSummary();
   const today = new Date().toISOString().slice(0, 10);
   const generated = new Date().toISOString();
   const generatedShort = new Date(generated).toLocaleTimeString('en-US', {
@@ -5404,6 +5556,8 @@ async function build() {
     sender: emailHeadline,
     templates: emailTemplates,
   }).replace(/<\//g, '<\\/');
+  // 4.03 (2026-05-22) — xGE comp-baseline (for drawer comp-comparison table)
+  const xgeBaselineJson = JSON.stringify(loadXgeBaseline() || {}).replace(/<\//g, '<\\/');
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -9748,6 +9902,52 @@ async function build() {
     overflow-x: auto; font-size: 12px; margin: 6px 0;
   }
   .gap-section-body pre code { background: none; padding: 0; }
+
+  /* 4.02 Part B (2026-05-22) — pasteable Claude Code interview prompt */
+  .gap-interview .gap-section-label {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px;
+  }
+  .gap-interview-copy {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-1);
+    border-radius: 4px;
+    padding: 3px 9px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+    cursor: pointer;
+    line-height: 1.4;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .gap-interview-copy:hover { background: var(--surface-2); border-color: var(--blue-fg-dark, #58a6ff); color: var(--blue-fg-dark, #58a6ff); }
+  .gap-interview-copy.copied { background: rgba(16,185,129,0.14); color: #10b981; border-color: rgba(16,185,129,0.32); }
+  .gap-interview-copy.copy-err { background: rgba(220,38,38,0.14); color: #dc2626; border-color: rgba(220,38,38,0.32); }
+  .gap-interview-details { padding: 0; }
+  .gap-interview-details summary {
+    padding: 8px 14px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--text-3);
+    user-select: none;
+  }
+  .gap-interview-details summary:hover { color: var(--text-1); }
+  .gap-interview-details[open] summary { border-bottom: 1px solid var(--border); }
+  .gap-interview-prompt {
+    margin: 0;
+    padding: 14px;
+    background: var(--surface-2);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--text-2);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-height: 50vh;
+    overflow-y: auto;
+  }
   .gap-section-body strong { color: var(--text); font-weight: 600; }
   .gap-section-body a { color: var(--blue-fg); }
   .gap-section.gap-ok { border-color: var(--green-border); }
@@ -10943,11 +11143,99 @@ async function build() {
     font-size: 12.5px; font-style: italic;
   }
 
+  /* 4.03 (2026-05-22) — comp comparison table (xGE vs target × 8 fields) */
+  .comp-comparison-wrap { margin-top: 6px; }
+  .comp-comparison-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    table-layout: fixed;
+  }
+  .comp-comparison-table th,
+  .comp-comparison-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    line-height: 1.45;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+  }
+  .comp-comparison-table thead th {
+    background: var(--surface-2);
+    font-weight: 700;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--text-2);
+    border-bottom: 2px solid var(--border);
+  }
+  .comp-comparison-table .cc-field {
+    width: 18%;
+    font-weight: 700;
+    color: var(--text-1);
+    background: var(--surface-2);
+  }
+  .comp-comparison-table .cc-current { width: 41%; color: var(--text-1); }
+  .comp-comparison-table .cc-target { width: 41%; color: var(--text-1); }
+  .comp-comparison-table .cc-na { color: var(--text-3); font-style: italic; }
+  .comp-comparison-meta {
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--text-3);
+  }
+  @media (max-width: 720px) {
+    .comp-comparison-table { font-size: 11.5px; }
+    .comp-comparison-table th,
+    .comp-comparison-table td { padding: 6px 8px; }
+    .comp-comparison-table .cc-field { width: 22%; }
+    .comp-comparison-table .cc-current,
+    .comp-comparison-table .cc-target { width: 39%; }
+  }
+
   /* Provider disagreements footer block */
   .hm-disagreement {
     background: rgba(245,158,11,.06);
     border-color: rgba(245,158,11,.3);
   }
+
+  /* 4.10 (2026-05-22) — outreach-section content density */
+  .outreach-tracks {
+    margin-top: 8px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .outreach-intro {
+    margin: 4px 0;
+    font-size: 12.5px;
+    color: var(--text-1);
+  }
+  .outreach-track {
+    padding: 8px 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    border-left: 3px solid var(--blue-fg-dark);
+  }
+  .outreach-track-label {
+    font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .04em;
+    color: var(--blue-fg-dark);
+    margin-bottom: 4px;
+  }
+  .outreach-track-body { font-size: 12.5px; line-height: 1.45; }
+  .outreach-avoid {
+    margin-top: 8px; padding: 8px 10px;
+    background: rgba(245,158,11,.06);
+    border: 1px solid rgba(245,158,11,.3);
+    border-radius: var(--radius-sm);
+  }
+  .outreach-avoid-label {
+    font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .04em;
+    color: var(--amber-fg, #b45309);
+    margin-bottom: 4px;
+  }
+  .outreach-avoid ul { margin: 0; padding-left: 18px; }
+  .outreach-avoid li { font-size: 12px; color: var(--text-2); margin: 2px 0; }
 
   /* FIX 3 (2026-05-17) — high-confidence contact filter footnote. */
   .hm-filter-footnote {
@@ -14800,10 +15088,10 @@ function openRightRailForDetail(idx, detailRow) {
     };
     const tierTitle = tierLabelMap[tierLetter];
     if (tierTitle) {
-      if (/\btitle=/.test(tierHtml)) {
-        tierHtml = tierHtml.replace(/\btitle="[^"]*"/, 'title="' + _drawerEscape(tierTitle) + '"');
+      if (/\\btitle=/.test(tierHtml)) {
+        tierHtml = tierHtml.replace(/\\btitle="[^"]*"/, 'title="' + _drawerEscape(tierTitle) + '"');
       } else {
-        tierHtml = tierHtml.replace(/^<(\w+)/, '<$1 title="' + _drawerEscape(tierTitle) + '"');
+        tierHtml = tierHtml.replace(/^<(\\w+)/, '<$1 title="' + _drawerEscape(tierTitle) + '"');
       }
     }
   }
@@ -15419,7 +15707,7 @@ async function loadSidebarRecentUpdates() {
       const date = _updateDrawerEscape((e.date || '').slice(0, 10));
       const tag = _updateDrawerEscape(e.tag || '');
       const fullText = _updateDrawerEscape(e.text || '');
-      const trimmed = (e.text || '').replace(/\s+/g, ' ').trim();
+      const trimmed = (e.text || '').replace(/\\s+/g, ' ').trim();
       const preview = _updateDrawerEscape(trimmed.length > 60 ? trimmed.slice(0, 60) + '…' : trimmed);
       return '<button type="button" class="sidebar-recent-update-row" ' +
         'data-text="' + fullText + '" ' +
@@ -15836,7 +16124,7 @@ function _populateDrawerRibbon(currentRow) {
     if (!tr) return '';
     var company = (tr.querySelector('a.company-link strong, td strong') || {}).textContent || '';
     var role = (tr.querySelector('td.role-cell a.role-link, td.role-cell') || {}).textContent || '';
-    var text = (company + ' — ' + role).replace(/\s+/g, ' ').trim();
+    var text = (company + ' — ' + role).replace(/\\s+/g, ' ').trim();
     return text.slice(0, 60);
   }
 
@@ -19631,18 +19919,23 @@ function _hmPersonCard(p) {
     + (a.url ? '<a href="' + _hmEsc(a.url) + '" target="_blank" rel="noopener">' + _hmEsc(a.platform || 'post') + '</a>' : _hmEsc(a.platform || ''))
     + ' — ' + _hmEsc(a.summary || '') + '</li>'
   ).join('');
+  // 4.09 (2026-05-22) — name linkifies via shared helper. Falls through to
+  // _hmEsc if helper isn't loaded yet (defensive; safe at runtime).
+  const nameHtml = (typeof window._personLinkify === 'function')
+    ? window._personLinkify(p.name, { linkedinUrl: p.linkedin_url })
+    : _hmEsc(p.name);
   return '<div class="hm-person">'
     + '<div class="hm-person-head">'
-    +   '<div class="hm-person-name">' + _hmEsc(p.name) + '</div>'
+    +   '<div class="hm-person-name">' + nameHtml + '</div>'
     +   _hmConfChip(p.confidence)
     +   (p.provider_consensus ? '<span class="hm-consensus" title="Provider consensus">' + _hmEsc(p.provider_consensus) + '</span>' : '')
     + '</div>'
     + '<div class="hm-person-title">' + _hmEsc(p.title || '') + '</div>'
-    + (p.why_owns_this_req ? '<div class="hm-person-why"><strong>Why:</strong> ' + _hmEsc(p.why_owns_this_req) + '</div>' : '')
+    + (p.why_owns_this_req ? '<div class="hm-person-why"><strong>Why:</strong> ' + _hmEsc(_cleanOutreachProse(p.why_owns_this_req)) + '</div>' : '')
     + (links.length ? '<div class="hm-person-links">' + links.join(' · ') + '</div>' : '')
     + (emails.length ? '<div class="hm-person-emails">' + emails.join('<br>') + '</div>' : '')
     + (activityHtml ? '<div class="hm-person-activity"><strong>Recent activity:</strong><ul>' + activityHtml + '</ul></div>' : '')
-    + (p.outreach_hook ? '<div class="hm-person-hook"><strong>Hook:</strong> ' + _hmEsc(p.outreach_hook) + '</div>' : '')
+    + (p.outreach_hook ? '<div class="hm-person-hook"><strong>Hook:</strong> ' + _hmEsc(_cleanOutreachProse(p.outreach_hook)) + '</div>' : '')
     + '</div>';
 }
 
@@ -19738,6 +20031,151 @@ function _hmProseBullets(prose) {
   return blocks.join('<hr class="dcard-divider">');
 }
 
+// 4.10 (2026-05-22) — strip stiff/robotic phrasing from outreach prose.
+// Reused by _formatOutreachSection (for outreach_strategy) and _hmPersonCard
+// (for short outreach_hook / why_owns_this_req strings).
+// Regex backslashes are doubled because this function lives inside the
+// giant outer build-dashboard template — single \s / \b would be stripped
+// to literal s / b (bug-class catalog Pattern A).
+function _cleanOutreachProse(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/^It is recommended (?:that |to )/i, '')
+    .replace(/^It would be (?:beneficial|advisable) to /i, '')
+    .replace(/^(?:It is suggested |It is advised )(?:that |to )/i, '')
+    .replace(/\\bplease (?:consider|be advised|note)\\b\\s*/gi, '')
+    .replace(/\\s{2,}/g, ' ')
+    .trim();
+}
+// 4.10 (2026-05-22) — content density helper for outreach prose. Detects
+// structural markers (Track N, Do not X) in long outreach prose and splits
+// into labeled micro-sections. Conservatively cleans robotic phrasing.
+// Falls back to a cleaned <p> for prose that lacks clear structure.
+// Browser-side helper — invoked from _renderHMIntel at runtime (async fetch).
+function _formatOutreachSection(prose) {
+  if (!prose) return '';
+  const raw = String(prose).trim();
+  if (!raw) return '';
+  const cleaned = _cleanOutreachProse(raw);
+  const wordCount = cleaned.split(/\\s+/).filter(Boolean).length;
+  let html;
+  if (wordCount < 50) {
+    html = '<p>' + _hmEsc(cleaned) + '</p>';
+  } else {
+    // Track-pattern split — biggest density win for outreach_strategy.
+    // Doubled backslashes per Pattern A (outer template strips singles).
+    const TRACK_RE = /(?=Track \\d+ \\(Day \\d+\\)\\s*[—-]\\s*)/g;
+    const parts = cleaned.split(TRACK_RE).map(p => p.trim()).filter(Boolean);
+    if (parts.length >= 3) {
+      html = _renderOutreachTracks(parts[0], parts.slice(1));
+    } else {
+      const avoidSplit = _splitOutreachAvoid(cleaned);
+      html = avoidSplit || ('<p>' + _hmEsc(cleaned) + '</p>');
+    }
+  }
+  // Linkify embedded directory names if the helper is available.
+  if (typeof window._personLinkifyProse === 'function') {
+    try { html = window._personLinkifyProse(html); } catch (_) { /* keep original */ }
+  }
+  return html;
+}
+function _renderOutreachTracks(intro, tracks) {
+  let html = '';
+  if (intro) html += '<p class="outreach-intro">' + _hmEsc(intro) + '</p>';
+  html += '<div class="outreach-tracks">';
+  for (const t of tracks) {
+    const m = t.match(/^(Track \\d+ \\(Day \\d+\\))\\s*[—-]\\s*(.+)$/);
+    if (m) {
+      html += '<div class="outreach-track">';
+      html +=   '<div class="outreach-track-label">' + _hmEsc(m[1]) + '</div>';
+      html +=   '<div class="outreach-track-body">' + _hmEsc(m[2].trim()) + '</div>';
+      html += '</div>';
+    } else {
+      html += '<div class="outreach-track"><div class="outreach-track-body">' + _hmEsc(t) + '</div></div>';
+    }
+  }
+  html += '</div>';
+  return html;
+}
+function _splitOutreachAvoid(prose) {
+  const sentences = prose.match(/[^.!?]+[.!?]/g) || [];
+  if (sentences.length < 3) return null;
+  const avoid = [];
+  const rest = [];
+  for (const s of sentences) {
+    const t = s.trim();
+    if (/^(?:Do not|Don't|Avoid)\\b/i.test(t)) avoid.push(t);
+    else rest.push(t);
+  }
+  if (avoid.length === 0) return null;
+  let html = '<p>' + _hmEsc(rest.join(' ').trim()) + '</p>';
+  html += '<div class="outreach-avoid">';
+  html +=   '<div class="outreach-avoid-label">⚠ Avoid</div>';
+  html +=   '<ul>';
+  for (const a of avoid) html += '<li>' + _hmEsc(a) + '</li>';
+  html +=   '</ul>';
+  html += '</div>';
+  return html;
+}
+
+// 4.03 (2026-05-22) — side-by-side comp comparison table. Two columns
+// (xGE baseline vs target role) × 8 fields (comp, equity, benefits,
+// vacation/sick, stock, bonuses, 401k, hybrid). Fills "Not disclosed"
+// for gaps. xGE side reads from window._XGE_BASELINE (build-injected
+// from data/xge-baseline.json — user-editable). Target side reads from
+// hm-intel tradeoffs_vs_current_role.new_role_specifics + comp_intelligence.
+function _renderCompComparisonTable(d) {
+  if (!d) return '';
+  const xge = (typeof window !== 'undefined' && window._XGE_BASELINE) ? window._XGE_BASELINE : {};
+  if (!xge || !xge.role_label) return '';
+  const t = d.tradeoffs_vs_current_role || {};
+  const ns = t.new_role_specifics || {};
+  const ci = d.comp_intelligence || {};
+  // Target-side resolution. Missing → "Not disclosed".
+  const NA = 'Not disclosed';
+  const targetComp = ns.comp || ci.jd_disclosed_range || ci.synthesized_range || NA;
+  const targetEquity = ns.equity || NA;
+  const targetBenefits = ns.benefits || NA;
+  const targetVacation = ns.vacation_sick || ns.vacation || NA;
+  const targetStock = ns.stock_price || ns.valuation || NA;
+  const targetBonus = ns.annual_bonuses || ns.bonus || NA;
+  const target401k = ns.k401_match || ns['401k_match'] || NA;
+  const targetHybrid = ns.remote || ns.location || ns.hybrid_policy || NA;
+  const rows = [
+    ['Comp (base/total)', xge.comp_base, targetComp],
+    ['Equity / RSUs', xge.equity_rsus, targetEquity],
+    ['Benefits', xge.benefits, targetBenefits],
+    ['Vacation + sick', xge.vacation_sick, targetVacation],
+    ['Stock price / valuation', xge.stock_price_valuation, targetStock],
+    ['Annual bonuses', xge.annual_bonuses, targetBonus],
+    ['401k match', xge.k401_match, target401k],
+    ['Hybrid / WFH policy', xge.hybrid_policy, targetHybrid],
+  ];
+  const targetLabel = (d.company_meta && d.company_meta.name) || d.company || 'Target role';
+  let html = '<div class="comp-comparison-wrap">';
+  html +=   '<table class="comp-comparison-table">';
+  html +=     '<thead><tr>';
+  html +=       '<th>Field</th>';
+  html +=       '<th>' + _hmEsc(xge.role_label) + '</th>';
+  html +=       '<th>' + _hmEsc(targetLabel) + '</th>';
+  html +=     '</tr></thead>';
+  html +=     '<tbody>';
+  for (const r of rows) {
+    const cur = r[1] || NA;
+    const tgt = r[2] || NA;
+    html += '<tr>';
+    html +=   '<td class="cc-field">' + _hmEsc(r[0]) + '</td>';
+    html +=   '<td class="cc-current' + (cur === NA ? ' cc-na' : '') + '">' + _hmEsc(cur) + '</td>';
+    html +=   '<td class="cc-target' + (tgt === NA ? ' cc-na' : '') + '">' + _hmEsc(tgt) + '</td>';
+    html += '</tr>';
+  }
+  html +=     '</tbody>';
+  html +=   '</table>';
+  html +=   '<div class="comp-comparison-meta">xGE baseline editable at data/xge-baseline.json · Target values from hm-intel + JD disclosure</div>';
+  html += '</div>';
+  return html;
+}
+
 // FIX 4 (2026-05-17) — 2-column "Going to {Company}" vs "Staying at Google xGE"
 // comparison grid. Left column: new role specifics (comp/equity/location/
 // benefits/remote). Right column: current_role_baseline split into bullets.
@@ -19818,7 +20256,7 @@ function _renderHMIntel(d, slug) {
     + (recCards ? '<section class="hm-section"><h4>Likely recruiters (' + recHigh.length + ')</h4>' + recCards + '</section>' : '')
     + filterFootnote
 
-    + (d.outreach_strategy     ? '<section class="hm-section"><h4>Outreach tactic</h4><p>' + _hmEsc(d.outreach_strategy) + '</p></section>' : '')
+    + (d.outreach_strategy     ? '<section class="hm-section"><h4>Outreach tactic</h4>' + _formatOutreachSection(d.outreach_strategy) + '</section>' : '')
     // FIX 4 (2026-05-17) — clump prose broken into scannable bullets.
     + (d.team_gap_analysis     ? '<section class="hm-section"><h4>Team gaps I fill</h4>' + _hmProseBullets(d.team_gap_analysis) + '</section>' : '')
 
@@ -19826,6 +20264,9 @@ function _renderHMIntel(d, slug) {
 
     // FIX 4 (2026-05-17) — 2-column comparison grid (new role / Google xGE).
     + (d.tradeoffs_vs_current_role ? '<section class="hm-section"><h4>Tradeoffs vs current Google xGE role</h4>' + _hmTradeoffsGrid(d.tradeoffs_vs_current_role) + '</section>' : '')
+
+    // 4.03 (2026-05-22) — comp comparison table (xGE × target × 8 fields).
+    + '<section class="hm-section"><h4>Comp comparison — full picture</h4>' + _renderCompComparisonTable(d) + '</section>'
 
     + (d.company_signals_90d   ? '<section class="hm-section"><h4>90-day company signals</h4>' + _hmProseBullets(d.company_signals_90d) + '</section>' : '')
     // Comp intelligence removed from HM-intel block 2026-05-18 Wave B —
@@ -20039,8 +20480,14 @@ function _drawerRenderIntelChips(data, mountEl) {
       return '<div class="intel-chip-pop"><div class="pop-empty">No HM intel yet. ' + _esc(m.reason || '') + '</div></div>';
     }
     const connCls = (m.connection_level || 'LOW').toLowerCase();
+    // 4.09 (2026-05-22) — header name + other_hms entries use shared helper.
+    const hmNameHtml = m.hm_name
+      ? ((typeof window._personLinkify === 'function')
+          ? window._personLinkify(m.hm_name, { linkedinUrl: m.linkedin_url })
+          : _esc(m.hm_name))
+      : '';
     let h = '<div class="intel-chip-pop">';
-    h +=   '<div class="pop-header">HM Visibility' + (m.hm_name ? (' - ' + _esc(m.hm_name)) : '') + '</div>';
+    h +=   '<div class="pop-header">HM Visibility' + (hmNameHtml ? (' - ' + hmNameHtml) : '') + '</div>';
     if (m.hm_title)        h += '<div class="pop-row"><span>Role</span><span>' + _esc(m.hm_title) + '</span></div>';
     if (m.linkedin_url)    h += '<div class="pop-row"><span>LinkedIn</span><span><a class="pop-link" href="' + _esc(m.linkedin_url) + '" target="_blank" rel="noopener">profile</a></span></div>';
     h +=   '<div class="pop-row"><span>Your connection</span><span class="pop-badge ' + connCls + '">' + _esc(m.connection_level || 'LOW') + '</span></div>';
@@ -20056,12 +20503,15 @@ function _drawerRenderIntelChips(data, mountEl) {
       h += '</ul>';
     }
     if (m.outreach_hook) {
-      h += '<div class="pop-divider"></div><div class="pop-label">Outreach hook</div><div class="pop-quote">' + _esc(m.outreach_hook) + '</div>';
+      h += '<div class="pop-divider"></div><div class="pop-label">Outreach hook</div><div class="pop-quote">' + _esc(_cleanOutreachProse(m.outreach_hook)) + '</div>';
     }
     if (Array.isArray(m.other_hms) && m.other_hms.length) {
       h += '<div class="pop-label" style="margin-top:8px">Other contacts</div><ul class="pop-list">';
       h += m.other_hms.map(function (o) {
-        return '<li>' + _esc(o.name || '') + (o.title ? (' — ' + _esc(o.title)) : '') + (o.linkedin_url ? (' <a class="pop-link" href="' + _esc(o.linkedin_url) + '" target="_blank" rel="noopener">[LinkedIn]</a>') : '') + '</li>';
+        var otherName = (typeof window._personLinkify === 'function')
+          ? window._personLinkify(o.name || '', { linkedinUrl: o.linkedin_url })
+          : _esc(o.name || '');
+        return '<li>' + otherName + (o.title ? (' — ' + _esc(o.title)) : '') + '</li>';
       }).join('');
       h += '</ul>';
     }
@@ -20260,8 +20710,14 @@ async function _drawerLoadArtifactManifest(num, mountEl) {
         + (bytes ? '<span class="drawer-artifact-size">' + bytes + '</span>' : '')
         + '</a>';
     }
+    // 09 Part 2 Item B (2026-05-22) — "Download all" CTA streams the entire
+    // pack as a single zip via /api/apply-pack-zip?slug=<slug>.
+    const zipHref = '/api/apply-pack-zip?slug=' + encodeURIComponent(slug);
     let html = '<div class="drawer-artifact-section" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">';
-    html +=   '<div class="drawer-artifact-title" style="font-size:11px;font-weight:600;color:var(--text-3);margin-bottom:6px;letter-spacing:0.05em;text-transform:uppercase">Apply-pack files <span style="color:var(--text-4);font-weight:400;text-transform:none">· ' + data.files.length + ' file' + (data.files.length === 1 ? '' : 's') + '</span></div>';
+    html +=   '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">';
+    html +=     '<div class="drawer-artifact-title" style="font-size:11px;font-weight:600;color:var(--text-3);letter-spacing:0.05em;text-transform:uppercase">Apply-pack files <span style="color:var(--text-4);font-weight:400;text-transform:none">· ' + data.files.length + ' file' + (data.files.length === 1 ? '' : 's') + '</span></div>';
+    html +=     '<a class="drawer-artifact-zipall" href="' + _esc(zipHref) + '" download style="font-size:11px;padding:3px 10px;border:1px solid var(--border);border-radius:4px;color:var(--text-2);text-decoration:none;background:var(--surface-2,transparent)" title="Download every artifact in one zip">' + String.fromCharCode(0x2913) + ' Download all</a>';
+    html +=   '</div>';
     if (consumer.length) {
       html += '<div class="drawer-artifact-list">' + consumer.map(_row).join('') + '</div>';
     }
@@ -20316,17 +20772,27 @@ function _renderLifecycleRow(s, driveEnabled, num) {
   if (s.applied) { applyState = 'done'; applyTitle = 'This role has been marked Applied/Responded/Interview/Offer'; }
   else if (s.pack_exists && s.polished) { applyState = 'active'; applyTitle = 'Open the JD URL + mark as Applied'; }
 
+  // 09 Part 1 Item A (2026-05-22) — header renamed "Lifecycle" → "Next move".
+  // Primary CTA cluster simplified to 3 buttons (Create apply pack / Polish
+  // materials / Apply). Sync + Pre-apply demoted to secondary row below;
+  // they remain accessible but don't clutter the primary action target.
+  // Contextual alignment note is populated by /api/context-note (lib at
+  // dashboard-server.mjs:8755) which queries the corpus index and runs Sonnet
+  // for a 1-2 sentence "Screen for: X / Lead with: Y" note grounded in
+  // cv.md + hm-intel + cv-tailored highlights.
   const rowHtml =
+    '<div class="drawer-lifecycle-note" style="font-size:11.5px;color:var(--text-3,#6b7280);margin-bottom:8px;font-style:italic">' + String.fromCharCode(8230) + '</div>' +
     '<div class="drawer-lifecycle-buttons">' +
-      btn('Create', createState, createTitle) +
-      btn('Sync edits', syncState, syncTitle) +
-      btn('Pre-apply', preApplyState, preApplyTitle) +
-      btn('Polish', polishState, polishTitle) +
-      btn('Apply', applyState, applyTitle) +
+      btn('Create apply pack', createState, createTitle) +
+      btn('Polish materials',  polishState, polishTitle) +
+      btn('Apply',             applyState,  applyTitle) +
     '</div>' +
-    '<div class="drawer-lifecycle-note">' + String.fromCharCode(8230) + '</div>';
+    '<div class="drawer-lifecycle-buttons-secondary" style="display:flex;gap:6px;margin-top:6px;font-size:11px;opacity:0.7">' +
+      btn('Sync edits', syncState, syncTitle) +
+      btn('Pre-apply',  preApplyState, preApplyTitle) +
+    '</div>';
   return '<div class="drawer-lifecycle-section">' +
-    '<div class="drawer-lifecycle-header">Lifecycle</div>' +
+    '<div class="drawer-lifecycle-header">Next move</div>' +
     rowHtml +
     '</div>';
 }
@@ -21410,11 +21876,11 @@ const _FX = { USD: 1, EUR: 1.12, GBP: 1.28, CAD: 0.73, SGD: 0.75, CHF: 1.15 };
 
 function _detectCurrency(comp) {
   if (!comp) return 'USD';
-  if (comp.includes('€') || /\bEUR\b/.test(comp)) return 'EUR';
-  if (comp.includes('£') || /\bGBP\b/.test(comp)) return 'GBP';
-  if (/\bCAD\b/.test(comp)) return 'CAD';
-  if (/\bSGD\b/.test(comp)) return 'SGD';
-  if (/\bCHF\b/.test(comp)) return 'CHF';
+  if (comp.includes('€') || /\\bEUR\\b/.test(comp)) return 'EUR';
+  if (comp.includes('£') || /\\bGBP\\b/.test(comp)) return 'GBP';
+  if (/\\bCAD\\b/.test(comp)) return 'CAD';
+  if (/\\bSGD\\b/.test(comp)) return 'SGD';
+  if (/\\bCHF\\b/.test(comp)) return 'CHF';
   return 'USD';
 }
 
@@ -21426,8 +21892,8 @@ function colBadge(comp, location) {
   // Extract numeric salary (handle K notation, ranges → midpoint)
   const raw = (comp || '').replace(/,/g, '');
   const nums = [];
-  for (const m of raw.matchAll(/([\d.]+)\s*[Kk]/g)) nums.push(parseFloat(m[1]) * 1000);
-  if (!nums.length) for (const m of raw.matchAll(/([\d]{4,7})/g)) nums.push(parseFloat(m[1]));
+  for (const m of raw.matchAll(/([\\d.]+)\\s*[Kk]/g)) nums.push(parseFloat(m[1]) * 1000);
+  if (!nums.length) for (const m of raw.matchAll(/([\\d]{4,7})/g)) nums.push(parseFloat(m[1]));
   if (!nums.length) return '';
   const mid = nums.length >= 2 ? (nums[0] + nums[1]) / 2 : nums[0];
   const usd = Math.round(mid * fx);
@@ -22133,6 +22599,20 @@ async function pollBatch() {
       try {
         const data = JSON.parse(e.data);
         _renderBatchData(data);
+        // Closure 08.4 (2026-05-22) — push fresh last_batch into the A7 chip
+        // renderer on every SSE tick, so the "Last batch: N/N · Mm Ss" chip
+        // updates within ≤30s without a page rebuild. data.last_batch shape
+        // matches loadLastBatchSummary's output (build-time + runtime mirror
+        // each other; see dashboard-server.mjs:_computeLastBatchSummary).
+        if (data && typeof data === 'object' && 'last_batch' in data) {
+          try {
+            if (!window.__PIPELINE_ACTIVITY__) window.__PIPELINE_ACTIVITY__ = {};
+            window.__PIPELINE_ACTIVITY__.last_batch = data.last_batch;
+            if (typeof _renderPipelineActivity === 'function') {
+              _renderPipelineActivity(window.__PIPELINE_ACTIVITY__);
+            }
+          } catch (_) { /* render is best-effort */ }
+        }
         _setBatchStreamMode('stream');
         _backoffMs = 1000;  // reset backoff on successful message
         _failTs = [];
@@ -22181,6 +22661,9 @@ let _batchStatusPrev = null;
 
 function _bsFmtDuration(s) {
   if (s === null || s === undefined || !isFinite(s)) return '—';
+  // 09 Part 6 (2026-05-22) — round fractional seconds to avoid
+  // "3m 18.562000000000012s" floating-point overflow display.
+  s = Math.round(s);
   if (s < 60) return s + 's';
   const m = Math.floor(s / 60); const rem = s % 60;
   if (m < 60) return rem ? (m + 'm ' + rem + 's') : (m + 'm');
@@ -22529,7 +23012,93 @@ function _bsRenderBody(data, changed) {
       '<style>@keyframes bs-pa-pulse { 0%,100% { opacity: 1 } 50% { opacity: .4 } }</style>';
   }
 
-  body.innerHTML = sectionP + sectionA + sectionB + sectionC + sectionD;
+  // Closure 08.3 (2026-05-22) — Section R: cancelled jobs with Resume CTA.
+  // Renders only when data.recent_cancelled_jobs is non-empty.
+  let sectionR = '';
+  const cancelledJobs = Array.isArray(data.recent_cancelled_jobs) ? data.recent_cancelled_jobs : [];
+  if (cancelledJobs.length) {
+    const rows = cancelledJobs.map(j => {
+      const cancelledAgo = j.cancelled_at
+        ? Math.max(0, Math.round((Date.now() - Date.parse(j.cancelled_at)) / 60000)) + 'm ago'
+        : '?';
+      const startedTxt = j.started_at ? _bsFmtTimestamp(j.started_at) : '?';
+      const typeLabel = j.type === 'process-all' ? 'Process All' : 'Run Batch';
+      const idEsc = _bsEsc(j.jobId);
+      return '<div class="bs-cancelled-row" style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border,#e5e7eb)">' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-size:12.5px;color:var(--text-1,#1f2937);font-weight:600">' + _bsEsc(typeLabel) + ' cancelled ' + _bsEsc(cancelledAgo) + '</div>' +
+          '<div style="font-size:10.5px;color:var(--text-3,#6b7280);margin-top:2px">' +
+            'started ' + _bsEsc(startedTxt) + ' · job <code style="font-size:10px">' + idEsc + '</code>' +
+          '</div>' +
+        '</div>' +
+        '<button type="button" id="bs-resume-' + idEsc + '" ' +
+          'onclick="window.resumeBatchJob(\\'' + idEsc + '\\')" ' +
+          'style="padding:5px 12px;font-size:11.5px;background:transparent;border:1px solid var(--green-fg,#16a34a);' +
+          'color:var(--green-fg,#16a34a);border-radius:5px;cursor:pointer" ' +
+          'title="Spawn a new batch with the rows the cancelled job did NOT complete">' +
+          String.fromCharCode(0x21BB) + ' Resume' +
+        '</button>' +
+      '</div>';
+    }).join('');
+    sectionR =
+      '<div class="batch-status-section" style="border-left:3px solid var(--green-fg,#16a34a);padding-left:12px">' +
+        '<h4 class="batch-status-section-title">Cancelled jobs — last 7 days</h4>' +
+        '<div class="bs-cancelled-list">' + rows + '</div>' +
+        '<div style="font-size:10.5px;color:var(--text-4,#9ca3af);margin-top:6px">' +
+          'Resume re-queues only the rows the cancelled job did NOT complete and spawns a new batch.' +
+        '</div>' +
+      '</div>';
+  }
+
+  // 09 Part 6 (2026-05-22) — Process All confidence panel. Renders recent
+  // Process All / batch-only runs with status + duration + success rate.
+  // Builds trust that the system actually delivers on Run Batch / Process
+  // All actions (the user's J + K concerns).
+  let sectionPaC = '';
+  const pac = data.process_all_confidence;
+  if (pac && Array.isArray(pac.runs) && pac.runs.length > 0) {
+    const pacRows = pac.runs.map(r => {
+      const statusEmoji = r.status === 'completed' ? String.fromCharCode(0x2713)
+                       : r.status === 'failed'   ? String.fromCharCode(0x2717)
+                       : r.status === 'cancelled'? String.fromCharCode(0x29B8)
+                       : r.status === 'running'  ? String.fromCharCode(0x25CF)
+                       : '?';
+      const statusColor = r.status === 'completed' ? 'var(--green-fg, #16a34a)'
+                       : r.status === 'failed'   ? 'var(--red-fg, #dc2626)'
+                       : r.status === 'cancelled'? 'var(--text-3, #6b7280)'
+                       : r.status === 'running'  ? 'var(--blue-fg, #2563eb)'
+                       : 'var(--text-4, #9ca3af)';
+      const durLabel = r.duration_ms ? _bsFmtDuration(r.duration_ms / 1000) : '—';
+      const startedAgo = r.started_at ? Math.max(0, Math.round((Date.now() - Date.parse(r.started_at)) / 60000)) + 'm ago' : '?';
+      const typeLabel = r.type === 'process-all' ? 'Process All' : 'Run Batch';
+      const resumeBadge = r.resumed_from
+        ? ' <span style="font-size:9.5px;background:rgba(22,163,74,0.18);color:var(--green-fg,#16a34a);padding:1px 5px;border-radius:3px">resumed</span>'
+        : '';
+      return '<tr>' +
+        '<td style="white-space:nowrap;padding:5px 8px"><span style="color:' + statusColor + ';font-weight:600">' + statusEmoji + '</span> ' + _bsEsc(r.status) + '</td>' +
+        '<td style="padding:5px 8px">' + _bsEsc(typeLabel) + resumeBadge + '</td>' +
+        '<td style="padding:5px 8px;color:var(--text-3,#6b7280)">' + _bsEsc(startedAgo) + '</td>' +
+        '<td style="padding:5px 8px">' + _bsEsc(durLabel) + '</td>' +
+        '</tr>';
+    }).join('');
+    const sum = pac.summary;
+    const sucRate = sum.success_rate !== null
+      ? sum.success_rate + '% success'
+      : 'no decisive runs yet';
+    sectionPaC =
+      '<div class="batch-status-section">' +
+        '<h4 class="batch-status-section-title" style="display:flex;justify-content:space-between;align-items:baseline">' +
+          '<span>Process All confidence — last ' + pac.runs.length + '</span>' +
+          '<span style="font-size:11px;color:var(--text-3,#6b7280);font-weight:400">' + _bsEsc(sucRate) + ' · ' + sum.succeeded + ' ok · ' + sum.failed + ' failed · ' + sum.cancelled + ' cancelled</span>' +
+        '</h4>' +
+        '<table class="batch-status-runs" style="width:100%;font-size:11.5px;margin-top:6px">' +
+          '<thead><tr><th>Status</th><th>Type</th><th>Started</th><th>Duration</th></tr></thead>' +
+          '<tbody>' + pacRows + '</tbody>' +
+        '</table>' +
+      '</div>';
+  }
+
+  body.innerHTML = sectionP + sectionR + sectionPaC + sectionA + sectionB + sectionC + sectionD;
   // Invariant #8 — apply the universal table baseline (dbl-click expand,
   // [title] tooltips, column-resize handles) to every freshly rendered
   // table inside the batch-status modal body.
@@ -24636,6 +25205,30 @@ function _renderPipelineActivity(data) {
   } else {
     html += _chip('pa-chip-muted', 'Overnight sweep: —', 'data/background-sweep-state.json absent — first sweep runs at 03:00 PT');
   }
+  // 4.13 (2026-05-22) — last-batch reliability chip. Click opens the
+  // existing batch-status modal for a fuller breakdown.
+  if (data.last_batch && data.last_batch.total > 0) {
+    var lb = data.last_batch;
+    var durSec = Math.max(0, Math.round((lb.duration_ms || 0) / 1000));
+    var durLabel;
+    if (durSec < 60) durLabel = durSec + 's';
+    else if (durSec < 3600) durLabel = Math.floor(durSec / 60) + 'm ' + (durSec % 60) + 's';
+    else durLabel = Math.floor(durSec / 3600) + 'h ' + Math.floor((durSec % 3600) / 60) + 'm';
+    var failPct = Math.round((lb.failed_rate || 0) * 100);
+    var lbCls = lb.state === 'running' ? 'pa-chip-warn'
+      : (lb.failed > 0 && failPct >= 10 ? 'pa-chip-bad'
+        : (lb.failed > 0 ? 'pa-chip-warn' : 'pa-chip-ok'));
+    var lbLabel;
+    if (lb.state === 'running') {
+      lbLabel = 'Batch running: ' + (lb.completed + lb.failed) + '/' + lb.total + ' · ' + lb.failed + ' failed · ' + durLabel + ' elapsed';
+    } else {
+      lbLabel = 'Last batch: ' + lb.completed + '/' + lb.total + ' · ' + lb.failed + ' failed · ' + durLabel;
+    }
+    var lbTip = 'batch/batch-state.tsv · started ' + (lb.started_at || 'unknown') + (lb.ended_at ? ' · ended ' + lb.ended_at : ' · still running') + ' · click for breakdown';
+    html += '<button type="button" class="pa-chip pa-chip-button ' + lbCls + '" title="' + _esc(lbTip) + '" onclick="if(window.openBatchStatusModal)window.openBatchStatusModal();else if(window.location)window.location.hash=\\'#batch-status\\'">' + _esc(lbLabel) + '</button>';
+  } else {
+    html += _chip('pa-chip-muted', 'Last batch: —', 'batch/batch-state.tsv empty — no batches yet today');
+  }
   chips.innerHTML = html;
 
   // "Updated X min ago" stamp based on the newest source-file timestamp.
@@ -25607,6 +26200,8 @@ function openGapModal(el) {
   const detail = el.dataset.detail || '';
   const strategy = el.dataset.strategy || '';
   const why = el.dataset.why || '';
+  // 4.02B (2026-05-22) — interview prompt for pasting into Claude Code.
+  const interviewPrompt = el.dataset.interviewPrompt || '';
 
   document.getElementById('gap-modal-title').textContent = title;
 
@@ -25633,11 +26228,35 @@ function openGapModal(el) {
     </div>\`);
   }
 
+  // 4.02B (2026-05-22) — pasteable Claude Code interview prompt section.
+  if (interviewPrompt) {
+    // ESC the prompt for HTML rendering inside <pre>. We use textContent in
+    // a moment to keep the actual copy-paste payload exact (no double-escape).
+    var promptEscaped = String(interviewPrompt)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    sections.push(\`<div class="gap-section gap-interview">
+      <div class="gap-section-label">Interview prompt for Claude Code
+        <button type="button" class="gap-interview-copy" onclick="window._copyGapInterviewPrompt(this)" title="Copy this prompt — paste it into a fresh Claude Code session to start a guided interview that closes this gap">📋 Copy</button>
+      </div>
+      <details class="gap-interview-details">
+        <summary>Show prompt</summary>
+        <pre class="gap-interview-prompt">\${promptEscaped}</pre>
+      </details>
+    </div>\`);
+  }
+
   if (!sections.length) {
     sections.push(\`<p class="gap-empty">No additional detail available for this gap.</p>\`);
   }
 
   document.getElementById('gap-modal-body').innerHTML = sections.join('');
+  // After innerHTML write, attach the raw (un-escaped) prompt string to the
+  // copy button so navigator.clipboard.writeText sends the exact payload.
+  if (interviewPrompt) {
+    var copyBtn = document.querySelector('#gap-modal-body .gap-interview-copy');
+    if (copyBtn) copyBtn._gapPromptText = interviewPrompt;
+  }
   const _gapBd = document.getElementById('gap-backdrop');
   _gapBd.classList.add('visible');
   _gapBd.setAttribute('aria-hidden', 'false');
@@ -25649,6 +26268,59 @@ function closeGapModal() {
   if (_gapBd && _gapBd._dpClose) _gapBd._dpClose();
   if (_gapBd) { _gapBd.classList.remove('visible'); _gapBd.setAttribute('aria-hidden', 'true'); }
 }
+
+// 4.02 Part B (2026-05-22) — copy the gap-interview prompt to clipboard.
+// The raw prompt string was attached to the button via _gapPromptText after
+// openGapModal's innerHTML write. Falls back to selecting the <pre> if
+// clipboard API is unavailable (older browsers / non-HTTPS).
+window._copyGapInterviewPrompt = function (btn) {
+  if (!btn) return;
+  var text = btn._gapPromptText || '';
+  if (!text) {
+    var pre = btn.closest('.gap-interview')?.querySelector('.gap-interview-prompt');
+    text = pre ? pre.textContent : '';
+  }
+  if (!text) return;
+  function flashOk() {
+    var prev = btn.textContent;
+    btn.textContent = '✓ Copied';
+    btn.classList.add('copied');
+    setTimeout(function () {
+      btn.textContent = prev;
+      btn.classList.remove('copied');
+    }, 1600);
+  }
+  function flashErr(msg) {
+    var prev = btn.textContent;
+    btn.textContent = '✗ ' + (msg || 'Failed');
+    btn.classList.add('copy-err');
+    setTimeout(function () {
+      btn.textContent = prev;
+      btn.classList.remove('copy-err');
+    }, 2400);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(flashOk).catch(function (e) {
+      flashErr(e && e.message ? e.message.slice(0, 40) : 'Failed');
+    });
+    return;
+  }
+  // Legacy fallback for non-HTTPS / older browsers.
+  try {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'absolute';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = document.execCommand('copy');
+    ta.remove();
+    if (ok) flashOk(); else flashErr('Copy blocked');
+  } catch (e) {
+    flashErr('No clipboard');
+  }
+};
 
 // ── Tier-legend modal ──────────────────────────────────────────
 const TIER_LEGEND = ${JSON.stringify(TIER_LEGEND)};
@@ -26121,7 +26793,7 @@ function _emailIncrUsage(id) {
 function _emailFillTemplate(tpl, vars) {
   // Replace {Token} placeholders. Unmatched tokens are left intact so
   // missing values are obvious to the user before they hit Send.
-  const replace = (s) => String(s || '').replace(/\{(\w+)\}/g, (m, k) =>
+  const replace = (s) => String(s || '').replace(/\\{(\\w+)\\}/g, (m, k) =>
     Object.prototype.hasOwnProperty.call(vars, k) && vars[k] != null ? String(vars[k]) : m);
   return { subject: replace(tpl.subject), body: replace(tpl.body) };
 }
@@ -26458,18 +27130,24 @@ function _renderPillPopover(d) {
           + (p && p.rationale ? esc(p.rationale.slice(0, 200)) : 'manual LinkedIn search recommended')
           + '</div>';
       }
-      let linkedin;
+      // 4.09 (2026-05-22) — name uses shared linkify (LinkedIn or directory).
+      // For linkedin_kind === 'search' (synthetic search-URL), suppress the
+      // LinkedIn handoff in the helper and surface the search link separately
+      // so the user knows it's a query, not a profile.
+      const usingSearchUrl = p.linkedin_kind === 'search';
+      const personLink = (typeof window !== 'undefined' && typeof window._personLinkify === 'function')
+        ? window._personLinkify(p.name, { linkedinUrl: usingSearchUrl ? '' : p.linkedin_url })
+        : esc(p.name);
+      let suffix;
       if (!p.linkedin_url || p.linkedin_url === 'unknown') {
-        linkedin = esc(p.name) + ' <span class="pill-popover-meta-inline">(LinkedIn unknown)</span>';
-      } else if (p.linkedin_kind === 'search') {
-        // Synthetic URL replaced with a real LinkedIn people-search query.
-        linkedin = esc(p.name) + ' '
-          + '<a href="' + esc(p.linkedin_url) + '" target="_blank" rel="noopener" class="pill-popover-linkedin-link">→ Search LinkedIn</a>';
+        suffix = ' <span class="pill-popover-meta-inline">(LinkedIn unknown)</span>';
+      } else if (usingSearchUrl) {
+        suffix = ' <a href="' + esc(p.linkedin_url) + '" target="_blank" rel="noopener" class="pill-popover-linkedin-link">→ Search LinkedIn</a>';
       } else {
-        linkedin = '<a href="' + esc(p.linkedin_url) + '" target="_blank" rel="noopener" class="pill-popover-linkedin-link">' + esc(p.name) + ' → LinkedIn</a>';
+        suffix = '';
       }
       return '<div class="pill-popover-section-label">' + esc(label) + '</div>'
-        + '<div class="pill-popover-body">' + linkedin + '</div>'
+        + '<div class="pill-popover-body">' + personLink + suffix + '</div>'
         + (p.rationale ? '<div class="pill-popover-meta-inline">' + esc(p.rationale) + '</div>' : '');
     };
     return '<div class="pill-popover-kind">People · ' + esc(d.company || '') + '</div>'
@@ -26487,6 +27165,102 @@ function _renderPillPopover(d) {
 // Network block — Mitchell's 1st-degree LinkedIn contacts at this company
 // (from data/linkedin/Connections.csv) and 2nd-degree (from a Chrome-scrape
 // pass against linkedin.com/company/{slug}/people?facetNetwork=S).
+
+// ── 4.09 (2026-05-22) — shared person-linkify helpers ─────────────────────
+// Extracted from _renderNetworkBlock's inline closures into window-scope so
+// that HM intel (_hmPersonCard, _renderHmPop), social corroboration, and the
+// pill-popover personBlock can all linkify person names consistently. The
+// resolution + enrichment-queue badge behavior is preserved exactly.
+window._personResolveDirectoryId = function (displayName) {
+  if (!displayName) return '';
+  try {
+    var norm = String(displayName).toLowerCase().trim().replace(/\\s+/g, ' ');
+    var directory = (typeof window !== 'undefined' && Array.isArray(window._CONTACTS_DATA)) ? window._CONTACTS_DATA : [];
+    for (var i = 0; i < directory.length; i++) {
+      var dc = directory[i];
+      if (!dc || !dc.name) continue;
+      var dcNorm = String(dc.name).toLowerCase().trim().replace(/\\s+/g, ' ');
+      if (dcNorm === norm) return dc.id || '';
+    }
+  } catch (_) { /* ignore */ }
+  return '';
+};
+window._personIsQueuedForEnrichment = function (internalId) {
+  if (!internalId) return false;
+  try {
+    var q = (typeof window !== 'undefined' && Array.isArray(window._ENRICH_QUEUE)) ? window._ENRICH_QUEUE : null;
+    return !!(q && q.indexOf(internalId) >= 0);
+  } catch (_) { return false; }
+};
+// Returns an HTML link for a person name. Resolves against the contacts
+// directory + enrichment queue. Options:
+//   linkedinUrl   — preferred external link target
+//   skipQueuedBadge — omit the 📋 queued enrichment indicator
+//   trailingMark  — override the link suffix (default: ↗ for linkedin, → for internal)
+window._personLinkify = function (name, options) {
+  options = options || {};
+  if (!name) return '';
+  var ESC = function (s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  };
+  var internalId = window._personResolveDirectoryId(name);
+  var url = options.linkedinUrl || '';
+  var validLinkedin = url && url !== 'unknown' && url !== 'no public signal' && url !== 'none';
+  var mark, link;
+  if (validLinkedin) {
+    mark = options.trailingMark || ' ↗';
+    link = '<a href="' + ESC(url) + '" target="_blank" rel="noopener" class="contact-link contact-link-linkedin" title="View on LinkedIn">' + ESC(name) + mark + '</a>';
+  } else if (internalId) {
+    mark = options.trailingMark || ' →';
+    link = '<a href="javascript:void(0)" class="contact-link contact-link-internal" data-contact-id="' + ESC(internalId) + '" onclick="if(typeof window.openContactsDirectoryModal===\\'function\\'){window.openContactsDirectoryModal();setTimeout(function(){if(typeof window._focusContactById===\\'function\\')window._focusContactById(\\'' + ESC(internalId) + '\\');},120)};event.stopPropagation()" title="View in contacts directory">' + ESC(name) + mark + '</a>';
+  } else {
+    link = ESC(name);
+  }
+  if (options.skipQueuedBadge) return link;
+  var queued = window._personIsQueuedForEnrichment(internalId);
+  if (queued) {
+    link += ' <span class="enrich-queued-badge" title="Queued for enrichment refresh — fresh data lands on the next refresh-master tick (within hours)">📋 queued</span>';
+  }
+  return link;
+};
+// Post-process already-escaped HTML to linkify any directory-known person
+// name found in the prose. Used for social-corroboration fields where the
+// name is embedded mid-sentence ("Reach out to Pedram Navid on LinkedIn").
+// Skips names containing apostrophes/quotes that get HTML-escaped (rare).
+window._personLinkifyProse = function (escapedHtml) {
+  if (!escapedHtml || typeof escapedHtml !== 'string') return escapedHtml || '';
+  try {
+    var directory = (typeof window !== 'undefined' && Array.isArray(window._CONTACTS_DATA)) ? window._CONTACTS_DATA : [];
+    if (!directory.length) return escapedHtml;
+    var names = [];
+    for (var i = 0; i < directory.length; i++) {
+      var c = directory[i];
+      if (!c || !c.name || !c.id) continue;
+      if (c.name.indexOf(' ') <= 0) continue;
+      if (/[<>"'&]/.test(c.name)) continue;
+      names.push({ name: c.name, id: c.id });
+    }
+    names.sort(function (a, b) { return b.name.length - a.name.length; });
+    var result = escapedHtml;
+    for (var k = 0; k < names.length; k++) {
+      var nm = names[k].name;
+      // Escape regex meta-chars likely to appear in real names ('.' for
+      // initials, '(' ')' for parentheticals). Backslash-dollar in the
+      // char class stops the outer build template from interpolating.
+      var escName = nm.replace(/[.*+?^\${}()|[\\]\\\\]/g, '\\\\$&');
+      var re = new RegExp('\\\\b' + escName + '\\\\b', 'g');
+      result = result.replace(re, function (match) {
+        return window._personLinkify(match, { skipQueuedBadge: true });
+      });
+    }
+    return result;
+  } catch (_) {
+    return escapedHtml;
+  }
+};
+
 function _renderNetworkBlock(n) {
   if (!n || (n.firstDegreeCount === 0 && n.secondDegreeCount === 0)) return '';
   const esc = (str) => String(str == null ? '' : str)
@@ -26507,54 +27281,20 @@ function _renderNetworkBlock(n) {
     const overflow = resolved.length > 3 ? ' + ' + (resolved.length - 3) + ' more' : '';
     return '<div class="network-warm-intro">→ ask ' + top + overflow + ' to intro</div>';
   };
-  // A6 (2026-05-22) — resolve drawer contact against window._CONTACTS_DATA
-  // so internal-only contacts (no LinkedIn URL) link to the contacts modal
-  // instead of degrading to plain text. Returns the directory entry id if
-  // the contact display name matches a directory record (case-insensitive,
-  // trimmed). Defensive: returns empty string if data unavailable.
-  const _resolveDirectoryId = (displayName) => {
-    if (!displayName) return '';
-    try {
-      const norm = String(displayName).toLowerCase().trim().replace(/\s+/g, ' ');
-      const directory = (typeof window !== 'undefined' && Array.isArray(window._CONTACTS_DATA)) ? window._CONTACTS_DATA : [];
-      for (let i = 0; i < directory.length; i++) {
-        const dc = directory[i];
-        if (!dc || !dc.name) continue;
-        const dcNorm = String(dc.name).toLowerCase().trim().replace(/\s+/g, ' ');
-        if (dcNorm === norm) return dc.id || '';
-      }
-    } catch (_) { /* ignore */ }
-    return '';
-  };
-  // Closure 18 — drawer-side badge resolver. Looks up the contact in the
-  // build-time enrichment queue. Returns true if this contact is awaiting
-  // an enrichment refresh.
-  const _isQueuedForEnrichment = (internalId) => {
-    if (!internalId) return false;
-    try {
-      const q = (typeof window !== 'undefined' && Array.isArray(window._ENRICH_QUEUE)) ? window._ENRICH_QUEUE : null;
-      return !!(q && q.indexOf(internalId) >= 0);
-    } catch (_) { return false; }
-  };
+  // A6 (2026-05-22) — link drawer contact to LinkedIn or the contacts modal
+  // via the shared window._personLinkify helper. The queued-enrichment badge
+  // is appended by the helper itself when the contact appears in
+  // window._ENRICH_QUEUE.
   const contactRow = (c) => {
     const name = ((c.first || '') + ' ' + (c.last || '')).trim() || (c.name || '');
     const url = c.url || '';
     const title = c.position || c.title || '';
     const when = c.when ? ' · ' + c.when : '';
-    const internalId = _resolveDirectoryId(name);
-    let link;
-    if (url) {
-      link = '<a href="' + esc(url) + '" target="_blank" rel="noopener" class="pill-popover-linkedin-link contact-link" title="View on LinkedIn">' + esc(name) + ' ↗</a>';
-    } else if (internalId) {
-      link = '<a href="javascript:void(0)" class="contact-link contact-link-internal" data-contact-id="' + esc(internalId) + '" onclick="if(typeof window.openContactsDirectoryModal===\\'function\\'){window.openContactsDirectoryModal();setTimeout(function(){if(typeof window._focusContactById===\\'function\\')window._focusContactById(\\'' + esc(internalId) + '\\');},120)};event.stopPropagation()" title="View in contacts directory">' + esc(name) + ' →</a>';
-    } else {
-      link = esc(name);
-    }
-    const queuedBadge = _isQueuedForEnrichment(internalId)
-      ? ' <span class="enrich-queued-badge" title="Queued for enrichment refresh — fresh data lands on the next refresh-master tick (within hours)">📋 queued</span>'
-      : '';
+    const link = (typeof window !== 'undefined' && typeof window._personLinkify === 'function')
+      ? window._personLinkify(name, { linkedinUrl: url })
+      : esc(name);
     return '<div class="network-contact-row">'
-      +   '<div class="network-contact-name">' + link + queuedBadge + '</div>'
+      +   '<div class="network-contact-name">' + link + '</div>'
       +   (title ? '<div class="network-contact-title">' + esc(title) + esc(when) + '</div>' : '')
       +   introsLine(c)
       + '</div>';
@@ -26613,6 +27353,16 @@ function _renderSocialCorroborationBlock(s) {
   const row = (label, val) => has(val)
     ? '<div class="pill-popover-row"><dt>' + esc(label) + '</dt><dd>' + esc(String(val).slice(0, 360)) + '</dd></div>'
     : '';
+  // 4.09 (2026-05-22) — linkifyRow runs people-aware prose through the
+  // shared linkifier so embedded directory names become clickable.
+  const linkifyRow = (label, val) => {
+    if (!has(val)) return '';
+    const escaped = esc(String(val).slice(0, 360));
+    const linked = (typeof window !== 'undefined' && typeof window._personLinkifyProse === 'function')
+      ? window._personLinkifyProse(escaped)
+      : escaped;
+    return '<div class="pill-popover-row"><dt>' + esc(label) + '</dt><dd>' + linked + '</dd></div>';
+  };
   const comp = s.comp_corroboration || {};
   const ben = s.benefits_corroboration || {};
   const sent = s.sentiment_corroboration || {};
@@ -26655,9 +27405,9 @@ function _renderSocialCorroborationBlock(s) {
         : '')
     + (has(ppl.recommended_outreach_target) || has(ppl.named_employees_posting)
         ? '<div class="pill-popover-section-label">People intel</div><dl class="pill-popover-body">'
-          + row('Outreach target', ppl.recommended_outreach_target)
-          + row('Posting employees', ppl.named_employees_posting)
-          + row('Team visibility', ppl.hiring_team_visibility)
+          + linkifyRow('Outreach target', ppl.recommended_outreach_target)
+          + linkifyRow('Posting employees', ppl.named_employees_posting)
+          + linkifyRow('Team visibility', ppl.hiring_team_visibility)
           + '</dl>'
         : '');
 }
@@ -27769,7 +28519,7 @@ window.invokeBuildPackStage = invokeBuildPackStage;
 // Confirms cost ~$25–$50, posts to /api/refresh-deep, opens job popout.
 async function invokeDeepRefresh(rowId, btn) {
   rowId = String(rowId || '').trim();
-  if (!rowId || !/^\d+$/.test(rowId)) {
+  if (!rowId || !/^\\d+$/.test(rowId)) {
     if (window.toast) window.toast('Deep refresh: numeric row required', 'error');
     return;
   }
@@ -27812,7 +28562,7 @@ function _alphaOpenJobPopout(jobId) {
 
 async function alphaPolishPack(rowId, opts) {
   rowId = String(rowId || '').trim();
-  if (!rowId || !/^\d+$/.test(rowId)) {
+  if (!rowId || !/^\\d+$/.test(rowId)) {
     if (window.toast) window.toast('Polish pack: numeric row required', 'error');
     return;
   }
@@ -27840,7 +28590,7 @@ window.alphaPolishPack = alphaPolishPack;
 
 async function alphaIntelRefresh(rowId, slots) {
   rowId = String(rowId || '').trim();
-  if (!rowId || !/^\d+$/.test(rowId)) {
+  if (!rowId || !/^\\d+$/.test(rowId)) {
     if (window.toast) window.toast('Intel refresh: numeric row required', 'error');
     return;
   }
@@ -27978,6 +28728,47 @@ window.cancelBatchJob = function(jobId, spendSoFarUsd, warnThresholdUsd) {
         btn.title = String(err && err.message || 'cancel error');
       }
       try { console.warn('cancelBatchJob error:', err && err.message); } catch (_) {}
+    });
+};
+
+// Closure 08.3 (2026-05-22) — Resume a cancelled batch job. POSTs to
+// /api/batch/resume which writes batch/batch-input-resume-<originalJobId>.tsv,
+// appends non-completed URLs to batch/triage-advance.tsv, and spawns a new
+// batch-only job. Refreshes the batch-status modal on success.
+window.resumeBatchJob = function(originalJobId) {
+  if (!originalJobId) return;
+  var btn = document.getElementById('bs-resume-' + originalJobId);
+  if (btn && btn.disabled) return;
+  if (btn) { btn.disabled = true; btn.textContent = String.fromCharCode(0x21BB) + ' Spawning' + String.fromCharCode(8230); }
+  fetch('/api/batch/resume', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jobId: originalJobId }),
+  })
+    .then(function(r) { return r.ok ? r.json() : r.json().then(function(j){ throw new Error(j.error || 'resume failed (HTTP ' + r.status + ')'); }); })
+    .then(function(data) {
+      if (btn) {
+        btn.textContent = String.fromCharCode(0x2713) + ' Resumed (' + (data.rowsRequeued || 0) + ' rows)';
+        btn.title = 'New job ' + (data.newJobId || '?');
+      }
+      if (window.toast) {
+        window.toast('Resume started — ' + (data.rowsRequeued || 0) + ' rows requeued as job ' + (data.newJobId || '?'), 'info');
+      }
+      // Force-refresh the modal so the new running job appears in Section P.
+      if (typeof window._bsFetchAndRender === 'function') {
+        setTimeout(function() { try { window._bsFetchAndRender(); } catch (_) {} }, 700);
+      }
+    })
+    .catch(function(err) {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = String.fromCharCode(0x21BB) + ' Resume';
+        btn.title = String(err && err.message || 'resume error');
+      }
+      if (window.toast) {
+        window.toast('Resume failed: ' + (err && err.message || 'unknown'), 'error');
+      }
+      try { console.warn('resumeBatchJob error:', err && err.message); } catch (_) {}
     });
 };
 
@@ -28714,6 +29505,10 @@ function renderNetworkGraphSvg(contacts, cx, cy, r) {
 window.renderNetworkGraphSvg = renderNetworkGraphSvg;
 
 // ── Contacts directory (2026-05-18, externalized 2026-05-20) ────────────
+// 4.03 (2026-05-22) — xGE baseline injected at build time. Tiny (~1KB)
+// so we inline rather than fetch async. Used by _renderCompComparisonTable.
+window._XGE_BASELINE = ${xgeBaselineJson};
+
 // Sidebar Contacts modal renders this list. Sources: outreach-state +
 // LinkedIn Connections.csv merged at build time. ~2.9k rows ≈ 2.36MB.
 // Previously inlined into block 2 — caused ~5-10s parse delay on cold load.
@@ -30639,6 +31434,10 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   .pa-chip-warn  { background: rgba(245,158,11,0.14); color: #f59e0b; border-color: rgba(245,158,11,0.32); }
   .pa-chip-bad   { background: rgba(220,38,38,0.14);  color: #dc2626; border-color: rgba(220,38,38,0.32); }
   .pa-chip-muted { background: rgba(148,163,184,0.10); color: var(--text-4); border-color: rgba(148,163,184,0.18); }
+  /* 4.13 (2026-05-22) — clickable batch-status chip */
+  .pa-chip-button { cursor: pointer; font: inherit; }
+  .pa-chip-button:hover { filter: brightness(1.15); }
+  .pa-chip-button:focus-visible { outline: 2px solid var(--blue-fg-dark, #58a6ff); outline-offset: 1px; }
   .pa-stamp { font-size: 10.5px; color: var(--text-4); white-space: nowrap; }
   .pa-stamp.pa-stamp-stale { color: var(--amber-fg, #f59e0b); }
   @media (max-width: 720px) {
@@ -32039,7 +32838,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
           if (c.touches[i].channel === 'internal_snooze') {
             var s = String(c.touches[i].summary || '');
             // Strip the "[snooze until YYYY-MM-DD]" prefix; show only the user note.
-            var stripped = s.replace(/^\[snooze[^\]]*\]\s*/, '');
+            var stripped = s.replace(/^\\[snooze[^\\]]*\\]\\s*/, '');
             if (stripped) note = ' · ' + escapeHtml(stripped);
             break;
           }
@@ -32272,7 +33071,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     return d.toISOString().slice(0, 10);
   }
   function isoFromDateInput(value) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) return null;
     var picked = Date.parse(value + 'T23:59:59');
     if (Number.isNaN(picked) || picked <= Date.now()) return null;
     return value;
@@ -33826,6 +34625,83 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   console.log(`  Pipeline pending:  ${pipelinePending}`);
   console.log(`  Reports rendered:  ${renderedCount} → dashboard/reports/`);
   console.log(`  Reports parsed:    ${_reportCache.size} (cache hits: ${_reportCacheHits})`);
+
+  // 09 Part 3 Item F (2026-05-22) — Network-DB enforcement audit.
+  // Scans every hm-intel/<slug>.json file for outreach recommendation
+  // fields, extracts person names from the free-text values, and reports
+  // how many of those names are present in the network database. Missing
+  // names should be added to data/enrichment-queue.json so a future
+  // network-enricher run can fill them in.
+  try {
+    const hmDir = join(ROOT, 'data', 'hm-intel');
+    if (existsSync(hmDir)) {
+      const hmFiles = readdirSync(hmDir).filter(f => f.endsWith('.json') && !f.startsWith('_'));
+      const dbPath = join(ROOT, 'data', 'network-database.json');
+      const dbNames = new Set();
+      if (existsSync(dbPath)) {
+        try {
+          const dbRaw = JSON.parse(readFileSync(dbPath, 'utf-8'));
+          for (const p of (dbRaw.people || [])) {
+            const name = p.full_name || ((p.first || '') + ' ' + (p.last || '')).trim();
+            if (name) dbNames.add(name.toLowerCase());
+          }
+        } catch (_) { /* DB unavailable — treat as 0 names */ }
+      }
+      const nameRe = /\b([A-Z][a-z]+ [A-Z][a-z]+(?:[- ][A-Z][a-z]+)?)\b/g;
+      let totalReco = 0;
+      const missing = new Set();
+      const allMentioned = new Set();
+      for (const f of hmFiles) {
+        let d;
+        try { d = JSON.parse(readFileSync(join(hmDir, f), 'utf-8')); } catch (_) { continue; }
+        const ppl = d.people_corroboration || {};
+        const text = [
+          ppl.recommended_outreach_target,
+          ppl.named_employees_posting,
+          ppl.hiring_team_visibility,
+        ].filter(Boolean).join(' ');
+        if (!text || text.trim() === '' || text === 'unknown') continue;
+        let m;
+        while ((m = nameRe.exec(text)) !== null) {
+          const name = m[1];
+          // Skip common false positives (titles, places, generic phrases)
+          if (/^(Hiring Team|Engineering Editorial|Communications Manager|Product Manager|Software Engineer|San Francisco|New York|Los Angeles|United States|Apply Now|Apply Pack|Bay Area)$/.test(name)) continue;
+          totalReco++;
+          allMentioned.add(name);
+          if (!dbNames.has(name.toLowerCase())) missing.add(name);
+        }
+      }
+      const inDb = allMentioned.size - missing.size;
+      const statusMark = missing.size === 0 ? '✓' : '⚠';
+      console.log(`  ${statusMark} Network-DB enforcement: ${totalReco} outreach recommendations rendered, ${inDb} unique names in DB, ${missing.size} missing`);
+      if (missing.size > 0) {
+        const sample = Array.from(missing).slice(0, 5).join(', ');
+        console.log(`    Missing sample: ${sample}${missing.size > 5 ? ', ...' : ''}`);
+        console.log(`    Fix: run network-enricher on the missing names, or add manually to data/enrichment-queue.json`);
+      }
+    }
+  } catch (err) {
+    console.log(`  ⚠ Network-DB enforcement check failed: ${err.message}`);
+  }
+
+  // 09 Part 4 Item G (2026-05-22) — Content density linter. Scans the
+  // built HTML for paragraphs that exceed policy thresholds. WARNINGS
+  // only; never fails the build. See data/content-density-policy-2026-05-22.md
+  try {
+    const { lintHtml, summarize } = await import('../lib/content-density-linter.mjs');
+    const result = lintHtml(html);
+    console.log(`  ${summarize(result)}`);
+    if (result.violations.length > 0 && result.violations.length <= 5) {
+      for (const v of result.violations) {
+        console.log(`    - ${v.kind}: "${v.sample}..."`);
+      }
+    } else if (result.violations.length > 5) {
+      console.log(`    (first 3) ${result.violations.slice(0, 3).map(v => v.kind).join(', ')}`);
+    }
+  } catch (err) {
+    console.log(`  ⚠ Content density linter failed: ${err.message}`);
+  }
+
   console.log(`  Page weight:       ${rawBytes.toLocaleString()} bytes raw → ${minBytes.toLocaleString()} bytes (−${(rawBytes - minBytes).toLocaleString()} bytes, ${Math.round((rawBytes - minBytes) / rawBytes * 100)}%)`);
 
   // P2.16 (2026-05-20) — build-weight gate. The inline-payload-bloat bug

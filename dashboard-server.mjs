@@ -3,7 +3,7 @@
 // Usage: node dashboard-server.mjs [--port=3000]
 
 import { createServer } from 'http';
-import { readFileSync, existsSync, statSync, readdirSync, appendFileSync, writeFileSync, renameSync, mkdirSync, watch as fsWatch } from 'fs';
+import { readFileSync, existsSync, statSync, readdirSync, appendFileSync, writeFileSync, renameSync, mkdirSync, unlinkSync, watch as fsWatch } from 'fs';
 import { join, extname, basename } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -597,13 +597,15 @@ const RESEARCHER_ENRICHMENT_RATE = clampEnvFloat('RESEARCHER_ENRICHMENT_RATE', 0
 //   `lib/next-moves.mjs:121`, `lib/eval-council.mjs:144`. PASS — gated by real code.
 const THRESHOLD_FOR_PUBLISH      = clampEnvFloat('THRESHOLD_FOR_PUBLISH',      4.0, 0, 10);
 // α Run-Batch eval 2026-05-19 — polish stage costs (only surface when POLISH_PACK_ENABLED=1).
-// Default of ~$60/pack is the calibrated typical (per overnight smoke @ 14021db: cover-letter
-// only converged at $46 + $0 cached signals; full 6-artifact ranges $40-180 from operational
-// telemetry). The $500 cap from spec is the hard ceiling, not the expected mean.
+// Default of ~$12/pack is the post-bugfix calibrated typical. The earlier $60 figure was
+// derived from cost-trace records produced before commit 8e83ffa, which had a per-1K-vs-per-1M
+// units bug in MODEL_COST_RATES that inflated every Anthropic Opus + Sonnet cost by ~1000x.
+// Recomputed against actual 2026-05-20 + 2026-05-22 traces (data/polish-cost-trace-corrected-*.json):
+// full 6-artifact pack averages ~$10-15. The $500 cap from spec is the hard ceiling, not the mean.
 // Bounded same as scripts/process-all-pipeline.mjs:phasePolish so dashboard preview stays
-// in sync with the agent's actual behavior.
-const _rawPolishCost = parseFloat(process.env.COST_PER_POLISH_PACK_USD || '60.00');
-const COST_PER_POLISH_PACK_USD     = Number.isFinite(_rawPolishCost) && _rawPolishCost > 0 ? _rawPolishCost : 60;
+// in sync with the agent's actual behavior. See data/cost-trace-bug-postmortem-2026-05-22.md.
+const _rawPolishCost = parseFloat(process.env.COST_PER_POLISH_PACK_USD || '12.00');
+const COST_PER_POLISH_PACK_USD     = Number.isFinite(_rawPolishCost) && _rawPolishCost > 0 ? _rawPolishCost : 12;
 const _rawPolishTopN = parseInt(process.env.POLISH_TOP_N_PER_RUN || '5', 10);
 const POLISH_TOP_N_PER_RUN         = Number.isFinite(_rawPolishTopN) && _rawPolishTopN > 0 ? Math.min(_rawPolishTopN, 20) : 5;
 const _rawPolishCap = parseFloat(process.env.POLISH_PER_PACK_COST_CAP_USD || '120.00');
@@ -663,12 +665,12 @@ const COST_CALIBRATION_PROVENANCE = {
   },
   polish_typical_cost: {
     value: COST_PER_POLISH_PACK_USD,
-    source: 'overnight smoke @ 14021db + apply-pack-polish.mjs operational telemetry',
+    source: 'corrected polish-cost-trace records (2026-05-20 + 2026-05-22) post-bugfix-8e83ffa',
     confidence: 'MED',
-    sample_size: 1,             // single full pack run observed
-    last_calibrated: '2026-05-19',
-    confidence_band_pct: 100,   // ±100% — single-pack telemetry is fragile
-    note: 'env-tunable via COST_PER_POLISH_PACK_USD',
+    sample_size: 95,            // 88 + 7 records across 2 correctly-priced trace days
+    last_calibrated: '2026-05-22',
+    confidence_band_pct: 50,    // ±50% — observed $8-20 range across artifact mixes
+    note: 'env-tunable via COST_PER_POLISH_PACK_USD; was $60 from inflated traces — see data/cost-trace-bug-postmortem-2026-05-22.md',
   },
   // δ DELTA Run-Batch 2026-05-19 — AI-detection cost provenance
   ai_detection_cost: {
@@ -1245,7 +1247,9 @@ function buildPipelinePreview() {
         // α Run-Batch eval 2026-05-19: only surfaced when POLISH_PACK_ENABLED=1.
         // Process All's phasePolish targets top-N Evaluated rows; each pack runs
         // 3-Haiku-critics / Sonnet author / Opus adjudicator / adversarial sweep
-        // until ≥0.99 confidence — typical $60, cap $120 (env-tunable).
+        // until ≥0.99 confidence — typical $12, cap $120 (env-tunable).
+        // (Earlier "typical $60" comment was calibrated against pre-bugfix-8e83ffa
+        //  trace data — see data/cost-trace-bug-postmortem-2026-05-22.md.)
         polish: {
           count: paPolishCount,
           cost_usd: r2(paPolishCost),
@@ -2585,6 +2589,12 @@ function batchLive() {
     } catch (_) {}
   }
 
+  // Closure 08.4 (2026-05-22) — last_batch summary embedded in batchLive() so
+  // the existing SSE stream pushes A7 chip updates without a separate poll.
+  // Same logic as scripts/build-dashboard.mjs:loadLastBatchSummary() — keep
+  // the two computations in lockstep.
+  const last_batch = _computeLastBatchSummary(stateRows);
+
   return {
     total, completed, failed, running, pending, pct,
     rows: sorted.slice(0, 500),
@@ -2592,6 +2602,54 @@ function batchLive() {
     pipelineStages,
     // γ GAMMA: stale-state marker so the renderer can mute / de-emphasize.
     pipelineStateMeta,
+    last_batch,
+  };
+}
+
+// Closure 08.4 (2026-05-22) — extract the most-recent batch (15-min gap
+// heuristic on started_at) from a list of stateRows parsed from
+// batch/batch-state.tsv. Mirrors scripts/build-dashboard.mjs:loadLastBatchSummary
+// so SSE pushes deliver the same shape the A7 chip reads at build time.
+function _computeLastBatchSummary(stateRows) {
+  if (!Array.isArray(stateRows) || stateRows.length === 0) return null;
+  const recent = stateRows.slice(-600);
+  const sorted = recent
+    .filter(r => r.started_at)
+    .sort((a, b) => (a.started_at || '').localeCompare(b.started_at || ''));
+  if (sorted.length === 0) return null;
+
+  // Walk back from the latest start; rows within 15min of the previous one
+  // belong to the same batch (matches the build-time helper).
+  let lastBatchRows = [sorted[sorted.length - 1]];
+  for (let i = sorted.length - 2; i >= 0; i--) {
+    const prev = lastBatchRows[lastBatchRows.length - 1];
+    const cur = sorted[i];
+    const gapMs = new Date(prev.started_at) - new Date(cur.started_at);
+    if (gapMs > 15 * 60 * 1000) break;
+    lastBatchRows.push(cur);
+  }
+  lastBatchRows.reverse();
+
+  let lbCompleted = 0, lbFailed = 0, lbRunning = 0;
+  for (const r of lastBatchRows) {
+    if (r.status === 'completed') lbCompleted++;
+    else if (r.status === 'failed') lbFailed++;
+    else if (r.status === 'running') lbRunning++;
+  }
+  const lbStart = lastBatchRows.length ? lastBatchRows[0].started_at : null;
+  const lbEnd   = lastBatchRows.length ? lastBatchRows[lastBatchRows.length - 1].completed_at || null : null;
+  const lbDurationMs = (lbStart && lbEnd) ? Math.max(0, new Date(lbEnd) - new Date(lbStart)) : 0;
+  const failedRate = (lbCompleted + lbFailed) > 0 ? (lbFailed / (lbCompleted + lbFailed)) : 0;
+  return {
+    completed:   lbCompleted,
+    failed:      lbFailed,
+    running:     lbRunning,
+    total:       lastBatchRows.length,
+    duration_ms: lbDurationMs,
+    failed_rate: failedRate,
+    started_at:  lbStart,
+    ended_at:    lbEnd,
+    state:       lbRunning > 0 ? 'running' : (lbFailed > 0 ? 'partial-fail' : 'completed'),
   };
 }
 
@@ -3072,6 +3130,77 @@ function _buildBatchStatusDetailedUncached() {
     }
   } catch (_) { /* state file unreadable — fall through with process_all_active=null */ }
 
+  // 09 Part 6 (2026-05-22) — Process All confidence panel data. Last 5
+  // Process All / batch-only runs with status + duration + completed
+  // counts. Renders in a new modal section so Mitchell can see at a glance
+  // whether the system is shipping cleanly.
+  let process_all_confidence = { runs: [], summary: { total: 0, succeeded: 0, failed: 0, cancelled: 0, success_rate: null } };
+  try {
+    const stateFp3 = join(ROOT, 'data/pipeline-process-state.json');
+    if (existsSync(stateFp3)) {
+      const state = JSON.parse(readFileSync(stateFp3, 'utf-8'));
+      const allRuns = Object.values(state.jobs || {})
+        .filter(j => j && (j.type === 'process-all' || j.type === 'batch-only'))
+        .sort((a, b) => String(b.started_at || '').localeCompare(String(a.started_at || '')))
+        .slice(0, 5);
+      const summary = { total: 0, succeeded: 0, failed: 0, cancelled: 0, running: 0 };
+      const runs = [];
+      for (const j of allRuns) {
+        const startMs = j.started_at ? Date.parse(j.started_at) : null;
+        const endMs = j.finished_at ? Date.parse(j.finished_at)
+                    : j.completed_at ? Date.parse(j.completed_at)
+                    : (j.status === 'running' ? Date.now() : null);
+        const durMs = (startMs && endMs) ? Math.max(0, endMs - startMs) : null;
+        runs.push({
+          jobId: j.jobId,
+          type: j.type || 'batch-only',
+          status: j.status,
+          started_at: j.started_at,
+          finished_at: j.finished_at || j.completed_at || null,
+          duration_ms: durMs,
+          phase: j.phase || null,
+          phases: j.phases || null,
+          resumed_from: j.resumed_from || null,
+        });
+        summary.total++;
+        if (j.status === 'completed') summary.succeeded++;
+        else if (j.status === 'failed') summary.failed++;
+        else if (j.status === 'cancelled') summary.cancelled++;
+        else if (j.status === 'running') summary.running++;
+      }
+      const decisive = summary.succeeded + summary.failed + summary.cancelled;
+      summary.success_rate = decisive > 0 ? Math.round((summary.succeeded / decisive) * 100) : null;
+      process_all_confidence = { runs, summary };
+    }
+  } catch (_) { /* best-effort */ }
+
+  // Closure 08.3 (2026-05-22) — surface recent cancelled jobs so the modal
+  // can render a Resume button per cancelled job. Window: last 7 days.
+  let recent_cancelled_jobs = [];
+  try {
+    const stateFp2 = join(ROOT, 'data/pipeline-process-state.json');
+    if (existsSync(stateFp2)) {
+      const state = JSON.parse(readFileSync(stateFp2, 'utf-8'));
+      const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      recent_cancelled_jobs = Object.values(state.jobs || {})
+        .filter(j => j && j.status === 'cancelled')
+        .filter(j => {
+          const ts = j.cancelled_at ? Date.parse(j.cancelled_at) : 0;
+          return Number.isFinite(ts) && ts >= since;
+        })
+        .map(j => ({
+          jobId:        j.jobId,
+          type:         j.type || 'batch-only',
+          started_at:   j.started_at,
+          cancelled_at: j.cancelled_at,
+          send_email:   !!j.send_email,
+          resumed_from: j.resumed_from || null,
+        }))
+        .sort((a, b) => String(b.cancelled_at || '').localeCompare(String(a.cancelled_at || '')))
+        .slice(0, 5);
+    }
+  } catch (_) { /* state file unreadable — empty list */ }
+
   return {
     ok: true,
     current_summary: {
@@ -3091,6 +3220,8 @@ function _buildBatchStatusDetailedUncached() {
     cost_today_usd: Math.round(cost_today_usd * 100) / 100,
     cost_30d_usd:   Math.round(cost_30d_usd * 100) / 100,
     most_recent_failures,
+    recent_cancelled_jobs,
+    process_all_confidence,
     generated_at: new Date().toISOString(),
   };
 }
@@ -5825,6 +5956,201 @@ const server = createServer((req, res) => {
     return;
   }
 
+  // Closure 08.3 (2026-05-22) — Resume a cancelled batch job. Reads the
+  // cancelled job's incomplete rows from batch/batch-state.tsv, looks up
+  // their full row data in batch/batch-input.tsv, writes an audit
+  // resume-input file at batch/batch-input-resume-<originalJobId>.tsv,
+  // appends any URLs not currently queued back into batch/triage-advance.tsv,
+  // then spawns a NEW batch-only-pipeline job. The new job's state-file
+  // entry is annotated with `resumed_from: <originalJobId>`.
+  //   body: { jobId }
+  //   returns: { ok, newJobId, originalJobId, rowsRequeued, resumeInputPath }
+  if (url === '/api/batch/resume' && req.method === 'POST') {
+    let body = '';
+    let total = 0;
+    req.on('data', c => { total += c.length; if (total > 4 * 1024) { req.destroy(); return; } body += c; });
+    req.on('end', () => {
+      let parsed;
+      try { parsed = JSON.parse(body || '{}'); }
+      catch (_) { return json({ ok: false, error: 'invalid JSON body' }, 400); }
+      const originalJobId = String(parsed.jobId || parsed.job_id || query.job_id || '').trim();
+      if (!originalJobId) return json({ ok: false, error: 'jobId required' }, 400);
+
+      const state = loadPipelineProcessState();
+      const job = state.jobs?.[originalJobId];
+      if (!job) return json({ ok: false, error: 'job not found' }, 404);
+      if (job.status !== 'cancelled') {
+        return json({ ok: false, error: 'only cancelled jobs are resumable; job is in status: ' + job.status }, 409);
+      }
+
+      // Identify rows belonging to this job that are NOT completed. The
+      // batch-state.tsv lacks an explicit jobId column — we identify by
+      // started_at falling within the job's lifecycle window
+      // (job.started_at ≤ row.started_at ≤ job.cancelled_at OR row has no
+      // completed_at if status=running).
+      const stateFp = join(ROOT, 'batch/batch-state.tsv');
+      const inputFp = join(ROOT, 'batch/batch-input.tsv');
+      const triageFp = join(ROOT, 'batch/triage-advance.tsv');
+
+      if (!existsSync(stateFp)) {
+        return json({ ok: false, error: 'batch-state.tsv not found — no batch run state to resume from' }, 409);
+      }
+
+      const jobStartMs = job.started_at ? Date.parse(job.started_at) : 0;
+      const jobCancelledMs = job.cancelled_at ? Date.parse(job.cancelled_at) : Date.now();
+      // Use a 30-min look-back from cancelled_at as a generous floor for the
+      // job's lifecycle window. Same gap heuristic as detailBatches() uses.
+      const lookbackMs = 30 * 60 * 1000;
+      const windowStartMs = Math.max(0, jobStartMs - 1000) || (jobCancelledMs - lookbackMs);
+
+      const incomplete = [];
+      try {
+        const rows = readFileSync(stateFp, 'utf8').split('\n')
+          .filter(l => l.trim() && !l.startsWith('id\t'));
+        for (const ln of rows) {
+          const [id, rowUrl, status, started_at] = ln.split('\t');
+          if (status === 'completed') continue;
+          if (!started_at) continue;
+          const ts = Date.parse(started_at);
+          if (!Number.isFinite(ts)) continue;
+          if (ts >= windowStartMs && ts <= jobCancelledMs + lookbackMs) {
+            incomplete.push({ id: id.trim(), url: (rowUrl || '').trim(), status: (status || '').trim() });
+          }
+        }
+      } catch (err) {
+        return json({ ok: false, error: 'failed to parse batch-state.tsv: ' + err.message }, 500);
+      }
+
+      // Look up notes/source from batch-input.tsv for the audit resume-input file.
+      const inputByUrl = new Map();
+      if (existsSync(inputFp)) {
+        try {
+          const lines = readFileSync(inputFp, 'utf8').split('\n')
+            .filter(l => l.trim() && !l.startsWith('id\t'));
+          for (const ln of lines) {
+            const parts = ln.split('\t');
+            const id = (parts[0] || '').trim();
+            const inUrl = (parts[1] || '').trim();
+            const source = (parts[2] || 'resume').trim();
+            const notes = (parts[3] || '').trim();
+            if (inUrl) inputByUrl.set(inUrl, { id, url: inUrl, source, notes });
+          }
+        } catch (_) { /* best-effort */ }
+      }
+
+      // Write the audit resume-input file.
+      const resumeFp = join(ROOT, `batch/batch-input-resume-${originalJobId}.tsv`);
+      const resumeRows = ['id\turl\tsource\tnotes'];
+      for (const r of incomplete) {
+        const inputRow = inputByUrl.get(r.url) || { id: r.id, url: r.url, source: 'resume', notes: 'resumed-from-' + originalJobId };
+        resumeRows.push(`${inputRow.id}\t${inputRow.url}\t${inputRow.source}\t${inputRow.notes}`);
+      }
+      try {
+        writeFileSync(resumeFp, resumeRows.join('\n') + '\n');
+      } catch (err) {
+        return json({ ok: false, error: 'failed to write resume-input file: ' + err.message }, 500);
+      }
+
+      // Re-inject URLs into triage-advance.tsv (the batch runner's input queue).
+      // The runner reads url, tier, score, archetype, reason. We don't have
+      // the original tier/score/archetype from batch-state.tsv, so use
+      // placeholders that flag the row as a resume.
+      const triageHeader = 'url\ttier\tscore\tarchetype\treason';
+      const existingTriage = new Set();
+      let existingTriageContent = '';
+      if (existsSync(triageFp)) {
+        existingTriageContent = readFileSync(triageFp, 'utf8');
+        const triageLines = existingTriageContent.split('\n')
+          .filter(l => l.trim() && !l.startsWith('url\t'));
+        for (const ln of triageLines) {
+          const url = (ln.split('\t')[0] || '').trim();
+          if (url) existingTriage.add(url);
+        }
+      }
+      const newTriageLines = [];
+      let appended = 0;
+      for (const r of incomplete) {
+        if (!r.url || existingTriage.has(r.url)) continue;
+        newTriageLines.push(`${r.url}\t?\t?\tresume\tresumed from cancelled job ${originalJobId}`);
+        appended++;
+      }
+      if (newTriageLines.length) {
+        try {
+          let combined = existingTriageContent;
+          if (!combined.includes('url\ttier\tscore\tarchetype\treason')) {
+            combined = triageHeader + '\n' + combined;
+          }
+          if (combined && !combined.endsWith('\n')) combined += '\n';
+          combined += newTriageLines.join('\n') + '\n';
+          writeFileSync(triageFp, combined);
+        } catch (err) {
+          return json({ ok: false, error: 'failed to append to triage-advance.tsv: ' + err.message }, 500);
+        }
+      }
+
+      // Spawn a new batch-only-pipeline job. Reuse spawnBatchOnly so we
+      // don't duplicate cap-enforcement / state-init logic. Force=true
+      // is appropriate since the user explicitly clicked Resume.
+      const spawnResult = spawnBatchOnly({
+        sendEmail: !!job.send_email,
+        force: true,
+      });
+      if (!spawnResult.ok) {
+        return json({ ok: false, error: 'failed to spawn resume batch: ' + spawnResult.error }, 500);
+      }
+
+      // Annotate the new job with resumed_from.
+      try {
+        const post = loadPipelineProcessState();
+        if (post.jobs[spawnResult.jobId]) {
+          post.jobs[spawnResult.jobId].resumed_from = originalJobId;
+          post.jobs[spawnResult.jobId].resume_rows_requeued = incomplete.length;
+          writeFileSync(join(ROOT, 'data/pipeline-process-state.json'), JSON.stringify(post, null, 2));
+        }
+      } catch (_) { /* annotation is best-effort */ }
+
+      return json({
+        ok:                  true,
+        newJobId:            spawnResult.jobId,
+        originalJobId,
+        rowsRequeued:        incomplete.length,
+        rowsAppendedToQueue: appended,
+        resumeInputPath:     `batch/batch-input-resume-${originalJobId}.tsv`,
+        statusUrl:           spawnResult.status_url,
+      });
+    });
+    return;
+  }
+
+  // Closure 08.3 (2026-05-22) — List recent cancelled jobs for the
+  // batch-status modal so the UI can render Resume buttons.
+  //   returns: { ok, cancelled_jobs: [{ jobId, type, cancelled_at, ... }] }
+  if (url === '/api/batch/cancelled-jobs') {
+    try {
+      const state = loadPipelineProcessState();
+      const since = Date.now() - 7 * 24 * 60 * 60 * 1000; // last 7 days
+      const cancelled = Object.values(state.jobs || {})
+        .filter(j => j.status === 'cancelled')
+        .filter(j => {
+          const ts = j.cancelled_at ? Date.parse(j.cancelled_at) : 0;
+          return Number.isFinite(ts) && ts >= since;
+        })
+        .map(j => ({
+          jobId:        j.jobId,
+          type:         j.type || 'batch-only',
+          started_at:   j.started_at,
+          cancelled_at: j.cancelled_at,
+          send_email:   !!j.send_email,
+          cancel_note:  j.cancel_note || null,
+        }))
+        .sort((a, b) => String(b.cancelled_at || '').localeCompare(String(a.cancelled_at || '')))
+        .slice(0, 10);
+      return json({ ok: true, cancelled_jobs: cancelled });
+    } catch (err) {
+      return json({ ok: false, error: err.message }, 500);
+    }
+  }
+
   const verifyMatch = url.match(/^\/api\/verify\/(.+\.md)$/);
   if (verifyMatch) {
     const payload = buildVerifyPayload(verifyMatch[1]);
@@ -6698,6 +7024,92 @@ const server = createServer((req, res) => {
         });
         const { createReadStream } = await import('node:fs');
         createReadStream(resolved).pipe(res);
+      } catch (err) {
+        try { return json({ ok: false, error: err.message }, 500); } catch (_) {}
+      }
+    })();
+    return;
+  }
+
+  // ── GET /api/apply-pack-zip?slug=<slug> ──────────────────────────────────
+  // 09 Part 2 Item B (2026-05-22) — stream a fresh zip of every artifact in
+  // an apply-pack as a single download. The browser fires a download with
+  // filename `<company>-<role>-<YYYY-MM-DD>.zip` containing every file in
+  // the pack. Reuses the same E1 merge logic as /api/finalize-apply-pack
+  // (apply-pack/ wins on collision, falls back to data/apply-packs/).
+  if (url.startsWith('/api/apply-pack-zip') && req.method === 'GET') {
+    (async () => {
+      try {
+        const slug = String(query.slug || '').trim();
+        if (!slug || !/^[A-Za-z0-9_.-]+$/.test(slug)) {
+          return json({ ok: false, error: 'invalid slug' }, 400);
+        }
+        const createDir = join(ROOT, 'apply-pack', slug);
+        const polishDir = join(ROOT, 'data', 'apply-packs', slug);
+        const haveCreate = existsSync(createDir);
+        const havePolish = existsSync(polishDir);
+        if (!haveCreate && !havePolish) {
+          return json({ ok: false, error: 'pack not found at apply-pack/' + slug + ' or data/apply-packs/' + slug }, 404);
+        }
+        const { execFile } = await import('child_process');
+        const execFileP = (cmd, args, opts = {}) => new Promise((resolve, reject) => {
+          execFile(cmd, args, { timeout: 60000, ...opts }, (err, stdout, stderr) => {
+            if (err) reject(new Error(`${cmd} failed: ${err.message}${stderr ? ' · ' + stderr.toString().slice(0, 240) : ''}`));
+            else resolve({ stdout, stderr });
+          });
+        });
+
+        // Stage temp merge dir same way as /api/finalize-apply-pack does.
+        let zipSourceDir;
+        let tempDirToCleanup = null;
+        if (haveCreate && havePolish) {
+          const tmpRoot = join(ROOT, 'data', 'tmp');
+          mkdirSync(tmpRoot, { recursive: true });
+          tempDirToCleanup = join(tmpRoot, `zip-stream-${slug}-${Date.now()}`);
+          mkdirSync(tempDirToCleanup, { recursive: true });
+          await execFileP('cp', ['-R', `${polishDir}/.`, tempDirToCleanup]);
+          await execFileP('cp', ['-R', `${createDir}/.`, tempDirToCleanup]);
+          zipSourceDir = tempDirToCleanup;
+        } else if (haveCreate) {
+          zipSourceDir = createDir;
+        } else {
+          zipSourceDir = polishDir;
+        }
+
+        // Build the zip in a temp file, then stream it.
+        const tmpRoot2 = join(ROOT, 'data', 'tmp');
+        mkdirSync(tmpRoot2, { recursive: true });
+        const tmpZip = join(tmpRoot2, `pack-${slug}-${Date.now()}.zip`);
+        try {
+          await execFileP('zip', ['-r', '-q', tmpZip, '.'], { cwd: zipSourceDir });
+        } finally {
+          if (tempDirToCleanup) {
+            try { await execFileP('rm', ['-rf', tempDirToCleanup]); } catch {}
+          }
+        }
+        if (!existsSync(tmpZip)) {
+          return json({ ok: false, error: 'zip creation failed' }, 500);
+        }
+        const stat = statSync(tmpZip);
+        // Derive download filename: slug is num-company-role; strip the
+        // num prefix to make the download name cleaner.
+        const date = new Date().toISOString().slice(0, 10);
+        const downloadName = `${slug}-${date}.zip`;
+        res.writeHead(200, {
+          'Content-Type': 'application/zip',
+          'Content-Length': stat.size,
+          'Content-Disposition': `attachment; filename="${downloadName}"`,
+          'Cache-Control': 'private, no-cache',
+        });
+        const { createReadStream } = await import('node:fs');
+        const stream = createReadStream(tmpZip);
+        stream.on('end', () => {
+          try { unlinkSync(tmpZip); } catch (_) {}
+        });
+        stream.on('error', () => {
+          try { unlinkSync(tmpZip); } catch (_) {}
+        });
+        stream.pipe(res);
       } catch (err) {
         try { return json({ ok: false, error: err.message }, 500); } catch (_) {}
       }
@@ -7948,9 +8360,12 @@ async function generatePack(){
       if (!POLISH_MODES[mode]) return json({ ok: false, error: 'mode must be lite|smart|heavy' }, 400);
       // Lazy-load dotenv — the launchd-wrapped dashboard-server doesn't source
       // .env at startup. Idempotent + low-cost on repeated calls.
+      // override:true is REQUIRED: Mitchell's shell pre-sets ANTHROPIC_API_KEY
+      // to empty, so dotenv without override would skip the real .env value.
+      // See ~/.claude/projects/.../memory/reference_env_secrets.md.
       try {
         const dotenv = await import('dotenv');
-        dotenv.config({ path: join(ROOT, '.env'), override: false });
+        dotenv.config({ path: join(ROOT, '.env'), override: true });
       } catch {}
       const apiKey = process.env.ANTHROPIC_API_KEY;
       if (!apiKey) return json({ ok: false, error: 'ANTHROPIC_API_KEY not set' }, 500);
@@ -8530,7 +8945,10 @@ async function generatePack(){
       const snippetText = chunks.slice(0, 8).map((c, i) =>
         '## Snippet ' + (i + 1) + ' [source: ' + (c.source || 'unknown') + ']\n' + ((c.text || '').slice(0, 600))
       ).join('\n\n');
-      const systemPrompt = "You are Mitchell's career strategist. Given a target role and the most relevant chunks from his career corpus (cv.md, article-digest.md, project stories), write a 1-2 sentence contextual note that calls out: (a) which 1-2 corpus signals best support the application, (b) one specific gap or risk to address. Be direct, specific, and grounded — cite source files inline like [cv.md] or [article-digest.md]. Maximum 280 characters total. No preamble.";
+      // 09 Part 1 Item A (2026-05-22) — switch to "Screen for / Lead with"
+      // format per the user's ask. The note appears above the Next-move CTA
+      // cluster and tells Mitchell what to focus on as he applies.
+      const systemPrompt = "You are Mitchell's career strategist. Given a target role and the most relevant chunks from his career corpus (cv.md, article-digest.md, project stories), write a contextual note in EXACTLY this two-line format:\n\n  Screen for: <3-5 word phrase that captures what makes Mitchell distinctively qualified for this role>.\n  Lead with: <a specific story or proof point from the corpus to open with>.\n\nGround both lines in the provided corpus chunks. Cite source files inline like [cv.md] or [article-digest.md]. Maximum 240 characters total. No preamble, no extra lines.";
       const userPrompt = `# Role\n${row.company || ''} — ${row.role || ''}\n\n# Corpus chunks (top-${chunks.length})\n${snippetText}`;
       let note = '';
       let citations = [];

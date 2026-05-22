@@ -3,6 +3,7 @@ cv.md
 data/applications.md
 data/pipeline.md
 data/scan-history.tsv
+data/xge-baseline.json
 data/vimeo-inventory-*.md
 data/heartbeat-*.md
 data/heartbeat-archive/*.html

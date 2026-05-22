@@ -226,54 +226,59 @@ const PAGE_TEMPLATE = (story, body, riskBand, scoreNum) => `<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>${story.requirement.slice(0, 70)} — Mitchell Williams</title>
 <style>
+  /* 09 Part 2 Item D (2026-05-22) — dashboard-cohesive dark theme by
+     default. The dashboard ships dark-first; story child pages must
+     match. Light fallback preserved via prefers-color-scheme: light
+     so users with a light-mode OS who explicitly want light still get it. */
   :root {
-    --bg: #f8f9fb;
-    --surface: #ffffff;
-    --surface-2: #f4f4f6;
-    --border: #e5e7eb;
-    --text: #111827;
-    --text-2: #374151;
-    --text-3: #6b7280;
-    --green-fg: #16a34a;
-    --green-fg-dark: #166534;
-    --green-bg: #dcfce7;
-    --green-border: #86efac;
-    --amber-fg: #a87b48;
-    --amber-bg: #f4ede1;
-    --amber-border: #d8c79f;
-    --red-fg: #dc2626;
-    --red-bg: #fee2e2;
-    --red-border: #fca5a5;
-    --link: #0969da;
-    --link-hover: #0550ae;
+    --bg: #06070d;
+    --surface: #11131c;
+    --surface-2: #181b27;
+    --border: #232737;
+    --text: #fafafa;
+    --text-2: #e4e4e7;
+    --text-3: #b8b8c0;
+    --green-fg: #86efac;
+    --green-fg-dark: #bbf7d0;
+    --green-bg: rgba(22,163,74,.12);
+    --green-border: rgba(22,163,74,.3);
+    --amber-fg: #d4ba84;
+    --amber-bg: rgba(168,123,72,.14);
+    --amber-border: rgba(168,123,72,.3);
+    --red-fg: #fca5a5;
+    --red-bg: rgba(220,38,38,.12);
+    --red-border: rgba(220,38,38,.3);
+    --link: #58a6ff;
+    --link-hover: #79c0ff;
     --radius-sm: 6px;
     --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--link);
   }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #06070d;
-      --surface: #11131c;
-      --surface-2: #181b27;
-      --border: #232737;
-      --text: #fafafa;
-      --text-2: #e4e4e7;
-      --text-3: #b8b8c0;
-      --green-fg: #86efac;
-      --green-fg-dark: #bbf7d0;
-      --green-bg: rgba(22,163,74,.12);
-      --green-border: rgba(22,163,74,.3);
-      --amber-fg: #d4ba84;
-      --amber-bg: rgba(168,123,72,.14);
-      --amber-border: rgba(168,123,72,.3);
-      --red-fg: #fca5a5;
-      --red-bg: rgba(220,38,38,.12);
-      --red-border: rgba(220,38,38,.3);
-      --link: #58a6ff;
-      --link-hover: #79c0ff;
+  @media (prefers-color-scheme: light) {
+    :root.respect-system {
+      --bg: #f8f9fb;
+      --surface: #ffffff;
+      --surface-2: #f4f4f6;
+      --border: #e5e7eb;
+      --text: #111827;
+      --text-2: #374151;
+      --text-3: #6b7280;
+      --green-fg: #16a34a;
+      --green-fg-dark: #166534;
+      --green-bg: #dcfce7;
+      --green-border: #86efac;
+      --amber-fg: #a87b48;
+      --amber-bg: #f4ede1;
+      --amber-border: #d8c79f;
+      --red-fg: #dc2626;
+      --red-bg: #fee2e2;
+      --red-border: #fca5a5;
+      --link: #0969da;
+      --link-hover: #0550ae;
       --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--link);
     }
   }
@@ -455,35 +460,23 @@ const INDEX_TEMPLATE = `<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>Story Library — Mitchell Williams</title>
 <style>
+  /* 09 Part 2 Item D (2026-05-22) — dashboard-cohesive dark theme by default. */
   :root {
-    --bg: #f8f9fb;
-    --surface: #ffffff;
-    --surface-2: #f4f4f6;
-    --border: #e5e7eb;
-    --text: #111827;
-    --text-2: #374151;
-    --text-3: #6b7280;
-    --link: #0969da;
-    --link-hover: #0550ae;
+    --bg: #06070d;
+    --surface: #11131c;
+    --surface-2: #181b27;
+    --border: #232737;
+    --text: #fafafa;
+    --text-2: #e4e4e7;
+    --text-3: #b8b8c0;
+    --link: #58a6ff;
+    --link-hover: #79c0ff;
     --radius-sm: 6px;
     --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--link);
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #06070d;
-      --surface: #11131c;
-      --surface-2: #181b27;
-      --border: #232737;
-      --text: #fafafa;
-      --text-2: #e4e4e7;
-      --text-3: #b8b8c0;
-      --link: #58a6ff;
-      --link-hover: #79c0ff;
-      --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--link);
-    }
   }
   * { box-sizing: border-box; }
   body {

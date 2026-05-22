@@ -2923,7 +2923,14 @@ function renderRow(r, idx) {
           //   'no-prior-outcomes'  — interview likelihood has no prior-outcome modifiers
           //   (any other non-'full' string is treated as insufficient and suppressed)
           if (completeness && completeness !== 'full') {
-            // Human-readable reason strings per completeness state.
+            // Closure C (2026-05-22): un-suppress the bar. The previous behavior
+            // (γ.3 decision 2026-05-19) replaced the bar entirely with "bar
+            // suppressed" placeholder text — too aggressive. The user reported
+            // missing-bar perception as a bug. Now we render the actual partial-
+            // data percentage at faded opacity + a warning chip explaining the
+            // quality concern. This preserves the anti-misleading intent (the
+            // chip flags low confidence) while restoring visual rhythm + the
+            // information value of the bar itself.
             const suppressReasonMap = {
               'baseline-only':     'formula baseline only — no signal modifiers available',
               'fallback-to-score': 'no Block B match grid found — alignment uses score proxy',
@@ -2931,9 +2938,10 @@ function renderRow(r, idx) {
             };
             const suppressReason = suppressReasonMap[completeness]
               || `data insufficient (${completeness})`;
-            return `<div class="alignbar-row alignbar-suppressed" title="${htmlEscape(hint)} — bar suppressed: ${htmlEscape(suppressReason)}" style="opacity:0.6">
-              <span class="alignbar-label">${htmlEscape(label)} <span class="alignbar-suppress-chip" style="font-size:10px;color:#f59e0b;margin-left:6px;font-style:italic" title="Bar suppressed: ${htmlEscape(suppressReason)}. Re-run eval to populate.">⚠ data insufficient</span></span>
-              <span class="alignbar-pct" style="color:var(--text-4);font-style:italic;font-size:11px">bar suppressed</span>
+            return `<div class="alignbar-row alignbar-row-clickable alignbar-partial drill-trigger" data-drill="percentage:${dk}" role="button" tabindex="0" title="${htmlEscape(hint)} — partial data: ${htmlEscape(suppressReason)} — click for the full source breakdown" style="cursor:pointer;opacity:0.78" onclick="event.stopPropagation();window.drillIn('percentage','${dk}',event)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();window.drillIn('percentage','${dk}',event)}">
+              <span class="alignbar-label">${htmlEscape(label)} <span class="alignbar-partial-chip" style="font-size:10px;color:#f59e0b;margin-left:6px;font-style:italic" title="Partial data: ${htmlEscape(suppressReason)}. Re-run eval for full signal coverage.">⚠ partial</span></span>
+              <div class="alignbar-track"><div class="alignbar-fill ${colorClass} alignbar-fill-partial" style="width:${pctClamped}%;background:repeating-linear-gradient(45deg, var(--alignbar-fill-color, currentColor), var(--alignbar-fill-color, currentColor) 4px, rgba(0,0,0,0.12) 4px, rgba(0,0,0,0.12) 8px)"></div></div>
+              <span class="alignbar-pct" style="color:var(--text-3)">${pctClamped}%</span>
             </div>`;
           }
           // 2026-05-20 — Mitchell asked: "I should be able to click into
@@ -8269,6 +8277,18 @@ async function build() {
   .alignbar-row-clickable:hover { background: var(--surface-hover, rgba(255,255,255,.04)); }
   .alignbar-row-clickable:hover .alignbar-explore-hint { opacity: 1; }
   .alignbar-explore-hint { font-size: 10px; color: var(--text-4); opacity: .4; transition: opacity .12s; margin-left: 4px; }
+  /* Closure C (2026-05-22): partial-data bars now render with diagonal-stripe
+     pattern + ⚠ chip instead of being hidden as "bar suppressed". Restores
+     visual rhythm + information value while preserving low-confidence signal. */
+  .alignbar-fill-partial { animation: alignbar-partial-shift 14s linear infinite; }
+  .alignbar-partial-chip { vertical-align: middle; }
+  @keyframes alignbar-partial-shift {
+    0%   { background-position:   0px 0; }
+    100% { background-position: 200px 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .alignbar-fill-partial { animation: none; }
+  }
   /* How-to-position markdown rendering — real table, not pipe-separated prose. */
   .htp-md table { width: 100%; border-collapse: collapse; margin: 6px 0; font-size: 12px; }
   .htp-md th, .htp-md td { padding: 6px 8px; border: 1px solid var(--border); text-align: left; vertical-align: top; }

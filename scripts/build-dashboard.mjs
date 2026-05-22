@@ -5162,6 +5162,19 @@ async function build() {
       } catch (_) { /* non-fatal */ }
     } catch (_) { _cbData.nextMoves = { top_moves: [], skip_list: [], deadline_stats: {} }; }
 
+    // Build-time: collect existing story page slugs so the drill-in handler
+    // can show "Open full story" only when the file actually exists on disk.
+    // Added 2026-05-21 to fix the dead-link bug (clicking story bullet →
+    // stories/*.html → "Not found").
+    try {
+      const _storiesDir = join(ROOT, 'dashboard', 'stories');
+      _cbData.storyPages = existsSync(_storiesDir)
+        ? readdirSync(_storiesDir)
+            .filter(f => f.endsWith('.html') && f !== 'index.html')
+            .map(f => f.replace(/\.html$/, ''))
+        : [];
+    } catch (_) { _cbData.storyPages = []; }
+
     // P0-2 fix (2026-05-18): previous strategy double-escaped apostrophes
     // (replace(/'/g, "\\'")) which produced JS-valid but JSON-INVALID output —
     // browser would JS-unescape \' → ', then JSON.parse choked on the bare
@@ -16283,12 +16296,18 @@ _drillInRegister('story', function(id) {
   var storyData = (cb.storyData || {})[id] || (cb.storyData || {})[storySlug] || {};
   var title = storyData.title || storySlug.replace(/-/g, ' ');
   var excerpt = storyData.excerpt || 'Click "Open full story" to read the complete STAR+R expansion.';
-  // Check if the file exists by trying to fetch it (best-effort)
+  // Guard: only show "Open full story" when the HTML file actually exists on disk.
+  // Build-time bakes the slug set into _waveCB.storyPages (added 2026-05-21).
+  // Fail-open: if storyPages isn't loaded yet, show the button (race-condition safe).
+  var _spArr = (cb.storyPages && Array.isArray(cb.storyPages)) ? cb.storyPages : null;
+  var _pageExists = !_spArr || (_spArr.indexOf(storySlug) !== -1);
+  var _storyBtn = _pageExists
+    ? '<a href="' + storyHref + '" target="_blank" rel="noopener" style="display:inline-block;padding:6px 14px;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;color:var(--fg)">Open full story &rarr;</a>'
+    : '<span style="font-size:11px;color:var(--text-3);font-style:italic">Full story not yet generated &mdash; run node scripts/generate-story-pages.mjs to build it.</span>';
   var html = '<div style="padding:4px 0">'
     + '<p style="font-size:13px;font-weight:600;margin:0 0 8px">' + title + '</p>'
     + '<p style="font-size:12px;color:var(--text-3);margin:0 0 12px">' + excerpt + '</p>'
-    + '<a href="' + storyHref + '" target="_blank" rel="noopener" style="display:inline-block;padding:6px 14px;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;color:var(--fg)">'
-    + 'Open full story &rarr;</a>'
+    + _storyBtn
     + '</div>';
   return { title: 'Story: ' + title, html: html };
 });

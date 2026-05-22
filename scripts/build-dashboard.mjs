@@ -10544,6 +10544,72 @@ async function build() {
     font-size: 11px;
     padding: 10px 0;
   }
+  /* A4 (2026-05-22): 3 intel chips (team health / interview likelihood / HM
+     visibility) — clickable chips that open inline popouts via /api/intel-chips.
+     Each chip is colored by data availability (green=present, grey=absent).
+     Outer-template-unescape safe per Pattern A — no backticks, no
+     dollar-brace interpolation in chip render JS. */
+  .drawer-intel-chips {
+    margin: 12px 0 4px 0;
+    padding: 10px 0 4px 0;
+    border-top: 1px dashed var(--border);
+  }
+  .drawer-intel-chips-header {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin-bottom: 6px;
+  }
+  .intel-chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+  .intel-chip {
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 600;
+    border: 1px solid;
+    cursor: pointer;
+    transition: filter 0.12s;
+    background: var(--surface-2);
+  }
+  .intel-chip:hover { filter: brightness(1.08); }
+  .intel-chip.present { background: #ecfdf5; color: #047857; border-color: #a7f3d0; }
+  .intel-chip.partial { background: #fefce8; color: #854d0e; border-color: #fde68a; }
+  .intel-chip.absent  { background: var(--surface-2); color: var(--text-3); border-color: var(--border); }
+  .intel-chip.active  { filter: brightness(0.92); box-shadow: 0 0 0 2px rgba(99,102,241,0.25); }
+  .intel-chip-pop {
+    margin-top: 8px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    font-size: 12px;
+    color: var(--text-2);
+  }
+  .pop-header { font-weight: 700; font-size: 13px; margin-bottom: 8px; color: var(--text); }
+  .pop-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; }
+  .pop-badge { font-weight: 600; color: #15803d; }
+  .pop-badge.high   { color: #15803d; background: #ecfdf5; padding: 1px 6px; border-radius: 999px; }
+  .pop-badge.medium { color: #854d0e; background: #fefce8; padding: 1px 6px; border-radius: 999px; }
+  .pop-badge.low    { color: #6b7280; background: var(--surface-2); padding: 1px 6px; border-radius: 999px; }
+  .pop-divider { border-top: 1px solid var(--border); margin: 8px 0; }
+  .pop-label { font-size: 10.5px; font-weight: 700; color: var(--text-3);
+    text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+  .pop-list { font-size: 12px; margin: 4px 0 0 0; padding-left: 16px; line-height: 1.45; }
+  .pop-list li { margin-bottom: 3px; }
+  .pop-list.cons li { color: #b45309; }
+  .pop-list.pros li { color: #047857; }
+  .pop-source { font-size: 10px; color: var(--text-4); margin-top: 8px; }
+  .pop-hero { display: flex; align-items: baseline; gap: 8px; margin: 6px 0; }
+  .pop-pct { font-size: 28px; font-weight: 700; color: #0369a1; }
+  .pop-conf { font-size: 11px; color: var(--text-3); }
+  .pop-quote { font-size: 12px; font-style: italic; color: var(--text-2);
+    padding: 6px 10px; background: var(--surface-2);
+    border-left: 3px solid #6366f1; border-radius: 4px; margin-top: 4px; }
+  .pop-link { color: #0369a1; text-decoration: none; }
+  .pop-link:hover { text-decoration: underline; }
+  .pop-empty { font-size: 12px; color: var(--text-3); font-style: italic; padding: 8px 0; }
   /* E4 (2026-05-22): 3 polish modes (lite/smart/heavy) — additive widget
      below the lifecycle row. The existing apply-pack-polish surface is
      unchanged; this is a lightweight 1-3-pass alternative. */
@@ -14815,6 +14881,13 @@ function openRightRailForDetail(idx, detailRow) {
       lifecycleMount.innerHTML = '<div class="drawer-lifecycle-loading" style="color:var(--text-3);font-size:11px;padding:10px 0">Loading lifecycle' + String.fromCharCode(8230) + '</div>';
       bodyEl.appendChild(lifecycleMount);
       _drawerLoadLifecycle(num, company, lifecycleMount);
+      // A4 (2026-05-22) — 3 intel chip popouts (team health / interview
+      // likelihood / HM visibility). Sits between lifecycle and polish-modes.
+      const intelChipsMount = document.createElement('div');
+      intelChipsMount.className = 'drawer-intel-chips-mount';
+      intelChipsMount.setAttribute('data-row-num', String(num));
+      bodyEl.appendChild(intelChipsMount);
+      _drawerLoadIntelChips(num, null, intelChipsMount);
       // E4 (2026-05-22) — 3 polish modes (lite/smart/heavy). Sits below the
       // lifecycle row; calls /api/polish (NOT /api/apply-pack-polish, which
       // is the heavier 4-round critic/author/adjudicator surface).
@@ -19700,6 +19773,182 @@ async function _drawerLoadLifecycle(num, company, mountEl) {
   }
 }
 window._drawerLoadLifecycle = _drawerLoadLifecycle;
+
+// ── A4 (2026-05-22) — 3 intel chip popouts (team health / interview
+// likelihood / HM visibility). Fetches /api/intel-chips?row|slug=, renders
+// 3 clickable chips, each click toggles an inline popout below the chip row.
+// Outer-template-unescape safe per Pattern A — no backticks, no
+// dollar-brace interpolation; all escapes via String.fromCharCode or double
+// backslash.
+async function _drawerLoadIntelChips(num, slug, mountEl) {
+  if (!mountEl) return;
+  if (!num && !slug) { mountEl.innerHTML = ''; return; }
+  try {
+    const q = slug ? ('slug=' + encodeURIComponent(slug)) : ('row=' + encodeURIComponent(String(num)));
+    const r = await fetch('/api/intel-chips?' + q, { cache: 'no-store' });
+    if (!r.ok) { mountEl.innerHTML = ''; return; }
+    const d = await r.json();
+    if (!d || !d.ok) { mountEl.innerHTML = ''; return; }
+    _drawerRenderIntelChips(d, mountEl);
+  } catch (_) {
+    mountEl.innerHTML = '';
+  }
+}
+window._drawerLoadIntelChips = _drawerLoadIntelChips;
+
+function _drawerRenderIntelChips(data, mountEl) {
+  function _esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function _stateCls(section) {
+    if (!section || section.source === 'absent') return 'absent';
+    if (section.source === 'role-enrichment' || section.source === 'toxicity-cache' || section.source === 'sonnet' || section.source === 'hm-intel' || section.source === 'company-health') return 'present';
+    return 'partial';
+  }
+  const th = data.team_health  || { source: 'absent' };
+  const il = data.interview_likelihood || { source: 'absent' };
+  const hm = data.hm_visibility || { source: 'absent' };
+
+  function _thLabel() {
+    if (th.source === 'absent') return 'Team health';
+    const score = th.composite_score != null ? Number(th.composite_score).toFixed(2) : (th.toxicity_grade != null ? (th.toxicity_grade + '/5') : '');
+    const band = th.composite_band ? (' ' + th.composite_band) : '';
+    return 'Team health' + (score ? (' ' + score) : '') + band;
+  }
+  function _ilLabel() {
+    if (il.source === 'absent') return 'Interview likelihood';
+    return 'Interview ' + il.likelihood_pct + '%';
+  }
+  function _hmLabel() {
+    if (hm.source === 'absent') return 'HM visibility';
+    return 'HM: ' + (hm.hm_name || '?');
+  }
+
+  let html = '<div class="drawer-intel-chips">';
+  html +=   '<div class="drawer-intel-chips-header">Intel chips</div>';
+  html +=   '<div class="intel-chip-row">';
+  html +=     '<button type="button" class="intel-chip ' + _stateCls(th) + '" data-intel-pop="th" title="' + _esc('Click to see Glassdoor + employee sentiment') + '">' + _esc(_thLabel()) + '</button>';
+  html +=     '<button type="button" class="intel-chip ' + _stateCls(il) + '" data-intel-pop="il" title="' + _esc('Click to see interview-likelihood breakdown') + '">' + _esc(_ilLabel()) + '</button>';
+  html +=     '<button type="button" class="intel-chip ' + _stateCls(hm) + '" data-intel-pop="hm" title="' + _esc('Click to see HM info + competitive edges') + '">' + _esc(_hmLabel()) + '</button>';
+  html +=   '</div>';
+  html +=   '<div class="intel-chip-pop-mount"></div>';
+  html += '</div>';
+  mountEl.innerHTML = html;
+
+  const popMount = mountEl.querySelector('.intel-chip-pop-mount');
+  let activeKey = null;
+  function _renderPop(key) {
+    if (activeKey === key) { popMount.innerHTML = ''; activeKey = null; _setActiveChip(null); return; }
+    activeKey = key;
+    _setActiveChip(key);
+    if (key === 'th') popMount.innerHTML = _renderThPop(th);
+    else if (key === 'il') popMount.innerHTML = _renderIlPop(il);
+    else if (key === 'hm') popMount.innerHTML = _renderHmPop(hm, data.slug);
+  }
+  function _setActiveChip(key) {
+    mountEl.querySelectorAll('.intel-chip').forEach(function (c) {
+      if (c.getAttribute('data-intel-pop') === key) c.classList.add('active');
+      else c.classList.remove('active');
+    });
+  }
+  mountEl.querySelectorAll('.intel-chip').forEach(function (btn) {
+    btn.addEventListener('click', function () { _renderPop(btn.getAttribute('data-intel-pop')); });
+  });
+
+  function _renderThPop(t) {
+    if (t.source === 'absent') {
+      return '<div class="intel-chip-pop"><div class="pop-empty">No team-health data yet. ' + _esc(t.reason || '') + '</div></div>';
+    }
+    let h = '<div class="intel-chip-pop">';
+    h +=   '<div class="pop-header">Team Health' + (t.company ? (' - ' + _esc(t.company)) : '') + '</div>';
+    if (t.composite_score != null) h += '<div class="pop-row"><span>Composite score</span><span class="pop-badge">' + _esc(Number(t.composite_score).toFixed(2)) + (t.composite_band ? (' (' + _esc(t.composite_band) + ')') : '') + '</span></div>';
+    if (t.blind_score)           h += '<div class="pop-row"><span>Blind / Glassdoor</span><span>' + _esc(t.blind_score) + '</span></div>';
+    if (t.toxicity_grade != null) h += '<div class="pop-row"><span>Team toxicity</span><span class="pop-badge ' + (t.toxicity_grade <= 2 ? 'high' : t.toxicity_grade <= 3 ? 'medium' : 'low') + '">' + _esc(t.toxicity_grade) + '/5</span></div>';
+    if (t.recommend != null)     h += '<div class="pop-row"><span>Recommend to friend</span><span>' + _esc(t.recommend) + '%</span></div>';
+    if (t.ceo_approval != null)  h += '<div class="pop-row"><span>CEO approval</span><span>' + _esc(t.ceo_approval) + '%</span></div>';
+    if (Array.isArray(t.drivers) && t.drivers.length)  h += '<div class="pop-divider"></div><div class="pop-label">Positive drivers</div><ul class="pop-list pros">' + t.drivers.map(function (d) { return '<li>' + _esc(d) + '</li>'; }).join('') + '</ul>';
+    if (Array.isArray(t.blockers) && t.blockers.length) h += '<div class="pop-label" style="margin-top:8px">Blockers</div><ul class="pop-list cons">' + t.blockers.map(function (d) { return '<li>' + _esc(d) + '</li>'; }).join('') + '</ul>';
+    if (Array.isArray(t.highlights) && t.highlights.length) h += '<div class="pop-label" style="margin-top:8px">What employees say (pros)</div><ul class="pop-list pros">' + t.highlights.map(function (d) { return '<li>' + _esc(d) + '</li>'; }).join('') + '</ul>';
+    if (Array.isArray(t.concerns) && t.concerns.length) h += '<div class="pop-label" style="margin-top:8px">Concerns</div><ul class="pop-list cons">' + t.concerns.map(function (d) { return '<li>' + _esc(d) + '</li>'; }).join('') + '</ul>';
+    if (t.glassdoor_summary) h += '<div class="pop-divider"></div><div style="font-size:12px;color:var(--text-2)">' + _esc(t.glassdoor_summary) + '</div>';
+    h +=   '<div class="pop-source">Source: ' + _esc(t.source) + (t.as_of ? (' · ' + _esc(String(t.as_of).slice(0, 10))) : '') + '</div>';
+    h += '</div>';
+    return h;
+  }
+
+  function _renderIlPop(i) {
+    if (i.source === 'absent') {
+      return '<div class="intel-chip-pop"><div class="pop-empty">No interview-likelihood analysis yet. ' + _esc(i.reason || '') + '</div></div>';
+    }
+    let h = '<div class="intel-chip-pop">';
+    h +=   '<div class="pop-header">Interview Likelihood</div>';
+    h +=   '<div class="pop-hero"><span class="pop-pct">' + _esc(i.likelihood_pct) + '%</span><span class="pop-conf">' + _esc(i.confidence) + ' confidence</span></div>';
+    if (Array.isArray(i.top_strengths) && i.top_strengths.length) {
+      h += '<div class="pop-divider"></div><div class="pop-label">Strengths</div><ul class="pop-list pros">';
+      h += i.top_strengths.map(function (s) {
+        const claim = s.claim || '';
+        const ev = s.evidence || '';
+        return '<li>' + (claim ? '<strong>' + _esc(claim) + '</strong>' : '') + (claim && ev ? ' — ' : '') + _esc(ev) + '</li>';
+      }).join('');
+      h += '</ul>';
+    }
+    if (Array.isArray(i.real_gaps) && i.real_gaps.length) {
+      h += '<div class="pop-label" style="margin-top:8px">Gaps to address</div><ul class="pop-list cons">';
+      h += i.real_gaps.map(function (g) {
+        const sev = g.severity ? (' (' + _esc(g.severity) + ')') : '';
+        return '<li>' + _esc(g.gap || g) + sev + '</li>';
+      }).join('');
+      h += '</ul>';
+    }
+    if (i.opening_talking_point) {
+      h += '<div class="pop-divider"></div><div class="pop-label">Lead with</div><div class="pop-quote">' + _esc(i.opening_talking_point) + '</div>';
+    }
+    if (i.competitive_edge) {
+      h += '<div class="pop-label" style="margin-top:8px">Competitive edge</div><div style="font-size:12px;color:var(--text-2)">' + _esc(i.competitive_edge) + '</div>';
+    }
+    h +=   '<div class="pop-source">Source: ' + _esc(i.source) + (i.generated_at ? (' · ' + _esc(String(i.generated_at).slice(0, 10))) : '') + '</div>';
+    h += '</div>';
+    return h;
+  }
+
+  function _renderHmPop(m, slug) {
+    if (m.source === 'absent') {
+      return '<div class="intel-chip-pop"><div class="pop-empty">No HM intel yet. ' + _esc(m.reason || '') + '</div></div>';
+    }
+    const connCls = (m.connection_level || 'LOW').toLowerCase();
+    let h = '<div class="intel-chip-pop">';
+    h +=   '<div class="pop-header">HM Visibility' + (m.hm_name ? (' - ' + _esc(m.hm_name)) : '') + '</div>';
+    if (m.hm_title)        h += '<div class="pop-row"><span>Role</span><span>' + _esc(m.hm_title) + '</span></div>';
+    if (m.linkedin_url)    h += '<div class="pop-row"><span>LinkedIn</span><span><a class="pop-link" href="' + _esc(m.linkedin_url) + '" target="_blank" rel="noopener">profile</a></span></div>';
+    h +=   '<div class="pop-row"><span>Your connection</span><span class="pop-badge ' + connCls + '">' + _esc(m.connection_level || 'LOW') + '</span></div>';
+    if (m.confidence)      h += '<div class="pop-row"><span>HM-intel confidence</span><span class="pop-badge ' + (String(m.confidence).toLowerCase() === 'high' ? 'high' : String(m.confidence).toLowerCase() === 'medium' ? 'medium' : 'low') + '">' + _esc(m.confidence) + '</span></div>';
+    if (Array.isArray(m.priorities) && m.priorities.length) {
+      h += '<div class="pop-divider"></div><div class="pop-label">HM’s likely priorities</div><ul class="pop-list">';
+      h += m.priorities.map(function (p) { return '<li>' + _esc(p) + '</li>'; }).join('');
+      h += '</ul>';
+    }
+    if (Array.isArray(m.competitive_edges) && m.competitive_edges.length) {
+      h += '<div class="pop-label" style="margin-top:8px">Your competitive edges</div><ul class="pop-list pros">';
+      h += m.competitive_edges.map(function (e) { return '<li>' + _esc(e) + '</li>'; }).join('');
+      h += '</ul>';
+    }
+    if (m.outreach_hook) {
+      h += '<div class="pop-divider"></div><div class="pop-label">Outreach hook</div><div class="pop-quote">' + _esc(m.outreach_hook) + '</div>';
+    }
+    if (Array.isArray(m.other_hms) && m.other_hms.length) {
+      h += '<div class="pop-label" style="margin-top:8px">Other contacts</div><ul class="pop-list">';
+      h += m.other_hms.map(function (o) {
+        return '<li>' + _esc(o.name || '') + (o.title ? (' — ' + _esc(o.title)) : '') + (o.linkedin_url ? (' <a class="pop-link" href="' + _esc(o.linkedin_url) + '" target="_blank" rel="noopener">[LinkedIn]</a>') : '') + '</li>';
+      }).join('');
+      h += '</ul>';
+    }
+    h +=   '<div class="pop-source">Source: ' + _esc(m.source) + (m.synthesized_at ? (' · ' + _esc(String(m.synthesized_at).slice(0, 10))) : '') + '</div>';
+    h += '</div>';
+    return h;
+  }
+}
+window._drawerRenderIntelChips = _drawerRenderIntelChips;
 
 // ── E4 (2026-05-22) — 3 polish modes (lite/smart/heavy) ───────────────────
 // Renders the mode selector + streams NDJSON progress from /api/polish.

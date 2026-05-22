@@ -7676,6 +7676,177 @@ async function generatePack(){
     return json({ ok: true, jobId, signalSent: 'SIGTERM', exitState: 'cancel-requested' });
   }
 
+  // ── A4 (2026-05-22) — intel-chips popout data aggregator ──────────────────
+  // Single endpoint backs all 3 A4 chip popouts (team health / interview
+  // likelihood / HM visibility). Reads from existing data sources, never
+  // fires LLM calls — the interview-likelihood JSON is generated out-of-band
+  // by scripts/generate-interview-likelihood.mjs.
+  if (url.startsWith('/api/intel-chips') && req.method === 'GET') {
+    (async () => {
+      try {
+        // Slug preferred; row fallback.
+        let slug = String(query.slug || '').trim();
+        let packDir = null;
+        if (!slug) {
+          const rowParam = String(query.row || '').trim();
+          if (rowParam && /^[0-9]{1,4}$/.test(rowParam)) {
+            const padded = rowParam.padStart(3, '0') + '-';
+            for (const base of [join(ROOT, 'apply-pack'), join(ROOT, 'data', 'apply-packs')]) {
+              if (!existsSync(base)) continue;
+              try {
+                const hit = readdirSync(base).find(n => n.startsWith(padded));
+                if (hit) { slug = hit; packDir = join(base, hit); break; }
+              } catch {}
+            }
+          }
+        } else {
+          if (!/^[A-Za-z0-9_.-]+$/.test(slug)) return json({ ok: false, error: 'invalid slug' }, 400);
+          for (const base of [join(ROOT, 'apply-pack'), join(ROOT, 'data', 'apply-packs')]) {
+            const d = join(base, slug);
+            if (existsSync(d)) { packDir = d; break; }
+          }
+        }
+        if (!slug) return json({ ok: false, error: 'slug or row required' }, 400);
+
+        // Derive company-slug + role-slug from the pack slug (NNN-company-role).
+        const slugParts = slug.split('-');
+        const numPart = slugParts.shift(); // 048 etc.
+        // Company slug is everything up to the first segment that diverges — we
+        // can't perfectly reverse the join, so use a coarse 1-2 word prefix
+        // heuristic and let the file existence check confirm.
+        let companySlug = slugParts[0] || '';
+        // Try 2-word company first (e.g., "cursor-anysphere"), fall back to 1-word.
+        const companyTry2 = slugParts.slice(0, 2).join('-');
+        if (existsSync(join(ROOT, 'data', 'company-toxicity-cache', companyTry2 + '.json'))) {
+          companySlug = companyTry2;
+        }
+        const roleSlug = slug.replace(/^[0-9]+-/, '');  // strip the NNN- prefix
+
+        // ─── team_health ───
+        // Three signal sources, in priority order:
+        //   1. data/role-enrichment/<num>-<slug>.json (sentiment + benefits)
+        //   2. data/company-toxicity-cache/<company>.json (composite + drivers)
+        //   3. data/company-health/<slug>.json (Glassdoor scrape if it exists)
+        function _readJsonSafe(p) {
+          try { return existsSync(p) ? JSON.parse(readFileSync(p, 'utf-8')) : null; }
+          catch { return null; }
+        }
+        const enrich = _readJsonSafe(join(ROOT, 'data', 'role-enrichment', slug + '.json'));
+        const toxCache = _readJsonSafe(join(ROOT, 'data', 'company-toxicity-cache', companySlug + '.json'));
+        const companyHealth = _readJsonSafe(join(ROOT, 'data', 'company-health', roleSlug + '.json'));
+        let team_health = { source: 'absent', reason: 'no role-enrichment or toxicity cache' };
+        if (enrich?.sentiment || enrich?.benefits || toxCache) {
+          team_health = {
+            source: enrich ? 'role-enrichment' : 'toxicity-cache',
+            company: enrich?.company || toxCache?.company || '',
+            blind_score: enrich?.sentiment?.blind_score || null,
+            glassdoor_summary: enrich?.sentiment?.glassdoor || enrich?.sentiment?.glassdoor_summary || null,
+            toxicity_grade: enrich?.sentiment?.team_toxicity_grade || null,
+            composite_score: toxCache?.composite_score || null,
+            composite_band: toxCache?.composite_band || null,
+            drivers: Array.isArray(toxCache?.drivers) ? toxCache.drivers.slice(0, 6) : [],
+            blockers: Array.isArray(toxCache?.blockers) ? toxCache.blockers.slice(0, 4) : [],
+            highlights: Array.isArray(enrich?.sentiment?.recent_highlights) ? enrich.sentiment.recent_highlights.slice(0, 3) : [],
+            concerns: Array.isArray(enrich?.sentiment?.recent_concerns) ? enrich.sentiment.recent_concerns.slice(0, 3) : [],
+            as_of: enrich?._meta?.as_of || toxCache?.as_of || null,
+          };
+        }
+        if (companyHealth?.glassdoor) {
+          team_health.source = 'company-health';
+          Object.assign(team_health, {
+            rating: companyHealth.glassdoor.rating ?? team_health.blind_score,
+            ratingCount: companyHealth.glassdoor.ratingCount ?? null,
+            recommend: companyHealth.glassdoor.recommend ?? null,
+            ceo_approval: companyHealth.glassdoor.ceo_approval ?? null,
+            scraped_at: companyHealth.scrapedAt || null,
+          });
+          if (Array.isArray(companyHealth.glassdoor.recentHighlights)) team_health.highlights = companyHealth.glassdoor.recentHighlights.slice(0, 3);
+          if (Array.isArray(companyHealth.glassdoor.recentConcerns)) team_health.concerns = companyHealth.glassdoor.recentConcerns.slice(0, 3);
+        }
+
+        // ─── interview_likelihood ───
+        const ilJsonRole = _readJsonSafe(join(ROOT, 'data', 'interview-likelihood', slug + '.json'));
+        const ilJsonPack = packDir ? _readJsonSafe(join(packDir, 'interview-likelihood.json')) : null;
+        const il = ilJsonRole || ilJsonPack;
+        let interview_likelihood;
+        if (il && typeof il.likelihood_pct === 'number') {
+          interview_likelihood = {
+            source: 'sonnet',
+            likelihood_pct: il.likelihood_pct,
+            confidence: il.confidence || 'medium',
+            top_strengths: Array.isArray(il.top_strengths) ? il.top_strengths.slice(0, 3) : [],
+            real_gaps: Array.isArray(il.real_gaps) ? il.real_gaps.slice(0, 3) : [],
+            opening_talking_point: il.opening_talking_point || '',
+            competitive_edge: il.competitive_edge || '',
+            generated_at: il.generated_at || null,
+          };
+        } else {
+          interview_likelihood = {
+            source: 'absent',
+            reason: 'no scored analysis yet — run scripts/generate-interview-likelihood.mjs',
+          };
+        }
+
+        // ─── hm_visibility ───
+        const hmIntel = _readJsonSafe(join(ROOT, 'data', 'hm-intel', roleSlug + '.json'));
+        let hm_visibility = { source: 'absent', reason: 'no HM intel — click "Re-run HM research" in the drawer' };
+        if (hmIntel?.hiring_managers?.length) {
+          const primary = hmIntel.hiring_managers[0];
+          const otherHMs = hmIntel.hiring_managers.slice(1, 3).map(h => ({ name: h.name, title: h.title, linkedin_url: h.linkedin_url }));
+          // Visibility level: HIGH if 1st-degree, MEDIUM if 2nd, LOW if none.
+          // Read connections from data/linkedin-network or hm intel network field; for
+          // now default LOW unless we find a signal.
+          let connection_level = 'LOW';
+          if (primary?.connection_level) connection_level = String(primary.connection_level).toUpperCase();
+          else if (hmIntel?.linkedin_network?.first_degree?.length) connection_level = 'HIGH';
+          else if (hmIntel?.linkedin_network?.second_degree?.length) connection_level = 'MEDIUM';
+          // Derive priorities from team_gap_analysis + role_summary (string fields).
+          const priorities = [];
+          if (typeof hmIntel.team_gap_analysis === 'string' && hmIntel.team_gap_analysis.length) {
+            // Pull first 1-2 sentences as the priority signal.
+            const sentences = hmIntel.team_gap_analysis.split(/(?<=[.!?])\s+/).slice(0, 3);
+            for (const s of sentences) if (s.length > 10) priorities.push(s.trim());
+          }
+          // Competitive edges: fit_evidence shape varies. Could be an array
+          // of strings/objects OR an object whose values are strings/arrays.
+          let fitArr = [];
+          if (Array.isArray(hmIntel.fit_evidence)) {
+            fitArr = hmIntel.fit_evidence;
+          } else if (hmIntel.fit_evidence && typeof hmIntel.fit_evidence === 'object') {
+            // Flatten the object's leaf strings.
+            for (const v of Object.values(hmIntel.fit_evidence)) {
+              if (typeof v === 'string') fitArr.push(v);
+              else if (Array.isArray(v)) fitArr.push(...v);
+            }
+          }
+          const competitive_edges = fitArr
+            .map(f => typeof f === 'string' ? f : (f?.evidence || f?.claim || f?.point || ''))
+            .filter(s => s && s.length > 20)
+            .slice(0, 4);
+          hm_visibility = {
+            source: 'hm-intel',
+            hm_name: primary?.name || '',
+            hm_title: primary?.title || '',
+            linkedin_url: primary?.linkedin_url || '',
+            why_owns_req: primary?.why_owns_this_req || '',
+            outreach_hook: primary?.outreach_hook || '',
+            confidence: primary?.confidence || hmIntel?.confidence || 'MEDIUM',
+            connection_level,
+            priorities: priorities.slice(0, 3),
+            competitive_edges: competitive_edges.filter(Boolean).slice(0, 4),
+            other_hms: otherHMs.filter(h => h.name),
+            synthesized_at: hmIntel.synthesized_at || hmIntel.retrieved_at || null,
+          };
+        }
+
+        return json({ ok: true, slug, team_health, interview_likelihood, hm_visibility });
+      } catch (err) {
+        return json({ ok: false, error: err.message }, 500);
+      }
+    })();
+    return;
+  }
+
   // ── E4 (2026-05-22) — 3 polish modes (lite/smart/heavy) + Drive push ──────
   // Lightweight alternative to /api/apply-pack-polish. The existing endpoint
   // spawns a 4-round critic/author/adjudicator loop (heavy spend); /api/polish

@@ -22120,6 +22120,12 @@ async function openPipelineModal(action) {
         (pCmp.companies || []).filter(c => !c.excluded).map(c => c.slug)
       );
       body.innerHTML = _renderProcessAllPhaseA(pAgg, pCmp);
+      // Closure D (2026-05-22): sync _pcpSelectedTier with the recommended
+      // tier baked into the radio markup, so the Continue handler reads the
+      // right value if the user proceeds without clicking another radio.
+      if (typeof window._pcpSeedSelectedTierFromRecommendation === 'function') {
+        try { window._pcpSeedSelectedTierFromRecommendation(); } catch (_) {}
+      }
       // Invariant #8 — universal table baseline on the freshly-rendered
       // per-company table (col-resize, dbl-click expand, [title] tooltips).
       if (typeof window.applyUniversalTableBaseline === 'function') {
@@ -22623,8 +22629,14 @@ function _renderProcessAllPhaseA(pAgg, pCmp) {
   // Default = full drain (all rows selected). _pcpUpdateScopedCost() recomputes
   // on every checkbox toggle.
   const allCompaniesCost = scopedRows.reduce((s, c) => s + (c.cost_estimate_usd || 0), 0);
-  // Initial cost = the FULL DRAIN cost (which already includes per-row pregen).
-  const initialCost = fullDrainCost;
+  // Initial cost = the recommended-tier cost when tier estimates are available
+  // (Closure D 2026-05-22 — auto-select escalates with queue size).
+  // Falls back to the full-drain Tier-1 total when tier_estimates is absent.
+  const _tierEstForInit = pAgg.process_all.tier_estimates;
+  const _recommendedTierLocal = (function (n) { if (n >= 100) return 3; if (n >= 25) return 2; return 1; })(triageCount + queuedForBatch);
+  const initialCost = (_tierEstForInit && _tierEstForInit[_recommendedTierLocal] && _tierEstForInit[_recommendedTierLocal].total_cost_usd != null)
+    ? _tierEstForInit[_recommendedTierLocal].total_cost_usd
+    : fullDrainCost;
   // OMEGA-proposal-2 (approved 2026-05-19): scoped AI-detection potential sum.
   const scopedDetection = scopedRows.reduce((s, c) => s + (c.ai_detection_potential_usd || 0), 0);
   const optInPct = Math.round((pCmp && pCmp.pack_build_opt_in_rate ? pCmp.pack_build_opt_in_rate : 0.40) * 100);
@@ -22637,26 +22649,52 @@ function _renderProcessAllPhaseA(pAgg, pCmp) {
   // Sonnet+Opus. Auto-escalation (apply-pack pregen + polish on ≥4.0 rows)
   // is included in every tier's total — it's "the system invests in proven
   // winners regardless of tier."
+  //
+  // Closure D (2026-05-22): tier auto-selection. Default tier escalates with
+  // queue size — small batches (<25 items) get Standard, mid batches (25-100)
+  // get Premium Triage, large batches (>100 items, where false-skip cost is
+  // highest) get Premium Eval. The highest tier is annotated with ★ as the
+  // golden quality option. User can override by clicking any radio.
   const tEst = pAgg.process_all.tier_estimates;
+  // Recommend tier from queue size. Thresholds tuned to roughly Mitchell's
+  // pattern: small batches optimize speed; large batches optimize judgment
+  // because manual triage of false-skips is more expensive than the model bill.
+  function _recommendTier(itemCount) {
+    if (itemCount >= 100) return 3;
+    if (itemCount >= 25)  return 2;
+    return 1;
+  }
+  const recommendedTier = _recommendTier(totalPipelineItems);
+  function _tierChecked(t) { return t === recommendedTier ? ' checked' : ''; }
+  function _tierBadge(t) {
+    if (t === recommendedTier) {
+      return ' <span class="pcp-tier-recommend" style="background:rgba(16,185,129,0.16);color:#10b981;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600;margin-left:6px">recommended for ' + totalPipelineItems + ' items</span>';
+    }
+    return '';
+  }
+  function _tierStar(t) {
+    if (t === 3) return '<span title="Premium quality — highest judgment fidelity" style="color:#fbbf24;margin-right:4px;font-size:13px">★</span>';
+    return '';
+  }
   const tierPickerLine = (tEst && tEst[1] && tEst[2] && tEst[3])
     ? '<div id="pcp-tier-picker" style="margin-top:8px;padding:10px 12px;border:1px dashed rgba(255,255,255,0.18);border-radius:6px;font-size:12px">'
       + '<div style="font-weight:600;margin-bottom:6px">Quality tier '
       +   '<span style="font-weight:400;opacity:0.65">(applies to triage + eval model; ≥4.0 rows auto-escalate to apply-pack pregen, ≥4.5 polish in every tier)</span>'
       + '</div>'
       + '<label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer">'
-      +   '<input type="radio" name="pcp-tier" value="1" checked onchange="_pcpUpdateTier(this.value)">'
-      +   '<span><strong>1 · Standard</strong> · Haiku triage + Sonnet eval · <strong>$' + tEst[1].total_cost_usd.toFixed(2) + '</strong>'
-      +     '<span style="opacity:0.6;font-size:11px"> · triage $' + tEst[1].breakdown.triage_cost_usd.toFixed(2) + ' + eval $' + tEst[1].breakdown.eval_cost_usd.toFixed(2) + ' + auto-escalate $' + (tEst[1].breakdown.pregen_cost_usd + tEst[1].breakdown.polish_cost_usd).toFixed(2) + '</span></span>'
+      +   '<input type="radio" name="pcp-tier" value="1"' + _tierChecked(1) + ' onchange="_pcpUpdateTier(this.value)">'
+      +   '<span>' + _tierStar(1) + '<strong>1 · Standard</strong> · Haiku triage + Sonnet eval · <strong>$' + tEst[1].total_cost_usd.toFixed(2) + '</strong>'
+      +     '<span style="opacity:0.6;font-size:11px"> · triage $' + tEst[1].breakdown.triage_cost_usd.toFixed(2) + ' + eval $' + tEst[1].breakdown.eval_cost_usd.toFixed(2) + ' + auto-escalate $' + (tEst[1].breakdown.pregen_cost_usd + tEst[1].breakdown.polish_cost_usd).toFixed(2) + '</span>' + _tierBadge(1) + '</span>'
       + '</label>'
       + '<label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer">'
-      +   '<input type="radio" name="pcp-tier" value="2" onchange="_pcpUpdateTier(this.value)">'
-      +   '<span><strong>2 · Premium Triage</strong> · Sonnet triage + Sonnet eval · <strong>$' + tEst[2].total_cost_usd.toFixed(2) + '</strong>'
-      +     '<span style="opacity:0.6;font-size:11px"> · fewer false-skips at the gate</span></span>'
+      +   '<input type="radio" name="pcp-tier" value="2"' + _tierChecked(2) + ' onchange="_pcpUpdateTier(this.value)">'
+      +   '<span>' + _tierStar(2) + '<strong>2 · Premium Triage</strong> · Sonnet triage + Sonnet eval · <strong>$' + tEst[2].total_cost_usd.toFixed(2) + '</strong>'
+      +     '<span style="opacity:0.6;font-size:11px"> · fewer false-skips at the gate</span>' + _tierBadge(2) + '</span>'
       + '</label>'
       + '<label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer">'
-      +   '<input type="radio" name="pcp-tier" value="3" onchange="_pcpUpdateTier(this.value)">'
-      +   '<span><strong>3 · Premium Eval</strong> · Sonnet triage + <strong>Opus</strong> eval · <strong>$' + tEst[3].total_cost_usd.toFixed(2) + '</strong>'
-      +     '<span style="opacity:0.6;font-size:11px"> · highest-quality A–G reports, esp. for borderline 3.8–4.4</span></span>'
+      +   '<input type="radio" name="pcp-tier" value="3"' + _tierChecked(3) + ' onchange="_pcpUpdateTier(this.value)">'
+      +   '<span>' + _tierStar(3) + '<strong>3 · Premium Eval</strong> · Sonnet triage + <strong>Opus</strong> eval · <strong>$' + tEst[3].total_cost_usd.toFixed(2) + '</strong>'
+      +     '<span style="opacity:0.6;font-size:11px"> · highest-quality A–G reports, esp. for borderline 3.8–4.4</span>' + _tierBadge(3) + '</span>'
       + '</label>'
       + '</div>'
     : '';
@@ -23317,6 +23355,14 @@ function startPipelineStatusPoll(jobId) {
   tick();
 }
 
+// Closure D (2026-05-22): track last-progress signature + timestamp for stall
+// detection. We compare against the prior tick's signature (phase + last log
+// tail line). If unchanged for >5 minutes, surface a stall warning chip with
+// Diagnose + Cancel-and-retry actions.
+let _pipelineLastProgressSig = '';
+let _pipelineLastProgressMs  = 0;
+const PIPELINE_STALL_THRESHOLD_MS = 5 * 60 * 1000;
+
 function _updatePipelineToast(job, logTail) {
   const phaseEl = document.getElementById('pipeline-toast-phase');
   const fillEl  = document.getElementById('pipeline-toast-fill');
@@ -23329,6 +23375,19 @@ function _updatePipelineToast(job, logTail) {
     email:  { pct: 95, label: 'Phase 4/4 — Heartbeat email' },
     done:   { pct: 100,label: '✓ Done' },
   };
+  // Stall detection — compute progress signature from phase + last log line.
+  // Any change resets the timer. If no change for PIPELINE_STALL_THRESHOLD_MS,
+  // render the stall chip alongside the normal toast content.
+  const _sigLast = (logTail && logTail.length) ? String(logTail[logTail.length - 1] || '') : '';
+  const _sig = String(job.phase || '') + '|' + String(job.processed || '') + '|' + _sigLast;
+  const _now = Date.now();
+  if (_sig !== _pipelineLastProgressSig) {
+    _pipelineLastProgressSig = _sig;
+    _pipelineLastProgressMs  = _now;
+  }
+  const stalled = (job.status !== 'completed' && job.status !== 'failed')
+    && _pipelineLastProgressMs > 0
+    && (_now - _pipelineLastProgressMs) > PIPELINE_STALL_THRESHOLD_MS;
   const info = phaseMap[job.phase] || phaseMap.queued;
   if (job.status === 'completed') {
     titleEl.textContent = '✅ ' + (job.type === 'process-all' ? 'Pipeline drained' : 'Batch eval complete');
@@ -23362,7 +23421,80 @@ function _updatePipelineToast(job, logTail) {
     phaseEl.textContent = info.label + (lastLine ? ' · ' + lastLine.slice(0, 80) : '');
     fillEl.style.width = info.pct + '%';
   }
+  // Closure D (2026-05-22): stall warning chip — surfaced inside the toast
+  // when the job hasn't moved for PIPELINE_STALL_THRESHOLD_MS. Mounted /
+  // removed inside the toast body (does not block normal phase rendering).
+  try {
+    let stallEl = document.getElementById('pipeline-toast-stall');
+    if (stalled) {
+      const toastBody = document.getElementById('pipeline-toast');
+      if (toastBody && !stallEl) {
+        stallEl = document.createElement('div');
+        stallEl.id = 'pipeline-toast-stall';
+        stallEl.style.cssText = 'margin-top:8px;padding:8px 10px;border-radius:6px;background:rgba(245,158,11,0.16);border:1px solid #f59e0b;color:#f59e0b;font-size:11.5px;line-height:1.4;display:flex;flex-direction:column;gap:6px';
+        stallEl.innerHTML = '<div style="font-weight:600">⚠ Batch appears stalled</div>'
+          + '<div style="opacity:0.85" id="pipeline-toast-stall-detail">No progress for over 5 minutes. The pipeline may be hung on an API timeout or stuck child process.</div>'
+          + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+          +   '<button type="button" onclick="window._pipelineStallDiagnose && window._pipelineStallDiagnose()" style="padding:4px 10px;background:transparent;border:1px solid #f59e0b;color:#f59e0b;border-radius:4px;cursor:pointer;font-size:11.5px">Diagnose</button>'
+          +   '<button type="button" onclick="window._pipelineStallCancelRetry && window._pipelineStallCancelRetry()" style="padding:4px 10px;background:#f59e0b;border:1px solid #f59e0b;color:#1f2937;border-radius:4px;cursor:pointer;font-size:11.5px;font-weight:600">Cancel + Retry smaller batch</button>'
+          + '</div>';
+        toastBody.appendChild(stallEl);
+      } else if (stallEl) {
+        // Update minute count if the stall persists across ticks.
+        const mins = Math.round((Date.now() - _pipelineLastProgressMs) / 60000);
+        const det = document.getElementById('pipeline-toast-stall-detail');
+        if (det) det.textContent = 'No progress for ' + mins + ' minutes. The pipeline may be hung on an API timeout or stuck child process.';
+      }
+    } else if (stallEl) {
+      stallEl.remove();
+    }
+  } catch (_) { /* never break toast on stall-chip error */ }
 }
+// Diagnose: fetch /api/batch/status to surface what the server currently
+// knows about the in-flight batch (running PIDs, last log line). Renders
+// the response inline inside the stall chip.
+window._pipelineStallDiagnose = async function () {
+  const det = document.getElementById('pipeline-toast-stall-detail');
+  if (!det) return;
+  det.textContent = 'Fetching diagnostic state from /api/batch/status…';
+  try {
+    const res = await fetch('/api/batch/status', { cache: 'no-store' });
+    const data = await res.json();
+    const lines = [];
+    lines.push('Status: ' + (data.status || 'unknown'));
+    if (data.running != null) lines.push('Running PIDs: ' + data.running);
+    if (data.pct != null) lines.push('Progress: ' + data.pct + '%');
+    if (data.last_log_line) lines.push('Last log: ' + String(data.last_log_line).slice(0, 80));
+    det.textContent = lines.join(' · ');
+  } catch (err) {
+    det.textContent = 'Diagnose failed: ' + (err && err.message ? err.message : 'fetch error');
+  }
+};
+// Cancel + Retry smaller batch: ask user to confirm, then call the existing
+// cancel endpoint. The Process All modal is closed during cancel so the user
+// can re-open it with a smaller scope. We don't auto-fire a new batch; the
+// user retains full control after the cancel completes.
+window._pipelineStallCancelRetry = async function () {
+  if (!_pipelineCurrentJob || !_pipelineCurrentJob.jobId) {
+    if (window.toast) window.toast('No active job to cancel', 'error');
+    return;
+  }
+  if (!window.confirm('Cancel the stalled batch and reopen the Process All modal at half scope?')) return;
+  try {
+    const res = await fetch('/api/pipeline/cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jobId: _pipelineCurrentJob.jobId }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
+    if (window.toast) window.toast('Cancel requested — server will SIGTERM the batch within BATCH_CANCEL_TIMEOUT_MS.', 'success');
+    // Reopen the modal so the user can scope a smaller batch.
+    setTimeout(() => { if (typeof openPipelineModal === 'function') openPipelineModal('process-all'); }, 2000);
+  } catch (err) {
+    if (window.toast) window.toast('Cancel failed: ' + (err && err.message ? err.message : err), 'error');
+  }
+};
 
 // Wire the sidebar counts on initial load + after status changes
 async function refreshPipelineBadges() {
@@ -23450,6 +23582,15 @@ window._pcpUpdateTier = function (tier) {
   // Update the headline cost to reflect the selected tier
   const costEl = document.getElementById('pcp-headline-cost');
   if (costEl) costEl.textContent = '$' + tEst[tier].total_cost_usd.toFixed(2);
+};
+// Closure D (2026-05-22): seed _pcpSelectedTier from the recommended tier
+// when the preview modal opens. Mutation observer is the simplest way to
+// detect the radio appearing in the DOM (modal mounts asynchronously).
+window._pcpSeedSelectedTierFromRecommendation = function () {
+  try {
+    const checked = document.querySelector('input[name="pcp-tier"]:checked');
+    if (checked && checked.value) _pcpSelectedTier = String(checked.value);
+  } catch (_) { /* tolerate missing element */ }
 };
 // Wrapper around the existing Continue handler that injects the selected
 // tier. confirmPipelineAction() reads the radio value via this getter.

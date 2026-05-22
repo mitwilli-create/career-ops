@@ -52,10 +52,10 @@
     <integer>21600</integer>
 
     <key>StandardOutPath</key>
-    <string>/Users/mitchellwilliams/Documents/career-ops/data/logs/pipeline-ingress-monitor.out</string>
+    <string>/Users/mitchellwilliams/Library/Logs/career-ops/pipeline-ingress-monitor.out</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/mitchellwilliams/Documents/career-ops/data/logs/pipeline-ingress-monitor.err</string>
+    <string>/Users/mitchellwilliams/Library/Logs/career-ops/pipeline-ingress-monitor.err</string>
 
     <key>EnvironmentVariables</key>
     <dict>

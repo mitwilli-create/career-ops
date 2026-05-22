@@ -62,10 +62,10 @@
     </dict>
 
     <key>StandardOutPath</key>
-    <string>/Users/mitchellwilliams/Documents/career-ops/data/logs/integrity-check-launchd.out</string>
+    <string>/Users/mitchellwilliams/Library/Logs/career-ops/integrity-check-launchd.out</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/mitchellwilliams/Documents/career-ops/data/logs/integrity-check-launchd.err</string>
+    <string>/Users/mitchellwilliams/Library/Logs/career-ops/integrity-check-launchd.err</string>
 
     <key>EnvironmentVariables</key>
     <dict>

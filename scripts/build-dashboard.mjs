@@ -31355,6 +31355,16 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   .bucket-modal-table .bm-score-400 { background: rgba(37, 99, 235, 0.18); color: var(--blue-fg, #2563eb); }
   .bucket-modal-table .bm-score-300 { background: rgba(217, 119, 6, 0.18); color: var(--amber-fg, #d97706); }
   .bucket-modal-table .bm-score-low { background: rgba(207, 34, 46, 0.15); color: var(--red-fg, #cf222e); }
+  /* Clickable rows + discarded dimming */
+  .bucket-modal-table tbody tr[data-report-url] { cursor: pointer; }
+  .bucket-modal-table tbody tr.bm-discarded { opacity: 0.62; }
+  .bucket-modal-table tbody tr.bm-discarded:hover { opacity: 0.85; }
+  /* Notes column */
+  .bucket-modal-table .bm-notes {
+    max-width: 200px; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; font-size: 11.5px; color: var(--text-3);
+  }
+  .bucket-modal-table th.bm-notes-col { min-width: 90px; }
 
   /* ── Bucket-card clickable upgrade (Feature 2) ─────────────────── */
   /* The existing .bucket-card stays a <div> by default. With
@@ -32044,6 +32054,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
         '<th class="sortable" data-col="2" data-type="str" onclick="bucketModalSort(2,\\'str\\')">Role</th>' +
         '<th class="sortable" data-col="3" data-type="str" onclick="bucketModalSort(3,\\'str\\')">Status</th>' +
         '<th class="sortable" data-col="4" data-type="str" onclick="bucketModalSort(4,\\'str\\')">Eval Date</th>' +
+        '<th class="bm-notes-col" title="Tracker notes (discard reason, follow-up, etc.)">Notes</th>' +
         '<th>Action</th>' +
       '</tr></thead>';
     var tbodyRows = items.map(function (r) {
@@ -32058,21 +32069,29 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
       var role    = r.role || '';
       var status  = r.status || '';
       var date    = r.date || '';
+      var notes   = r.notes || '';
+      var isDiscarded = (status.toLowerCase() === 'discarded');
       var slug    = (r.reportPath || r.report || '').replace(/^reports\\//, '');
-      var reportLink = slug
-        ? '<a href="reports/' + _escHtml(slug.replace(/\\.md$/, '.html')) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">Report</a>'
+      var reportUrl = slug ? ('reports/' + slug.replace(/\\.md$/, '.html')) : '';
+      var reportLink = reportUrl
+        ? '<a href="' + _escHtml(reportUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">Report</a>'
         : '';
       var url     = (r.reportSummary && r.reportSummary.url) || '';
       var applyLink = url
         ? '<a href="' + _escHtml(url) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">Apply</a>'
         : '';
       var actions = [reportLink, applyLink].filter(Boolean).join(' \\u00b7 ') || '<span class="muted">\\u2014</span>';
-      return '<tr data-num="' + _escHtml(String(r.num || '')) + '">' +
+      var notesDisplay = notes ? (notes.length > 42 ? (_escHtml(notes.slice(0, 40)) + '\\u2026') : _escHtml(notes)) : '\\u2014';
+      var notesCell = '<td class="bm-notes" title="' + _escHtml(notes) + '">' + notesDisplay + '</td>';
+      var rowExtra = (isDiscarded ? ' class="bm-discarded"' : '') +
+        (reportUrl ? ' data-report-url="' + _escHtml(reportUrl) + '" onclick="bmRowClick(this,event)"' : '');
+      return '<tr data-num="' + _escHtml(String(r.num || '')) + '"' + rowExtra + '>' +
         '<td data-sort-value="' + _escHtml(String(scoreNum)) + '"><span class="' + scoreClass + '">' + _escHtml(score) + '</span></td>' +
         '<td><strong>' + _escHtml(company) + '</strong></td>' +
         '<td class="bm-role" title="' + _escHtml(role) + '">' + _escHtml(role) + '</td>' +
         '<td>' + _escHtml(status) + '</td>' +
         '<td>' + _escHtml(date) + '</td>' +
+        notesCell +
         '<td class="bm-actions">' + actions + '</td>' +
       '</tr>';
     }).join('');
@@ -32090,6 +32109,16 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
       try { window.applyUniversalTableBaseline({ root: scroll }); } catch (_) {}
     }
   }
+
+  // Row click handler: opens the report in a new tab when clicking anywhere
+  // on the row EXCEPT on an <a> or <button> (those handle themselves).
+  window.bmRowClick = function bmRowClick(row, ev) {
+    if (!row) return;
+    try { if (ev && ev.target && ev.target.closest && ev.target.closest('a,button')) return; } catch (_) {}
+    var u = row.dataset && row.dataset.reportUrl;
+    if (u) window.open(u, '_blank', 'noopener');
+  };
+  window.bmRowClick = window.bmRowClick; // export
 
   function bucketModalSort(colIndex, type) {
     var tbody = document.getElementById('bucket-modal-tbody');

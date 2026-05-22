@@ -22583,6 +22583,20 @@ async function pollBatch() {
       try {
         const data = JSON.parse(e.data);
         _renderBatchData(data);
+        // Closure 08.4 (2026-05-22) — push fresh last_batch into the A7 chip
+        // renderer on every SSE tick, so the "Last batch: N/N · Mm Ss" chip
+        // updates within ≤30s without a page rebuild. data.last_batch shape
+        // matches loadLastBatchSummary's output (build-time + runtime mirror
+        // each other; see dashboard-server.mjs:_computeLastBatchSummary).
+        if (data && typeof data === 'object' && 'last_batch' in data) {
+          try {
+            if (!window.__PIPELINE_ACTIVITY__) window.__PIPELINE_ACTIVITY__ = {};
+            window.__PIPELINE_ACTIVITY__.last_batch = data.last_batch;
+            if (typeof _renderPipelineActivity === 'function') {
+              _renderPipelineActivity(window.__PIPELINE_ACTIVITY__);
+            }
+          } catch (_) { /* render is best-effort */ }
+        }
         _setBatchStreamMode('stream');
         _backoffMs = 1000;  // reset backoff on successful message
         _failTs = [];

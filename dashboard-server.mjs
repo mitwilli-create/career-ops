@@ -2585,6 +2585,12 @@ function batchLive() {
     } catch (_) {}
   }
 
+  // Closure 08.4 (2026-05-22) — last_batch summary embedded in batchLive() so
+  // the existing SSE stream pushes A7 chip updates without a separate poll.
+  // Same logic as scripts/build-dashboard.mjs:loadLastBatchSummary() — keep
+  // the two computations in lockstep.
+  const last_batch = _computeLastBatchSummary(stateRows);
+
   return {
     total, completed, failed, running, pending, pct,
     rows: sorted.slice(0, 500),
@@ -2592,6 +2598,54 @@ function batchLive() {
     pipelineStages,
     // γ GAMMA: stale-state marker so the renderer can mute / de-emphasize.
     pipelineStateMeta,
+    last_batch,
+  };
+}
+
+// Closure 08.4 (2026-05-22) — extract the most-recent batch (15-min gap
+// heuristic on started_at) from a list of stateRows parsed from
+// batch/batch-state.tsv. Mirrors scripts/build-dashboard.mjs:loadLastBatchSummary
+// so SSE pushes deliver the same shape the A7 chip reads at build time.
+function _computeLastBatchSummary(stateRows) {
+  if (!Array.isArray(stateRows) || stateRows.length === 0) return null;
+  const recent = stateRows.slice(-600);
+  const sorted = recent
+    .filter(r => r.started_at)
+    .sort((a, b) => (a.started_at || '').localeCompare(b.started_at || ''));
+  if (sorted.length === 0) return null;
+
+  // Walk back from the latest start; rows within 15min of the previous one
+  // belong to the same batch (matches the build-time helper).
+  let lastBatchRows = [sorted[sorted.length - 1]];
+  for (let i = sorted.length - 2; i >= 0; i--) {
+    const prev = lastBatchRows[lastBatchRows.length - 1];
+    const cur = sorted[i];
+    const gapMs = new Date(prev.started_at) - new Date(cur.started_at);
+    if (gapMs > 15 * 60 * 1000) break;
+    lastBatchRows.push(cur);
+  }
+  lastBatchRows.reverse();
+
+  let lbCompleted = 0, lbFailed = 0, lbRunning = 0;
+  for (const r of lastBatchRows) {
+    if (r.status === 'completed') lbCompleted++;
+    else if (r.status === 'failed') lbFailed++;
+    else if (r.status === 'running') lbRunning++;
+  }
+  const lbStart = lastBatchRows.length ? lastBatchRows[0].started_at : null;
+  const lbEnd   = lastBatchRows.length ? lastBatchRows[lastBatchRows.length - 1].completed_at || null : null;
+  const lbDurationMs = (lbStart && lbEnd) ? Math.max(0, new Date(lbEnd) - new Date(lbStart)) : 0;
+  const failedRate = (lbCompleted + lbFailed) > 0 ? (lbFailed / (lbCompleted + lbFailed)) : 0;
+  return {
+    completed:   lbCompleted,
+    failed:      lbFailed,
+    running:     lbRunning,
+    total:       lastBatchRows.length,
+    duration_ms: lbDurationMs,
+    failed_rate: failedRate,
+    started_at:  lbStart,
+    ended_at:    lbEnd,
+    state:       lbRunning > 0 ? 'running' : (lbFailed > 0 ? 'partial-fail' : 'completed'),
   };
 }
 

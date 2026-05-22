@@ -7311,6 +7311,18 @@ async function build() {
   body.dark .tp-stage-fill--done { background: #4ade80; }
   .tp-progress-footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
   .tp-progress-msg { font-size: 12px; color: var(--text-3); margin-top: 10px; min-height: 18px; }
+  /* Closure E (2026-05-22): failed-state styling for the apply-pack stage row.
+     Mirrors the .mc-batch[data-state="failed"] pattern from the batch widget. */
+  .tp-stage-row.tp-stage-row-failed { border-left: 3px solid var(--red-fg, #dc2626); padding-left: 8px; margin-left: -11px; }
+  .tp-stage-row.tp-stage-row-failed .tp-stage-pill.failed { font-weight: 700; }
+  .tp-failure-widget { animation: tp-failure-enter .25s ease-out; }
+  @keyframes tp-failure-enter {
+    0%   { opacity: 0; transform: translateY(-4px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .tp-failure-widget { animation: none; }
+  }
   /* Responsive: stack on narrow screens */
   @media (max-width: 600px) {
     .tonight-pick-actions { gap: 5px; }
@@ -18568,6 +18580,56 @@ function _tpSetMsg(msg) {
   var el = document.getElementById('tp-progress-msg');
   if (el) el.textContent = msg || '';
 }
+// Closure E (2026-05-22): apply-pack creation failure widget.
+// Replaces the previous one-line _tpSetMsg('Stage X failed: <raw>') with a
+// richer rendering: friendly translation (via _bsTranslateError) + fix
+// guidance (via _bsFixGuidance) + a collapsible details panel that holds
+// the raw error for debugging. Also marks the failed stage row clickable
+// so a click scrolls focus to the detail panel.
+function _tpSetFailedStageDetail(stageId, rawError) {
+  var host = document.getElementById('tp-progress-msg');
+  if (!host) return;
+  // Translate via the same helpers used by the batch failure modal.
+  var friendly = (typeof window._bsTranslateError === 'function')
+    ? window._bsTranslateError(rawError) : ('Error: ' + String(rawError || '').slice(0, 120));
+  var fix = (typeof window._bsFixGuidance === 'function')
+    ? window._bsFixGuidance(rawError) : '';
+  // Per-artifact-specific guidance overlay. The stage-id-keyed guidance
+  // wins when present, otherwise we fall through to the generic fix.
+  var artifactHints = {
+    'cv-tailor':    'CV tailor failed. Check cv.md for unescaped Typst characters (< > $) — see escape-typst troubleshooting in scripts/render-cv-typst.mjs.',
+    'cover-letter': 'Cover letter generation failed. Check that cv.md + the JD parse both loaded — server logs will show the exact stage that errored.',
+    'linkedin-dm':  'LinkedIn DM generation failed. Common cause: corpus index lookup empty for this company. Run /intel-refresh on this row first.',
+    'form-fields':  'Form-fields agent failed. The JD may not contain a parseable application form. Check data/apply-now-queue.json for the canonical URL.',
+  };
+  var artifactHint = artifactHints[stageId] || '';
+  function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  host.innerHTML = '<div class="tp-failure-widget" style="border:1px solid var(--red-fg, #dc2626);border-radius:6px;padding:10px 12px;background:rgba(220,38,38,0.06);font-size:12.5px;line-height:1.5;color:var(--text-1)">'
+    + '<div style="font-weight:700;color:var(--red-fg,#dc2626);margin-bottom:4px">'
+    +   '× Stage failed: ' + _esc(stageId)
+    + '</div>'
+    + '<div style="margin-bottom:6px">' + _esc(friendly) + '</div>'
+    + (artifactHint ? '<div style="margin-bottom:6px;padding:6px 8px;border-radius:4px;background:rgba(0,0,0,0.04);font-size:12px;color:var(--text-2)">' + _esc(artifactHint) + '</div>' : '')
+    + (fix ? '<details class="tp-failure-fix" style="margin-top:6px"><summary style="cursor:pointer;font-size:11.5px;font-weight:600;color:#10b981;list-style:none">How to fix →</summary>'
+        + '<div style="margin-top:4px;padding:8px 10px;border-left:3px solid #10b981;background:rgba(16,185,129,0.06);border-radius:4px;font-size:12px;color:var(--text-2)">' + _esc(fix) + '</div>'
+        + '</details>' : '')
+    + '<details class="tp-failure-raw" style="margin-top:4px"><summary style="cursor:pointer;font-size:10.5px;color:var(--text-4);list-style:none">Show raw error</summary>'
+    +   '<code style="display:block;margin-top:4px;padding:6px 8px;background:var(--surface-2);border-radius:3px;font-size:10.5px;font-family:ui-monospace,monospace;word-break:break-all">' + _esc(rawError) + '</code>'
+    + '</details>'
+    + '</div>';
+  // Make the failed stage row clickable (jump focus to the detail panel).
+  // Also stamp the row with .tp-stage-row-failed so it picks up the red
+  // border-left visual marker.
+  try {
+    var row = document.querySelector('.tp-stage-row[data-stage="' + stageId + '"]');
+    if (row) {
+      row.classList.add('tp-stage-row-failed');
+      row.style.cursor = 'pointer';
+      row.title = 'Click to see what went wrong with ' + stageId;
+      row.onclick = function () { host.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+    }
+  } catch (_) { /* never break the modal */ }
+}
 
 // DELTA P1 — Editing Priority callout. Renders an inline chip + (when not
 // NONE) the top flagged sentences GPTZero surfaced. Anchored beneath the
@@ -18732,7 +18794,8 @@ async function tonightPickCreateMaterials() {
         _tpStopStageTimer(stageId, 'failed');
         stageStates[stageId] = 'failed';
         _tpRenderStages(stageStates);
-        _tpSetMsg('Budget cap reached ($0.50/pack). Partial materials are in the draft folder.');
+        _tpSetFailedStageDetail(stageId, 'Budget cap reached ($0.50/pack). Partial materials are in the draft folder.');
+        _tpSetFooterRetry(stageId, rowNum);
         failedStage = stageId;
         break;
       }
@@ -18753,7 +18816,7 @@ async function tonightPickCreateMaterials() {
         if (data.gpt_zero_score) detMsg += ' GPTZero: ' + data.gpt_zero_score + '%.';
         if (data.originality_score) detMsg += ' Originality: ' + data.originality_score + '%.';
         if (data.ai_detection_retry_status) detMsg += ' Retry: ' + data.ai_detection_retry_status + '.';
-        _tpSetMsg(detMsg);
+        _tpSetFailedStageDetail(stageId, detMsg);
         _tpSetFooterRetry(stageId, rowNum, 'Regenerate with stricter constraints');
         failedStage = stageId;
         break;
@@ -18772,7 +18835,7 @@ async function tonightPickCreateMaterials() {
         _tpStopStageTimer(stageId, 'failed');
         stageStates[stageId] = 'failed';
         _tpRenderStages(stageStates);
-        _tpSetMsg('Stage ' + stageId + ' failed: ' + (data.error || resp.status));
+        _tpSetFailedStageDetail(stageId, String(data.error || resp.status));
         _tpSetFooterRetry(stageId, rowNum);
         failedStage = stageId;
         break;
@@ -18785,7 +18848,7 @@ async function tonightPickCreateMaterials() {
       _tpStopStageTimer(stageId, 'failed');
       stageStates[stageId] = 'failed';
       _tpRenderStages(stageStates);
-      _tpSetMsg('Error: ' + err.message);
+      _tpSetFailedStageDetail(stageId, String(err && err.message ? err.message : err));
       _tpSetFooterRetry(stageId, rowNum);
       failedStage = stageId;
       break;
@@ -21424,6 +21487,11 @@ function _bsFixGuidance(raw) {
     return '1. Open the affected artifact (cover-letter.md / cv-tailored.md). 2. Rewrite the highlighted sentences in your own voice. 3. Re-run /apply-pack-polish for that row.';
   return 'No automated fix available. Check data/errors.log for the full context, or paste the raw error into the Claude Code prompt for diagnosis.';
 }
+// Closure E (2026-05-22): expose to window so the apply-pack creation
+// failure widget at _tpSetFailedStageDetail can reach these helpers.
+// They're defined later in the same script block, but window-binding
+// makes the dependency explicit and survives any future code reorg.
+try { window._bsTranslateError = _bsTranslateError; window._bsFixGuidance = _bsFixGuidance; } catch (_) {}
 function _bsUpdateStamp() {
   const el = document.getElementById('batch-status-updated');
   if (!el || !_batchStatusLastFetchMs) return;

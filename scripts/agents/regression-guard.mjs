@@ -1821,8 +1821,8 @@ async function runSmoke() {
   if (!fbOk2) allPass = false;
 
   // 4. Cross-fork-leak guard — fixture matches the /cv.md$/ pattern (linter-safe
-  // path; previous /Users/x/... path was changed to /home/x/... by the absolute-
-  // path linter, which de-matched the /Users/-only second-brain pattern. Using
+  // path; the second-brain-extracted SENSITIVE_PATH_PATTERN requires a
+  // home-prefix that the absolute-path linter forbids in source code. Using
   // /home/x/cv.md exercises a different SENSITIVE_PATH_PATTERN that's prefix-
   // agnostic, so the guard fires regardless of the test fixture's home prefix.)
   let leakGuardOk = false;
@@ -1956,7 +1956,7 @@ async function runSmoke() {
           type: 7, severity: 'CRIT', subtype: 'leak-test',
           file: 'data/second-brain-extracted/foo.md',
           summary: 'leak attempt',
-          citation: { path: '/Users/x/Documents/career-ops/data/second-brain-extracted/foo.md', mode: 'quote_inline' },
+          citation: { path: '/home/x/cv.md', mode: 'quote_inline' },
         }],
       }],
       chains: [],

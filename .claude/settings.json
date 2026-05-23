@@ -11,6 +11,15 @@
             "command": "bash /Users/mitchellwilliams/Documents/career-ops/scripts/hooks/ui-edit-verify-reminder.sh"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/mitchellwilliams/Documents/career-ops/scripts/hooks/branch-invariant-gate.sh post"
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -20,6 +29,10 @@
           {
             "type": "command",
             "command": "bash /Users/mitchellwilliams/Documents/career-ops/scripts/hooks/commit-ui-verify-gate.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash /Users/mitchellwilliams/Documents/career-ops/scripts/hooks/branch-invariant-gate.sh pre"
           }
         ]
       },

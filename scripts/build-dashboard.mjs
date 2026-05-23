@@ -10833,6 +10833,15 @@ async function build() {
     line-height: 30px;
     box-sizing: border-box;
   }
+  /* Phase 4.5b (2026-05-22): lifecycle-btn states harmonized with dashboard
+   * tokens. The filled "active" state keeps the saturated #15803d that reads
+   * as primary-green on BOTH themes (dark-bg #06070d AND light-bg #f8f9fb)
+   * with white text — used as the canonical primary-fill across the dashboard
+   * (cf. drawer-btn-primary at line 10773). The outlined "done" + hover use
+   * var(--green-fg) + var(--green-bg) which theme-switch correctly: in dark
+   * mode --green-fg = #86efac (light pastel green outline on dark bg);
+   * in light mode --green-fg = #16a34a (mid green outline on white bg).
+   * Disabled state already used tokens — left as-is. */
   .drawer-lifecycle-btn-active {
     background: #15803d;
     color: #ffffff;
@@ -10841,12 +10850,14 @@ async function build() {
   .drawer-lifecycle-btn-active:hover { filter: brightness(1.08); }
   .drawer-lifecycle-btn-done {
     background: transparent;
-    color: #15803d;
-    border-color: #15803d;
+    color: var(--green-fg, #15803d);
+    border-color: var(--green-fg, #15803d);
     border-width: 2px;
     line-height: 28px;
   }
-  .drawer-lifecycle-btn-done:hover { background: color-mix(in srgb, #15803d 8%, transparent); }
+  .drawer-lifecycle-btn-done:hover {
+    background: var(--green-bg, color-mix(in srgb, #15803d 8%, transparent));
+  }
   .drawer-lifecycle-btn-disabled {
     background: var(--surface-2, #f6f8fa);
     color: var(--text-3, #57606a);

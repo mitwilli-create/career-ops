@@ -144,27 +144,71 @@ async function main() {
 
   const state = loadState();
   const nowIso = new Date().toISOString();
+  const sweepId = `sweep-${nowIso.replace(/[:.]/g, '-')}`;
   const summary = { active: 0, expired_discarded: 0, expired_needs_review: 0, uncertain: 0, no_url: 0 };
+
+  // Auto-removal audit trail (Phase 3, 2026-05-22).
+  // Only NEW expirations get appended — if a row was already in
+  // 'expired_discarded' from the previous sweep, we don't re-audit it.
+  // The delta detection makes this hook safe to run hourly without
+  // generating duplicate audit entries on each tick.
+  const autoRemovals = [];
+  const reviewFlags = [];
 
   for (const { row, url, result } of probed) {
     const key = String(row.num);
     const stateRow = state.rows[key] || {};
+    const prevSweepStatus = stateRow.status || null; // active | expired_discarded | expired_needs_review | uncertain | no_url
 
     if (result.result === 'active') {
       summary.active++;
       state.rows[key] = { ...stateRow, status: 'active', url, lastChecked: nowIso, reason: result.reason };
     } else if (result.result === 'expired') {
       if (row.status === 'Evaluated') {
-        if (!DRY_RUN) {
-          markRowAsExpired(row.num, result.reason);
+        // Delta gate: only fire the auto-removal AND audit-trail write if the
+        // row was NOT already marked expired on the previous sweep. Without
+        // this gate, an hourly cadence would mark + audit + log the same
+        // row 24 times a day.
+        const isNewExpiration = prevSweepStatus !== 'expired_discarded';
+        if (isNewExpiration) {
+          if (!DRY_RUN) {
+            markRowAsExpired(row.num, result.reason);
+          } else {
+            log(`  DRY-RUN: would mark row #${row.num} as Discarded (${result.reason})`);
+          }
+          autoRemovals.push({
+            row_id: row.num,
+            company: row.company,
+            role: row.role,
+            prev_status: 'Evaluated',
+            new_status: 'Discarded',
+            signal: result.reason,
+            signal_url: url,
+            timestamp: nowIso,
+            sweep_id: sweepId,
+          });
         } else {
-          log(`  DRY-RUN: would mark row #${row.num} as Discarded (${result.reason})`);
+          log(`  skip: row #${row.num} already in expired_discarded — no re-audit`);
         }
         summary.expired_discarded++;
         state.rows[key] = { ...stateRow, status: 'expired_discarded', url, lastChecked: nowIso, reason: result.reason };
       } else {
         // Applied or Interview — needs Mitchell's eyes, don't auto-discard.
         log(`  ⚠ Row #${row.num} (${row.status}) ${row.company} — ${row.role.slice(0, 40)} posting appears closed: ${result.reason}`);
+        // Delta gate for needs-review notifications too — only log freshly-detected ones.
+        const isNewReview = prevSweepStatus !== 'expired_needs_review';
+        if (isNewReview) {
+          reviewFlags.push({
+            row_id: row.num,
+            company: row.company,
+            role: row.role,
+            prev_status: row.status,
+            signal: result.reason,
+            signal_url: url,
+            timestamp: nowIso,
+            sweep_id: sweepId,
+          });
+        }
         summary.expired_needs_review++;
         state.rows[key] = { ...stateRow, status: 'expired_needs_review', url, lastChecked: nowIso, reason: result.reason, tracker_status: row.status };
       }
@@ -177,17 +221,50 @@ async function main() {
     }
   }
 
-  state.runs = (state.runs || []).slice(-9); // keep last 9 + this run = 10 history
+  // Persist auto-removal audit JSON (gitignored personal-data dir).
+  // Schema: append-mode JSON array; one file per day, all sweeps within
+  // the day concatenated. Safe for an hourly cadence — files stay small
+  // (typically ≤20 rows/day with delta detection on).
+  if ((autoRemovals.length > 0 || reviewFlags.length > 0) && !DRY_RUN) {
+    const auditDate = nowIso.slice(0, 10); // YYYY-MM-DD
+    const auditPath = join(ROOT, `data/liveness-auto-removals-${auditDate}.json`);
+    let existing = { date: auditDate, sweeps: [] };
+    if (existsSync(auditPath)) {
+      try {
+        existing = JSON.parse(readFileSync(auditPath, 'utf-8'));
+        if (!existing.sweeps) existing.sweeps = [];
+      } catch (e) {
+        log(`  audit: ${auditPath} unparseable; rewriting fresh`);
+        existing = { date: auditDate, sweeps: [] };
+      }
+    }
+    existing.sweeps.push({
+      sweep_id: sweepId,
+      timestamp: nowIso,
+      rows_checked: activeRows.length,
+      removed: autoRemovals,
+      needs_review: reviewFlags,
+    });
+    writeFileSync(auditPath, JSON.stringify(existing, null, 2));
+    log(`  audit: appended ${autoRemovals.length} removal(s) + ${reviewFlags.length} review-flag(s) to ${auditPath}`);
+  } else if (DRY_RUN && (autoRemovals.length > 0 || reviewFlags.length > 0)) {
+    log(`  DRY-RUN: would audit ${autoRemovals.length} removal(s) + ${reviewFlags.length} review-flag(s)`);
+  }
+
+  state.runs = (state.runs || []).slice(-23); // keep last 23 + this run = 24 history (hourly cadence = ~1 day)
   state.runs.push({
     timestamp: nowIso,
+    sweep_id: sweepId,
     rows_checked: activeRows.length,
     summary,
+    new_removals: autoRemovals.length,
+    new_review_flags: reviewFlags.length,
     dry_run: DRY_RUN,
   });
 
   saveState(state);
 
-  log(`Summary: active=${summary.active} expired_discarded=${summary.expired_discarded} expired_needs_review=${summary.expired_needs_review} uncertain=${summary.uncertain} no_url=${summary.no_url}`);
+  log(`Summary: active=${summary.active} expired_discarded=${summary.expired_discarded} (new=${autoRemovals.length}) expired_needs_review=${summary.expired_needs_review} (new=${reviewFlags.length}) uncertain=${summary.uncertain} no_url=${summary.no_url}`);
   log(`Wrote state to ${STATE_PATH}`);
   log('--- liveness-sweep done ---');
   return summary;

@@ -51,7 +51,31 @@ import { getPulseForCompany, getCachedPulseSync, renderPulseCard } from '../lib/
 import { detectFunnelGap, renderFunnelNudge }                      from '../lib/funnel-completion.mjs';
 import { scoreStaleness, renderStalenessBadge }                    from '../lib/staleness-nudge.mjs';
 import { computeToxicityComposite }                                from '../lib/toxicity-composite.mjs';
+import { snapshotForRender as _snapshotCredentials }               from '../lib/credentials.mjs';
 const parseYaml = yaml.load;
+
+// ── Phase 4.1 (2026-05-22 closure / P8) — credentials cache for chip + modal ──
+// snapshotForRender() reads data/credentials/all.json synchronously and falls
+// back to the example file when the real one is missing. Cached at module load
+// so per-row Anthropic chip rendering doesn't re-read every time.
+const _CREDENTIALS_SNAPSHOT = (() => {
+  try { return _snapshotCredentials(); }
+  catch (err) {
+    console.warn('[credentials] snapshot failed:', err.message);
+    return { available: false, total: 0, by_provider: {}, all: [], featured: [] };
+  }
+})();
+
+function _formatLatestCertMonth(certs) {
+  if (!certs || !certs.length) return '';
+  const dates = certs.map(c => c && c.earned_date).filter(Boolean).sort();
+  const latest = dates[dates.length - 1];
+  if (!latest) return '';
+  const d = new Date(latest);
+  if (isNaN(d.getTime())) return '';
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return months[d.getMonth()] + ' ' + d.getFullYear();
+}
 
 // ── Design tokens (Phase C, 2026-05-19) ────────────────────────────────────
 // Shared source of truth with the heartbeat emails. The dashboard's inline
@@ -3267,7 +3291,14 @@ function renderRow(r, idx) {
     // /api/credentials (which serves snapshotForRender from lib/credentials.mjs)
     // and renders the cert list. event.stopPropagation prevents the row from
     // expanding when the chip is clicked.
-    _matchFooterParts.push('<button type="button" class="match-credential-chip" onclick="event.stopPropagation();window._openCredentialsModal&&window._openCredentialsModal()" style="display:inline-block;font-size:11px;padding:3px 9px;border-radius:999px;background:rgba(99,102,241,.12);color:var(--blue-fg);border:1px solid rgba(99,102,241,.32);margin-right:6px;cursor:pointer;font-family:inherit" title="Click to see Mitchell&#39;s Anthropic credentials — earned March 2026, answers the heavy-Claude-Code-user credibility gate">&#x1f393; Your Anthropic credentials &middot; 4 certs (Mar 2026)</button>');
+    // Phase 4.1 (2026-05-22 closure / P8) — chip text is now dynamic from
+    // _CREDENTIALS_SNAPSHOT (was hardcoded "4 certs (Mar 2026)"). Auto-updates
+    // when Mitchell adds a new cert to data/credentials/all.json + rebuilds.
+    const _anthCerts = (_CREDENTIALS_SNAPSHOT.all || []).filter(c => c && c.provider === 'anthropic');
+    const _anthCount = _anthCerts.length;
+    const _anthLatestMonth = _formatLatestCertMonth(_anthCerts);
+    const _anthChipText = '&#x1f393; Your Anthropic credentials &middot; ' + _anthCount + ' cert' + (_anthCount === 1 ? '' : 's') + (_anthLatestMonth ? ' (' + _anthLatestMonth + ')' : '');
+    _matchFooterParts.push('<button type="button" class="match-credential-chip" onclick="event.stopPropagation();window._openCredentialsModal&&window._openCredentialsModal()" style="display:inline-block;font-size:11px;padding:3px 9px;border-radius:999px;background:rgba(99,102,241,.12);color:var(--blue-fg);border:1px solid rgba(99,102,241,.32);margin-right:6px;cursor:pointer;font-family:inherit" title="Click to see Mitchell&#39;s Anthropic credentials — earned ' + (_anthLatestMonth || 'recently') + ', each cert maps to corpus evidence for the heavy-Claude-Code-user credibility gate">' + _anthChipText + '</button>');
   }
   _matchFooterParts.push('<a href="article-digest.html" target="_blank" rel="noopener" style="display:inline-block;font-size:11px;color:var(--blue-fg);text-decoration:underline dotted" title="Open the full article digest — your accumulated proof points across journalism, comms, and AI-builder work">More proof points: your article digest &rarr;</a>');
   const _matchFooter = `<div class="match-footer" style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);line-height:1.7">${_matchFooterParts.join('')}</div>`;
@@ -16119,7 +16150,12 @@ window.openRightRailForDetail = openRightRailForDetail;
 async function _probeDrawerLiveness(applyHref, rowNum) {
   if (!applyHref) return;
   try {
-    const res = await fetch('/api/liveness?url=' + encodeURIComponent(applyHref), { signal: AbortSignal.timeout(10000) });
+    // Pass &row=N so server can compute auto_remove_recommended against the
+    // row's CURRENT tracker status (Evaluated only — Applied/Interview rows
+    // stay user-actioned).
+    var probeUrl = '/api/liveness?url=' + encodeURIComponent(applyHref);
+    if (rowNum) probeUrl += '&row=' + encodeURIComponent(String(rowNum));
+    const res = await fetch(probeUrl, { signal: AbortSignal.timeout(10000) });
     if (!res.ok) return;
     const data = await res.json();
     if (!data || !data.ok) return;
@@ -16130,6 +16166,9 @@ async function _probeDrawerLiveness(applyHref, rowNum) {
     if (!actionsEl) return;
     var badge = header.querySelector('.drawer-liveness-badge');
     if (badge) badge.remove();
+    // Remove any previously-rendered refuse-banner from a prior row.
+    var oldBanner = document.querySelector('.drawer-liveness-banner');
+    if (oldBanner) oldBanner.remove();
     var newBadge = document.createElement('span');
     newBadge.className = 'drawer-liveness-badge';
     if (data.alive) {
@@ -16138,42 +16177,133 @@ async function _probeDrawerLiveness(applyHref, rowNum) {
       newBadge.innerHTML = '🟢 Live';
     } else {
       newBadge.classList.add('drawer-liveness-dead');
-      newBadge.title = 'Posting closed: ' + (data.reason || 'unknown') + ' · checked ' + (data.lastChecked || '') + ' · source: ' + (data.source || 'live-probe');
-      newBadge.innerHTML = '⚠ Posting closed';
-      // Disable apply button + add a Mark-as-Discarded CTA
+      newBadge.title = 'Posting no longer accepting applications · checked ' + (data.lastChecked || '') + ' · source: ' + (data.source || 'live-probe');
+      newBadge.innerHTML = '⚠ Not accepting applications';
+      // Disable apply button (low-friction signal that this is no longer actionable)
       var applyBtn = actionsEl.querySelector('button[data-drawer-action="apply"]');
       if (applyBtn) {
         applyBtn.disabled = true;
-        applyBtn.title = 'Posting verified closed: ' + (data.reason || 'unknown');
+        applyBtn.title = 'Posting no longer accepting applications: ' + (data.reason || 'unknown');
         applyBtn.style.opacity = '0.5';
       }
-      // Add a discard CTA if not already present
-      if (rowNum && !actionsEl.querySelector('button[data-drawer-action="discard-dead"]')) {
-        var discardBtn = document.createElement('button');
-        discardBtn.type = 'button';
-        discardBtn.setAttribute('data-drawer-action', 'discard-dead');
-        discardBtn.style.background = 'var(--red-fg)';
-        discardBtn.style.color = '#fff';
-        discardBtn.style.borderColor = 'var(--red-fg)';
-        discardBtn.title = 'Mark this row as Discarded with LINK EXPIRED note';
-        discardBtn.textContent = 'Mark Discarded (posting closed)';
-        discardBtn.addEventListener('click', async function() {
-          if (!confirm('Mark row #' + rowNum + ' as Discarded (posting closed)?')) return;
-          discardBtn.disabled = true;
-          discardBtn.textContent = 'Marking...';
-          try {
-            await fetch('/api/discard-with-reason', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ row_num: rowNum, reason: 'Posting closed (drawer-probe): ' + (data.reason || 'unknown'), source: 'drawer-liveness-probe' }),
-            });
-            if (typeof window.optimisticStatusChange === 'function') {
-              window.optimisticStatusChange(rowNum, 'Discarded');
+      // tone-safe refuse-banner (Phase 3, 2026-05-22). Only renders when:
+      //   - the posting is verifiably not accepting applications
+      //   - the user has NOT dismissed this row in the past 24h
+      //   - the row is still in a state where auto-removal makes sense
+      //     (the server's auto_remove_recommended bit; trust the server)
+      // Banner offers Remove (flips Evaluated → Discarded) OR Keep anyway
+      // (writes a localStorage flag so the banner stays dismissed for 24h).
+      if (rowNum) {
+        var dismissKey = 'liveness_banner_dismissed_' + rowNum;
+        var dismissedUntil = 0;
+        try { dismissedUntil = parseInt(localStorage.getItem(dismissKey) || '0', 10) || 0; }
+        catch (_e) { dismissedUntil = 0; }
+        var shouldShowBanner = Date.now() > dismissedUntil;
+        // Server hint takes priority if present; falls back to permissive
+        // when the server didn't include the field (existing /api/liveness
+        // shape lacks auto_remove_recommended — we conservatively show the
+        // banner whenever the post is not alive AND not dismissed).
+        if (data.auto_remove_recommended === false) shouldShowBanner = false;
+        if (shouldShowBanner && !document.querySelector('.drawer-liveness-banner')) {
+          var banner = document.createElement('div');
+          banner.className = 'drawer-liveness-banner';
+          banner.setAttribute('role', 'status');
+          banner.style.background = 'var(--warning-bg, rgba(245, 158, 11, 0.12))';
+          banner.style.border = '1px solid var(--warning, #f59e0b)';
+          banner.style.borderRadius = '6px';
+          banner.style.padding = '12px 14px';
+          banner.style.margin = '8px 0 16px';
+          banner.style.color = 'var(--fg, #e7e7e7)';
+          banner.style.fontSize = '13px';
+          banner.style.lineHeight = '1.45';
+          // Build banner content via DOM nodes (NOT innerHTML with template
+          // interpolation) to keep Pattern A safe + avoid XSS on the reason
+          // field which is server-supplied but bubbles user-visible text.
+          var bannerMsg = document.createElement('div');
+          bannerMsg.style.marginBottom = '10px';
+          var strong = document.createElement('strong');
+          strong.textContent = 'This posting is no longer accepting applications.';
+          bannerMsg.appendChild(strong);
+          var detail = document.createElement('span');
+          detail.style.opacity = '0.85';
+          detail.style.marginLeft = '6px';
+          detail.textContent = 'Remove from queue?';
+          bannerMsg.appendChild(detail);
+          banner.appendChild(bannerMsg);
+
+          var btnRow = document.createElement('div');
+          btnRow.style.display = 'flex';
+          btnRow.style.gap = '8px';
+
+          var removeBtn = document.createElement('button');
+          removeBtn.type = 'button';
+          removeBtn.setAttribute('data-banner-action', 'remove');
+          removeBtn.style.background = 'var(--warning, #f59e0b)';
+          removeBtn.style.color = '#1a1a1a';
+          removeBtn.style.border = '1px solid var(--warning, #f59e0b)';
+          removeBtn.style.padding = '6px 14px';
+          removeBtn.style.borderRadius = '4px';
+          removeBtn.style.cursor = 'pointer';
+          removeBtn.style.fontWeight = '600';
+          removeBtn.textContent = 'Remove';
+          removeBtn.title = 'Mark row #' + rowNum + ' as Discarded with audit note';
+          removeBtn.addEventListener('click', async function() {
+            removeBtn.disabled = true;
+            removeBtn.textContent = 'Removing...';
+            try {
+              await fetch('/api/discard-with-reason', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  row_num: rowNum,
+                  reason: 'manually removed from drawer banner (posting closed): ' + (data.reason || 'unknown'),
+                  source: 'drawer-liveness-banner',
+                }),
+              });
+              if (typeof window.optimisticStatusChange === 'function') {
+                window.optimisticStatusChange(rowNum, 'Discarded');
+              }
+              if (typeof window.closeRightRail === 'function') window.closeRightRail();
+            } catch (e) {
+              removeBtn.textContent = 'Failed — see console';
+              console.warn(e);
             }
-            if (typeof window.closeRightRail === 'function') window.closeRightRail();
-          } catch (e) { discardBtn.textContent = 'Failed — see console'; console.warn(e); }
-        });
-        actionsEl.appendChild(discardBtn);
+          });
+          btnRow.appendChild(removeBtn);
+
+          var keepBtn = document.createElement('button');
+          keepBtn.type = 'button';
+          keepBtn.setAttribute('data-banner-action', 'keep');
+          keepBtn.style.background = 'transparent';
+          keepBtn.style.color = 'var(--fg, #e7e7e7)';
+          keepBtn.style.border = '1px solid var(--border, #444)';
+          keepBtn.style.padding = '6px 14px';
+          keepBtn.style.borderRadius = '4px';
+          keepBtn.style.cursor = 'pointer';
+          keepBtn.textContent = 'Keep anyway';
+          keepBtn.title = 'Dismiss this banner for 24 hours';
+          keepBtn.addEventListener('click', function() {
+            try {
+              // Store dismissal expiry — 24h from now.
+              var until = Date.now() + 24 * 60 * 60 * 1000;
+              localStorage.setItem(dismissKey, String(until));
+            } catch (_e) { /* localStorage may be blocked — fail silent, banner won't re-show this session anyway */ }
+            banner.remove();
+          });
+          btnRow.appendChild(keepBtn);
+
+          banner.appendChild(btnRow);
+
+          // Insert banner near top of drawer body (after header chip row,
+          // before primary content) so it's the first thing the user sees.
+          var drawer = document.getElementById('right-rail-drawer');
+          var insertTarget = drawer ? drawer.querySelector('#right-rail-actions') : null;
+          if (insertTarget && insertTarget.parentNode) {
+            insertTarget.parentNode.insertBefore(banner, insertTarget);
+          } else if (drawer) {
+            drawer.insertBefore(banner, drawer.firstChild);
+          }
+        }
       }
     }
     // Insert badge into drawer header chip row
@@ -21119,13 +21249,18 @@ async function _openCredentialsModal() {
       const icon = c.icon || String.fromCharCode(0x1f393);
       const url = c.url ? '<a href="' + String(c.url).replace(/"/g, '&quot;') + '" target="_blank" rel="noopener" style="color:var(--link,#58a6ff);text-decoration:none">' + icon + '</a>' : icon;
       const desc = c.description ? '<p style="font-size:12px;color:var(--text-2,#e4e4e7);margin:6px 0 0;line-height:1.5">' + String(c.description).replace(/</g, '&lt;') + '</p>' : '';
+      // Phase 4.1 (2026-05-22 closure / P8) — render alignment_to_corpus per Q10.
+      // The schema field carries 1-2 sentences tying this cert to cv.md /
+      // article-digest.md proof points. Renders as a distinct labeled block
+      // below the description so the corpus citation reads clearly.
+      const corpus = c.alignment_to_corpus ? '<p style="font-size:11.5px;color:var(--text-2,#e4e4e7);margin:6px 0 0;padding:6px 8px;line-height:1.5;background:rgba(99,102,241,0.06);border-left:2px solid rgba(99,102,241,0.5);border-radius:0 4px 4px 0"><strong style="text-transform:uppercase;font-size:9.5px;letter-spacing:0.08em;color:var(--text-3,#b8b8c0);font-weight:600;margin-right:6px">Alignment</strong>' + String(c.alignment_to_corpus).replace(/</g, '&lt;') + '</p>' : '';
       const date = c.earned_date ? '<span style="font-size:11px;color:var(--text-3,#b8b8c0);margin-left:6px">' + c.earned_date + '</span>' : '';
       return '<div style="border-bottom:1px solid var(--border,#232737);padding:10px 0">' +
         '<div style="display:flex;align-items:baseline;gap:6px">' +
         '<span style="font-size:18px">' + url + '</span>' +
         '<strong style="font-size:13.5px;color:var(--text,#fafafa)">' + String(c.name || c.id || '?').replace(/</g, '&lt;') + '</strong>' +
         featured + date +
-        '</div>' + desc +
+        '</div>' + desc + corpus +
         '</div>';
     }).join('');
     modal.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">' +

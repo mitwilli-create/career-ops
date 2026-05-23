@@ -35,11 +35,14 @@
     <key>RunAtLoad</key>
     <false/>
 
+    <!-- Log path MUST live outside ~/Documents/ - macOS Tahoe TCC blocks
+         launchd from writing to log files under Documents (silent EX_CONFIG=78).
+         Pattern F / feedback_tahoe_sandbox_calendar_interval.md. Fixed 2026-05-22. -->
     <key>StandardOutPath</key>
-    <string>/Users/mitchellwilliams/Documents/career-ops/data/logs/career-library.out</string>
+    <string>/Users/mitchellwilliams/Library/Logs/career-ops/career-library.out</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/mitchellwilliams/Documents/career-ops/data/logs/career-library.err</string>
+    <string>/Users/mitchellwilliams/Library/Logs/career-ops/career-library.err</string>
 
     <key>EnvironmentVariables</key>
     <dict>

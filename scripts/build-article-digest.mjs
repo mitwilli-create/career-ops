@@ -56,6 +56,76 @@ const htmlEscape = (s) => String(s)
   .replace(/"/g, '&quot;')
   .replace(/'/g, '&#39;');
 
+// Phase 6.2 follow-up (2026-05-22): extract H2 sections from the markdown +
+// build a TOC the article-digest page renders at the top. Each H2 gets an
+// id="sec-<slug>" anchor injected, the TOC links to those ids, so users can
+// jump straight to any proof point. Cheap, in-page (no separate child-page
+// HTML files — that's the next iteration if Mitchell wants it).
+function _slugifyHeading(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80) || 'section';
+}
+
+function extractSections(md) {
+  const lines = String(md || '').split('\n');
+  const sections = [];
+  const seen = new Set();
+  for (const line of lines) {
+    const m = line.match(/^##\s+(.+)$/);
+    if (!m) continue;
+    const title = m[1].trim();
+    let slug = _slugifyHeading(title);
+    // Disambiguate duplicates by appending -2, -3, etc.
+    if (seen.has(slug)) {
+      let n = 2;
+      while (seen.has(slug + '-' + n)) n++;
+      slug = slug + '-' + n;
+    }
+    seen.add(slug);
+    sections.push({ title, slug });
+  }
+  return sections;
+}
+
+function buildToc(sections) {
+  if (!sections.length) return '';
+  const items = sections.map(s =>
+    '<li><a href="#sec-' + htmlEscape(s.slug) + '">' + htmlEscape(s.title) + '</a></li>'
+  ).join('\n        ');
+  return [
+    '<nav class="digest-toc" aria-label="Article digest table of contents">',
+    '  <h2 style="margin-top:0">On this page</h2>',
+    '  <ol style="font-size:13.5px;line-height:1.7;color:var(--text-2);columns:2;column-gap:32px;margin:0;padding-left:22px">',
+    '        ' + items,
+    '  </ol>',
+    '</nav>',
+  ].join('\n');
+}
+
+function injectAnchorIds(html, sections) {
+  // marked renders ## Foo as <h2>Foo</h2> (no id). We do a careful regex pass
+  // that matches each H2 in order + injects id="sec-<slug>" based on the
+  // sections array. Matches use the .title text to identify which H2, so
+  // duplicate-text edge cases are handled by the order-sensitive walk.
+  let out = html;
+  let cursor = 0;
+  for (const s of sections) {
+    const idx = out.indexOf('<h2>', cursor);
+    if (idx === -1) break;
+    const closeIdx = out.indexOf('</h2>', idx);
+    if (closeIdx === -1) break;
+    const before = out.slice(0, idx);
+    const after = out.slice(idx);
+    const replaced = after.replace(/^<h2>/, '<h2 id="sec-' + htmlEscape(s.slug) + '">');
+    out = before + replaced;
+    cursor = closeIdx + 5;
+  }
+  return out;
+}
+
 // Shell adapted from dashboard/stories/index.html (Closure 09 Part 2 Item D
 // dark-theme tokens). Wider than the stories list (920px vs 760px) because
 // the digest content is denser and benefits from more horizontal room.
@@ -147,6 +217,32 @@ function buildHtml(bodyHtml, meta) {
   .back { margin-bottom: 24px; font-size: 13px; }
   .back a { color: var(--text-3); font-weight: 500; }
   .back a:hover { color: var(--text); }
+  .digest-toc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 16px 22px;
+    margin-bottom: 16px;
+  }
+  .digest-toc h2 {
+    border-bottom: none;
+    padding-bottom: 0;
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-3);
+    margin: 0 0 10px;
+    font-weight: 600;
+  }
+  .digest-toc a { color: var(--text-2); font-weight: 400; }
+  .digest-toc a:hover { color: var(--link); }
+  @media (max-width: 720px) {
+    .digest-toc ol { columns: 1 !important; }
+  }
+  /* Smooth-scroll into a section when an anchor link is clicked */
+  html { scroll-behavior: smooth; }
+  /* Offset for sticky-back-link anchor scroll target */
+  h2[id^="sec-"] { scroll-margin-top: 20px; }
 </style>
 </head><body>
 <div class="back"><a href="/">&larr; back to dashboard</a></div>
@@ -183,7 +279,12 @@ function main() {
 
   if (existsSync(SOURCE)) {
     const md = readFileSync(SOURCE, 'utf-8');
-    bodyHtml = marked.parse(md);
+    const rawBody = marked.parse(md);
+    // Phase 6.2 follow-up: TOC + anchor IDs on H2 sections
+    const sections = extractSections(md);
+    const bodyWithAnchors = injectAnchorIds(rawBody, sections);
+    const tocHtml = buildToc(sections);
+    bodyHtml = tocHtml + '\n<hr style="margin:24px 0">\n' + bodyWithAnchors;
     // Extract a subtitle from the markdown if it has one — look for the
     // first non-heading line as a hint, otherwise default.
     const subtitleMatch = md.match(/^\*\*Source:\*\*\s*([^\n]+)/m);
@@ -191,7 +292,7 @@ function main() {
       title: 'Article digest',
       subtitle: subtitleMatch ? subtitleMatch[1].slice(0, 200) : 'Proof-point bank — STAR-formatted accomplishments across journalism, comms, and AI-builder work.',
     };
-    log(`[build-article-digest] read ${SOURCE} (${md.length} chars, ${md.split('\n').length} lines)`);
+    log(`[build-article-digest] read ${SOURCE} (${md.length} chars, ${md.split('\n').length} lines, ${sections.length} sections in TOC)`);
   } else {
     bodyHtml = buildMissingFilePlaceholder();
     meta = {

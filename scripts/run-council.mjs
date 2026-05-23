@@ -12,6 +12,14 @@
  *        --models perplexity:sonar-deep-research,xai:grok-4,openai:gpt-5
  *   node scripts/run-council.mjs --prompt /tmp/prompt.txt --out /tmp/council.json --max-tokens 8000
  *
+ *   # Per-provider timeout override (default 180000ms = 180s, callCouncil clamps to [30s, 30min]).
+ *   # The 180s default fits typical 6k-token dispatches. For Sonnet/Opus with
+ *   # --max-tokens >= 8000 (dialogue-heavy synthesis, large reasoning chains), bump
+ *   # to >= 600000 (10min) — the 2026-05-23 regression-guard run lost Round 2 of
+ *   # dialogue because synthesis at 16k tokens needed > 180s and the default tripped.
+ *   node scripts/run-council.mjs --prompt /tmp/prompt.txt --out /tmp/council.json \
+ *        --max-tokens 16000 --timeout-ms 600000
+ *
  *   # Opt-in: probe each model's year-belief before firing the real prompt.
  *   # Drops any model that answers ≥ tolerance years off from system clock.
  *   node scripts/run-council.mjs --prompt /tmp/prompt.txt --out /tmp/council.json --probe
@@ -21,6 +29,12 @@
  *   node scripts/run-council.mjs --prompt /tmp/prompt.txt --out /tmp/council.json --no-retry-refusal
  *
  * Designed to be invoked by the council-of-models agent in ~/.claude/agents/.
+ *
+ * Hang-prevention: lib/council.mjs already wraps every provider call in
+ * AbortSignal.timeout(opts.timeoutMs) and reads bodies via lib/safe-fetch.mjs's
+ * readJson/readText (which adds the body-read timeout pattern). See AGENTS.md
+ * § Bug class: missing-timeout-on-long-running-operation and
+ * ~/.claude/knowledge/brain/bug-class-catalog.md.
  */
 
 import { readFileSync, writeFileSync } from 'fs';
@@ -47,13 +61,15 @@ const promptPath      = arg('--prompt');
 const outPath         = arg('--out', '/tmp/council-report.json');
 const modelsRaw       = arg('--models', '');
 const maxTokens       = parseInt(arg('--max-tokens', '6000'), 10);
+const timeoutMs       = parseInt(arg('--timeout-ms', '180000'), 10);
 const doProbe         = hasFlag('--probe');
 const probeTolerance  = parseInt(arg('--probe-tolerance', '1'), 10);
 const retryOnRefusal  = !hasFlag('--no-retry-refusal');
 
 if (!promptPath) {
   console.error('Usage: node scripts/run-council.mjs --prompt <file> --out <file> [--models a,b]');
-  console.error('       [--max-tokens N] [--probe [--probe-tolerance N]] [--no-retry-refusal]');
+  console.error('       [--max-tokens N] [--timeout-ms N] [--probe [--probe-tolerance N]] [--no-retry-refusal]');
+  console.error('       --timeout-ms defaults to 180000 (180s). Use >= 600000 when --max-tokens >= 8000.');
   process.exit(1);
 }
 
@@ -79,7 +95,7 @@ if (doProbe) {
   }
 }
 
-const report = await callCouncil({ prompt, models, opts: { timeoutMs: 180000, maxTokens, retryOnRefusal } });
+const report = await callCouncil({ prompt, models, opts: { timeoutMs, maxTokens, retryOnRefusal } });
 if (probeResults) report.probe = probeResults;
 writeFileSync(outPath, JSON.stringify(report, null, 2));
 

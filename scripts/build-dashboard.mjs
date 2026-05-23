@@ -3024,7 +3024,12 @@ function _buildGapInterviewPrompt({ title, detail, severity, company, role, repo
 
 function renderRow(r, idx) {
   const archetype = getReportArchetype(r.reportPath);
-  const url = getReportUrl(r.reportPath);
+  // Prefer the queue's canonical_url (resolved by lib/jd-url-canonicalizer.mjs
+  // during enrichment) over the raw url over the report-derived URL.
+  // Mirrors lib/apply-now-queue-gate.mjs:266. Without this, rows whose report
+  // file stored a LinkedIn URL render LinkedIn even when canonical_url points
+  // at the Greenhouse/Ashby/Lever employer URL. (LEDGER-026, 2026-05-23)
+  const url = r.canonical_url || r.url || getReportUrl(r.reportPath);
   const finalRec = getReportFinalRecommendation(r.reportPath);
   const edge = getCompetitiveEdge(r.reportPath);
   // Polish badge — small icon next to the score. Looks up by row.num.
@@ -3918,6 +3923,24 @@ async function build() {
   }
 
   const apps = parseApplications();
+  // Hydrate canonical_url from apply-now-queue.json into apps so renderRow
+  // can prefer canonical over the report-derived URL. Fixes LinkedIn-vs-canonical
+  // drawer URL leak for rows where lib/jd-url-canonicalizer.mjs resolved a
+  // canonical employer URL but the report .md still has the raw LinkedIn URL.
+  // (LEDGER-026 audit-2026-05-23 Part 3)
+  try {
+    const aQ = JSON.parse(readFileSync(join(ROOT, 'data', 'apply-now-queue.json'), 'utf-8'));
+    const canonByNum = new Map();
+    for (const r of (aQ.ranked || [])) {
+      if (r && r.canonical_url) canonByNum.set(String(r.num), r.canonical_url);
+    }
+    let hydrated = 0;
+    for (const r of apps) {
+      const c = canonByNum.get(String(r.num));
+      if (c) { r.canonical_url = c; hydrated++; }
+    }
+    if (hydrated > 0) console.log(`  canonical_url hydrated: ${hydrated} rows from apply-now-queue.json`);
+  } catch (e) { /* queue file missing or unparseable — leave apps as-is */ }
   // Cluster A7 (2026-05-22): pre-load pipeline activity state for the
   // top-of-dashboard health strip. Build-time snapshot; SSE refreshes
   // the strip at runtime via the existing batch-live channel.

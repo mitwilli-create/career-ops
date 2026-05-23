@@ -46,6 +46,15 @@ function resolveRoot() {
 }
 const ROOT = resolveRoot();
 
+// Retry-cap config: after RETRY_CAP consecutive failures, the row is
+// escalated to NEEDS_HUMAN and skipped on subsequent batch invocations.
+// Stops the cv-tailor row=48-style retry loop bleed identified in the
+// 2026-05-23 cost-log L2 audit ($1.15 burned on cv-tailor errors over
+// 11 days; row=48 alone errored 7 consecutive times).
+const RETRY_CAP = parseInt(process.env.CV_TAILOR_RETRY_CAP || '3', 10);
+const RETRY_STATE_PATH = join(ROOT, 'data/cv-tailor-retry-state.json');
+const NEEDS_HUMAN_DIR = join(ROOT, 'data/cv-tailor-needs-human');
+
 // Load .env BEFORE importing runCvTailor (which itself loads .env, but we
 // load it here too so our own logging picks up env state).
 try {
@@ -257,6 +266,67 @@ function logCost({ stage, rowId, company, role, model, tokens, costUsd, status, 
   );
 }
 
+// --- Retry-cap state management ---
+// Tracks consecutive failures per row across batch invocations. When a row
+// hits RETRY_CAP consecutive failures, it is escalated to NEEDS_HUMAN and
+// subsequent batch invocations skip it until the operator deletes the
+// data/cv-tailor-needs-human/row-NN.json file (signaling "I hand-polished
+// the bullets, try again").
+
+function readRetryState() {
+  if (!existsSync(RETRY_STATE_PATH)) return { version: 1, rows: {} };
+  try {
+    return JSON.parse(readFileSync(RETRY_STATE_PATH, 'utf-8'));
+  } catch {
+    return { version: 1, rows: {} };
+  }
+}
+
+function writeRetryState(state) {
+  state.updated_at = new Date().toISOString();
+  writeFileSync(RETRY_STATE_PATH, JSON.stringify(state, null, 2) + '\n');
+}
+
+function escalateToNeedsHuman({ rowId, company, role, applyPackSlug, consecutiveFailures, lastError, lastHumanizeScore, lastHumanizeBand }) {
+  mkdirSync(NEEDS_HUMAN_DIR, { recursive: true });
+  const path = join(NEEDS_HUMAN_DIR, `row-${rowId}.json`);
+  const payload = {
+    row_id: String(rowId),
+    company,
+    role,
+    apply_pack_slug: applyPackSlug,
+    escalated_at: new Date().toISOString(),
+    consecutive_failures: consecutiveFailures,
+    last_error: lastError,
+    last_humanize_score: lastHumanizeScore,
+    last_humanize_band: lastHumanizeBand,
+    next_action: `Hand-polish bullets in apply-pack/${applyPackSlug}/cv-tailored.md to reduce humanize signal (last score ${lastHumanizeScore} > 20 threshold). Once polished, delete this file to re-enable automated tailoring.`,
+  };
+  writeFileSync(path, JSON.stringify(payload, null, 2) + '\n');
+  return path;
+}
+
+function recordFailure(state, rowId, errorNotes, humanizeScore, humanizeBand) {
+  const key = String(rowId);
+  const existing = state.rows[key] || { consecutive_failures: 0, first_failure_at: null, last_failure_at: null, last_error: null, escalated_to_needs_human: false };
+  existing.consecutive_failures += 1;
+  if (!existing.first_failure_at) existing.first_failure_at = new Date().toISOString();
+  existing.last_failure_at = new Date().toISOString();
+  existing.last_error = errorNotes;
+  existing.last_humanize_score = humanizeScore;
+  existing.last_humanize_band = humanizeBand;
+  state.rows[key] = existing;
+}
+
+function recordSuccess(state, rowId) {
+  const key = String(rowId);
+  if (state.rows[key]) {
+    state.rows[key].consecutive_failures = 0;
+    state.rows[key].last_success_at = new Date().toISOString();
+    state.rows[key].escalated_to_needs_human = false;
+  }
+}
+
 async function processRow(rowSpec, browser, opts) {
   const { rowId, company, role, url, applyPackSlug, status } = rowSpec;
   console.error(`[row ${rowId}] ${company} — ${role}`);
@@ -267,6 +337,35 @@ async function processRow(rowSpec, browser, opts) {
   }
   if (!url) {
     return { rowId, ok: false, reason: 'no_url_in_report' };
+  }
+
+  // --- Retry-cap check: skip + escalate if row has hit RETRY_CAP failures ---
+  // If the operator hand-polished bullets, they should delete
+  // data/cv-tailor-needs-human/row-NN.json — recordSuccess() will then
+  // reset the counter on the next successful tailor.
+  const retryState = readRetryState();
+  const rowState = retryState.rows[String(rowId)];
+  if (rowState && rowState.consecutive_failures >= RETRY_CAP) {
+    if (!rowState.escalated_to_needs_human) {
+      const escalatedPath = escalateToNeedsHuman({
+        rowId, company, role, applyPackSlug,
+        consecutiveFailures: rowState.consecutive_failures,
+        lastError: rowState.last_error,
+        lastHumanizeScore: rowState.last_humanize_score,
+        lastHumanizeBand: rowState.last_humanize_band,
+      });
+      rowState.escalated_to_needs_human = true;
+      writeRetryState(retryState);
+      console.error(`  [retry-cap] Row ${rowId} hit ${rowState.consecutive_failures} consecutive failures, escalated to ${escalatedPath.replace(ROOT + '/', '')}`);
+    } else {
+      console.error(`  [retry-cap] Row ${rowId} already escalated (${rowState.consecutive_failures} failures); skipping.`);
+    }
+    return {
+      rowId, ok: false, reason: 'retry_cap_exceeded',
+      consecutive_failures: rowState.consecutive_failures,
+      escalated: true,
+      needs_human_path: `data/cv-tailor-needs-human/row-${rowId}.json`,
+    };
   }
 
   // --- Phase 1: fetch JD --------------------------------------------------
@@ -371,6 +470,26 @@ async function processRow(rowSpec, browser, opts) {
     } catch (err) {
       refreshNotes.push(`render_failed:${err.message.slice(0, 120)}`);
     }
+  }
+
+  // --- Update retry-cap state based on outcome ---
+  if (tailorStatus === 'error') {
+    recordFailure(
+      retryState,
+      rowId,
+      (result?.error || '(no error message)').slice(0, 500),
+      result?.output?.humanize_risk_score,
+      result?.output?.humanize_risk_band
+    );
+    writeRetryState(retryState);
+    const failCount = retryState.rows[String(rowId)].consecutive_failures;
+    console.error(`  [retry-cap] Row ${rowId} failure #${failCount} of ${RETRY_CAP} recorded.`);
+  } else if (tailorStatus === 'ok') {
+    if (retryState.rows[String(rowId)]?.consecutive_failures) {
+      console.error(`  [retry-cap] Row ${rowId} recovered after ${retryState.rows[String(rowId)].consecutive_failures} prior failures; counter reset.`);
+    }
+    recordSuccess(retryState, rowId);
+    writeRetryState(retryState);
   }
 
   return {

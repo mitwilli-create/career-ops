@@ -7374,8 +7374,11 @@ async function build() {
     letter-spacing: 0.02em;
     transition: color 0.2s ease, border-color 0.2s ease;
   }
-  .pipeline-health-chip, .pipeline-dispatch-chip { cursor: pointer; }
-  .pipeline-health-chip:hover, .pipeline-dispatch-chip:hover { border-color: var(--text-3); }
+  .pipeline-health-chip, .pipeline-dispatch-chip, .pipeline-freshness-chip { cursor: pointer; }
+  .pipeline-health-chip:hover, .pipeline-dispatch-chip:hover, .pipeline-freshness-chip:hover { border-color: var(--text-3); }
+  .pipeline-freshness-chip:focus-visible, .pipeline-health-chip:focus-visible, .pipeline-dispatch-chip:focus-visible {
+    outline: 2px solid var(--blue-fg-dark, #1d4ed8); outline-offset: 2px;
+  }
   .pipeline-freshness-chip.fresh, .pipeline-health-chip.healthy {
     border-color: rgba(16,185,129,0.5); color: #10b981;
   }
@@ -9034,6 +9037,17 @@ async function build() {
   }
   .pipeline-btn-nuclear { border-color: rgba(245,158,11,.35); }
   .pipeline-btn-nuclear:hover { border-color: rgba(245,158,11,.7); background: rgba(245,158,11,.05); }
+  /* View-flow button — quieter than the two action buttons. */
+  .pipeline-btn-flow {
+    background: transparent; color: var(--text-2);
+    border-color: transparent; border-style: dashed;
+    font-weight: 500; font-size: 11.5px;
+    padding: 5px 12px;
+  }
+  .pipeline-btn-flow:hover {
+    background: var(--surface-2); color: var(--text);
+    border-color: var(--border); border-style: solid;
+  }
   body.sidebar-collapsed .pipeline-btn-label,
   body.sidebar-collapsed .pipeline-btn-count { display: none; }
   body.sidebar-collapsed .pipeline-btn { justify-content: center; padding: 8px; }
@@ -12417,6 +12431,16 @@ async function build() {
         <span class="pipeline-btn-label">Process All</span>
         <span class="pipeline-btn-count" id="pipeline-btn-all-count">${pipelinePending + triageAdvanceCount}</span>
       </button>
+      <!-- Sidebar entry point to the 5-stage pipeline flow modal (Scan / Triage /
+           Process / Eval / Publish). Previously only reachable from the KPI
+           stat-cell tile; surfaced here so the pipeline view is one click from
+           every screen. -->
+      <button type="button" class="pipeline-btn pipeline-btn-flow"
+              onclick="(window._openPipelineFlowModal||function(){})()"
+              title="See the 5-stage pipeline flow: Scan → Triage → Process → Eval → Publish">
+        <span class="pipeline-btn-icon" aria-hidden="true">🔍</span>
+        <span class="pipeline-btn-label">View flow</span>
+      </button>
     </div>
     <!-- 2026-05-19 Mitchell trust-fix — freshness chip + health chip.
          Chip shows "updated Ns ago" with live ticking. Color-codes on staleness.
@@ -12424,7 +12448,7 @@ async function build() {
          2026-05-20 — initial values baked at build time so first paint shows
          data instead of "badges loading…" / "health: —" flashing in. -->
     <div id="sidebar-pipeline-status" class="sidebar-pipeline-status" aria-label="Pipeline status freshness">
-      <span id="pipeline-freshness-chip" class="pipeline-freshness-chip fresh" title="Time since last badge refresh">badges · just now</span>
+      <span id="pipeline-freshness-chip" class="pipeline-freshness-chip fresh" title="Time since last badge refresh — click for pipeline health detail" onclick="openPipelineHealthModal()" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openPipelineHealthModal();}">badges · just now</span>
       <span id="pipeline-health-chip" class="${initialHealthChip.cls}" title="${htmlEscape(initialHealthChip.title)} — click to view full status" onclick="openPipelineHealthModal()">${htmlEscape(initialHealthChip.label)}</span>
       <span id="pipeline-dispatch-chip" class="${initialDispatchChip.cls}" title="${htmlEscape(initialDispatchChip.title)}" onclick="openBatchStatusModal()">${htmlEscape(initialDispatchChip.label)}</span>
     </div>
@@ -13407,23 +13431,20 @@ async function build() {
         ${_tonightPick.location ? `<span class="tp-sig tp-sig-loc">${htmlEscape(_tonightPick.location)}</span>` : ''}
       </div>
       <div class="tonight-pick-why">${htmlEscape(_tonightPick.whyPick)}</div>
-      <!-- 2026-05-20 redesign: 4-5 buttons. The 4th (Polish materials) is
-           CONDITIONAL — only renders when the polish-status alert surfaces
-           (never_polished / stale / failed). When already polished, that
-           slot shows a small "✓ Polished" indicator instead so the user
-           knows the state without an action prompt.
-           PRIMARY  "Apply now"                    → opens JD in new tab
-           SECONDARY "Learn more"                  → opens right drawer
-           ACCENT   "Generate application materials" → creates apply-pack (cv/cover/dm/forms)
-           CONDITIONAL "Polish materials"          → fires apply-pack-polish skill (only if alert)
-           GHOST    "Pick another"                 → cycles to next ranked role -->
+      <!-- 2026-05-22 harmonization: button order + labels now match the drawer
+           lifecycle cluster (Phase 4.4), so the same role's affordances stay
+           consistent whether the user is in the inline spotlight or the drawer.
+           Drawer order: Learn more · Create apply pack · Pre-Apply Check · Polish materials · Apply now
+           Inline order: Learn more · Create apply pack ·                    · Polish materials · Apply now → · Pick another
+           (Pre-Apply Check is drawer-only because the inline card doesn't have
+           the per-row lifecycle context the readiness modal expects.) -->
       <div class="tonight-pick-actions">
-        <button type="button" class="tonight-pick-btn-primary" onclick="tonightPickStart()" aria-label="Open ${htmlEscape(_tonightPick.company)} live job posting in a new tab">Apply now &rarr;</button>
         <button type="button" class="tonight-pick-btn-secondary" onclick="tonightPickLearnMore()" aria-label="Open role detail in right drawer">Learn more</button>
-        <button type="button" id="tonight-pick-create-btn" class="tonight-pick-btn-accent" onclick="tonightPickCreateMaterials()" aria-label="Generate apply-pack (CV, cover letter, LinkedIn DM, form fields)">Generate application materials</button>
+        <button type="button" id="tonight-pick-create-btn" class="tonight-pick-btn-accent" onclick="tonightPickCreateMaterials()" aria-label="Create apply pack (CV, cover letter, LinkedIn DM, form fields)">Create apply pack</button>
         ${_tonightPick.polishAlert
           ? `<button type="button" id="tonight-pick-polish-btn" class="tonight-pick-btn-accent tonight-pick-btn-polish" onclick="tonightPickPolish()" aria-label="Run apply-pack polish (4-round critic/author/adjudicator loop) on the generated materials" title="Polish alert surfaced — materials never polished or stale">✨ Polish materials</button>`
           : `<span class="tonight-pick-polish-done" title="Materials are polished + current">✓ Polished</span>`}
+        <button type="button" class="tonight-pick-btn-primary" onclick="tonightPickStart()" aria-label="Open ${htmlEscape(_tonightPick.company)} live job posting in a new tab">Apply now &rarr;</button>
         <button type="button" class="tonight-pick-btn-ghost" onclick="tonightPickCycle()" aria-label="Pick a different role">Pick another</button>
       </div>
     </div>` : '<!-- tonight-pick: no candidate met criteria -->'}
@@ -31363,6 +31384,92 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     letter-spacing: 0.06em; color: var(--text-3); font-weight: 700;
   }
 
+  /* Drill-in side panel — slides over the right half of the modal when a
+     count-cell or queue-cell is clicked. Backdrop stays usable underneath
+     so the main run-status stays visible. Was missing all CSS pre-2026-05-22;
+     close-x was rendering at default-button bottom-left (Mitchell screenshot
+     2026-05-22 12.23.00). */
+  .batch-status-drillin {
+    position: absolute; top: 0; right: 0; bottom: 0;
+    width: min(440px, 60%);
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    box-shadow: -4px 0 16px rgba(0,0,0,.12);
+    display: flex; flex-direction: column;
+    transform: translateX(100%);
+    transition: transform .18s ease;
+    z-index: 2;
+    border-radius: 0 12px 12px 0;
+    visibility: hidden;
+  }
+  .batch-status-drillin.open {
+    transform: translateX(0);
+    visibility: visible;
+  }
+  .batch-status-drillin[aria-hidden="false"] { visibility: visible; }
+  @media (prefers-reduced-motion: reduce) {
+    .batch-status-drillin { transition: none; }
+  }
+  .batch-status-drillin-header {
+    position: sticky; top: 0; background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 16px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .batch-status-drillin-header h4 {
+    margin: 0; font-size: 13px; font-weight: 600;
+    color: var(--text); flex: 1;
+  }
+  .batch-status-drillin-close {
+    background: none; border: none; font-size: 20px;
+    cursor: pointer; color: var(--text-3);
+    padding: 0 6px; line-height: 1;
+    border-radius: 4px;
+  }
+  .batch-status-drillin-close:hover {
+    color: var(--text); background: var(--surface-2);
+  }
+  .batch-status-drillin-close:focus-visible {
+    outline: 2px solid var(--blue-fg-dark, #1d4ed8); outline-offset: 2px;
+  }
+  .batch-status-drillin-body {
+    flex: 1; min-height: 0; overflow-y: auto;
+    padding: 12px 16px;
+    font-size: 12.5px; color: var(--text-2);
+  }
+  .bs-drillin-callout {
+    margin: 0 0 12px; padding: 8px 12px;
+    background: var(--surface-2); border-radius: 6px;
+    font-size: 12px; color: var(--text);
+  }
+  .bs-drillin-empty {
+    padding: 16px 0; color: var(--text-3); font-size: 12px;
+  }
+  .bs-drillin-item-head {
+    display: flex; gap: 6px; align-items: baseline;
+    margin-top: 8px;
+  }
+  .bs-drillin-item-pos {
+    color: var(--text-3); font-variant-numeric: tabular-nums;
+    font-size: 11px; min-width: 22px;
+  }
+  .bs-drillin-item-label {
+    flex: 1; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .bs-drillin-item-meta {
+    margin: 2px 0 4px 28px;
+    color: var(--text-3); font-size: 11px;
+  }
+  .bs-drillin-item-link {
+    color: var(--blue-fg, #2563eb); text-decoration: none;
+  }
+  .bs-drillin-item-link:hover { text-decoration: underline; }
+  .bs-drillin-item-error {
+    margin: 2px 0 6px 28px;
+    color: var(--red-fg-dark, #991b1b); font-size: 11px;
+    word-break: break-word;
+  }
   /* A. Current run summary card */
   .batch-status-current {
     border: 1px solid var(--border); border-radius: 10px;

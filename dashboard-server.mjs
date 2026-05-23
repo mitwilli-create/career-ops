@@ -5980,8 +5980,10 @@ const server = createServer((req, res) => {
   // when truncated.
   if (url.startsWith('/api/batch/items')) {
     try {
-      const u = new URL(url, 'http://localhost');
-      const state = (u.searchParams.get('state') || 'failed').toLowerCase();
+      // `url` is stripped of the query string at handler entry (line 4194),
+      // so `new URL(url, 'http://localhost').searchParams` is always empty.
+      // Use the already-parsed `query` object from line 4196 instead.
+      const state = String(query.state || 'failed').toLowerCase();
       const items = buildBatchItemsForState(state);
       return json({ ok: true, state: state, items: items.items, total: items.total, truncated: items.truncated, error_categories: items.error_categories || null });
     } catch (err) {

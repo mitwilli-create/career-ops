@@ -20830,7 +20830,30 @@ function _drawerRenderIntelChips(data, mountEl) {
     });
   }
   mountEl.querySelectorAll('.intel-chip').forEach(function (btn) {
-    btn.addEventListener('click', function () { _renderPop(btn.getAttribute('data-intel-pop')); });
+    btn.addEventListener('click', function () {
+      // Phase 5 (Closure 4+5+6, 2026-05-23) — chip click opens the full
+      // modal-backdrop pop-out instead of the inline chip-popover. The
+      // inline _renderPop / _renderThPop / _renderIlPop / _renderHcPop
+      // functions remain defined for backward compatibility and potential
+      // re-use; the chip itself is now the "headline score + click for full
+      // pop-out" affordance per the master prompt § C.5 5a/5b/5c spec.
+      const key = btn.getAttribute('data-intel-pop');
+      if (key === 'th') {
+        const company = (th.company || data.company || '').trim();
+        const slug = company.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+        if (window._openTeamHealthPopout) window._openTeamHealthPopout(slug, company);
+        else _renderPop(key);
+      } else if (key === 'il') {
+        if (window._openInterviewLikelihoodPopout) window._openInterviewLikelihoodPopout(data.num, data.slug);
+        else _renderPop(key);
+      } else if (key === 'hc') {
+        if (window._openHmChancePopout) window._openHmChancePopout(data.num, data.slug);
+        else _renderPop(key);
+      } else {
+        // Other chips (e.g., 'hm' HM Visibility) keep the inline popover.
+        _renderPop(key);
+      }
+    });
   });
 
   function _renderThPop(t) {
@@ -21518,6 +21541,520 @@ async function _openCredentialsModal() {
   }
 }
 window._openCredentialsModal = _openCredentialsModal;
+
+/* Phase 5 (Closure 4+5+6, 2026-05-23) — Intel pop-out modals.
+ *
+ * Three full modal-backdrop pop-outs for the drawer intel chips:
+ *   _openTeamHealthPopout(companySlug, companyName)
+ *   _openInterviewLikelihoodPopout(num, slug)
+ *   _openHmChancePopout(num, slug)
+ *
+ * Structural template matches _openApplyClipboardModal (PR #119): backdrop
+ * with rgba 0.7 fill at z-index 99999, modal at max-width 760px / max-height
+ * 85vh, click-on-backdrop + ESC to close, async fetch with skeleton state,
+ * graceful 404 fallback.
+ *
+ * Differs from the inline chip popovers (_renderThPop / _renderIlPop /
+ * _renderHcPop inside _drawerRenderIntelChips): the modal surfaces the full
+ * council-adjudicated JSON — model_estimates, dealbreaker_classification,
+ * rationale paragraph — in addition to the summary fields the chip popover
+ * already shows.
+ *
+ * Pattern A safe (per AGENTS.md "outer-template-unescape" bug class):
+ *   - Pure string concat — no template literals inside the inline JS body
+ *   - No backticks inside the function body
+ *   - String.fromCharCode(N) for control chars / unicode
+ *   - Double-backslash regex literals (the outer template eats single \)
+ */
+
+async function _openIntelPopoutModal(opts) {
+  opts = opts || {};
+  const kind = opts.kind;
+  const title = opts.title || 'Intel detail';
+  const ariaLabel = opts.ariaLabel || title;
+  if (!kind || (kind !== 'th' && kind !== 'il' && kind !== 'hc')) return;
+
+  // Clean up any prior instance of THIS popout kind.
+  const backdropId = 'intel-popout-backdrop-' + kind;
+  const oldBackdrop = document.getElementById(backdropId);
+  if (oldBackdrop) oldBackdrop.remove();
+
+  const backdrop = document.createElement('div');
+  backdrop.id = backdropId;
+  backdrop.setAttribute('role', 'dialog');
+  backdrop.setAttribute('aria-modal', 'true');
+  backdrop.setAttribute('aria-label', ariaLabel);
+  backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:99999;padding:24px';
+  backdrop.addEventListener('click', function (e) {
+    if (e.target === backdrop) backdrop.remove();
+  });
+
+  const modal = document.createElement('div');
+  modal.style.cssText = 'background:var(--surface,#11131c);border:1px solid var(--border,#232737);border-radius:8px;max-width:760px;width:100%;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;color:var(--text,#fafafa);font-family:inherit;box-shadow:0 18px 48px rgba(0,0,0,0.5)';
+  modal.innerHTML = '<div style="padding:20px 24px;font-size:13px;color:var(--text-3,#b8b8c0);letter-spacing:0.04em">Loading ' + _intelEsc(title) + String.fromCharCode(8230) + '</div>';
+  backdrop.appendChild(modal);
+  document.body.appendChild(backdrop);
+
+  function escCloseHandler(e) {
+    if (e.key === 'Escape') {
+      backdrop.remove();
+      document.removeEventListener('keydown', escCloseHandler);
+    }
+  }
+  document.addEventListener('keydown', escCloseHandler);
+
+  // Resolve endpoint + query params per kind.
+  let endpointUrl = '';
+  let debugDataUrl = '';
+  if (kind === 'th') {
+    const slug = String(opts.slug || '').trim().toLowerCase();
+    if (!slug) {
+      _intelRenderModalError(modal, backdrop, 'Team Health needs a company slug. None was passed from the chip click.');
+      return;
+    }
+    endpointUrl = '/api/team-health?slug=' + encodeURIComponent(slug);
+    debugDataUrl = '/api/team-health?slug=' + encodeURIComponent(slug);
+  } else if (kind === 'il') {
+    if (opts.slug) {
+      endpointUrl = '/api/interview-likelihood?slug=' + encodeURIComponent(opts.slug);
+      debugDataUrl = endpointUrl;
+    } else if (opts.row) {
+      endpointUrl = '/api/interview-likelihood?row=' + encodeURIComponent(opts.row);
+      debugDataUrl = endpointUrl;
+    } else {
+      _intelRenderModalError(modal, backdrop, 'Interview Likelihood needs a row number or slug.');
+      return;
+    }
+  } else if (kind === 'hc') {
+    if (opts.slug) {
+      endpointUrl = '/api/hm-chance?slug=' + encodeURIComponent(opts.slug);
+      debugDataUrl = endpointUrl;
+    } else if (opts.row) {
+      endpointUrl = '/api/hm-chance?row=' + encodeURIComponent(opts.row);
+      debugDataUrl = endpointUrl;
+    } else {
+      _intelRenderModalError(modal, backdrop, 'HM Chance needs a row number or slug.');
+      return;
+    }
+  }
+
+  try {
+    const r = await fetch(endpointUrl, { cache: 'no-store' });
+    if (r.status === 404) {
+      const body = await r.json().catch(function () { return {}; });
+      _intelRenderModalEmptyState(modal, backdrop, kind, title, body && body.reason ? body.reason : 'No cached analysis yet.');
+      return;
+    }
+    if (!r.ok) {
+      throw new Error('HTTP ' + r.status);
+    }
+    const payload = await r.json();
+    if (!payload || !payload.ok || !payload.data) {
+      throw new Error('endpoint returned no data');
+    }
+    _intelRenderModalBody(modal, backdrop, kind, title, payload.data, {
+      stale: !!payload.stale,
+      age_days: payload.age_days,
+      debug_data_url: debugDataUrl,
+    });
+  } catch (err) {
+    const msg = String(err && err.message ? err.message : err);
+    _intelRenderModalError(modal, backdrop, msg);
+  }
+}
+window._openIntelPopoutModal = _openIntelPopoutModal;
+
+function _intelEsc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+window._intelEsc = _intelEsc;
+
+function _intelRenderModalError(modal, backdrop, msg) {
+  let h = '<div style="padding:24px"><h2 style="margin:0 0 10px;font-size:15px">Pop-out data unavailable</h2>';
+  h += '<p style="color:var(--text-2);margin:0 0 16px;font-size:13px;line-height:1.55">' + _intelEsc(msg) + '</p>';
+  h += '<p style="color:var(--text-3);margin:0 0 16px;font-size:12px;line-height:1.55">Run Deep Refresh (sidebar) to regenerate the 7-slot nuclear sweep including this cache.</p>';
+  h += '<div style="display:flex;gap:8px;justify-content:flex-end">';
+  h += '<button type="button" id="intel-popout-close" style="padding:6px 14px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);border-radius:6px;cursor:pointer;font-size:12px">Close</button>';
+  h += '</div></div>';
+  modal.innerHTML = h;
+  const closeBtn = modal.querySelector('#intel-popout-close');
+  if (closeBtn) closeBtn.addEventListener('click', function () { backdrop.remove(); });
+}
+
+function _intelRenderModalEmptyState(modal, backdrop, kind, title, reason) {
+  let h = '<div style="padding:18px 24px 14px;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;align-items:flex-start;justify-content:space-between;gap:12px">';
+  h += '<h2 style="margin:0;font-size:15px;font-weight:600;color:var(--text)">' + _intelEsc(title) + '</h2>';
+  h += '<button type="button" id="intel-popout-close" aria-label="Close" style="background:transparent;border:none;color:var(--text-3);font-size:20px;cursor:pointer;padding:0 4px;line-height:1">' + String.fromCharCode(215) + '</button>';
+  h += '</div>';
+  h += '<div style="padding:24px">';
+  h += '<p style="margin:0 0 12px;font-size:13px;color:var(--text-2);line-height:1.6">' + _intelEsc(reason) + '</p>';
+  h += '<p style="margin:0 0 16px;font-size:12.5px;color:var(--text-3);line-height:1.6">Run Deep Refresh (sidebar) to regenerate the 7-slot nuclear sweep, or wait for the next scheduled refresh-master tick.</p>';
+  h += '</div>';
+  modal.innerHTML = h;
+  const closeBtn = modal.querySelector('#intel-popout-close');
+  if (closeBtn) closeBtn.addEventListener('click', function () { backdrop.remove(); });
+}
+
+function _intelRenderModalBody(modal, backdrop, kind, title, data, meta) {
+  meta = meta || {};
+  // Header
+  let h = '<div style="padding:18px 24px 14px;border-bottom:1px solid var(--border);flex-shrink:0">';
+  h += '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">';
+  h += '<div><h2 style="margin:0;font-size:15px;font-weight:600;color:var(--text)">' + _intelEsc(title) + '</h2>';
+  const subParts = [];
+  if (data.company) subParts.push(_intelEsc(data.company));
+  if (data.role) subParts.push(_intelEsc(data.role));
+  if (subParts.length) h += '<p style="margin:4px 0 0;font-size:12px;color:var(--text-3);line-height:1.5">' + subParts.join(' ' + String.fromCharCode(183) + ' ') + '</p>';
+  if (meta.stale) {
+    h += '<div style="margin-top:6px;display:inline-block;font-size:10.5px;color:var(--amber-fg,#b45309);background:rgba(168,123,72,0.14);padding:3px 8px;border-radius:4px;border:1px solid rgba(168,123,72,0.3);letter-spacing:0.04em;text-transform:uppercase">Stale - regenerate via Deep Refresh</div>';
+  }
+  h += '</div>';
+  h += '<button type="button" id="intel-popout-close" aria-label="Close" style="background:transparent;border:none;color:var(--text-3);font-size:20px;cursor:pointer;padding:0 4px;line-height:1">' + String.fromCharCode(215) + '</button>';
+  h += '</div></div>';
+
+  // Scrollable body
+  h += '<div style="flex:1;overflow-y:auto;padding:18px 24px 18px;display:flex;flex-direction:column;gap:14px">';
+  if (kind === 'th') h += _intelRenderTeamHealthBody(data);
+  else if (kind === 'il') h += _intelRenderInterviewLikelihoodBody(data);
+  else if (kind === 'hc') h += _intelRenderHmChanceBody(data);
+  h += '</div>';
+
+  // Footer with Open underlying data link (debug aid per spec; visible always
+  // since the URL is informational).
+  h += '<div style="padding:12px 24px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--surface);flex-shrink:0">';
+  h += '<a href="' + _intelEsc(meta.debug_data_url || '#') + '" target="_blank" rel="noopener" style="font-size:11px;color:var(--text-3);text-decoration:none">Open underlying data ' + String.fromCharCode(8594) + '</a>';
+  h += '<button type="button" id="intel-popout-close-footer" style="padding:6px 14px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);border-radius:6px;cursor:pointer;font-size:12px">Close</button>';
+  h += '</div>';
+
+  modal.innerHTML = h;
+  const closeBtn = modal.querySelector('#intel-popout-close');
+  if (closeBtn) closeBtn.addEventListener('click', function () { backdrop.remove(); });
+  const closeBtnF = modal.querySelector('#intel-popout-close-footer');
+  if (closeBtnF) closeBtnF.addEventListener('click', function () { backdrop.remove(); });
+}
+
+function _intelRenderTeamHealthBody(d) {
+  const scores = d.scores || {};
+  let h = '';
+
+  // 5-score grid
+  const rows = [
+    { key: 'overall',    label: 'Overall' },
+    { key: 'leadership', label: 'Leadership' },
+    { key: 'comp',       label: 'Compensation' },
+    { key: 'growth',     label: 'Growth' },
+    { key: 'balance',    label: 'Work-life balance' },
+  ];
+  h += '<div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px">';
+  for (let i = 0; i < rows.length; i++) {
+    const v = scores[rows[i].key];
+    const pct = v != null ? Math.max(0, Math.min(100, Number(v))) : null;
+    const bandCls = pct == null ? '' : pct >= 75 ? 'high' : pct >= 50 ? 'medium' : 'low';
+    h += '<div style="background:var(--surface-2,#0f1118);border:1px solid var(--border);border-radius:6px;padding:10px 8px;text-align:center">';
+    h += '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:4px">' + _intelEsc(rows[i].label) + '</div>';
+    h += '<div style="font-size:20px;font-weight:600;color:var(--text)">' + (pct == null ? String.fromCharCode(8212) : _intelEsc(pct)) + '</div>';
+    if (bandCls) h += '<div style="font-size:9.5px;color:var(--text-4);text-transform:uppercase;margin-top:2px">' + bandCls + '</div>';
+    h += '</div>';
+  }
+  h += '</div>';
+
+  // Narrative
+  if (d.narrative) {
+    h += '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">Narrative summary</div>';
+    h += '<p style="margin:0;font-size:13px;line-height:1.6;color:var(--text-2)">' + _intelEsc(d.narrative) + '</p></div>';
+  }
+
+  // Anecdotes / sources list
+  const anecdotes = Array.isArray(d.anecdotes) ? d.anecdotes : (Array.isArray(d.sources) ? d.sources : []);
+  if (anecdotes.length) {
+    h += '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">What employees say</div>';
+    h += '<ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px">';
+    for (let i = 0; i < anecdotes.length; i++) {
+      const a = anecdotes[i];
+      const src = a.source || a.name || '';
+      const url = a.url || '';
+      const quote = a.quote || a.anchor_quote || '';
+      const date = a.date || '';
+      const topic = a.topic || '';
+      const verdict = a.verdict || a.sentiment || '';
+      const verdictCls = verdict === 'good' || verdict === 'positive' ? 'high' : verdict === 'concerning' || verdict === 'negative' ? 'low' : '';
+      h += '<li style="background:var(--surface-2,#0f1118);border:1px solid var(--border);border-radius:6px;padding:10px 12px">';
+      h += '<div style="display:flex;gap:6px;align-items:baseline;font-size:11px;color:var(--text-3);margin-bottom:4px">';
+      if (src) h += '<strong style="color:var(--text-2);text-transform:capitalize">' + _intelEsc(src) + '</strong>';
+      if (topic) h += '<span>' + String.fromCharCode(183) + ' ' + _intelEsc(topic) + '</span>';
+      if (date) h += '<span>' + String.fromCharCode(183) + ' ' + _intelEsc(date) + '</span>';
+      if (verdictCls) h += '<span class="pop-badge ' + verdictCls + '" style="margin-left:auto">' + _intelEsc(verdict) + '</span>';
+      h += '</div>';
+      h += '<div style="font-size:12.5px;line-height:1.5;color:var(--text)">' + String.fromCharCode(0x201C) + _intelEsc(quote) + String.fromCharCode(0x201D) + '</div>';
+      if (url) h += '<div style="margin-top:4px"><a href="' + _intelEsc(url) + '" target="_blank" rel="noopener" style="font-size:10.5px;color:var(--link,#58a6ff);text-decoration:none">source ' + String.fromCharCode(8594) + '</a></div>';
+      h += '</li>';
+    }
+    h += '</ul></div>';
+  }
+
+  // Providers + meta
+  if (Array.isArray(d.providers_called) && d.providers_called.length) {
+    h += '<div style="font-size:10.5px;color:var(--text-4);border-top:1px dashed var(--border);padding-top:10px">Providers: ' + d.providers_called.map(function (p) { return _intelEsc(p); }).join(' ' + String.fromCharCode(183) + ' ') + '</div>';
+  }
+  if (d.synthesized_at) {
+    h += '<div style="font-size:10.5px;color:var(--text-4)">Synthesized: ' + _intelEsc(String(d.synthesized_at).slice(0, 10)) + '</div>';
+  }
+  return h;
+}
+
+function _intelRenderInterviewLikelihoodBody(d) {
+  let h = '';
+
+  // Hero — % + confidence
+  h += '<div style="display:flex;align-items:baseline;gap:14px;padding:16px 18px;background:var(--surface-2,#0f1118);border:1px solid var(--border);border-radius:8px">';
+  h += '<div style="font-size:36px;font-weight:700;color:var(--text);line-height:1">' + _intelEsc(d.likelihood_pct != null ? d.likelihood_pct : String.fromCharCode(8212)) + '%</div>';
+  if (d.confidence) h += '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-3)">' + _intelEsc(d.confidence) + ' confidence</div>';
+  h += '</div>';
+
+  if (d.opening_talking_point) {
+    h += '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">Lead with</div>';
+    h += '<p style="margin:0;padding:12px 14px;font-size:13px;line-height:1.55;color:var(--text);background:rgba(99,102,241,0.06);border-left:3px solid rgba(99,102,241,0.5);border-radius:0 4px 4px 0">' + _intelEsc(d.opening_talking_point) + '</p></div>';
+  }
+
+  if (d.competitive_edge) {
+    h += '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">Competitive edge</div>';
+    h += '<p style="margin:0;font-size:12.5px;line-height:1.55;color:var(--text-2)">' + _intelEsc(d.competitive_edge) + '</p></div>';
+  }
+
+  if (Array.isArray(d.top_strengths) && d.top_strengths.length) {
+    h += '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">Top strengths</div>';
+    h += '<ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px">';
+    for (let i = 0; i < d.top_strengths.length; i++) {
+      const s = d.top_strengths[i];
+      h += '<li style="background:var(--surface-2,#0f1118);border:1px solid var(--border);border-radius:6px;padding:10px 12px">';
+      if (s.claim) h += '<div style="font-size:13px;color:var(--text);line-height:1.5;font-weight:500">' + _intelEsc(s.claim) + '</div>';
+      if (s.evidence) h += '<div style="font-size:11px;color:var(--text-3);line-height:1.5;margin-top:4px">' + _intelEsc(s.evidence) + '</div>';
+      h += '</li>';
+    }
+    h += '</ul></div>';
+  }
+
+  if (Array.isArray(d.real_gaps) && d.real_gaps.length) {
+    h += '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">Gaps to address</div>';
+    h += '<ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px">';
+    for (let i = 0; i < d.real_gaps.length; i++) {
+      const g = d.real_gaps[i];
+      const sevCls = g.severity === 'significant' ? 'low' : g.severity === 'minor' ? 'medium' : '';
+      h += '<li style="background:var(--surface-2,#0f1118);border:1px solid var(--border);border-radius:6px;padding:10px 12px">';
+      h += '<div style="display:flex;gap:8px;align-items:baseline;margin-bottom:2px">';
+      if (g.severity) h += '<span class="pop-badge ' + sevCls + '">' + _intelEsc(g.severity) + '</span>';
+      h += '</div>';
+      h += '<div style="font-size:12.5px;color:var(--text-2);line-height:1.55">' + _intelEsc(g.gap || g) + '</div>';
+      h += '</li>';
+    }
+    h += '</ul></div>';
+  }
+
+  if (Array.isArray(d.reason_bullets) && d.reason_bullets.length) {
+    h += '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">Why this percentage</div>';
+    h += '<ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.55;color:var(--text-2)">';
+    for (let i = 0; i < d.reason_bullets.length; i++) {
+      h += '<li style="margin-bottom:4px">' + _intelEsc(d.reason_bullets[i]) + '</li>';
+    }
+    h += '</ul></div>';
+  }
+
+  if (d.rationale) {
+    h += '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">Rationale (adversarial sweep)</div>';
+    h += '<p style="margin:0;font-size:12px;line-height:1.6;color:var(--text-2)">' + _intelEsc(d.rationale) + '</p></div>';
+  }
+
+  // Model estimates table
+  if (Array.isArray(d.model_estimates) && d.model_estimates.length) {
+    h += '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">Per-model estimates</div>';
+    h += '<div style="display:grid;grid-template-columns:1fr auto auto;gap:6px 12px;font-size:11.5px;color:var(--text-2);background:var(--surface-2,#0f1118);border:1px solid var(--border);border-radius:6px;padding:10px 12px">';
+    for (let i = 0; i < d.model_estimates.length; i++) {
+      const m = d.model_estimates[i];
+      h += '<div style="color:var(--text-2)">' + _intelEsc(m.model || '') + '</div>';
+      h += '<div style="color:var(--text);font-weight:600;text-align:right">' + _intelEsc(m.pct != null ? m.pct + '%' : '') + '</div>';
+      h += '<div style="color:var(--text-4);text-align:right;font-size:10.5px;text-transform:uppercase">' + _intelEsc(m.confidence || '') + '</div>';
+    }
+    h += '</div></div>';
+  }
+
+  // Dealbreaker classification
+  if (d.dealbreaker_classification) {
+    const dc = d.dealbreaker_classification;
+    const sections = [
+      { key: 'verified',     label: 'Verified',     cls: 'high'   },
+      { key: 'corroborated', label: 'Corroborated', cls: 'medium' },
+      { key: 'cut',          label: 'Cut',          cls: 'low'    },
+    ];
+    h += '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">Dealbreaker classification</div>';
+    for (let i = 0; i < sections.length; i++) {
+      const arr = dc[sections[i].key];
+      if (!Array.isArray(arr) || !arr.length) continue;
+      h += '<div style="margin-top:6px"><span class="pop-badge ' + sections[i].cls + '" style="margin-right:6px">' + _intelEsc(sections[i].label) + '</span></div>';
+      h += '<ul style="margin:4px 0 8px;padding-left:18px;font-size:11.5px;line-height:1.55;color:var(--text-3)">';
+      for (let j = 0; j < arr.length; j++) {
+        h += '<li>' + _intelEsc(arr[j]) + '</li>';
+      }
+      h += '</ul>';
+    }
+    h += '</div>';
+  }
+
+  if (Array.isArray(d.citations) && d.citations.length) {
+    h += '<div style="font-size:10.5px;color:var(--text-4);border-top:1px dashed var(--border);padding-top:10px;line-height:1.6">Citations: ' + d.citations.map(function (c) { return _intelEsc(c); }).join(' ' + String.fromCharCode(183) + ' ') + '</div>';
+  }
+  if (Array.isArray(d.models_used) && d.models_used.length) {
+    h += '<div style="font-size:10.5px;color:var(--text-4)">Models: ' + d.models_used.map(function (m) { return _intelEsc(m); }).join(' ' + String.fromCharCode(183) + ' ') + '</div>';
+  }
+  if (d.generated_at) {
+    h += '<div style="font-size:10.5px;color:var(--text-4)">Generated: ' + _intelEsc(String(d.generated_at).slice(0, 10)) + (d.cost_usd != null ? ' ' + String.fromCharCode(183) + ' $' + Number(d.cost_usd).toFixed(2) : '') + '</div>';
+  }
+  return h;
+}
+
+function _intelRenderHmChanceBody(d) {
+  let h = '';
+
+  // Lead with competitive edges (per master prompt 12.16.12)
+  if (Array.isArray(d.competitive_edges_first) && d.competitive_edges_first.length) {
+    h += '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">Your competitive edges (lead with these)</div>';
+    h += '<ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px">';
+    for (let i = 0; i < d.competitive_edges_first.length; i++) {
+      h += '<li style="background:rgba(16,163,74,0.06);border:1px solid rgba(16,163,74,0.25);border-radius:6px;padding:10px 12px;font-size:12.5px;line-height:1.55;color:var(--text)">' + _intelEsc(d.competitive_edges_first[i]) + '</li>';
+    }
+    h += '</ul></div>';
+  }
+
+  // Hero — % + confidence
+  h += '<div style="display:flex;align-items:baseline;gap:14px;padding:16px 18px;background:var(--surface-2,#0f1118);border:1px solid var(--border);border-radius:8px">';
+  h += '<div style="font-size:36px;font-weight:700;color:var(--text);line-height:1">' + _intelEsc(d.visibility_pct != null ? d.visibility_pct : String.fromCharCode(8212)) + '%</div>';
+  if (d.confidence) h += '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-3)">' + _intelEsc(d.confidence) + ' confidence</div>';
+  h += '</div>';
+
+  if (Array.isArray(d.visibility_factors) && d.visibility_factors.length) {
+    h += '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">Visibility factors</div>';
+    h += '<ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px">';
+    for (let i = 0; i < d.visibility_factors.length; i++) {
+      const f = d.visibility_factors[i];
+      const w = String(f.weight || '').toLowerCase();
+      const wCls = (w === 'high' || w === 'medium' || w === 'low') ? w : '';
+      h += '<li style="background:var(--surface-2,#0f1118);border:1px solid var(--border);border-radius:6px;padding:10px 12px">';
+      h += '<div style="display:flex;gap:8px;align-items:baseline;margin-bottom:4px">';
+      if (wCls) h += '<span class="pop-badge ' + wCls + '">' + _intelEsc(w) + '</span>';
+      if (f.factor) h += '<strong style="font-size:13px;color:var(--text);line-height:1.4">' + _intelEsc(f.factor) + '</strong>';
+      h += '</div>';
+      if (f.evidence) h += '<div style="font-size:11.5px;color:var(--text-3);line-height:1.55">' + _intelEsc(f.evidence) + '</div>';
+      h += '</li>';
+    }
+    h += '</ul></div>';
+  }
+
+  if (Array.isArray(d.reason_bullets) && d.reason_bullets.length) {
+    h += '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">Why this percentage</div>';
+    h += '<ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.55;color:var(--text-2)">';
+    for (let i = 0; i < d.reason_bullets.length; i++) {
+      h += '<li style="margin-bottom:4px">' + _intelEsc(d.reason_bullets[i]) + '</li>';
+    }
+    h += '</ul></div>';
+  }
+
+  if (d.best_path_to_hm) {
+    h += '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">Best path to HM</div>';
+    h += '<p style="margin:0;padding:12px 14px;font-size:13px;line-height:1.55;color:var(--text);background:rgba(99,102,241,0.06);border-left:3px solid rgba(99,102,241,0.5);border-radius:0 4px 4px 0">' + _intelEsc(d.best_path_to_hm) + '</p></div>';
+  }
+
+  if (d.candidate_volume_estimate) {
+    h += '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">Candidate volume</div>';
+    h += '<p style="margin:0;font-size:12.5px;line-height:1.55;color:var(--text-2)">' + _intelEsc(d.candidate_volume_estimate) + '</p></div>';
+  }
+
+  if (d.rationale) {
+    h += '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">Rationale (adversarial sweep)</div>';
+    h += '<p style="margin:0;font-size:12px;line-height:1.6;color:var(--text-2)">' + _intelEsc(d.rationale) + '</p></div>';
+  }
+
+  // Model estimates table
+  if (Array.isArray(d.model_estimates) && d.model_estimates.length) {
+    h += '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">Per-model estimates</div>';
+    h += '<div style="display:grid;grid-template-columns:1fr auto auto;gap:6px 12px;font-size:11.5px;color:var(--text-2);background:var(--surface-2,#0f1118);border:1px solid var(--border);border-radius:6px;padding:10px 12px">';
+    for (let i = 0; i < d.model_estimates.length; i++) {
+      const m = d.model_estimates[i];
+      h += '<div style="color:var(--text-2)">' + _intelEsc(m.model || '') + '</div>';
+      h += '<div style="color:var(--text);font-weight:600;text-align:right">' + _intelEsc(m.pct != null ? m.pct + '%' : '') + '</div>';
+      h += '<div style="color:var(--text-4);text-align:right;font-size:10.5px;text-transform:uppercase">' + _intelEsc(m.confidence || '') + '</div>';
+    }
+    h += '</div></div>';
+  }
+
+  // Dealbreaker classification
+  if (d.dealbreaker_classification) {
+    const dc = d.dealbreaker_classification;
+    const sections = [
+      { key: 'verified',     label: 'Verified',     cls: 'high'   },
+      { key: 'corroborated', label: 'Corroborated', cls: 'medium' },
+      { key: 'cut',          label: 'Cut',          cls: 'low'    },
+    ];
+    h += '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">Dealbreaker classification</div>';
+    for (let i = 0; i < sections.length; i++) {
+      const arr = dc[sections[i].key];
+      if (!Array.isArray(arr) || !arr.length) continue;
+      h += '<div style="margin-top:6px"><span class="pop-badge ' + sections[i].cls + '" style="margin-right:6px">' + _intelEsc(sections[i].label) + '</span></div>';
+      h += '<ul style="margin:4px 0 8px;padding-left:18px;font-size:11.5px;line-height:1.55;color:var(--text-3)">';
+      for (let j = 0; j < arr.length; j++) {
+        h += '<li>' + _intelEsc(arr[j]) + '</li>';
+      }
+      h += '</ul>';
+    }
+    h += '</div>';
+  }
+
+  if (Array.isArray(d.citations) && d.citations.length) {
+    h += '<div style="font-size:10.5px;color:var(--text-4);border-top:1px dashed var(--border);padding-top:10px;line-height:1.6">Citations: ' + d.citations.map(function (c) { return _intelEsc(c); }).join(' ' + String.fromCharCode(183) + ' ') + '</div>';
+  }
+  if (Array.isArray(d.models_used) && d.models_used.length) {
+    h += '<div style="font-size:10.5px;color:var(--text-4)">Models: ' + d.models_used.map(function (m) { return _intelEsc(m); }).join(' ' + String.fromCharCode(183) + ' ') + '</div>';
+  }
+  if (d.generated_at) {
+    h += '<div style="font-size:10.5px;color:var(--text-4)">Generated: ' + _intelEsc(String(d.generated_at).slice(0, 10)) + (d.cost_usd != null ? ' ' + String.fromCharCode(183) + ' $' + Number(d.cost_usd).toFixed(2) : '') + '</div>';
+  }
+  return h;
+}
+
+// Thin wrappers used by drawer chip click handlers.
+function _openTeamHealthPopout(companySlug, companyName) {
+  _openIntelPopoutModal({
+    kind: 'th',
+    slug: companySlug,
+    title: 'Team Health' + (companyName ? ' ' + String.fromCharCode(8212) + ' ' + companyName : ''),
+    ariaLabel: 'Team Health detail',
+  });
+}
+window._openTeamHealthPopout = _openTeamHealthPopout;
+
+function _openInterviewLikelihoodPopout(num, slug) {
+  _openIntelPopoutModal({
+    kind: 'il',
+    row: num,
+    slug: slug,
+    title: 'Interview Likelihood',
+    ariaLabel: 'Interview Likelihood detail',
+  });
+}
+window._openInterviewLikelihoodPopout = _openInterviewLikelihoodPopout;
+
+function _openHmChancePopout(num, slug) {
+  _openIntelPopoutModal({
+    kind: 'hc',
+    row: num,
+    slug: slug,
+    title: 'HM Chance ' + String.fromCharCode(8212) + ' chance the hiring manager sees your application',
+    ariaLabel: 'HM Chance detail',
+  });
+}
+window._openHmChancePopout = _openHmChancePopout;
 
 /* Phase 7.1 (2026-05-22) — Pipeline flow modal.
  * Replaces the Pipeline-pending stat-cell drill-in with a richer 5-stage view

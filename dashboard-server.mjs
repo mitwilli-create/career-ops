@@ -8600,6 +8600,38 @@ async function generatePack(){
     return;
   }
 
+  // ── Phase 5.1 (Closure 4, 2026-05-23) — Team Health detail endpoint ───────
+  // Backs the full-modal _openTeamHealthPopout renderer in build-dashboard.mjs.
+  // Reads data/team-health/<company-slug>.json (composite produced by Phase 1.5
+  // role-enrichment toxicity-derived pipeline OR future Chrome MCP scrape via
+  // lib/team-health.mjs synthesizeTeamHealth path). Returns the raw cache file
+  // plus an age_days + stale flag against the lib's 3-day TTL.
+  if (url.startsWith('/api/team-health') && req.method === 'GET') {
+    (async () => {
+      try {
+        let slug = String(query.slug || '').trim().toLowerCase();
+        if (!slug) {
+          const company = String(query.company || '').trim();
+          if (company) {
+            slug = company.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+          }
+        }
+        if (!slug) return json({ ok: false, error: 'slug or company required' }, 400);
+        if (!/^[a-z0-9._-]+$/.test(slug)) return json({ ok: false, error: 'invalid slug' }, 400);
+        const p = join(ROOT, 'data', 'team-health', slug + '.json');
+        if (!existsSync(p)) return json({ ok: false, error: 'not-found', slug, reason: 'no team-health cache yet — run scripts/agents/role-enrichment.mjs --slug ' + slug }, 404);
+        const j = JSON.parse(readFileSync(p, 'utf-8'));
+        const synthAt = j.synthesized_at || (j._meta && j._meta.source_as_of) || null;
+        const ageMs = synthAt ? Date.now() - Date.parse(synthAt) : null;
+        const ageDays = ageMs != null ? Math.floor(ageMs / (1000 * 60 * 60 * 24)) : null;
+        return json({ ok: true, slug, age_days: ageDays, stale: ageDays != null && ageDays > 3, data: j });
+      } catch (err) {
+        return json({ ok: false, error: err.message }, 500);
+      }
+    })();
+    return;
+  }
+
   // ── E4 (2026-05-22) — 3 polish modes (lite/smart/heavy) + Drive push ──────
   // Lightweight alternative to /api/apply-pack-polish. The existing endpoint
   // spawns a 4-round critic/author/adjudicator loop (heavy spend); /api/polish

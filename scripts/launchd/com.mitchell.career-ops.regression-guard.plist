@@ -33,9 +33,15 @@
     <key>WorkingDirectory</key>
     <string>/Users/mitchellwilliams/Documents/career-ops</string>
 
-    <!-- 06:00 PT daily. CalendarInterval Hour is local time on macOS. -->
+    <!-- 4-week calibration window (2026-05-25 → 2026-06-22): Mondays only.
+         After 4 clean Mondays, flip back to daily by removing the Weekday key.
+         See .claude/audit/regression-guard-tune-2026-05-23/notes.md for the
+         calibration plan + flip-back command.
+         CalendarInterval Hour is local time on macOS. -->
     <key>StartCalendarInterval</key>
     <dict>
+        <key>Weekday</key>
+        <integer>1</integer>
         <key>Hour</key>
         <integer>6</integer>
         <key>Minute</key>

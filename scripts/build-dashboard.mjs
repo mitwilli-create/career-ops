@@ -20793,23 +20793,38 @@ function _renderLifecycleRow(s, driveEnabled, num) {
   else if (s.pack_exists && s.polished) { applyState = 'active'; applyTitle = 'Open the JD URL + mark as Applied'; }
 
   // 09 Part 1 Item A (2026-05-22) — header renamed "Lifecycle" → "Next move".
-  // Primary CTA cluster simplified to 3 buttons (Create apply pack / Polish
-  // materials / Apply). Sync + Pre-apply demoted to secondary row below;
-  // they remain accessible but don't clutter the primary action target.
+  // Phase 4.4 (2026-05-22 evening) — primary CTA cluster expanded to 5 buttons
+  // in the canonical workflow order: Learn More → Create Apply Pack →
+  // Pre-Apply Check → Polish Materials → Apply Now. Sync edits stays as the
+  // only secondary action below the primary cluster.
+  //
+  // - Learn More: always active. Click handler (wired downstream in 4.x phases)
+  //   expands the "Why this score" + JD must-haves info section. For now it
+  //   carries data-drill so the existing drill-in mechanism picks it up.
+  // - Create Apply Pack: state machine unchanged (done if pack_exists, else active).
+  // - Pre-Apply Check: stays disabled until Cluster K / Phase 4.5a (Drive folder
+  //   scan via Gemini) ships. Tooltip explains the upcoming behavior.
+  // - Polish Materials: state machine unchanged.
+  // - Apply Now: state machine unchanged; click handler (wired in Phase 4.5c)
+  //   opens the canonical employer URL only — no clipboard modal, no bookmarklet
+  //   per Mitchell's Q15 locked answer.
+  //
   // Contextual alignment note is populated by /api/context-note (lib at
   // dashboard-server.mjs:8755) which queries the corpus index and runs Sonnet
   // for a 1-2 sentence "Screen for: X / Lead with: Y" note grounded in
   // cv.md + hm-intel + cv-tailored highlights.
+  const learnMoreTitle = 'Expand the role rationale, must-haves, and scoring detail';
   const rowHtml =
     '<div class="drawer-lifecycle-note" style="font-size:11.5px;color:var(--text-3,#6b7280);margin-bottom:8px;font-style:italic">' + String.fromCharCode(8230) + '</div>' +
     '<div class="drawer-lifecycle-buttons">' +
-      btn('Create apply pack', createState, createTitle) +
-      btn('Polish materials',  polishState, polishTitle) +
-      btn('Apply',             applyState,  applyTitle) +
+      btn('Learn More',        'active',     learnMoreTitle) +
+      btn('Create Apply Pack', createState,  createTitle) +
+      btn('Pre-Apply Check',   preApplyState, preApplyTitle) +
+      btn('Polish Materials',  polishState,  polishTitle) +
+      btn('Apply Now',         applyState,   applyTitle) +
     '</div>' +
     '<div class="drawer-lifecycle-buttons-secondary" style="display:flex;gap:6px;margin-top:6px;font-size:11px;opacity:0.7">' +
       btn('Sync edits', syncState, syncTitle) +
-      btn('Pre-apply',  preApplyState, preApplyTitle) +
     '</div>';
   return '<div class="drawer-lifecycle-section">' +
     '<div class="drawer-lifecycle-header">Next move</div>' +

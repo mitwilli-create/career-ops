@@ -13445,7 +13445,7 @@ async function build() {
   ` : `
   <div class="panel" id="apply-now-section">
     <h2 class="panel-title collapsible" onclick="togglePanel('apply-now-section',event)">Apply-Now Queue <span class="panel-chevron">▾</span></h2>
-    <p style="color:#57606a;font-size:13px">No roles scored 4.0 or above right now. Check your highest-scoring discards below, or wait for the next batch to finish.</p>
+    <p style="color:var(--text-3);font-size:13px">No roles scored 4.0 or above right now. Check your highest-scoring discards below, or wait for the next batch to finish.</p>
   </div>
   `}
 
@@ -22200,7 +22200,7 @@ function rowActions(r) {
 }
 
 function buildTable(rows, panelId) {
-  if (!rows || !rows.length) return '<p style="color:#57606a;font-size:13px;margin:0">No items.</p>';
+  if (!rows || !rows.length) return '<p style="color:var(--text-3);font-size:13px;margin:0">No items.</p>';
   // BRAVO 2026-05-19 (Phase A.10): scope tbody id per-panel so multiple
   // buildTable() invocations on the same page (Recent Evals + bucket modals)
   // each get unique tbody ids that sortTable() can target.
@@ -22298,7 +22298,7 @@ function renderStatPanel(key, data) {
     const recentRows = (data.recent || rows).slice(0, 30);
     const recentTotal = recentRows.length;
     const hasMore = recentTotal > 5;
-    return \`<div class="stat-panel-title">\${esc(title)} <span class="pill">\${count}</span> <span style="font-size:12px;color:#57606a;font-weight:400">· live</span></div>
+    return \`<div class="stat-panel-title">\${esc(title)} <span class="pill">\${count}</span> <span style="font-size:12px;color:var(--text-3);font-weight:400">· live</span></div>
       <div style="margin-bottom:16px"><div class="bucket-grid bucket-grid-row" style="margin-top:8px">\${bucketCards}<span class="bucket-divider" aria-hidden="true"></span>\${statusCards}</div></div>
       <div class="recent-evals-header">
         <strong style="font-size:13px">Recent evaluations</strong>
@@ -22357,7 +22357,7 @@ function renderStatPanel(key, data) {
     const staleWarning = staleCount > 0
       ? \`<button type="button" class="stale-pipeline-alert-link" onclick="openStalePipelineModal(30)" aria-label="Open stale pipeline items list (\${staleCount} items >=30 days old)">⚠️ <strong>\${staleCount}</strong> items have been pending 30+ days — postings may be closed.</button>\`
       : '';
-    return \`<div class="stat-panel-title">\${esc(title)} <span class="pill">\${data.total}</span> <span style="font-size:12px;color:#57606a;font-weight:400">· live</span></div>
+    return \`<div class="stat-panel-title">\${esc(title)} <span class="pill">\${data.total}</span> <span style="font-size:12px;color:var(--text-3);font-weight:400">· live</span></div>
       <div class="bucket-grid" style="margin-bottom:12px">\${tierCards}</div>
       \${staleWarning}
       <strong style="font-size:13px">Pending URLs — click Open to preview, then paste URL into chat to evaluate</strong>
@@ -22384,7 +22384,7 @@ function renderStatPanel(key, data) {
     };
     if (!batches.length) {
       return \`<div class="stat-panel-title">\${esc(title)} <span class="pill">0</span></div>
-        <p style="color:#57606a;font-size:13px;margin:0">No batch runs recorded yet.</p>\`;
+        <p style="color:var(--text-3);font-size:13px;margin:0">No batch runs recorded yet.</p>\`;
     }
     const rowsHtml = batches.map((b, i) => {
       const avg = b.avgScore != null ? scoreBadge(b.avgScore) : '<span class="muted">—</span>';
@@ -22405,7 +22405,7 @@ function renderStatPanel(key, data) {
     const successRate = (totalCompleted + totalFailed) > 0
       ? Math.round((totalCompleted / (totalCompleted + totalFailed)) * 100)
       : null;
-    return \`<div class="stat-panel-title">\${esc(title)} <span class="pill">\${data.total}</span> <span style="font-size:12px;color:#57606a;font-weight:400">· last \${batches.length}</span></div>
+    return \`<div class="stat-panel-title">\${esc(title)} <span class="pill">\${data.total}</span> <span style="font-size:12px;color:var(--text-3);font-weight:400">· last \${batches.length}</span></div>
       <div class="bucket-grid" style="margin-bottom:12px">
         <div class="bucket-card"><div class="bval">\${totalCompleted}</div><div class="blbl">Completed</div></div>
         <div class="bucket-card"><div class="bval">\${totalFailed}</div><div class="blbl">Failed</div></div>
@@ -22442,12 +22442,12 @@ function renderStatPanel(key, data) {
         <td class="muted-text">\${r.rolesFound || 0}</td>
       </tr>\`;
     }).join('');
-    return \`<div class="stat-panel-title">\${esc(data.title || 'Companies Tracked')} <span class="pill">\${data.total || crows.length}</span> <span style="font-size:12px;color:#57606a;font-weight:400">· live</span></div>
+    return \`<div class="stat-panel-title">\${esc(data.title || 'Companies Tracked')} <span class="pill">\${data.total || crows.length}</span> <span style="font-size:12px;color:var(--text-3);font-weight:400">· live</span></div>
       <div class="bucket-grid" style="margin-bottom:12px">\${bucketCards}</div>
-      <p style="font-size:12px;color:#57606a;margin:0 0 8px">Click a row to filter Apply-Now / All Evaluations to that company.</p>
+      <p style="font-size:12px;color:var(--text-3);margin:0 0 8px">Click a row to filter Apply-Now / All Evaluations to that company.</p>
       <div style="overflow-x:auto;max-height:440px;overflow-y:auto"><table>
         <thead><tr><th>Company</th><th>Portal</th><th>Evals</th><th>Apply-Now</th><th>Last scanned</th><th>Roles found</th></tr></thead>
-        <tbody>\${trows || '<tr><td colspan="6" style="color:#57606a;font-size:12px">No companies yet.</td></tr>'}</tbody>
+        <tbody>\${trows || '<tr><td colspan="6" style="color:var(--text-3);font-size:12px">No companies yet.</td></tr>'}</tbody>
       </table></div>\`;
   }
 
@@ -22469,7 +22469,7 @@ function renderStatPanel(key, data) {
     }).join('');
     const chart = daily.length
       ? \`<svg viewBox="0 0 \${W} \${H}" preserveAspectRatio="none" width="100%" height="60" role="img" aria-label="Scans per day, last \${daily.length} days" style="background:rgba(0,0,0,0.02);border-radius:4px">\${bars}</svg>\`
-      : '<p style="color:#57606a;font-size:12px;margin:0">No scan history yet.</p>';
+      : '<p style="color:var(--text-3);font-size:12px;margin:0">No scan history yet.</p>';
     const trows = recent.slice(0, 100).map(r => {
       const ok = (r.newRolesFound || 0) > 0;
       const status = ok
@@ -22483,7 +22483,7 @@ function renderStatPanel(key, data) {
         <td>\${status}</td>
       </tr>\`;
     }).join('');
-    return \`<div class="stat-panel-title">\${esc(data.title || 'URLs Scanned')} <span class="pill">\${data.total || 0}</span> <span style="font-size:12px;color:#57606a;font-weight:400">· live</span></div>
+    return \`<div class="stat-panel-title">\${esc(data.title || 'URLs Scanned')} <span class="pill">\${data.total || 0}</span> <span style="font-size:12px;color:var(--text-3);font-weight:400">· live</span></div>
       <div class="bucket-grid" style="margin-bottom:12px">\${bucketCards}</div>
       <div style="margin-bottom:12px"><strong style="font-size:13px">Scans per day — last \${daily.length} days</strong>
         <div style="margin-top:6px">\${chart}</div>
@@ -22491,12 +22491,12 @@ function renderStatPanel(key, data) {
       <strong style="font-size:13px">Recent scan events</strong>
       <div style="margin-top:10px;overflow-x:auto;max-height:440px;overflow-y:auto"><table>
         <thead><tr><th>Date</th><th>Company</th><th>Portal</th><th>New roles</th><th>Status</th></tr></thead>
-        <tbody>\${trows || '<tr><td colspan="5" style="color:#57606a;font-size:12px">No scan history yet.</td></tr>'}</tbody>
+        <tbody>\${trows || '<tr><td colspan="5" style="color:var(--text-3);font-size:12px">No scan history yet.</td></tr>'}</tbody>
       </table></div>\`;
   }
 
   // Default: title + full table
-  return \`<div class="stat-panel-title">\${esc(title)} \${count ? \`<span class="pill">\${count}</span>\` : ''} <span style="font-size:12px;color:#57606a;font-weight:400">· live</span></div>
+  return \`<div class="stat-panel-title">\${esc(title)} \${count ? \`<span class="pill">\${count}</span>\` : ''} <span style="font-size:12px;color:var(--text-3);font-weight:400">· live</span></div>
     \${buildTable(rows, key)}\`;
 }
 
@@ -31639,7 +31639,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   }
   .pa-chip-ok    { background: rgba(16,185,129,0.14); color: #10b981; border-color: rgba(16,185,129,0.32); }
   .pa-chip-warn  { background: rgba(245,158,11,0.14); color: #f59e0b; border-color: rgba(245,158,11,0.32); }
-  .pa-chip-bad   { background: rgba(220,38,38,0.14);  color: #dc2626; border-color: rgba(220,38,38,0.32); }
+  .pa-chip-bad   { background: rgba(220,38,38,0.14);  color: var(--red-fg); border-color: rgba(220,38,38,0.32); }
   .pa-chip-muted { background: rgba(148,163,184,0.10); color: var(--text-4); border-color: rgba(148,163,184,0.18); }
   /* 4.13 (2026-05-22) — clickable batch-status chip */
   .pa-chip-button { cursor: pointer; font: inherit; }

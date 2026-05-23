@@ -15463,7 +15463,10 @@ function openRightRailForDetail(idx, detailRow) {
     const applyBtnEl = actionsEl.querySelector('button[data-drawer-action="apply"]');
     if (applyBtnEl && applyHref) {
       applyBtnEl.addEventListener('click', () => {
-        window.open(applyHref, '_blank', 'noopener');
+        // Phase 4.3 (2026-05-23) — Mitchell overrode Q15 (no clipboard
+        // modal) on 2026-05-23. Route through staging modal so the apply
+        // form is paste-ready before navigation.
+        _openApplyClipboardModal(num, applyHref);
       });
     }
     const materialsBtnEl = actionsEl.querySelector('button[data-drawer-action="materials"]');
@@ -20624,7 +20627,10 @@ async function _drawerLoadLifecycle(num, company, mountEl, applyHref) {
       applyNowBtn.addEventListener('click', function (e) {
         e.preventDefault();
         e.stopPropagation();
-        window.open(applyHref, '_blank', 'noopener');
+        // Phase 4.3 (2026-05-23) — Mitchell overrode Q15 (no clipboard
+        // modal) on 2026-05-23. Route through staging modal so the apply
+        // form is paste-ready before navigation.
+        _openApplyClipboardModal(num, applyHref);
       });
     } else if (applyNowBtn && !applyHref) {
       // No canonical URL resolved for this row — surface the gap rather than
@@ -21202,6 +21208,239 @@ async function _drawerLoadArtifactManifest(num, mountEl) {
   }
 }
 window._drawerLoadArtifactManifest = _drawerLoadArtifactManifest;
+
+/* Phase 4.3 (2026-05-23) — Apply Now clipboard staging modal.
+ * Triggered by both the drawer rail "Apply" button and the 5-button CTA
+ * "Apply Now" lifecycle button. Workflow: fetch form-fields.md, render
+ * with per-section Copy buttons + Copy all, then "Open Apply form" CTA
+ * fires window.open to the canonical URL. Handles empty-state when
+ * form-fields.md doesn't exist for the row's apply-pack.
+ *
+ * Bug-class safe: pure string concat, no template literals, no
+ * single-backslash escapes inside string literals (outer template would
+ * unescape them on emit). Uses String.fromCharCode for special chars
+ * and \\u0027 for in-string apostrophes per pattern in
+ * _openCredentialsModal below. */
+async function _openApplyClipboardModal(num, applyHref) {
+  if (!num) {
+    if (applyHref) window.open(applyHref, '_blank', 'noopener');
+    return;
+  }
+  var existing = document.getElementById('apply-clipboard-modal-backdrop');
+  if (existing) existing.remove();
+  var backdrop = document.createElement('div');
+  backdrop.id = 'apply-clipboard-modal-backdrop';
+  backdrop.setAttribute('role', 'dialog');
+  backdrop.setAttribute('aria-modal', 'true');
+  backdrop.setAttribute('aria-label', 'Apply Now — staged form fields');
+  backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:99999;padding:24px';
+  backdrop.addEventListener('click', function (e) {
+    if (e.target === backdrop) backdrop.remove();
+  });
+  var modal = document.createElement('div');
+  modal.id = 'apply-clipboard-modal';
+  modal.style.cssText = 'background:var(--surface,#11131c);border:1px solid var(--border,#232737);border-radius:8px;max-width:760px;width:100%;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;color:var(--text,#fafafa);font-family:inherit;box-shadow:0 18px 48px rgba(0,0,0,0.5)';
+  modal.innerHTML = '<div style="padding:20px 24px;font-size:13px;color:var(--text-3,#b8b8c0);letter-spacing:0.04em">Loading staged form fields' + String.fromCharCode(8230) + '</div>';
+  backdrop.appendChild(modal);
+  document.body.appendChild(backdrop);
+  function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function _escCloseHandler(e) {
+    if (e.key === 'Escape') { backdrop.remove(); document.removeEventListener('keydown', _escCloseHandler); }
+  }
+  document.addEventListener('keydown', _escCloseHandler);
+  try {
+    var mres = await fetch('/api/artifact-manifest?row=' + encodeURIComponent(String(num)), { cache: 'no-store' });
+    if (!mres.ok) {
+      if (mres.status === 404) {
+        _renderApplyClipboardEmptyState(modal, num, null, applyHref, backdrop, 'No apply-pack exists for row ' + num + ' yet.');
+        return;
+      }
+      throw new Error('manifest HTTP ' + mres.status);
+    }
+    var mdata = await mres.json();
+    if (!mdata || !mdata.ok || !mdata.slug) {
+      throw new Error('manifest response missing slug');
+    }
+    var slug = mdata.slug;
+    var hasFormFields = Array.isArray(mdata.files) && mdata.files.some(function (f) { return f.rel === 'form-fields.md'; });
+    if (!hasFormFields) {
+      _renderApplyClipboardEmptyState(modal, num, slug, applyHref, backdrop, null);
+      return;
+    }
+    var fres = await fetch('/api/artifact?slug=' + encodeURIComponent(slug) + '&file=' + encodeURIComponent('form-fields.md'), { cache: 'no-store' });
+    if (!fres.ok) {
+      throw new Error('form-fields.md HTTP ' + fres.status);
+    }
+    var formFieldsText = await fres.text();
+    _renderApplyClipboardModal(modal, formFieldsText, slug, applyHref, backdrop);
+  } catch (err) {
+    var msg = String(err && err.message ? err.message : err);
+    var html = '<div style="padding:24px"><h2 style="margin:0 0 10px;font-size:15px">Couldn' + String.fromCharCode(39) + 't stage form fields</h2>';
+    html += '<p style="color:var(--text-2);margin:0 0 16px;font-size:13px;line-height:1.55">' + _esc(msg) + '</p>';
+    html += '<div style="display:flex;gap:8px;justify-content:flex-end">';
+    html += '<button type="button" id="apply-clipboard-cancel" style="padding:6px 14px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);border-radius:6px;cursor:pointer;font-size:12px">Close</button>';
+    if (applyHref) {
+      html += '<button type="button" id="apply-clipboard-skip" style="padding:6px 14px;border:1px solid var(--green-fg,#16a34a);background:var(--green-fg,#16a34a);color:#fff;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">Open Apply form anyway ' + String.fromCharCode(8594) + '</button>';
+    }
+    html += '</div></div>';
+    modal.innerHTML = html;
+    var cancelBtn = modal.querySelector('#apply-clipboard-cancel');
+    if (cancelBtn) cancelBtn.addEventListener('click', function () { backdrop.remove(); });
+    var skipBtn = modal.querySelector('#apply-clipboard-skip');
+    if (skipBtn) skipBtn.addEventListener('click', function () {
+      backdrop.remove();
+      if (applyHref) window.open(applyHref, '_blank', 'noopener');
+    });
+  }
+}
+window._openApplyClipboardModal = _openApplyClipboardModal;
+
+function _renderApplyClipboardModal(modal, formFieldsText, slug, applyHref, backdrop) {
+  function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  // Parse simple H2 sections from form-fields.md.
+  // Each section: "## Title" followed by paragraphs. Lines before the
+  // first H2 are skipped (title/preamble). "## Notes" is filtered out
+  // since it's internal-only.
+  var NL = String.fromCharCode(10);
+  var lines = String(formFieldsText).split(NL);
+  var sections = [];
+  var current = null;
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    if (line.indexOf('## ') === 0) {
+      if (current) sections.push(current);
+      var title = line.replace(/^##\\s*/, '').replace(/^"|"$/g, '').trim();
+      current = { title: title, lines: [] };
+    } else if (current) {
+      current.lines.push(line);
+    }
+  }
+  if (current) sections.push(current);
+  sections = sections.filter(function (s) { return s.title.toLowerCase() !== 'notes'; });
+  if (sections.length === 0) {
+    _renderApplyClipboardEmptyState(modal, null, slug, applyHref, backdrop, 'form-fields.md exists but has no parseable H2 sections.');
+    return;
+  }
+  // Helper to normalize a section body (strip surrounding horizontal rules).
+  function _bodyOf(sec) {
+    var b = sec.lines.join(NL).trim();
+    b = b.replace(/^---\\s*/g, '').replace(/\\s*---\\s*$/g, '').trim();
+    return b;
+  }
+  // Header
+  var html = '<div style="padding:18px 24px 14px;border-bottom:1px solid var(--border);flex-shrink:0">';
+  html += '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">';
+  html += '<div><h2 style="margin:0;font-size:15px;font-weight:600;color:var(--text)">Apply Now ' + String.fromCharCode(8212) + ' staged form fields</h2>';
+  html += '<p style="margin:4px 0 0;font-size:12px;color:var(--text-3);line-height:1.5">Copy each answer below into the corresponding apply-form field. Or copy everything at once, then open the form.</p>';
+  html += '<p style="margin:6px 0 0;font-size:11px;color:var(--text-4)">Pack: <code style="font-family:ui-monospace,monospace;background:var(--surface-2);padding:1px 5px;border-radius:3px">' + _esc(slug) + '</code></p></div>';
+  html += '<button type="button" id="apply-clipboard-close" aria-label="Close" style="background:transparent;border:none;color:var(--text-3);font-size:20px;cursor:pointer;padding:0 4px;line-height:1">' + String.fromCharCode(215) + '</button>';
+  html += '</div></div>';
+  // Scrollable section list
+  html += '<div style="flex:1;overflow-y:auto;padding:4px 24px 8px">';
+  for (var j = 0; j < sections.length; j++) {
+    var sec = sections[j];
+    var bodyText = _bodyOf(sec);
+    html += '<div class="apply-clipboard-section" style="border-bottom:1px solid var(--border);padding:14px 0" data-section-idx="' + j + '">';
+    html += '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:8px">';
+    html += '<div style="font-size:13px;font-weight:600;color:var(--text);line-height:1.4;flex:1">' + _esc(sec.title) + '</div>';
+    html += '<button type="button" class="apply-clipboard-copy-btn" data-section-idx="' + j + '" style="flex-shrink:0;padding:4px 10px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);border-radius:4px;cursor:pointer;font-size:11px;font-weight:500">' + String.fromCharCode(0x2398) + ' Copy</button>';
+    html += '</div>';
+    html += '<pre class="apply-clipboard-body" style="margin:0;padding:10px 12px;background:var(--surface-2,#0f1118);border-radius:4px;font-family:inherit;font-size:12.5px;line-height:1.6;color:var(--text-2);white-space:pre-wrap;word-wrap:break-word;border:1px solid var(--border-2,var(--border))">' + _esc(bodyText) + '</pre>';
+    html += '</div>';
+  }
+  html += '</div>';
+  // Footer
+  html += '<div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--surface);flex-shrink:0">';
+  html += '<button type="button" id="apply-clipboard-copy-all" style="padding:6px 14px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);border-radius:6px;cursor:pointer;font-size:12px;font-weight:500">' + String.fromCharCode(0x2398) + ' Copy all</button>';
+  html += '<div style="display:flex;gap:8px">';
+  html += '<button type="button" id="apply-clipboard-cancel" style="padding:6px 14px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);border-radius:6px;cursor:pointer;font-size:12px">Cancel</button>';
+  html += '<button type="button" id="apply-clipboard-open" style="padding:6px 14px;border:1px solid var(--green-fg,#16a34a);background:var(--green-fg,#16a34a);color:#fff;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">Open Apply form ' + String.fromCharCode(8594) + '</button>';
+  html += '</div></div>';
+  modal.innerHTML = html;
+  // Wire per-section Copy buttons.
+  var copyBtns = modal.querySelectorAll('.apply-clipboard-copy-btn');
+  for (var k = 0; k < copyBtns.length; k++) {
+    (function (btn) {
+      btn.addEventListener('click', async function () {
+        var idx = parseInt(btn.getAttribute('data-section-idx'), 10);
+        var body = modal.querySelector('.apply-clipboard-section[data-section-idx="' + idx + '"] .apply-clipboard-body');
+        if (!body) return;
+        try {
+          await navigator.clipboard.writeText(body.textContent);
+          btn.textContent = String.fromCharCode(0x2713) + ' Copied';
+          setTimeout(function () { btn.innerHTML = String.fromCharCode(0x2398) + ' Copy'; }, 1500);
+        } catch (e) {
+          btn.textContent = 'Copy failed';
+          setTimeout(function () { btn.innerHTML = String.fromCharCode(0x2398) + ' Copy'; }, 1500);
+        }
+      });
+    })(copyBtns[k]);
+  }
+  // Wire Copy all.
+  var copyAllBtn = modal.querySelector('#apply-clipboard-copy-all');
+  if (copyAllBtn) {
+    copyAllBtn.addEventListener('click', async function () {
+      var allText = sections.map(function (s) {
+        return s.title + NL + NL + _bodyOf(s);
+      }).join(NL + NL + '---' + NL + NL);
+      try {
+        await navigator.clipboard.writeText(allText);
+        copyAllBtn.innerHTML = String.fromCharCode(0x2713) + ' Copied all';
+        setTimeout(function () { copyAllBtn.innerHTML = String.fromCharCode(0x2398) + ' Copy all'; }, 1800);
+      } catch (e) {
+        copyAllBtn.textContent = 'Copy failed';
+        setTimeout(function () { copyAllBtn.innerHTML = String.fromCharCode(0x2398) + ' Copy all'; }, 1800);
+      }
+    });
+  }
+  function _close() { backdrop.remove(); }
+  var closeBtn = modal.querySelector('#apply-clipboard-close');
+  if (closeBtn) closeBtn.addEventListener('click', _close);
+  var cancelBtn2 = modal.querySelector('#apply-clipboard-cancel');
+  if (cancelBtn2) cancelBtn2.addEventListener('click', _close);
+  var openBtn = modal.querySelector('#apply-clipboard-open');
+  if (openBtn) {
+    if (!applyHref) {
+      openBtn.setAttribute('disabled', '');
+      openBtn.style.opacity = '0.5';
+      openBtn.style.cursor = 'not-allowed';
+      openBtn.title = 'No canonical apply URL resolved for this row';
+    } else {
+      openBtn.addEventListener('click', function () {
+        window.open(applyHref, '_blank', 'noopener');
+        _close();
+      });
+    }
+  }
+}
+window._renderApplyClipboardModal = _renderApplyClipboardModal;
+
+function _renderApplyClipboardEmptyState(modal, num, slug, applyHref, backdrop, customMsg) {
+  function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  var packSnippet = slug
+    ? 'The apply-pack at <code style="font-family:ui-monospace,monospace;background:var(--surface-2);padding:1px 5px;border-radius:3px">' + _esc(slug) + '</code> doesn' + String.fromCharCode(39) + 't have a <code style="font-family:ui-monospace,monospace;background:var(--surface-2);padding:1px 5px;border-radius:3px">form-fields.md</code> artifact yet.'
+    : (customMsg ? _esc(customMsg) : 'No staged form fields available.');
+  var html = '<div style="padding:24px">';
+  html += '<h2 style="margin:0 0 10px;font-size:15px;color:var(--text)">No staged form fields for this row</h2>';
+  html += '<p style="margin:0 0 12px;font-size:13px;color:var(--text-2);line-height:1.6">' + packSnippet + '</p>';
+  html += '<p style="margin:0 0 16px;font-size:12.5px;color:var(--text-3);line-height:1.6">Run <code style="font-family:ui-monospace,monospace;background:var(--surface-2);padding:1px 5px;border-radius:3px">/apply-pack-polish</code> for this row to generate the staged answers, or open the apply form and fill manually using cv-tailored.md + cover-letter.md from the drawer' + String.fromCharCode(39) + 's per-artifact list.</p>';
+  html += '<div style="display:flex;gap:8px;justify-content:flex-end">';
+  html += '<button type="button" id="apply-clipboard-cancel" style="padding:6px 14px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);border-radius:6px;cursor:pointer;font-size:12px">Cancel</button>';
+  if (applyHref) {
+    html += '<button type="button" id="apply-clipboard-skip" style="padding:6px 14px;border:1px solid var(--green-fg,#16a34a);background:var(--green-fg,#16a34a);color:#fff;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">Open Apply form anyway ' + String.fromCharCode(8594) + '</button>';
+  }
+  html += '</div></div>';
+  modal.innerHTML = html;
+  function _close() { backdrop.remove(); }
+  var cancelBtn = modal.querySelector('#apply-clipboard-cancel');
+  if (cancelBtn) cancelBtn.addEventListener('click', _close);
+  var skipBtn = modal.querySelector('#apply-clipboard-skip');
+  if (skipBtn) skipBtn.addEventListener('click', function () {
+    _close();
+    if (applyHref) window.open(applyHref, '_blank', 'noopener');
+  });
+}
+window._renderApplyClipboardEmptyState = _renderApplyClipboardEmptyState;
 
 /* Phase 6.3 follow-up (2026-05-22) — credentials modal.
  * Fetches /api/credentials (which serves lib/credentials.mjs::snapshotForRender)

@@ -20244,11 +20244,38 @@ function _hmTradeoffsGrid(t) {
         : '');
 }
 
+/* Phase 6.5-CAD-2 (2026-05-22) — stale-data freshness chip.
+ *
+ * Renders a small chip when the underlying data is >3 days old. Empty string
+ * when fresh (≤3d) or when no timestamp is available. Designed to slot next
+ * to existing widget headers without breaking layout.
+ *
+ * Pattern A safe — pure string concat, no backticks / no template literals
+ * inside the chip HTML.
+ */
+function _freshnessChip(timestampStr, opts) {
+  if (!timestampStr) return '';
+  const t = Date.parse(String(timestampStr));
+  if (!Number.isFinite(t)) return '';
+  const ageMs = Date.now() - t;
+  const ageDays = Math.floor(ageMs / (1000 * 60 * 60 * 24));
+  const threshold = (opts && opts.thresholdDays) || 3;
+  if (ageDays < threshold) return '';
+  const ageLabel = ageDays === 1 ? '1 day' : ageDays + ' days';
+  const label = (opts && opts.label) || 'Stale';
+  const tooltip = 'This data was last refreshed ' + ageLabel + ' ago. Click Deep Refresh to regenerate.';
+  return '<span class="data-stale-chip" title="' + tooltip + '" aria-label="' + tooltip + '" style="display:inline-block;font-size:10px;font-weight:600;padding:2px 7px;border-radius:999px;background:rgba(168,123,72,0.14);color:var(--amber-fg,#b45309);border:1px solid rgba(168,123,72,0.3);margin-left:8px;letter-spacing:0.02em;vertical-align:middle">'
+    + String.fromCharCode(0x26A0) + ' ' + label + ' ' + ageDays + 'd'
+    + '</span>';
+}
+
 function _renderHMIntel(d, slug) {
   if (!d) return '';
   const succeeded = (d.providers_succeeded || []).length;
   const called    = (d.providers_called    || []).length || 7;
   const provFootline = 'Synthesized from ' + succeeded + ' of ' + called + ' LLM providers (council research) · ' + (d.sources_cited_count || '?') + ' distinct sources cited';
+  // Phase 6.5-CAD-2: stale-data chip when the synthesis is >3d old.
+  const stalenessChip = _freshnessChip(d.synthesized_at, { thresholdDays: 3, label: 'HM intel stale' });
   // FIX 3 (2026-05-17) — surface only HIGH-confidence contacts. Filter at the
   // render layer (data untouched). Confidence schema is HIGH/MEDIUM/LOW
   // (see _hmConfChip). Numeric confidence_score (>=0.8) is a defensive
@@ -20280,7 +20307,7 @@ function _renderHMIntel(d, slug) {
     : '';
 
   return '<div class="hm-intel-block" data-slug="' + _hmEsc(slug) + '">'
-    + '<div class="hm-intel-head"><h3>🎯 Hiring intel</h3><span class="hm-prov-footline">' + _hmEsc(provFootline) + '</span></div>'
+    + '<div class="hm-intel-head"><h3>🎯 Hiring intel' + stalenessChip + '</h3><span class="hm-prov-footline">' + _hmEsc(provFootline) + '</span></div>'
 
     + (d.role_summary          ? '<section class="hm-section"><h4>Role (Mitchell-tailored)</h4><p>' + _hmEsc(d.role_summary) + '</p></section>' : '')
     + (d.alignment_with_goals  ? '<section class="hm-section"><h4>Why this aligns with my goals</h4><p>' + _hmEsc(d.alignment_with_goals) + '</p></section>' : '')

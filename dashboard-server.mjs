@@ -6318,6 +6318,53 @@ const server = createServer((req, res) => {
     }
   }
 
+  // GET /api/handoffs/pending — researcher-chain handoff envelope sweep
+  // (added 2026-05-23, handoff-file contract for researcher → dealbreaker)
+  // Returns the active handoff envelopes under ~/.claude/agents/runs/_handoffs/
+  // that are status:pending. Includes age + staleness flag (>24h) so the
+  // dashboard panel can colour-code stale entries the same way the daily
+  // system-maintainer sweep does.
+  if (url === '/api/handoffs/pending') {
+    try {
+      const handoffDir = join(homedir(), '.claude', 'agents', 'runs', '_handoffs');
+      if (!existsSync(handoffDir)) {
+        return json({ ok: true, pending: [], stale_count: 0, generated_at: new Date().toISOString() });
+      }
+      const STALE_MS = 24 * 60 * 60 * 1000;
+      const now = Date.now();
+      const entries = readdirSync(handoffDir);
+      const pending = [];
+      for (const f of entries) {
+        if (!f.startsWith('dealbreaker-') || !f.endsWith('.json')) continue;
+        const p = join(handoffDir, f);
+        try {
+          const h = JSON.parse(readFileSync(p, 'utf8'));
+          if (h.status !== 'pending') continue;
+          const createdMs = Date.parse(h.created_at);
+          const ageMs = Number.isFinite(createdMs) ? now - createdMs : 0;
+          pending.push({
+            file: f,
+            path: p,
+            created_at: h.created_at,
+            age_hours: Math.round(ageMs / 3.6e6),
+            stale: ageMs > STALE_MS,
+            mode: h.mode || 'unknown',
+            source_agent: h.source_agent || 'unknown',
+            ceiling_usd: h.ceiling_usd ?? null,
+            audit_items_count: Array.isArray(h.audit_items) ? h.audit_items.length : 0,
+            original_question: (h.original_question || '').slice(0, 240),
+            report_path: h.report_path || null,
+          });
+        } catch { /* skip malformed envelope */ }
+      }
+      pending.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+      const stale_count = pending.filter(p => p.stale).length;
+      return json({ ok: true, pending, stale_count, generated_at: new Date().toISOString() });
+    } catch (err) {
+      return json({ ok: false, error: err.message }, 500);
+    }
+  }
+
   const verifyMatch = url.match(/^\/api\/verify\/(.+\.md)$/);
   if (verifyMatch) {
     const payload = buildVerifyPayload(verifyMatch[1]);

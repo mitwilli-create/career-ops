@@ -3669,8 +3669,10 @@ function renderRow(r, idx) {
       <div class="drawer-slash-cmds" style="display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
         <!-- refresh-master Phase 3 deliverable 6: ↻ Deep refresh CTA. Fires
              full council-7 Layer-3 research. Confirm modal shows ~$25-$50 cost.
-             Closure 3.16 (2026-05-22): full-width horizontal bar per spec. -->
-        <button type="button" class="dcard-btn" style="background:linear-gradient(180deg,#1f2a44,#162035);border-color:#3b4f7a;color:#dbe4ff;width:100%;display:block;padding:8px 14px;font-weight:600" onclick="invokeDeepRefresh(${htmlEscape(String(r.num||''))}, this);event.stopPropagation()" title="Phase 3 Layer-3 deep research: 7-model council, $25–$50 per fire. Confirm modal will appear.">↻ Deep refresh — re-run liveness + JD scrape + HM research + corpus reindex + rebuild</button>
+             Closure 3.16 (2026-05-22): full-width horizontal bar per spec.
+             Phase 4.2 (2026-05-23): label now honest — names the 7 slots
+             /api/refresh-deep actually fires (--slots all). -->
+        <button type="button" class="dcard-btn" style="background:linear-gradient(180deg,#1f2a44,#162035);border-color:#3b4f7a;color:#dbe4ff;width:100%;display:block;padding:8px 14px;font-weight:600" onclick="invokeDeepRefresh(${htmlEscape(String(r.num||''))}, this);event.stopPropagation()" title="Phase 3 Layer-3 deep research: 7-slot nuclear sweep, $25–$50 per fire. Confirm modal will appear.">↻ Deep refresh — nuclear sweep (HM intel + toxicity + strategy + positioning + liveness + ATS detection + role enrichment)</button>
       </div>
     </div>
   </td>
@@ -29528,7 +29530,7 @@ async function invokeDeepRefresh(rowId, btn) {
     if (window.toast) window.toast('Deep refresh: numeric row required', 'error');
     return;
   }
-  const ok = window.confirm('Layer-3 Deep refresh fires the full 7-model council (Sonnet + Opus + GPT-5 + Gemini + Sonar Deep + Sonar Reasoning + Grok-x).\\n\\nProjected cost: $25–$50.\\nETA: 3–8 min.\\n\\nProceed?');
+  const ok = window.confirm('Deep refresh fires a 7-slot nuclear sweep for this row:\\n  · hm-intel (council research)\\n  · toxicity composite\\n  · strategy-ceiling per metric\\n  · positioning (council + adjudicator)\\n  · liveness (URL still active?)\\n  · ats-detection (re-scan pack artifacts)\\n  · role-enrichment (benefits + sentiment + people)\\n\\nProjected cost: $25–$50. ETA: 3–8 min.\\n\\nProceed?');
   if (!ok) return;
   const origText = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '↻ Deep refreshing…'; }

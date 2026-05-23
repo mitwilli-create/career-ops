@@ -20380,6 +20380,38 @@ async function _drawerLoadLifecycle(num, company, mountEl, applyHref) {
       applyNowBtn.setAttribute('disabled', '');
       applyNowBtn.setAttribute('title', 'No canonical application URL is resolved for this row — open the report to verify the JD link');
     }
+    // Phase 4.1 (2026-05-22): wire the lifecycle Polish Materials + Create
+    // Apply Pack buttons to the canonical handlers. Polish Materials triggers
+    // alphaPolishPack(rowId) which opens the progress UI + hits /api/polish
+    // (which now runs L1+L2 gates via PR #80 polish-loop integration) +
+    // syncs to Drive on completion. Create Apply Pack triggers
+    // drawerCreateMaterials -- the same handler the right-rail Generate-apply
+    // pack button uses (line 15367). The btn() helper sets the disabled
+    // attribute when state is disabled so those clicks no-op naturally.
+    const polishBtn = mountEl.querySelector(
+      '.drawer-lifecycle-buttons > button[data-drill="lifecycle:polish-materials:' + String(num) + '"]'
+    );
+    if (polishBtn && !polishBtn.disabled) {
+      polishBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof window.alphaPolishPack === 'function') {
+          window.alphaPolishPack(String(num));
+        }
+      });
+    }
+    const createBtn = mountEl.querySelector(
+      '.drawer-lifecycle-buttons > button[data-drill="lifecycle:create-apply-pack:' + String(num) + '"]'
+    );
+    if (createBtn && !createBtn.disabled) {
+      createBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof window.drawerCreateMaterials === 'function') {
+          window.drawerCreateMaterials(num, company, null, createBtn);
+        }
+      });
+    }
     // Fetch + inject contextual note (best-effort; failures hide silently).
     fetch('/api/context-note?num=' + encodeURIComponent(String(num)), { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : null; })

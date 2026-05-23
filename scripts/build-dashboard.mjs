@@ -10918,6 +10918,12 @@ async function build() {
   .intel-chip.partial { background: #fefce8; color: #854d0e; border-color: #fde68a; }
   .intel-chip.absent  { background: var(--surface-2); color: var(--text-3); border-color: var(--border); }
   .intel-chip.active  { filter: brightness(0.92); box-shadow: 0 0 0 2px rgba(99,102,241,0.25); }
+  /* Phase 5.2/5.3 — band coloring for percentage chips. Layered ON TOP of
+     .present so the present-green border stays visible; only the inner color
+     shifts. Active-state filter still applies. */
+  .intel-chip.pct-high { background: #ecfdf5; color: #047857; border-color: #34d399; box-shadow: 0 0 0 1px rgba(52,211,153,0.18); }
+  .intel-chip.pct-med  { background: #fefce8; color: #854d0e; border-color: #fbbf24; }
+  .intel-chip.pct-low  { background: #fef2f2; color: #b91c1c; border-color: #fca5a5; }
   .intel-chip-pop {
     margin-top: 8px;
     padding: 12px;
@@ -20520,12 +20526,24 @@ function _drawerRenderIntelChips(data, mountEl) {
   }
   function _stateCls(section) {
     if (!section || section.source === 'absent') return 'absent';
-    if (section.source === 'role-enrichment' || section.source === 'toxicity-cache' || section.source === 'sonnet' || section.source === 'hm-intel' || section.source === 'company-health') return 'present';
+    if (section.source === 'role-enrichment' || section.source === 'toxicity-cache' || section.source === 'sonnet' || section.source === 'hm-intel' || section.source === 'company-health' || section.source === 'council-adjudicated') return 'present';
     return 'partial';
+  }
+  // Band coloring for percentage chips. 5.2 + 5.3 chips display a percentage —
+  // surface band intent inline so HMs/users can scan good/middling/risky at a glance.
+  function _pctBandCls(pct) {
+    if (pct == null) return '';
+    const n = Number(pct);
+    if (!Number.isFinite(n)) return '';
+    if (n >= 70) return ' pct-high';
+    if (n >= 45) return ' pct-med';
+    return ' pct-low';
   }
   const th = data.team_health  || { source: 'absent' };
   const il = data.interview_likelihood || { source: 'absent' };
   const hm = data.hm_visibility || { source: 'absent' };
+  // Phase 5.3 — HM Chance (council-adjudicated visibility) chip data.
+  const hc = data.hm_chance || { source: 'absent' };
 
   function _thLabel() {
     if (th.source === 'absent') return 'Team health';
@@ -20541,13 +20559,24 @@ function _drawerRenderIntelChips(data, mountEl) {
     if (hm.source === 'absent') return 'HM visibility';
     return 'HM: ' + (hm.hm_name || '?');
   }
+  // Phase 5.3 — HM Chance chip label. Uses visibility_pct (council-adjudicated).
+  function _hcLabel() {
+    if (hc.source === 'absent') return 'HM chance';
+    return 'HM chance ' + hc.visibility_pct + '%';
+  }
+
+  // Stable cache-bust chip suffix: hyphenated band class for percentage chips.
+  const ilBand = (il.source !== 'absent') ? _pctBandCls(il.likelihood_pct) : '';
+  const hcBand = (hc.source !== 'absent') ? _pctBandCls(hc.visibility_pct) : '';
 
   let html = '<div class="drawer-intel-chips">';
   html +=   '<div class="drawer-intel-chips-header">Intel chips</div>';
   html +=   '<div class="intel-chip-row">';
   html +=     '<button type="button" class="intel-chip ' + _stateCls(th) + '" data-intel-pop="th" title="' + _esc('Click to see Glassdoor + employee sentiment') + '">' + _esc(_thLabel()) + '</button>';
-  html +=     '<button type="button" class="intel-chip ' + _stateCls(il) + '" data-intel-pop="il" title="' + _esc('Click to see interview-likelihood breakdown') + '">' + _esc(_ilLabel()) + '</button>';
+  html +=     '<button type="button" class="intel-chip ' + _stateCls(il) + ilBand + '" data-intel-pop="il" title="' + _esc('Click to see interview-likelihood breakdown') + '">' + _esc(_ilLabel()) + '</button>';
   html +=     '<button type="button" class="intel-chip ' + _stateCls(hm) + '" data-intel-pop="hm" title="' + _esc('Click to see HM info + competitive edges') + '">' + _esc(_hmLabel()) + '</button>';
+  // Phase 5.3 — HM Chance chip (council-adjudicated visibility estimate).
+  html +=     '<button type="button" class="intel-chip ' + _stateCls(hc) + hcBand + '" data-intel-pop="hc" title="' + _esc('Click to see HM-chance breakdown + competitive edges leading the analysis') + '">' + _esc(_hcLabel()) + '</button>';
   html +=   '</div>';
   html +=   '<div class="intel-chip-pop-mount"></div>';
   html += '</div>';
@@ -20562,6 +20591,7 @@ function _drawerRenderIntelChips(data, mountEl) {
     if (key === 'th') popMount.innerHTML = _renderThPop(th);
     else if (key === 'il') popMount.innerHTML = _renderIlPop(il);
     else if (key === 'hm') popMount.innerHTML = _renderHmPop(hm, data.slug);
+    else if (key === 'hc') popMount.innerHTML = _renderHcPop(hc);
   }
   function _setActiveChip(key) {
     mountEl.querySelectorAll('.intel-chip').forEach(function (c) {
@@ -20624,7 +20654,19 @@ function _drawerRenderIntelChips(data, mountEl) {
     if (i.competitive_edge) {
       h += '<div class="pop-label" style="margin-top:8px">Competitive edge</div><div style="font-size:12px;color:var(--text-2)">' + _esc(i.competitive_edge) + '</div>';
     }
-    h +=   '<div class="pop-source">Source: ' + _esc(i.source) + (i.generated_at ? (' · ' + _esc(String(i.generated_at).slice(0, 10))) : '') + '</div>';
+    // Phase 5.2 enrichments — surface when present (council-adjudicated entries only).
+    if (Array.isArray(i.reason_bullets) && i.reason_bullets.length) {
+      h += '<div class="pop-divider"></div><div class="pop-label">Why this percentage</div><ul class="pop-list">';
+      h += i.reason_bullets.map(function (b) { return '<li>' + _esc(b) + '</li>'; }).join('');
+      h += '</ul>';
+    }
+    if (Array.isArray(i.citations) && i.citations.length) {
+      h += '<div class="pop-label" style="margin-top:8px">Citations</div><div style="font-size:11px;color:var(--text-3);line-height:1.5">' + i.citations.map(function (s) { return _esc(s); }).join(' &middot; ') + '</div>';
+    }
+    if (Array.isArray(i.models_used) && i.models_used.length) {
+      h += '<div class="pop-label" style="margin-top:8px">Models</div><div style="font-size:11px;color:var(--text-3)">' + i.models_used.map(function (m) { return _esc(m); }).join(' &middot; ') + '</div>';
+    }
+    h +=   '<div class="pop-source">Source: ' + _esc(i.source) + (i.generated_at ? (' &middot; ' + _esc(String(i.generated_at).slice(0, 10))) : '') + '</div>';
     h += '</div>';
     return h;
   }
@@ -20670,6 +20712,56 @@ function _drawerRenderIntelChips(data, mountEl) {
       h += '</ul>';
     }
     h +=   '<div class="pop-source">Source: ' + _esc(m.source) + (m.synthesized_at ? (' · ' + _esc(String(m.synthesized_at).slice(0, 10))) : '') + '</div>';
+    h += '</div>';
+    return h;
+  }
+
+  // Phase 5.3 — HM Chance popout renderer. Leads with Mitchell's competitive
+  // edges (Q-8.53.32), then visibility factors, then reason bullets + best
+  // path to HM + candidate-volume estimate. Pattern A safe (string concat,
+  // no template literals, no single-backslash escapes).
+  function _renderHcPop(c) {
+    if (c.source === 'absent') {
+      return '<div class="intel-chip-pop"><div class="pop-empty">No HM-chance analysis yet. ' + _esc(c.reason || '') + '</div></div>';
+    }
+    const confLower = String(c.confidence || 'medium').toLowerCase();
+    let h = '<div class="intel-chip-pop">';
+    h +=   '<div class="pop-header">HM Chance - chance the hiring manager sees your application</div>';
+    h +=   '<div class="pop-hero"><span class="pop-pct">' + _esc(c.visibility_pct) + '%</span><span class="pop-conf">' + _esc(c.confidence) + ' confidence</span></div>';
+    // Lead with competitive edges (Q-8.53.32).
+    if (Array.isArray(c.competitive_edges_first) && c.competitive_edges_first.length) {
+      h += '<div class="pop-divider"></div><div class="pop-label">Your competitive edges (lead with these)</div><ul class="pop-list pros">';
+      h += c.competitive_edges_first.map(function (e) { return '<li>' + _esc(e) + '</li>'; }).join('');
+      h += '</ul>';
+    }
+    if (Array.isArray(c.visibility_factors) && c.visibility_factors.length) {
+      h += '<div class="pop-label" style="margin-top:8px">Visibility factors</div><ul class="pop-list">';
+      h += c.visibility_factors.map(function (f) {
+        const w = String(f.weight || '').toLowerCase();
+        const wCls = (w === 'high' || w === 'medium' || w === 'low') ? w : '';
+        const wBadge = wCls ? ('<span class="pop-badge ' + wCls + '">' + _esc(w) + '</span> ') : '';
+        return '<li>' + wBadge + '<strong>' + _esc(f.factor || '') + '</strong>' + (f.evidence ? (' - ' + _esc(f.evidence)) : '') + '</li>';
+      }).join('');
+      h += '</ul>';
+    }
+    if (Array.isArray(c.reason_bullets) && c.reason_bullets.length) {
+      h += '<div class="pop-divider"></div><div class="pop-label">Why this percentage</div><ul class="pop-list">';
+      h += c.reason_bullets.map(function (b) { return '<li>' + _esc(b) + '</li>'; }).join('');
+      h += '</ul>';
+    }
+    if (c.best_path_to_hm) {
+      h += '<div class="pop-divider"></div><div class="pop-label">Best path to HM</div><div class="pop-quote">' + _esc(c.best_path_to_hm) + '</div>';
+    }
+    if (c.candidate_volume_estimate) {
+      h += '<div class="pop-label" style="margin-top:8px">Candidate volume</div><div style="font-size:12px;color:var(--text-2)">' + _esc(c.candidate_volume_estimate) + '</div>';
+    }
+    if (Array.isArray(c.citations) && c.citations.length) {
+      h += '<div class="pop-label" style="margin-top:8px">Citations</div><div style="font-size:11px;color:var(--text-3);line-height:1.5">' + c.citations.map(function (s) { return _esc(s); }).join(' &middot; ') + '</div>';
+    }
+    if (Array.isArray(c.models_used) && c.models_used.length) {
+      h += '<div class="pop-label" style="margin-top:8px">Models</div><div style="font-size:11px;color:var(--text-3)">' + c.models_used.map(function (m) { return _esc(m); }).join(' &middot; ') + '</div>';
+    }
+    h +=   '<div class="pop-source">Source: ' + _esc(c.source) + (c.generated_at ? (' &middot; ' + _esc(String(c.generated_at).slice(0, 10))) : '') + (confLower === 'high' ? ' &middot; HIGH conf' : '') + '</div>';
     h += '</div>';
     return h;
   }

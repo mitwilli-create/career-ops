@@ -8370,20 +8370,29 @@ async function generatePack(){
         const il = ilJsonRole || ilJsonPack;
         let interview_likelihood;
         if (il && typeof il.likelihood_pct === 'number') {
+          // Phase 5.2 enhancement: surface the actual method (council-adjudicated
+          // v1 from scripts/agents/interview-likelihood.mjs vs the older sonnet-only
+          // scripts/generate-interview-likelihood.mjs). Renderer in build-dashboard.mjs
+          // treats both as "present" for chip coloring (see _stateCls there).
+          const ilSource = (il.method && String(il.method).startsWith('council-adjudicated')) ? 'council-adjudicated' : 'sonnet';
           interview_likelihood = {
-            source: 'sonnet',
+            source: ilSource,
             likelihood_pct: il.likelihood_pct,
             confidence: il.confidence || 'medium',
             top_strengths: Array.isArray(il.top_strengths) ? il.top_strengths.slice(0, 3) : [],
             real_gaps: Array.isArray(il.real_gaps) ? il.real_gaps.slice(0, 3) : [],
             opening_talking_point: il.opening_talking_point || '',
             competitive_edge: il.competitive_edge || '',
+            // Phase 5.2 enrichments — surface to chip popout when present.
+            reason_bullets: Array.isArray(il.reason_bullets) ? il.reason_bullets.slice(0, 5) : [],
+            citations: Array.isArray(il.citations) ? il.citations.slice(0, 8) : [],
+            models_used: Array.isArray(il.models_used) ? il.models_used : [],
             generated_at: il.generated_at || null,
           };
         } else {
           interview_likelihood = {
             source: 'absent',
-            reason: 'no scored analysis yet — run scripts/generate-interview-likelihood.mjs',
+            reason: 'no scored analysis yet — run scripts/agents/interview-likelihood.mjs --row N',
           };
         }
 
@@ -8439,7 +8448,105 @@ async function generatePack(){
           };
         }
 
-        return json({ ok: true, slug, team_health, interview_likelihood, hm_visibility });
+        // ─── hm_chance (Phase 5.3) ───
+        // Council-adjudicated "chance HM will see the application" with
+        // competitive-edges-first framing (Q-8.53.32). Populated out-of-band by
+        // scripts/agents/hm-chance.mjs (3d cache TTL).
+        const hcJsonRole = _readJsonSafe(join(ROOT, 'data', 'hm-chance', slug + '.json'));
+        const hcJsonPack = packDir ? _readJsonSafe(join(packDir, 'hm-chance.json')) : null;
+        const hc = hcJsonRole || hcJsonPack;
+        let hm_chance;
+        if (hc && typeof hc.visibility_pct === 'number') {
+          hm_chance = {
+            source: 'council-adjudicated',
+            visibility_pct: hc.visibility_pct,
+            confidence: hc.confidence || 'medium',
+            competitive_edges_first: Array.isArray(hc.competitive_edges_first) ? hc.competitive_edges_first.slice(0, 5) : [],
+            visibility_factors: Array.isArray(hc.visibility_factors) ? hc.visibility_factors.slice(0, 6) : [],
+            reason_bullets: Array.isArray(hc.reason_bullets) ? hc.reason_bullets.slice(0, 5) : [],
+            best_path_to_hm: hc.best_path_to_hm || '',
+            candidate_volume_estimate: hc.candidate_volume_estimate || '',
+            citations: Array.isArray(hc.citations) ? hc.citations.slice(0, 8) : [],
+            models_used: Array.isArray(hc.models_used) ? hc.models_used : [],
+            generated_at: hc.generated_at || null,
+          };
+        } else {
+          hm_chance = {
+            source: 'absent',
+            reason: 'no HM-chance analysis yet — run scripts/agents/hm-chance.mjs',
+          };
+        }
+
+        return json({ ok: true, slug, team_health, interview_likelihood, hm_visibility, hm_chance });
+      } catch (err) {
+        return json({ ok: false, error: err.message }, 500);
+      }
+    })();
+    return;
+  }
+
+  // ── Phase 5.2 (2026-05-22) — Interview Likelihood detail endpoint ─────────
+  // Serves the FULL council-adjudicated JSON (versus intel-chips which trims).
+  // Used by the dedicated modal renderer when Mitchell wants the dealbreaker
+  // classification + model_estimates surface alongside the rendered bullets.
+  if (url.startsWith('/api/interview-likelihood') && req.method === 'GET') {
+    (async () => {
+      try {
+        let slug = String(query.slug || '').trim();
+        if (!slug) {
+          const rowParam = String(query.row || '').trim();
+          if (rowParam && /^[0-9]{1,4}$/.test(rowParam)) {
+            const padded = rowParam.padStart(3, '0') + '-';
+            for (const base of [join(ROOT, 'apply-pack'), join(ROOT, 'data', 'apply-packs')]) {
+              if (!existsSync(base)) continue;
+              try {
+                const hit = readdirSync(base).find(n => n.startsWith(padded));
+                if (hit) { slug = hit; break; }
+              } catch {}
+            }
+          }
+        }
+        if (!slug) return json({ ok: false, error: 'slug or row required' }, 400);
+        if (!/^[A-Za-z0-9_.-]+$/.test(slug)) return json({ ok: false, error: 'invalid slug' }, 400);
+        const p = join(ROOT, 'data', 'interview-likelihood', slug + '.json');
+        if (!existsSync(p)) return json({ ok: false, error: 'not-found', slug, reason: 'no scored analysis yet — run scripts/agents/interview-likelihood.mjs --row N' }, 404);
+        const j = JSON.parse(readFileSync(p, 'utf-8'));
+        const ageMs = j.generated_at ? Date.now() - Date.parse(j.generated_at) : null;
+        const ageDays = ageMs != null ? Math.floor(ageMs / (1000 * 60 * 60 * 24)) : null;
+        return json({ ok: true, slug, age_days: ageDays, stale: ageDays != null && ageDays > 3, data: j });
+      } catch (err) {
+        return json({ ok: false, error: err.message }, 500);
+      }
+    })();
+    return;
+  }
+
+  // ── Phase 5.3 (2026-05-22) — HM Chance detail endpoint ────────────────────
+  if (url.startsWith('/api/hm-chance') && req.method === 'GET') {
+    (async () => {
+      try {
+        let slug = String(query.slug || '').trim();
+        if (!slug) {
+          const rowParam = String(query.row || '').trim();
+          if (rowParam && /^[0-9]{1,4}$/.test(rowParam)) {
+            const padded = rowParam.padStart(3, '0') + '-';
+            for (const base of [join(ROOT, 'apply-pack'), join(ROOT, 'data', 'apply-packs')]) {
+              if (!existsSync(base)) continue;
+              try {
+                const hit = readdirSync(base).find(n => n.startsWith(padded));
+                if (hit) { slug = hit; break; }
+              } catch {}
+            }
+          }
+        }
+        if (!slug) return json({ ok: false, error: 'slug or row required' }, 400);
+        if (!/^[A-Za-z0-9_.-]+$/.test(slug)) return json({ ok: false, error: 'invalid slug' }, 400);
+        const p = join(ROOT, 'data', 'hm-chance', slug + '.json');
+        if (!existsSync(p)) return json({ ok: false, error: 'not-found', slug, reason: 'no HM-chance analysis yet — run scripts/agents/hm-chance.mjs --row N' }, 404);
+        const j = JSON.parse(readFileSync(p, 'utf-8'));
+        const ageMs = j.generated_at ? Date.now() - Date.parse(j.generated_at) : null;
+        const ageDays = ageMs != null ? Math.floor(ageMs / (1000 * 60 * 60 * 24)) : null;
+        return json({ ok: true, slug, age_days: ageDays, stale: ageDays != null && ageDays > 3, data: j });
       } catch (err) {
         return json({ ok: false, error: err.message }, 500);
       }

@@ -473,13 +473,19 @@ function buildDecisionFindings(snap, reviewFindings) {
     });
   }
 
-  // Flapping plists — always CRITICAL, indicates a job is hard-failing
+  // Flapping plists — always CRITICAL, indicates a job is hard-failing.
+  // Handles both legacy string entries and new object shape ({label, exitCode, pid, plistFile})
+  // produced by lib/system-health-snapshot.mjs after 2026-05-23. Without the
+  // shape-tolerant accessor, `${lbl}` would render "[object Object]" and
+  // `.replace()` would throw TypeError — pre-existing bug surfaced 2026-05-23.
   for (const lbl of snap.launchd.flapping || []) {
+    const label = (typeof lbl === 'string') ? lbl : (lbl.label || String(lbl));
+    const exitCode = (typeof lbl === 'object' && lbl.exitCode != null) ? lbl.exitCode : '?';
     out.push({
       severity: 'CRITICAL',
       area: 'launchd',
-      finding: `Plist flapping (non-zero exit on last run): ${lbl}`,
-      recommendation: `Tail data/logs/${lbl.replace('com.mitchell.career-ops.','')}-launchd.err for stack trace`,
+      finding: `Plist flapping (last exit ${exitCode}): ${label}`,
+      recommendation: `Tail data/logs/${label.replace('com.mitchell.career-ops.','')}-launchd.err for stack trace`,
       decisionPrompt: `Decision: FIX_SCRIPT, BOOTOUT_AND_DEFER, or RUN_MANUALLY?`,
     });
   }

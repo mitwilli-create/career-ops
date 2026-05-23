@@ -20444,6 +20444,22 @@ async function _drawerLoadLifecycle(num, company, mountEl, applyHref) {
         }
       });
     }
+    // Phase 4.5a (2026-05-22): wire the Pre-Apply Check button to the readiness
+    // modal. Endpoint /api/pre-apply-check scores 7 dimensions of pack readiness
+    // and returns a Gemini-generated narrative explaining what's most load-bearing
+    // to fix next. Modal exposes a Run Polish CTA when can_polish=true.
+    const preApplyBtn = mountEl.querySelector(
+      '.drawer-lifecycle-buttons > button[data-drill="lifecycle:pre-apply-check:' + String(num) + '"]'
+    );
+    if (preApplyBtn && !preApplyBtn.disabled) {
+      preApplyBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof window._openPreApplyCheckModal === 'function') {
+          window._openPreApplyCheckModal(num);
+        }
+      });
+    }
     // Fetch + inject contextual note (best-effort; failures hide silently).
     fetch('/api/context-note?num=' + encodeURIComponent(String(num)), { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : null; })
@@ -21013,6 +21029,95 @@ async function _openPipelineFlowModal() {
 }
 window._openPipelineFlowModal = _openPipelineFlowModal;
 
+/* Phase 4.5a (2026-05-22) — Pre-Apply Check modal.
+ * Fetches /api/pre-apply-check?num=N, renders readiness score + 7-dimension
+ * rubric + gap list + Gemini-generated "why" narrative + Run Polish CTA when
+ * can_polish=true. Pattern A safe: pure string concat, no template literals,
+ * no backticks, no single-backslash escapes. */
+async function _openPreApplyCheckModal(num) {
+  const existing = document.getElementById('pre-apply-check-backdrop');
+  if (existing) { existing.remove(); }
+  const backdrop = document.createElement('div');
+  backdrop.id = 'pre-apply-check-backdrop';
+  backdrop.setAttribute('role', 'dialog');
+  backdrop.setAttribute('aria-modal', 'true');
+  backdrop.setAttribute('aria-label', 'Pre-Apply Check');
+  backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:99999;padding:24px';
+  backdrop.addEventListener('click', function(e) {
+    if (e.target === backdrop) backdrop.remove();
+  });
+  const modal = document.createElement('div');
+  modal.style.cssText = 'background:var(--surface,#11131c);border:1px solid var(--border,#232737);border-radius:8px;max-width:640px;width:100%;max-height:85vh;overflow-y:auto;padding:24px;color:var(--text,#fafafa);font-family:inherit';
+  modal.innerHTML = '<div style="font-size:14px;color:var(--text-3,#b8b8c0);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Scanning pre-apply readiness' + String.fromCharCode(8230) + '</div>';
+  backdrop.appendChild(modal);
+  document.body.appendChild(backdrop);
+  function escCloseHandler(e) {
+    if (e.key === 'Escape') { backdrop.remove(); document.removeEventListener('keydown', escCloseHandler); }
+  }
+  document.addEventListener('keydown', escCloseHandler);
+  function pctColor(pct) {
+    if (pct >= 80) return 'var(--green-fg,#16a34a)';
+    if (pct >= 60) return 'var(--amber-fg,#f59e0b)';
+    if (pct >= 40) return '#eab308';
+    return 'var(--red-fg,#fca5a5)';
+  }
+  function dimBadge(score) {
+    if (score >= 1)   return '<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:var(--green-fg,#16a34a);color:#fff;font-size:10px;line-height:14px;text-align:center;font-weight:700">' + String.fromCharCode(0x2713) + '</span>';
+    if (score >= 0.5) return '<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:var(--amber-fg,#f59e0b);color:#fff;font-size:9px;line-height:14px;text-align:center;font-weight:700">~</span>';
+    return '<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:var(--text-3,#6b7280);color:#fff;font-size:10px;line-height:14px;text-align:center;font-weight:700">' + String.fromCharCode(0x2715) + '</span>';
+  }
+  try {
+    const r = await fetch('/api/pre-apply-check?num=' + encodeURIComponent(String(num)));
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    if (!data.ok) throw new Error(data.error || 'pre-apply-check unavailable');
+    if (data.reason === 'pack_missing') {
+      modal.innerHTML = '<h2 style="margin:0 0 10px;font-size:18px">Pre-Apply Check</h2>' +
+        '<p style="color:var(--text-2,#e4e4e7);font-size:13px;line-height:1.5;margin:0 0 12px">Apply pack hasn' + String.fromCharCode(0x2019) + 't been generated yet. Click <strong>Create Apply Pack</strong> first to provision local artifacts; then come back to scan readiness.</p>' +
+        '<button type="button" onclick="document.getElementById(\\u0027pre-apply-check-backdrop\\u0027).remove()" style="margin-top:8px;padding:6px 14px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);border-radius:6px;cursor:pointer">Close</button>';
+      return;
+    }
+    const pct = Number(data.readiness_pct) || 0;
+    const pctCol = pctColor(pct);
+    const dims = data.dimensions || [];
+    const dimRows = dims.map(function(d) {
+      const gapHtml = d.gap ? '<div style="font-size:11px;color:var(--text-3,#b8b8c0);margin-top:2px;line-height:1.4">' + String(d.gap).replace(/</g, '&lt;') + '</div>' : '';
+      return '<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border,#232737)">' +
+        '<div style="margin-top:2px">' + dimBadge(d.score) + '</div>' +
+        '<div style="flex:1;min-width:0"><strong style="font-size:13px;color:var(--text,#fafafa)">' + String(d.label).replace(/</g, '&lt;') + '</strong>' + gapHtml + '</div>' +
+        '</div>';
+    }).join('');
+    const driveLine = data.drive_enabled
+      ? (data.drive_status === 'synced' ? '<span style="color:var(--green-fg,#16a34a)">Drive synced</span>' :
+         data.drive_status === 'missing-folder' ? '<span style="color:var(--amber-fg,#f59e0b)">Drive enabled, folder not yet created</span>' :
+         '<span style="color:var(--text-3,#b8b8c0)">Drive status: ' + String(data.drive_status).replace(/</g, '&lt;') + '</span>')
+      : '<span style="color:var(--text-3,#b8b8c0)">Drive sync off</span>';
+    const whyBlock = data.why
+      ? '<div style="background:rgba(99,102,241,0.08);border-left:3px solid var(--blue-fg,#58a6ff);padding:10px 14px;margin:12px 0;border-radius:0 6px 6px 0"><div style="font-size:11px;color:var(--text-3,#b8b8c0);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px">Why this matters</div><div style="font-size:13px;color:var(--text,#fafafa);line-height:1.5">' + String(data.why).replace(/</g, '&lt;').replace(/\\n/g, '<br>') + '</div></div>'
+      : '';
+    const polishBtn = data.can_polish
+      ? '<button type="button" onclick="document.getElementById(\\u0027pre-apply-check-backdrop\\u0027).remove(); if(typeof window.alphaPolishPack===\\u0027function\\u0027){window.alphaPolishPack(\\u0027' + String(num).replace(/[^0-9]/g, '') + '\\u0027);}" style="padding:8px 16px;background:var(--green-fg,#16a34a);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px">Run Polish</button>'
+      : '';
+    const closeBtn = '<button type="button" onclick="document.getElementById(\\u0027pre-apply-check-backdrop\\u0027).remove()" style="padding:8px 16px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:13px">Close</button>';
+    const cacheBadge = data._from_cache ? '<span style="font-size:10px;padding:2px 7px;border-radius:999px;background:rgba(99,102,241,0.10);color:var(--text-3,#b8b8c0);margin-left:6px">cached</span>' : '';
+    modal.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">' +
+      '<h2 style="margin:0;font-size:18px">Pre-Apply Check &middot; row ' + Number(num) + cacheBadge + '</h2>' +
+      '<button type="button" onclick="document.getElementById(\\u0027pre-apply-check-backdrop\\u0027).remove()" aria-label="Close" style="background:transparent;border:none;color:var(--text-3);font-size:18px;cursor:pointer;padding:4px 8px;line-height:1">' + String.fromCharCode(0x2715) + '</button>' +
+      '</div>' +
+      '<div style="font-size:11px;color:var(--text-3,#b8b8c0);margin-bottom:14px">' + String(data.slug || '').replace(/</g, '&lt;') + ' &middot; ' + driveLine + '</div>' +
+      '<div style="display:flex;align-items:baseline;gap:14px;margin-bottom:12px"><div style="font-size:48px;font-weight:700;color:' + pctCol + ';font-variant-numeric:tabular-nums">' + pct + '%</div><div style="font-size:13px;color:var(--text-2,#e4e4e7)">' + (data.ready ? 'Ready to apply' : (pct >= 60 ? 'Polish then apply' : (pct >= 40 ? 'Polish + fill gaps' : 'Significant gaps'))) + '</div></div>' +
+      whyBlock +
+      '<div style="font-size:11px;color:var(--text-3,#b8b8c0);text-transform:uppercase;letter-spacing:0.06em;margin:14px 0 4px">7-dimension rubric</div>' +
+      dimRows +
+      '<div style="display:flex;gap:10px;margin-top:18px;justify-content:flex-end">' + polishBtn + closeBtn + '</div>';
+  } catch (err) {
+    modal.innerHTML = '<h2 style="margin:0 0 8px;color:var(--red-fg)">Pre-Apply Check unavailable</h2>' +
+      '<p style="color:var(--text-2,#e4e4e7);font-size:12px">Error: ' + String(err.message || err).replace(/</g, '&lt;') + '</p>' +
+      '<button type="button" onclick="document.getElementById(\\u0027pre-apply-check-backdrop\\u0027).remove()" style="margin-top:8px;padding:6px 14px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);border-radius:6px;cursor:pointer">Close</button>';
+  }
+}
+window._openPreApplyCheckModal = _openPreApplyCheckModal;
+
 function _renderLifecycleRow(s, driveEnabled, num) {
   // 5 button states: 'active' (green solid), 'done' (outlined), 'disabled'
   // (greyed). Map per-button below.
@@ -21034,9 +21139,13 @@ function _renderLifecycleRow(s, driveEnabled, num) {
     if (s.drive_synced) { syncState = 'active'; syncTitle = 'Pull latest edits from the Drive Doc into the apply-pack'; }
     else { syncState = 'disabled'; syncTitle = 'Sync after first push to Drive — generate apply pack first to provision the Drive folder'; }
   }
-  // Pre-apply — stub until Cluster K is wired (handoff says render as Coming soon)
-  const preApplyState = s.pack_exists ? 'disabled' : 'disabled';
-  const preApplyTitle = 'Coming soon — 7-dimension readiness check (Cluster K)';
+  // Pre-apply — Phase 4.5a (2026-05-22): active when pack_exists. Click handler
+  // opens _openPreApplyCheckModal which fetches /api/pre-apply-check and renders
+  // the 7-dimension rubric + readiness score + Gemini narrative + Run Polish CTA.
+  const preApplyState = s.pack_exists ? 'active' : 'disabled';
+  const preApplyTitle = s.pack_exists
+    ? 'Scan apply-pack readiness across 7 dimensions — opens readiness modal with gap list + polish CTA'
+    : 'Create an apply pack first to enable readiness check';
   // Polish — active if pack exists, done if polished
   let polishState = 'disabled';
   let polishTitle = 'Polish requires the apply pack to exist';

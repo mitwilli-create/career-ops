@@ -5318,16 +5318,43 @@ const server = createServer((req, res) => {
     return;
   }
 
-  // ── GET /api/liveness?url=... ──────────────────────────────────────────
+  // ── GET /api/liveness?url=...&row=N ────────────────────────────────────
   // Liveness Phase 2 (2026-05-18, inventory item from strategy doc).
   // Realtime probe used by the drawer-open hook. 6h cache keyed by URL so
   // repeated drawer opens don't hammer ATS hosts. Reuses lib/liveness.mjs.
+  //
+  // Phase 3 (2026-05-22) — added `auto_remove_recommended` to every return
+  // payload. True ONLY when:
+  //   - the posting is verifiably not alive AND
+  //   - the tracker row's current status is 'Evaluated' (so a Discarded
+  //     auto-flip is safe — wouldn't trample on Applied/Interview/Offer rows)
+  // The client uses this hint to gate the refuse-banner display.
+  // `row` query param is optional but recommended; without it the server
+  // falls back to matching the URL against liveness-state.json's row map.
   if (url.startsWith('/api/liveness') && req.method === 'GET') {
     (async () => {
       try {
-        const parsed = new URL('http://localhost' + url);
-        const target = parsed.searchParams.get('url');
+        // `url` is path-only (stripped at line 4194); read params from the
+        // pre-parsed `query` object created at line 4196. The earlier code
+        // tried `new URL('http://localhost' + url)` which always had empty
+        // searchParams since url=/api/liveness with no query string.
+        const target = String(query.url || '');
+        const rowQ = String(query.row || '');
         if (!target) return json({ ok: false, error: 'url param required' }, 400);
+
+        // Helper: compute auto_remove_recommended given the liveness outcome
+        // and the tracker row (if resolvable). The row's current status is the
+        // authoritative gate — auto-remove ONLY suggested for Evaluated rows.
+        const computeAutoRemove = (alive, rowNum) => {
+          if (alive) return false;
+          if (!rowNum) return false;
+          try {
+            const apps = parseApplicationsFile(join(ROOT, 'data/applications.md'));
+            const r = apps.find((a) => String(a.num) === String(rowNum));
+            if (!r) return false;
+            return r.status === 'Evaluated';
+          } catch (_e) { return false; }
+        };
 
         // 1) Check the overnight sweep's sidecar (most authoritative)
         const statePath = join(ROOT, 'data/liveness-state.json');
@@ -5336,14 +5363,16 @@ const server = createServer((req, res) => {
             const state = JSON.parse(readFileSync(statePath, 'utf-8'));
             for (const [num, row] of Object.entries(state.rows || {})) {
               if (row && row.url === target) {
+                const alive = row.status === 'active';
                 return json({
                   ok: true,
-                  alive: row.status === 'active',
+                  alive,
                   status: row.status,
                   reason: row.reason || '',
                   lastChecked: row.lastChecked,
                   source: 'overnight-sweep',
                   row_num: num,
+                  auto_remove_recommended: computeAutoRemove(alive, rowQ || num),
                 });
               }
             }
@@ -5360,13 +5389,15 @@ const server = createServer((req, res) => {
         const cacheEntry = cache[cacheKey];
         const SIX_HOURS = 6 * 60 * 60 * 1000;
         if (cacheEntry && (Date.now() - cacheEntry.ts) < SIX_HOURS) {
+          const alive = cacheEntry.status === 'active';
           return json({
             ok: true,
-            alive: cacheEntry.status === 'active',
+            alive,
             status: cacheEntry.status,
             reason: cacheEntry.reason,
             lastChecked: new Date(cacheEntry.ts).toISOString(),
             source: 'cache',
+            auto_remove_recommended: computeAutoRemove(alive, rowQ),
           });
         }
 
@@ -5374,6 +5405,7 @@ const server = createServer((req, res) => {
         const { verifyApplyNowLink } = await import(join(ROOT, 'lib/liveness.mjs'));
         const result = await verifyApplyNowLink(target);
         const status = result.result;
+        const alive = status === 'active';
 
         // Update the 6h cache
         cache[cacheKey] = { status, reason: result.reason, ts: Date.now() };
@@ -5383,11 +5415,12 @@ const server = createServer((req, res) => {
 
         return json({
           ok: true,
-          alive: status === 'active',
+          alive,
           status,
           reason: result.reason,
           lastChecked: new Date().toISOString(),
           source: 'live-probe',
+          auto_remove_recommended: computeAutoRemove(alive, rowQ),
         });
       } catch (e) {
         _d25Log('[liveness] ' + e.message);

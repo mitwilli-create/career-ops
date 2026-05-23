@@ -15139,12 +15139,28 @@ function openRightRailForDetail(idx, detailRow) {
   let applyHref = '';
   const roleLinkHref = row?.querySelector('td.role-cell a.role-link[href]')?.href || '';
   const companyLinkHref = row?.querySelector('a.company-link[href]')?.href || '';
-  // Pick favicon source: prefer the actual JD URL hostname, fall back to
-  // the company /careers page hostname.
-  const jdAnchor = row?.querySelector('td.role-cell a.role-link[href], a.company-link[href]')
-    || row?.querySelector('td.action-cell a[href]:not([href^="#"]):not([href^="reports/"]):not([href^="javascript:"]):not([href^="file:"])');
-  if (jdAnchor && jdAnchor.href) {
-    applyHref = jdAnchor.href;
+  // Section 5.1 fix (2026-05-22 completion run): prefer the most-specific URL.
+  // Role-link is the canonical JD URL; company-link is typically the /careers
+  // root. The earlier comma-list querySelector returned the FIRST DOM match
+  // which sometimes is the company-link (when role-link is missing) — that
+  // dropped row #48 to https://www.anthropic.com/jobs instead of the
+  // Greenhouse posting. Explicit priority: role-link → ATS-host action-cell
+  // anchor → company-link → any action-cell anchor.
+  const KNOWN_ATS_HOSTS = ['greenhouse.io', 'lever.co', 'ashbyhq.com', 'workday.com', 'myworkdayjobs.com', 'jobvite.com', 'smartrecruiters.com', 'icims.com', 'taleo.net', 'bamboohr.com', 'eightfold.ai', 'oraclecloud.com', 'successfactors.com'];
+  function _looksLikeAtsUrl(u) {
+    if (!u) return false;
+    try {
+      const h = new URL(u).hostname;
+      return KNOWN_ATS_HOSTS.some(ats => h === ats || h.endsWith('.' + ats));
+    } catch { return false; }
+  }
+  const actionAnchors = row ? Array.from(row.querySelectorAll('td.action-cell a[href]:not([href^="#"]):not([href^="reports/"]):not([href^="javascript:"]):not([href^="file:"])')) : [];
+  const atsActionAnchor = actionAnchors.find(a => _looksLikeAtsUrl(a.href));
+  applyHref = roleLinkHref
+    || (atsActionAnchor ? atsActionAnchor.href : '')
+    || companyLinkHref
+    || (actionAnchors[0] ? actionAnchors[0].href : '');
+  if (applyHref) {
     try { logoHost = new URL(applyHref).hostname; } catch (e) {}
   }
   const fallbackChar = (company.charAt(0) || '?').toUpperCase();

@@ -2541,6 +2541,26 @@ const htmlEscape = (s) => String(s)
   .replace(/"/g, '&quot;')
   .replace(/'/g, '&#39;');
 
+// stripHtmlTags — iterative-strip helper that defeats the
+// js/incomplete-multi-character-sanitization CodeQL pattern flagged on the
+// prior `.replace(/<[^>]+>/g, '')` single-pass strip at build-dashboard.mjs:3300
+// (2026-05-22 follow-up). Single-pass is bypassed by crafted nested input
+// like `<scr<script>ipt>` → after one pass `<script>` survives. The
+// iterative version applies `<[^>]*>` (note `*` not `+` so empty `<>` tags
+// also strip) until the string is stable, then defensively strips any
+// remaining lone `<` or `>` characters. Lossy on legitimate angle-bracketed
+// content (existing behaviour); fine for derivable text use cases like
+// interview-prompt payloads.
+const stripHtmlTags = (s) => {
+  let prev;
+  let cur = String(s == null ? '' : s);
+  do {
+    prev = cur;
+    cur = cur.replace(/<[^>]*>/g, '');
+  } while (cur !== prev);
+  return cur.replace(/[<>]/g, '');
+};
+
 // FIX 1 (2026-05-17) — strip table-cell markup residue before escaping so users
 // don't see literal "<br>" or "**" in the WHAT FITS card. Source data is
 // markdown-table cells that intentionally carry inline <br> and **bold** to
@@ -3297,7 +3317,7 @@ function renderRow(r, idx) {
       // Template-based seed question selection (no LLM call at build time).
       const interviewPrompt = _buildGapInterviewPrompt({
         title: g.title,
-        detail: (g.detail || '').replace(/<[^>]+>/g, '').trim(),
+        detail: stripHtmlTags(g.detail).trim(),
         severity: g.severity || 'medium',
         company: r.company || 'this company',
         role: r.role || 'this role',

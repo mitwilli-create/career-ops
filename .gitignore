@@ -2,6 +2,22 @@
 cv.md
 data/applications.md
 data/pipeline.md
+
+# regression-guard outputs (shipped 2026-05-23) — personal pipeline data
+# - decision doc has `[PERSONAL — DO NOT PUBLISH]` frontmatter
+# - baselines have applications row counts + transcript stats (cross-fork-leak risk)
+# - spend ledger has LLM cost detail (operational, but not load-bearing public)
+# - state file has finding history (timestamps + counts per day)
+# - log file is operational telemetry
+data/regression-guard-state.json
+data/regression-guard-spend.jsonl
+data/regression-baselines/
+data/logs/regression-guard-*.log
+.claude/audit/*/regression-report-*.md
+# Panel JSON reveals file paths from .claude/audit/ work-product directories,
+# which can include personal workflow names (e.g. apply-now-clipboard-modal).
+# Agent regenerates this on every scheduled run.
+data/dashboard-panels/regression-guard.json
 data/scan-history.tsv
 data/xge-baseline.json
 data/vimeo-inventory-*.md

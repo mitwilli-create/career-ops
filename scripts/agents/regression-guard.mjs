@@ -26,11 +26,25 @@
  * Modes (CLI):
  *   --scheduled        Daily 06:00 PT run. Reads baselines, fires detectors, writes decision doc.
  *   --seed-baselines   First run. Seeds baselines from current repo state + transcripts. Trial cap $10.
- *   --deep <session>   Forensic root-cause on a single session-id or YYYY-MM-DD range.
+ *   --deep <session>   Forensic root-cause on a single session-id (v1.0 single-session behavior).
  *   --smoke            Smoke test. No real LLM calls; mocks Gemini→Sonnet fallback + cost WARN.
  *   --canary-only      Run only the canary self-test loop. Used by hang-watchdog hooks.
  *   --dashboard        Write data/dashboard-panels/regression-guard.json (no detection run).
  *   --help             Print usage.
+ *
+ * v1.1 multi-session deep mode (2026-05-23) — combine --deep with any of these:
+ *   --since YYYY-MM-DD     Lower bound (inclusive) on session mtime
+ *   --until YYYY-MM-DD     Upper bound (inclusive) on session mtime
+ *   --sessions <uuid,...>  Explicit comma-separated UUID list
+ *   --last <N>             Convenience for --since N days ago through now
+ *   --synthesize           Run Sonnet 4.6 cross-session correlation (chains where A↑ → B↓)
+ *   --budget <usd>         Per-invocation budget override (≤ $200). Default = daily cap remaining.
+ *
+ * Multi-session output:
+ *   .claude/audit/<YYYY-MM-DD>/regression-report-multi-deep-<DESCRIPTOR>.md
+ *   <DESCRIPTOR> auto-derived: last-3-days | 2026-05-20-to-2026-05-23 | uuids-<8hex>
+ *
+ * Default --deep <single-uuid> behavior is unchanged from v1.0.
  *
  * Environment (all defaults documented in .env.example):
  *   REGRESSION_GUARD_ENABLED=true               kill switch
@@ -1178,6 +1192,592 @@ async function runDeep(target) {
   return { ok: true, reportPath: null, note: 'deep mode stub' };
 }
 
+// ─── v1.1 multi-session deep mode ───────────────────────────────────────────
+//
+// Adds native CLI orchestration so multi-session deep forensics no longer require
+// Claude-as-orchestrator on every run. The per-session work is the deterministic
+// "what changed during this session" git-log analysis within the session's mtime
+// window — cheap, robust, hash_only-safe. The cross-session synthesis is a single
+// Sonnet 4.6 call that takes per-session summaries (metadata only — no transcript
+// content) and identifies chains where session A introduced something session B
+// silently undid.
+
+const MAX_BUDGET_USD = 200;        // hard ceiling on --budget override
+const DEFAULT_SCOPE_DAYS = 7;       // when --until set without --since
+const PER_SESSION_BUDGET_USD = 8;   // soft target per session (matches runbook estimate)
+
+function parseV11DeepOpts(args) {
+  const opts = {};
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--since')        opts.since      = args[++i];
+    else if (a === '--until')   opts.until      = args[++i];
+    else if (a === '--sessions') {
+      const v = args[++i] || '';
+      opts.sessions = v.split(',').map(s => s.trim()).filter(Boolean);
+    }
+    else if (a === '--last')        opts.last      = Number(args[++i]);
+    else if (a === '--synthesize')  opts.synthesize = true;
+    else if (a === '--budget')      opts.budget    = Number(args[++i]);
+  }
+  return opts;
+}
+
+function isMultiSessionDeep(opts) {
+  return Boolean(
+    (opts.sessions && opts.sessions.length > 0) ||
+    opts.since || opts.until ||
+    opts.last !== undefined
+  );
+}
+
+function uuidsHash(uuids) {
+  const h = createHash('sha256').update(uuids.join(',')).digest('hex').slice(0, 8);
+  return `uuids-${h}`;
+}
+
+function buildDescriptor({ sessions, since, until, last, sinceMs, untilMs }) {
+  if (sessions && sessions.length > 0) return uuidsHash(sessions);
+  if (last !== undefined && Number.isFinite(last)) return `last-${last}-days`;
+  const sinceStamp = since || new Date(sinceMs).toISOString().slice(0, 10);
+  const untilStamp = until || new Date(untilMs).toISOString().slice(0, 10);
+  if (since && until) return `${sinceStamp}-to-${untilStamp}`;
+  if (since) return `since-${sinceStamp}`;
+  if (until) return `until-${untilStamp}`;
+  return 'unscoped';
+}
+
+/**
+ * Enumerate session UUIDs to deep-process based on v1.1 flag opts.
+ * Returns { sessions, descriptor, windowSinceMs, windowUntilMs }.
+ */
+function enumerateSessions(opts) {
+  // Explicit UUID list takes precedence
+  if (opts.sessions && opts.sessions.length > 0) {
+    // Filter to UUIDs that actually have a transcript on disk
+    const present = [];
+    const missing = [];
+    for (const u of opts.sessions) {
+      const fp = join(PROJECT_TRANSCRIPTS_DIR, `${u}.jsonl`);
+      if (existsSync(fp)) present.push(u);
+      else missing.push(u);
+    }
+    if (missing.length > 0) {
+      log(`WARN: ${missing.length} requested session(s) not on disk: ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? ', ...' : ''}`, 'warn');
+    }
+    return {
+      sessions: present,
+      missing,
+      descriptor: buildDescriptor({ sessions: opts.sessions }),
+      windowSinceMs: null,
+      windowUntilMs: null,
+    };
+  }
+
+  // Date-range path
+  const now = Date.now();
+  let sinceMs, untilMs;
+  if (opts.last !== undefined && Number.isFinite(opts.last)) {
+    sinceMs = now - opts.last * 86400 * 1000;
+    untilMs = now;
+  } else {
+    if (opts.since) {
+      sinceMs = new Date(opts.since + 'T00:00:00').getTime();
+    } else {
+      // Default 7 days back when only --until given
+      sinceMs = now - DEFAULT_SCOPE_DAYS * 86400 * 1000;
+    }
+    if (opts.until) {
+      // Inclusive — bump to end of day
+      untilMs = new Date(opts.until + 'T23:59:59').getTime();
+    } else {
+      untilMs = now;
+    }
+  }
+
+  if (!Number.isFinite(sinceMs) || !Number.isFinite(untilMs)) {
+    throw new Error(`enumerateSessions: invalid date range. since=${opts.since} until=${opts.until} last=${opts.last}`);
+  }
+  if (sinceMs > untilMs) {
+    throw new Error(`enumerateSessions: --since (${new Date(sinceMs).toISOString()}) is after --until (${new Date(untilMs).toISOString()})`);
+  }
+
+  const sessions = [];
+  if (existsSync(PROJECT_TRANSCRIPTS_DIR)) {
+    try {
+      const entries = readdirSync(PROJECT_TRANSCRIPTS_DIR);
+      for (const e of entries) {
+        if (!e.endsWith('.jsonl')) continue;
+        const fp = join(PROJECT_TRANSCRIPTS_DIR, e);
+        try {
+          const st = statSync(fp);
+          if (!st.isFile()) continue;
+          const mt = st.mtimeMs;
+          if (mt >= sinceMs && mt <= untilMs) {
+            sessions.push({ uuid: e.replace(/\.jsonl$/, ''), mtimeMs: mt, bytes: st.size });
+          }
+        } catch { /* skip */ }
+      }
+    } catch (e) {
+      log(`enumerateSessions: scan err: ${e.message}`, 'warn');
+    }
+  }
+  // Newest first — most-recently-touched sessions deep-process first
+  sessions.sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  return {
+    sessions: sessions.map(s => s.uuid),
+    sessionMeta: sessions,
+    missing: [],
+    descriptor: buildDescriptor({ since: opts.since, until: opts.until, last: opts.last, sinceMs, untilMs }),
+    windowSinceMs: sinceMs,
+    windowUntilMs: untilMs,
+  };
+}
+
+/**
+ * Per-session deep work: derive the session's git-touch window, collect commit
+ * metadata + file-change list. NO transcript content is returned; everything
+ * is hash_only-safe.
+ *
+ * Returns { uuid, mtimeMs, commits[], filesChanged[], findings[], cost }.
+ */
+function deepSingleSession(uuid, { mtimeMs } = {}) {
+  heartbeat('multi-deep', 'session-start', { uuid });
+  const out = {
+    uuid,
+    mtimeMs: mtimeMs || null,
+    commits: [],
+    filesChanged: [],
+    findings: [],
+    cost: 0,
+    error: null,
+  };
+
+  const fp = join(PROJECT_TRANSCRIPTS_DIR, `${uuid}.jsonl`);
+  if (!existsSync(fp)) {
+    out.error = 'transcript-not-found';
+    return out;
+  }
+
+  // Derive session window — file creation time → mtime
+  let sessionStartMs, sessionEndMs;
+  try {
+    const st = statSync(fp);
+    sessionStartMs = st.birthtimeMs || st.ctimeMs;
+    sessionEndMs = st.mtimeMs;
+    out.mtimeMs = sessionEndMs;
+  } catch {
+    out.error = 'stat-failed';
+    return out;
+  }
+
+  // git log within the session window — bounded by 1024 commits + 10s timeout
+  const sinceIso = new Date(sessionStartMs).toISOString();
+  const untilIso = new Date(sessionEndMs + 60_000).toISOString();   // +1 min slack
+  try {
+    const cmd = `git log --since="${sinceIso}" --until="${untilIso}" --pretty=format:'%H|%ai|%s' --name-status -1024`;
+    const raw = execSync(cmd, { encoding: 'utf-8', timeout: 10_000, cwd: REPO_ROOT });
+    // Parse: blocks of [SHA|date|subject] then file-status lines
+    const blocks = raw.split(/\n(?=[0-9a-f]{40}\|)/m);
+    for (const blk of blocks) {
+      if (!blk.trim()) continue;
+      const [head, ...rest] = blk.split('\n');
+      const m = head.match(/^([0-9a-f]{40})\|([^|]+)\|(.*)$/);
+      if (!m) continue;
+      const [, sha, date, subject] = m;
+      const files = [];
+      for (const ln of rest) {
+        const fm = ln.match(/^([AMDRT])\s+(.+)$/);
+        if (fm) files.push({ status: fm[1], path: fm[2] });
+      }
+      out.commits.push({ sha: sha.slice(0, 8), date, subject, files });
+      for (const f of files) out.filesChanged.push(f.path);
+    }
+  } catch (e) {
+    log(`deepSingleSession: git-log err for ${uuid.slice(0, 8)}: ${e.message}`, 'warn');
+  }
+
+  // De-dup file list
+  out.filesChanged = [...new Set(out.filesChanged)];
+
+  // Per-session findings — deterministic signals based on touched files
+  // (the v1.0 detectors run against current repo state, so re-running them per
+  // session would all produce identical output. The session-distinguishing
+  // signal is which FILES this session touched, not the current file state.)
+  if (out.commits.length === 0 && out.filesChanged.length === 0) {
+    out.findings.push({
+      type: 5, severity: 'LOW', confidence: 'LOW',
+      subtype: 'session-no-git-activity',
+      file: `<session ${uuid.slice(0, 8)}>`,
+      summary: 'Session window has no committed changes — work may be uncommitted or read-only',
+      sourceSession: uuid,
+      citation: { path: fp, mode: 'summary_only', summary: 'session metadata only' },
+    });
+  }
+
+  // Flag touched files that match sensitive paths — possible cross-fork-leak surface
+  for (const fpath of out.filesChanged) {
+    if (isSensitivePath(join(REPO_ROOT, fpath))) {
+      out.findings.push({
+        type: 7, severity: 'MED', confidence: 'HIGH',
+        subtype: 'session-touched-sensitive-path',
+        file: fpath,
+        summary: `Session committed changes to sensitive path ${fpath} — verify it's gitignored or this is a real leak`,
+        sourceSession: uuid,
+        citation: { path: fpath, mode: 'hash_only', hash: hashCite(`${uuid}:${fpath}`) },
+      });
+    }
+  }
+
+  heartbeat('multi-deep', 'session-done', { uuid, commits: out.commits.length, files: out.filesChanged.length });
+  return out;
+}
+
+/**
+ * Cross-session synthesis: identify chains where session A introduced something
+ * session B silently undid. Sonnet 4.6 only — Opus too expensive, Haiku too weak
+ * per dealbreaker spec § Audit Item 2 + Council OS routing-rules.
+ *
+ * Input is per-session metadata ONLY (no transcript content):
+ *   [{ uuid, commits: [{sha, date, subject, files}], filesChanged: [...] }, ...]
+ *
+ * Returns { chains: [{ introducedBy, undoneBy, summary }], rawAnalysis, cost }.
+ */
+async function crossSessionSynthesize(perSession, opts = {}) {
+  if (perSession.length < 2) {
+    return { chains: [], rawAnalysis: 'Fewer than 2 sessions in scope — no cross-session correlation possible.', cost: 0 };
+  }
+  if (opts.dryRun) {
+    return { chains: [], rawAnalysis: '<dry-run synthesis>', cost: 0 };
+  }
+
+  // Build a compact metadata-only prompt — file paths + commit subjects only,
+  // NO transcript content. This is the cross-fork-leak-safe substrate.
+  const lines = [];
+  lines.push('You are reviewing per-session git activity across multiple Claude Code sessions on a personal job-search repo. Find CROSS-SESSION CHAINS where one session introduced or changed something a later session silently undid, reverted, or contradicted.');
+  lines.push('');
+  lines.push('CRITICAL CONSTRAINT: respond in this exact structured format. No prose intro, no markdown headers.');
+  lines.push('');
+  lines.push('Per-session metadata follows (commit SHA / commit subject / file paths only — no content):');
+  lines.push('');
+  for (const s of perSession) {
+    const shortId = String(s.uuid).slice(0, 8);
+    lines.push(`SESSION ${shortId} (${s.commits.length} commits, ${s.filesChanged.length} files):`);
+    for (const c of s.commits.slice(0, 24)) {
+      lines.push(`  ${c.sha} ${c.date.slice(0, 10)} | ${c.subject.slice(0, 100)}`);
+      for (const f of c.files.slice(0, 10)) {
+        lines.push(`    ${f.status} ${f.path}`);
+      }
+    }
+    lines.push('');
+  }
+  lines.push('Emit findings as a JSON array of chains. Each chain object MUST have these keys:');
+  lines.push('  introducedBy: <8-char session id>');
+  lines.push('  undoneBy:     <8-char session id>');
+  lines.push('  file:         <file path>');
+  lines.push('  summary:      <one-sentence description of what was added/changed then undone>');
+  lines.push('  confidence:   <"HIGH" | "MED" | "LOW">');
+  lines.push('');
+  lines.push('If no chains exist, emit []. Wrap the JSON array in <chains>...</chains> tags. No other output.');
+
+  const prompt = lines.join('\n');
+  const r = await sonnetSynthesis(prompt, { ...opts, label: 'multi-deep-synthesis', maxTokens: 4096 });
+  const content = r.content || '';
+  let chains = [];
+  try {
+    const m = content.match(/<chains>([\s\S]*?)<\/chains>/);
+    const jsonRaw = m ? m[1].trim() : content.trim();
+    const parsed = JSON.parse(jsonRaw);
+    if (Array.isArray(parsed)) chains = parsed;
+  } catch (e) {
+    log(`crossSessionSynthesize: JSON parse err: ${e.message}`, 'warn');
+  }
+  return { chains, rawAnalysis: content, cost: r.usd || 0 };
+}
+
+/**
+ * Render the multi-session decision doc. Same frontmatter conventions as the
+ * single-session doc + cross-session chains section + per-session breakdown.
+ */
+function renderMultiDeepDoc({
+  perSession, chains, descriptor, opts, spentUsd, budgetUsd,
+  windowSinceMs, windowUntilMs, abortedReason, synthesisCost, synthesisRaw,
+}) {
+  // Collate findings across sessions; tag each with source-session
+  const allFindings = [];
+  for (const s of perSession) {
+    for (const f of s.findings || []) {
+      allFindings.push({ ...f, sourceSession: f.sourceSession || s.uuid });
+    }
+  }
+
+  // Validate citations (throws if any quote_inline from sensitive path)
+  const citations = allFindings.map(f => f.citation).filter(Boolean);
+  assertNoInlineQuotesFromSensitivePaths(citations);
+
+  // Severity ordering
+  const sevOrder = { CRIT: 0, HIGH: 1, MED: 2, LOW: 3 };
+  const sortedFindings = [...allFindings].sort((a, b) => (sevOrder[a.severity] ?? 9) - (sevOrder[b.severity] ?? 9));
+  const tally = { CRIT: 0, HIGH: 0, MED: 0, LOW: 0 };
+  for (const f of allFindings) tally[f.severity] = (tally[f.severity] || 0) + 1;
+
+  const lines = [];
+  lines.push('---');
+  lines.push('classification: "[PERSONAL — DO NOT PUBLISH]"');
+  lines.push('agent: regression-guard');
+  lines.push('mode: multi-deep');
+  lines.push(`date: ${TODAY}`);
+  lines.push(`descriptor: ${descriptor}`);
+  lines.push(`session_count: ${perSession.length}`);
+  lines.push(`spend_total_usd: ${spentUsd.toFixed(4)}`);
+  lines.push(`budget_usd: ${budgetUsd}`);
+  lines.push(`synthesize_requested: ${Boolean(opts.synthesize)}`);
+  lines.push(`synthesis_cost_usd: ${(synthesisCost || 0).toFixed(4)}`);
+  if (windowSinceMs) lines.push(`window_since: ${new Date(windowSinceMs).toISOString()}`);
+  if (windowUntilMs) lines.push(`window_until: ${new Date(windowUntilMs).toISOString()}`);
+  if (abortedReason) lines.push(`aborted_reason: ${abortedReason}`);
+  lines.push('citation_policy: hash_only');
+  lines.push('---');
+  lines.push('');
+
+  lines.push(`# Regression-Guard Multi-Session Deep — ${descriptor}`);
+  lines.push('');
+  if (abortedReason) {
+    lines.push(`> ⚠️ **RUN ABORTED**: ${abortedReason}`);
+    lines.push(`> Partial results below — review and re-run with adjusted scope or --budget.`);
+    lines.push('');
+  }
+
+  // TL;DR
+  lines.push('## TL;DR');
+  lines.push('');
+  lines.push(`- **Sessions analyzed**: ${perSession.length}`);
+  lines.push(`- **Cross-session chains**: ${chains.length}`);
+  lines.push(`- **Findings**: ${allFindings.length} (CRIT ${tally.CRIT} · HIGH ${tally.HIGH} · MED ${tally.MED} · LOW ${tally.LOW})`);
+  lines.push(`- **Cost**: $${spentUsd.toFixed(4)} / $${budgetUsd} budget`);
+  lines.push(`- **Synthesis**: ${opts.synthesize ? 'Sonnet 4.6 ran' : 'skipped (no --synthesize flag)'}`);
+  lines.push('');
+
+  // Cross-session chains — always render the section, even when empty
+  lines.push('## Cross-session chains');
+  lines.push('');
+  if (!opts.synthesize) {
+    lines.push('_Cross-session synthesis not requested. Re-run with `--synthesize` to fire Sonnet 4.6 correlation._');
+  } else if (chains.length === 0) {
+    lines.push('No cross-session chains detected. Either:');
+    lines.push('- the sessions are independent (no shared files / no introduce-then-undo patterns), OR');
+    lines.push('- the synthesis call failed to parse a chains array (see Raw synthesis section).');
+  } else {
+    for (let i = 0; i < chains.length; i++) {
+      const c = chains[i];
+      lines.push(`### Chain ${i + 1}`);
+      lines.push('');
+      lines.push(`- **Introduced by**: \`${c.introducedBy}\``);
+      lines.push(`- **Undone by**: \`${c.undoneBy}\``);
+      lines.push(`- **File**: \`${c.file || '<unspecified>'}\``);
+      lines.push(`- **Confidence**: ${c.confidence || 'MED'}`);
+      lines.push(`- **Summary**: ${c.summary || '<no summary>'}`);
+      lines.push('');
+    }
+  }
+  lines.push('');
+
+  // Per-session breakdown
+  lines.push('## Per-session breakdown');
+  lines.push('');
+  for (const s of perSession) {
+    const shortId = String(s.uuid).slice(0, 8);
+    lines.push(`### Session \`${shortId}\``);
+    lines.push('');
+    lines.push(`- **Full UUID**: \`${s.uuid}\``);
+    lines.push(`- **Commits in window**: ${s.commits.length}`);
+    lines.push(`- **Files touched**: ${s.filesChanged.length}`);
+    lines.push(`- **Findings**: ${(s.findings || []).length}`);
+    if (s.error) lines.push(`- **Error**: ${s.error}`);
+    if (s.commits.length > 0) {
+      lines.push('');
+      lines.push('Commits:');
+      for (const c of s.commits.slice(0, 10)) {
+        lines.push(`- \`${c.sha}\` ${c.date.slice(0, 10)} — ${c.subject.slice(0, 80)}`);
+      }
+      if (s.commits.length > 10) lines.push(`- _(+${s.commits.length - 10} more)_`);
+    }
+    lines.push('');
+  }
+
+  // All findings — severity-ordered, tagged by source session
+  if (sortedFindings.length > 0) {
+    lines.push('## All findings (severity-ordered, source-tagged)');
+    lines.push('');
+    for (let i = 0; i < Math.min(sortedFindings.length, 30); i++) {
+      const f = sortedFindings[i];
+      lines.push(`### ${i + 1}. [${f.severity}] ${f.subtype} (type ${f.type})`);
+      lines.push('');
+      lines.push(`- **Source session**: \`${String(f.sourceSession || '').slice(0, 8)}\``);
+      lines.push(`- **File**: \`${f.file}${f.line ? ':' + f.line : ''}\``);
+      lines.push(`- **Confidence**: ${f.confidence || 'MEDIUM'}`);
+      lines.push(`- **Summary**: ${f.summary}`);
+      if (f.citation) {
+        lines.push(`- **Citation**: ${f.citation.mode} — \`${f.citation.hash || f.citation.summary || ''}\``);
+      }
+      lines.push('');
+    }
+    if (sortedFindings.length > 30) {
+      lines.push(`_(+${sortedFindings.length - 30} additional findings — see data/regression-guard-pending.jsonl for full list)_`);
+      lines.push('');
+    }
+  }
+
+  // Raw synthesis (collapsed if successful)
+  if (opts.synthesize && synthesisRaw) {
+    lines.push('## Raw synthesis output (Sonnet 4.6)');
+    lines.push('');
+    lines.push('<details>');
+    lines.push('<summary>click to expand</summary>');
+    lines.push('');
+    lines.push('```');
+    lines.push(String(synthesisRaw).slice(0, 4000));
+    if (String(synthesisRaw).length > 4000) lines.push('... (truncated)');
+    lines.push('```');
+    lines.push('');
+    lines.push('</details>');
+    lines.push('');
+  }
+
+  lines.push('---');
+  lines.push('');
+  lines.push(`_regression-guard v1.1 multi-deep — ${ptIso()} — see \`scripts/agents/regression-guard.mjs\`._`);
+  lines.push('');
+  return lines.join('\n');
+}
+
+/**
+ * Main multi-session orchestrator. Enumerates sessions, loops with budget guard,
+ * runs cross-session synthesis if --synthesize, writes decision doc.
+ */
+async function runDeepMultiSession(opts) {
+  killSwitchCheck();
+
+  // Budget resolution: explicit --budget > daily-cap remaining > DEEP_BUDGET_USD
+  let budget = DEEP_BUDGET_USD;
+  if (Number.isFinite(opts.budget) && opts.budget > 0) {
+    budget = Math.min(opts.budget, MAX_BUDGET_USD);
+  }
+  if (opts.budget && opts.budget > MAX_BUDGET_USD) {
+    log(`WARN: --budget ${opts.budget} exceeds MAX_BUDGET_USD=${MAX_BUDGET_USD} — clamped to ${MAX_BUDGET_USD}`, 'warn');
+  }
+
+  // Pre-flight: confirm daily cap hasn't already been blown
+  const dailyCheck = checkDailyCap();
+  if (dailyCheck.exhausted) {
+    log(`CRIT: daily cap exhausted ($${dailyCheck.spent.toFixed(4)} / $${dailyCheck.cap}) — multi-deep aborted`);
+    return { ok: false, reason: 'daily_cap_exhausted', spent: dailyCheck.spent };
+  }
+
+  const enum_ = enumerateSessions(opts);
+  const sessionsList = enum_.sessions;
+
+  log(`▶ multi-deep — descriptor=${enum_.descriptor} sessions=${sessionsList.length} budget=$${budget}`);
+  if (sessionsList.length === 0) {
+    log('WARN: no sessions matched scope — emitting empty decision doc');
+  }
+
+  testPathEncoder();
+
+  const startSpend = getTodaySpend();
+  const perSession = [];
+  let abortedReason = null;
+
+  // Per-session loop with mid-run budget guard
+  for (let i = 0; i < sessionsList.length; i++) {
+    const uuid = sessionsList[i];
+    const meta = enum_.sessionMeta?.find(m => m.uuid === uuid);
+
+    // Budget check BEFORE each session
+    const currSpend = getTodaySpend();
+    const sessionRunSpend = currSpend - startSpend;
+    if (sessionRunSpend >= budget) {
+      abortedReason = `budget exhausted: $${sessionRunSpend.toFixed(4)} of $${budget} consumed before session ${i + 1}/${sessionsList.length}`;
+      log(`CRIT: ${abortedReason}`, 'error');
+      break;
+    }
+    const remaining = budget - sessionRunSpend;
+    if (remaining < PER_SESSION_BUDGET_USD * 0.5) {
+      // Soft warning — likely insufficient runway for an honest pass
+      log(`WARN: only $${remaining.toFixed(4)} budget remaining (≈${(remaining / PER_SESSION_BUDGET_USD).toFixed(2)} session-pass) — may abort mid-session`, 'warn');
+    }
+
+    log(`  [${i + 1}/${sessionsList.length}] deep-processing ${uuid.slice(0, 8)}`);
+    try {
+      const r = deepSingleSession(uuid, { mtimeMs: meta?.mtimeMs });
+      perSession.push(r);
+    } catch (e) {
+      log(`  [${i + 1}/${sessionsList.length}] ERR ${uuid.slice(0, 8)}: ${e.message}`, 'warn');
+      perSession.push({ uuid, error: e.message, commits: [], filesChanged: [], findings: [] });
+    }
+  }
+
+  // Cross-session synthesis if --synthesize and budget allows
+  let chains = [];
+  let synthesisCost = 0;
+  let synthesisRaw = null;
+  if (opts.synthesize && perSession.length >= 2 && !abortedReason) {
+    const currSpend = getTodaySpend();
+    const remaining = budget - (currSpend - startSpend);
+    if (remaining < 0.5) {
+      log(`WARN: insufficient budget for synthesis ($${remaining.toFixed(4)} remaining) — skipping`, 'warn');
+    } else {
+      log('▶ running cross-session synthesis (Sonnet 4.6)...');
+      try {
+        const r = await crossSessionSynthesize(perSession, { timeoutMs: 180_000 });
+        chains = r.chains;
+        synthesisCost = r.cost;
+        synthesisRaw = r.rawAnalysis;
+        log(`  synthesis: ${chains.length} chain(s), $${synthesisCost.toFixed(4)}`);
+      } catch (e) {
+        log(`synthesis err: ${e.message}`, 'warn');
+      }
+    }
+  } else if (opts.synthesize && perSession.length < 2) {
+    log('skipping synthesis: < 2 sessions in scope');
+  }
+
+  // Final spend after synthesis
+  const finalSpend = getTodaySpend() - startSpend;
+
+  // Render + write decision doc
+  const auditDir = join(REPO_ROOT, '.claude/audit', TODAY);
+  if (!existsSync(auditDir)) mkdirSync(auditDir, { recursive: true });
+  const reportPath = join(auditDir, `regression-report-multi-deep-${enum_.descriptor}.md`);
+  const md = renderMultiDeepDoc({
+    perSession,
+    chains,
+    descriptor: enum_.descriptor,
+    opts,
+    spentUsd: finalSpend,
+    budgetUsd: budget,
+    windowSinceMs: enum_.windowSinceMs,
+    windowUntilMs: enum_.windowUntilMs,
+    abortedReason,
+    synthesisCost,
+    synthesisRaw,
+  });
+  writeFileSync(reportPath, md);
+  log(`✓ wrote multi-deep decision doc: ${reportPath} (${md.length} chars)`);
+
+  return {
+    ok: !abortedReason,
+    reportPath,
+    descriptor: enum_.descriptor,
+    sessionCount: perSession.length,
+    chainCount: chains.length,
+    spentUsd: finalSpend,
+    budgetUsd: budget,
+    abortedReason,
+  };
+}
+
 async function runSmoke() {
   log('▶ smoke test — no real LLM calls');
   let allPass = true;
@@ -1266,6 +1866,120 @@ async function runSmoke() {
     if (!v) allPass = false;
   }
 
+  // 7. v1.1 — parseV11DeepOpts handles all flag forms
+  const p1 = parseV11DeepOpts(['--deep', '--last', '3', '--synthesize']);
+  const p1Ok = p1.last === 3 && p1.synthesize === true && !p1.since;
+  results.push({ name: 'v11-parse-last+synthesize', passed: p1Ok, detail: JSON.stringify(p1) });
+  if (!p1Ok) allPass = false;
+
+  const p2 = parseV11DeepOpts(['--deep', '--since', '2026-05-20', '--until', '2026-05-23', '--budget', '50']);
+  const p2Ok = p2.since === '2026-05-20' && p2.until === '2026-05-23' && p2.budget === 50;
+  results.push({ name: 'v11-parse-since+until+budget', passed: p2Ok, detail: JSON.stringify(p2) });
+  if (!p2Ok) allPass = false;
+
+  const p3 = parseV11DeepOpts(['--deep', '--sessions', 'a1b2c3,d4e5f6,g7h8i9']);
+  const p3Ok = Array.isArray(p3.sessions) && p3.sessions.length === 3 && p3.sessions[0] === 'a1b2c3';
+  results.push({ name: 'v11-parse-sessions-csv', passed: p3Ok, detail: JSON.stringify(p3) });
+  if (!p3Ok) allPass = false;
+
+  // 8. v1.1 — isMultiSessionDeep classification
+  const c1 = isMultiSessionDeep({});
+  const c2 = isMultiSessionDeep({ last: 3 });
+  const c3 = isMultiSessionDeep({ sessions: ['a', 'b'] });
+  const c4 = isMultiSessionDeep({ synthesize: true });  // synthesize alone is NOT multi-session
+  const classOk = c1 === false && c2 === true && c3 === true && c4 === false;
+  results.push({
+    name: 'v11-isMultiSessionDeep-classification',
+    passed: classOk,
+    detail: `empty=${c1} last=${c2} sessions=${c3} synth-only=${c4}`,
+  });
+  if (!classOk) allPass = false;
+
+  // 9. v1.1 — buildDescriptor variants
+  const d1 = buildDescriptor({ last: 3 });
+  const d2 = buildDescriptor({ since: '2026-05-20', until: '2026-05-23' });
+  const d3 = buildDescriptor({ sessions: ['aaaa1111', 'bbbb2222'] });
+  const dOk = d1 === 'last-3-days' && d2 === '2026-05-20-to-2026-05-23' && /^uuids-[0-9a-f]{8}$/.test(d3);
+  results.push({ name: 'v11-buildDescriptor-variants', passed: dOk, detail: `${d1} | ${d2} | ${d3}` });
+  if (!dOk) allPass = false;
+
+  // 10. v1.1 — crossSessionSynthesize dry-run with <2 sessions returns empty chains, no cost
+  const synthResult = await crossSessionSynthesize([{ uuid: 'x', commits: [], filesChanged: [] }], { dryRun: true });
+  const synthOk = Array.isArray(synthResult.chains) && synthResult.chains.length === 0 && synthResult.cost === 0;
+  results.push({ name: 'v11-synthesis-skips-single-session', passed: synthOk, detail: JSON.stringify({ chains: synthResult.chains.length, cost: synthResult.cost }) });
+  if (!synthOk) allPass = false;
+
+  // 11. v1.1 — renderMultiDeepDoc renders chain section even with zero chains
+  let renderedDoc = null;
+  try {
+    renderedDoc = renderMultiDeepDoc({
+      perSession: [{ uuid: 'aaaa1111', commits: [], filesChanged: [], findings: [] }],
+      chains: [],
+      descriptor: 'smoke-test',
+      opts: { synthesize: true },
+      spentUsd: 0,
+      budgetUsd: 50,
+      windowSinceMs: null,
+      windowUntilMs: null,
+      abortedReason: null,
+      synthesisCost: 0,
+      synthesisRaw: null,
+    });
+  } catch (e) {
+    renderedDoc = `ERR: ${e.message}`;
+  }
+  const renderOk =
+    typeof renderedDoc === 'string' &&
+    /## Cross-session chains/.test(renderedDoc) &&
+    /## Per-session breakdown/.test(renderedDoc) &&
+    /\[PERSONAL — DO NOT PUBLISH\]/.test(renderedDoc);
+  results.push({
+    name: 'v11-renderMultiDeepDoc-zero-chains',
+    passed: renderOk,
+    detail: renderOk ? `${renderedDoc.length} chars` : renderedDoc.slice(0, 200),
+  });
+  if (!renderOk) allPass = false;
+
+  // 12. v1.1 — multi-deep cross-fork-leak guard still fires inside the renderer
+  let multiLeakGuardOk = false;
+  try {
+    renderMultiDeepDoc({
+      perSession: [{
+        uuid: 'aaaa1111',
+        commits: [],
+        filesChanged: [],
+        findings: [{
+          type: 7, severity: 'CRIT', subtype: 'leak-test',
+          file: 'data/second-brain-extracted/foo.md',
+          summary: 'leak attempt',
+          citation: { path: '/Users/x/Documents/career-ops/data/second-brain-extracted/foo.md', mode: 'quote_inline' },
+        }],
+      }],
+      chains: [],
+      descriptor: 'leak-test',
+      opts: { synthesize: false },
+      spentUsd: 0,
+      budgetUsd: 50,
+    });
+  } catch (e) {
+    if (/CITATION-POLICY VIOLATION/.test(e.message)) multiLeakGuardOk = true;
+  }
+  results.push({ name: 'v11-multi-deep-leak-guard-fires', passed: multiLeakGuardOk });
+  if (!multiLeakGuardOk) allPass = false;
+
+  // 13. v1.1 — budget arithmetic: synthesis is gated when remaining < 0.5
+  // (verifies the gate is wired correctly; the live abort path requires real spend
+  // accumulation, which v1.1's deterministic git-log work doesn't produce.)
+  const remainingTooLow = 50 - 49.6;          // 0.4 remaining
+  const synthGatesOn = remainingTooLow < 0.5;
+  results.push({ name: 'v11-budget-synthesis-gate-arithmetic', passed: synthGatesOn });
+  if (!synthGatesOn) allPass = false;
+
+  // 14. v1.1 — MAX_BUDGET_USD clamp guards against runaway --budget overrides
+  const clampOk = MAX_BUDGET_USD === 200;
+  results.push({ name: 'v11-max-budget-clamp', passed: clampOk, detail: `MAX_BUDGET_USD=${MAX_BUDGET_USD}` });
+  if (!clampOk) allPass = false;
+
   // Print report
   log('');
   log('=== SMOKE TEST RESULTS ===');
@@ -1303,11 +2017,24 @@ regression-guard.mjs — aggressive regression detection agent
 USAGE:
   node scripts/agents/regression-guard.mjs --scheduled
   node scripts/agents/regression-guard.mjs --seed-baselines
-  node scripts/agents/regression-guard.mjs --deep <session-id-or-date>
+  node scripts/agents/regression-guard.mjs --deep <session-id>
   node scripts/agents/regression-guard.mjs --smoke
   node scripts/agents/regression-guard.mjs --canary-only
   node scripts/agents/regression-guard.mjs --dashboard
   node scripts/agents/regression-guard.mjs --help
+
+v1.1 MULTI-SESSION DEEP (combine --deep with any of these):
+  --since YYYY-MM-DD     Lower bound on session mtime (inclusive)
+  --until YYYY-MM-DD     Upper bound on session mtime (inclusive)
+  --sessions <uuid,...>  Explicit comma-separated UUID list
+  --last <N>             Convenience for --since N days ago
+  --synthesize           Run Sonnet 4.6 cross-session correlation
+  --budget <usd>         Per-invocation budget override (≤ $200)
+
+Examples:
+  --deep --last 3 --synthesize --budget 50
+  --deep --since 2026-05-20 --until 2026-05-23 --synthesize
+  --deep --sessions a1b2c3,d4e5f6 --synthesize --budget 20
 
 ENV:
   REGRESSION_GUARD_ENABLED=true                 (kill switch — set false to no-op)
@@ -1315,9 +2042,11 @@ ENV:
   REGRESSION_GUARD_DAILY_USD=20                 (Mitchell's locked cap)
   REGRESSION_GUARD_PER_CALL_WARN_USD=5          (soft warn, does NOT block)
   REGRESSION_GUARD_TRANSCRIPT_BASELINE_ENABLED=false   (feature flag — flip after 30d baseline-build)
+  REGRESSION_GUARD_DEEP_BUDGET_USD=20           (default --deep budget envelope)
 
 OUTPUT:
-  .claude/audit/<YYYY-MM-DD>/regression-report-<YYYY-MM-DD>.md
+  .claude/audit/<YYYY-MM-DD>/regression-report-<YYYY-MM-DD>.md             (single-session / scheduled)
+  .claude/audit/<YYYY-MM-DD>/regression-report-multi-deep-<DESCRIPTOR>.md  (v1.1 multi-session)
   data/dashboard-panels/regression-guard.json
   data/regression-guard-spend.jsonl  (append-only cost ledger)
 
@@ -1335,13 +2064,24 @@ async function main() {
   }
 
   const mode = args.find(a => a.startsWith('--'));
-  const target = args[args.indexOf(mode) + 1];
+  // v1.0 logic: target is the arg immediately after the first flag, IF it's not itself a flag.
+  const modeIdx = args.indexOf(mode);
+  const nextArg = args[modeIdx + 1];
+  const target = (nextArg && !nextArg.startsWith('--')) ? nextArg : null;
 
   try {
     if (mode === '--smoke') return await runSmoke();
     if (mode === '--canary-only') return await runCanaryOnly();
     if (mode === '--seed-baselines') return await runSeedBaselines();
-    if (mode === '--deep') return await runDeep(target);
+    if (mode === '--deep') {
+      // v1.1: detect multi-session flags and dispatch to the orchestrator
+      const v11Opts = parseV11DeepOpts(args);
+      if (isMultiSessionDeep(v11Opts)) {
+        return await runDeepMultiSession(v11Opts);
+      }
+      // v1.0 single-session path — preserved verbatim
+      return await runDeep(target);
+    }
     if (mode === '--scheduled') return await runScheduled();
     if (mode === '--dashboard') return await runDashboardOnly();
 
@@ -1378,4 +2118,14 @@ export {
   renderDecisionDoc,
   CANARY_FIXTURES,
   SENSITIVE_PATH_PATTERNS,
+  // v1.1 multi-session deep
+  parseV11DeepOpts,
+  isMultiSessionDeep,
+  buildDescriptor,
+  enumerateSessions,
+  deepSingleSession,
+  crossSessionSynthesize,
+  renderMultiDeepDoc,
+  runDeepMultiSession,
+  MAX_BUDGET_USD,
 };

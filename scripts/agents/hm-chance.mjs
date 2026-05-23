@@ -49,6 +49,7 @@ try {
 
 import { callCouncil } from '../../lib/council.mjs';
 import { fetchJson } from '../../lib/safe-fetch.mjs';
+import { buildGroundedPrompt } from '../../lib/ground-prompt.mjs';
 
 const OUT_DIR = join(ROOT, 'data', 'hm-chance');
 mkdirSync(OUT_DIR, { recursive: true });
@@ -323,13 +324,32 @@ async function runCouncilResearch(row, opts = {}) {
     cvSnippet, articleSnippet, reportSnippet, hmIntelSummary, jdSnippet,
   });
 
+  // 2026-05-23 B5 — popout grounding (locked decision #1: all 4 popouts grounded).
+  // See scripts/agents/interview-likelihood.mjs for full rationale. We inject
+  // the analyst-to-Mitchell system prompt + personality corpus only; the
+  // dynamic prompt is unchanged because buildResearchPrompt already inlines
+  // cv.md + article-digest.md + JD + hm-intel.
+  const grounded = buildGroundedPrompt({
+    task: 'hm_chance',
+    rowId: num,
+    role: row.role, company: row.company,
+    metricKey: 'hm_chance',
+    currentValue: null,
+  });
+  const personalityBlock = Array.isArray(grounded.cacheStableContent)
+    ? grounded.cacheStableContent[0] || ''
+    : '';
+
   const t0 = Date.now();
   const council = await callCouncil({
     prompt,
+    systemPrompt: grounded.system,
     opts: {
       timeoutMs: 180_000,
       maxTokens: 3500,
       agentSlug: 'hm-chance',
+      cacheStableContent: personalityBlock ? [personalityBlock] : '',
+      cacheCaller: 'hm-chance',
     },
   });
   const councilMs = Date.now() - t0;

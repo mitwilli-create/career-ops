@@ -63,6 +63,7 @@ try {
 
 import { callCouncil } from '../../lib/council.mjs';
 import { fetchJson } from '../../lib/safe-fetch.mjs';
+import { buildGroundedPrompt } from '../../lib/ground-prompt.mjs';
 
 const OUT_DIR = join(ROOT, 'data', 'interview-likelihood');
 mkdirSync(OUT_DIR, { recursive: true });
@@ -282,15 +283,45 @@ async function runCouncilResearch(row, opts = {}) {
     cvSnippet, articleSnippet, reportSnippet, hmIntel, jdSnippet,
   });
 
+  // 2026-05-23 B5 — popout grounding (locked decision #1: all 4 popouts grounded).
+  //
+  // We use buildGroundedPrompt purely for its analyst-to-Mitchell system prompt
+  // + personality corpus (tone-safety rules, voice constraints, analyst lens).
+  // We DO NOT use its profile corpus or user-prompt builder — buildResearchPrompt
+  // already inlines cv.md + article-digest.md + JD + hm-intel as the dynamic
+  // research surface, and replacing the multi-stage research+adjudicate flow
+  // would balloon B5's blast radius.
+  //
+  // Result: each council model receives Mitchell's voice rules + personality
+  // lens as cached stable context, while the existing per-call research prompt
+  // unchanged. Backwards-compat: legacy mode flag returns the empty array, so
+  // callCouncil falls back to no-cache no-system shape (matches v0 behavior).
+  const grounded = buildGroundedPrompt({
+    task: 'interview',
+    rowId: num,
+    role, company,
+    metricKey: 'interview_likelihood',
+    currentValue: null,
+    // No responseSchema — buildResearchPrompt provides its own.
+  });
+  // Pass only the personality block as cacheStableContent (profile corpus is
+  // already inlined into the dynamic prompt — would duplicate context).
+  const personalityBlock = Array.isArray(grounded.cacheStableContent)
+    ? grounded.cacheStableContent[0] || ''
+    : '';
+
   // Full council fan-out per Decision-Maximization Policy (no subsets unless cost-capped).
   // DEFAULT_LINEUP in lib/council.mjs is Sonnet + GPT-5 + Gemini 2.5 Pro + Perplexity Sonar Pro.
   const t0 = Date.now();
   const council = await callCouncil({
     prompt,
+    systemPrompt: grounded.system,
     opts: {
       timeoutMs: 180_000,   // 3 min per provider (rule: pass timeoutMs per hang-prevention)
       maxTokens: 3500,
       agentSlug: 'interview-likelihood',
+      cacheStableContent: personalityBlock ? [personalityBlock] : '',
+      cacheCaller: 'interview-likelihood',
     },
   });
   const councilMs = Date.now() - t0;

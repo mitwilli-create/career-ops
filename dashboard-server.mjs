@@ -51,6 +51,29 @@ import { guessCompany as _guessCompanyFromUrl } from './lib/ats-utils.mjs';
 // P1-6 / P1-5 — SQLite job-run ledger + scraper health widget
 import { initSchema as _ledgerInitSchema, lastFinishedRun, recentRuns } from './lib/job-runs-ledger.mjs';
 
+// 2026-05-23 B4 — top-of-file dotenv with override:true.
+//
+// Architectural fix for the env-shadow bug class on launchd-spawned daemons
+// (Mitchell's shell pre-sets credentials like ANTHROPIC_API_KEY="" — empty
+// string, not unset — so lazy dotenv loads with override:false keep the empty
+// value and endpoints return "API key not set" even though .env has the real
+// key). Prior session verified no lib/* module reads API keys at module-init
+// time, so this is safe to load once here.
+//
+// Reference: AGENTS.md § Bug class: env-shadow-on-lazy-dotenv
+// Reference: data/handover-popout-grounding-2026-05-23.md § Step 14 (reapply)
+import _dotenv from 'dotenv';
+try {
+  _dotenv.config({ path: new URL('.env', import.meta.url).pathname, override: true });
+  const _CRITICAL_KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'];
+  const _missing = _CRITICAL_KEYS.filter(k => !process.env[k] || !process.env[k].trim());
+  if (_missing.length > 0) {
+    console.error(`[dashboard-server] STARTUP WARNING: missing/empty critical API keys: ${_missing.join(', ')}`);
+  }
+} catch (e) {
+  console.error(`[dashboard-server] STARTUP WARNING: dotenv load failed: ${e.message}`);
+}
+
 // Registry of tracked scheduler jobs with expected cadence.
 //
 // Originally a hardcoded 6-entry list of scrapers; expanded 2026-05-19 to
@@ -7491,19 +7514,53 @@ const server = createServer((req, res) => {
   }
 
   // ── 3. GET /api/drill/percentage/{rowId}/{key} ─────────────────────────────
-  // Returns rendered strategy card HTML via lib/strategy-ceiling.mjs
+  // Returns rendered strategy card HTML via lib/strategy-ceiling.mjs.
+  //
+  // 2026-05-23 B3 row hydration: previously called computeStrategyCeiling with
+  // hardcoded empty role/company/hmIntel — defeated the lib/ground-prompt.mjs
+  // RAG grounding entirely. Now hydrates from data/applications.md (role+company
+  // by rowId) and data/hm-intel/<slug>.json (HM intel context).
+  //
+  // Endpoint-level dotenv re-load with override:true is belt-and-suspenders to
+  // the top-of-file dotenv (B4) — preserves the existing endpoint pattern.
   const drillPctMatch = url.match(/^\/api\/drill\/percentage\/([^/]+)\/([^/]+)$/);
   if (drillPctMatch) {
     (async () => {
       try {
-        const { buildCacheKey, getCachedStrategy, computeStrategyCeiling, renderStrategyCard } = await import(join(ROOT, 'lib/strategy-ceiling.mjs'));
-        const rowId   = decodeURIComponent(drillPctMatch[1]);
-        const key     = decodeURIComponent(drillPctMatch[2]);
-        const cacheKey = buildCacheKey({ rowId, metricKey: key, company: '', role: '' });
-        let result = getCachedStrategy(cacheKey);
-        if (!result) {
-          result = await computeStrategyCeiling({ rowId, metricKey: key, role: '', company: '', currentValue: null, jdText: '', hmIntel: null });
+        try {
+          const dotenv = await import('dotenv');
+          dotenv.config({ path: join(ROOT, '.env'), override: true });
+        } catch (_) { /* dotenv soft-fail */ }
+
+        const { getCachedStrategy, computeStrategyCeiling, renderStrategyCard } = await import(join(ROOT, 'lib/strategy-ceiling.mjs'));
+        const rowId = decodeURIComponent(drillPctMatch[1]);
+        const key   = decodeURIComponent(drillPctMatch[2]);
+
+        let role = '', company = '', hmIntel = null;
+        try {
+          const apps = parseApplications();
+          const row = apps.find(r => String(r.num) === String(rowId));
+          if (row) {
+            role = row.role || '';
+            company = row.company || '';
+            if (company && role) {
+              const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+              const hmIntelPath = join(ROOT, 'data', 'hm-intel', `${slug(company)}-${slug(role)}.json`);
+              if (existsSync(hmIntelPath)) {
+                try { hmIntel = JSON.parse(readFileSync(hmIntelPath, 'utf-8')); } catch { /* malformed JSON → null */ }
+              }
+            }
+          }
+        } catch (e) {
+          _d25Log(`[drill/percentage] hydration soft-failed: ${e.message}`);
         }
+
+        // computeStrategyCeiling now derives cacheKey from buildGroundedPrompt
+        // (corpus-mtime aware) — no need to compute it separately here.
+        const result = await computeStrategyCeiling({
+          rowId, metricKey: key, role, company,
+          currentValue: null, jdText: '', hmIntel,
+        });
         const html = renderStrategyCard(result);
         return json({ ok: true, rowId, key, html, strategy: result });
       } catch (err) {

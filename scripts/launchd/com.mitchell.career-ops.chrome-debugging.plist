@@ -22,24 +22,32 @@
     <key>WorkingDirectory</key>
     <string>/Users/mitchellwilliams/Documents/career-ops</string>
 
-    <!-- Fire at login + keep alive. macOS Tahoe KeepAlive bug:
-         after bootstrap, also run `launchctl start <label>` once
-         to actually kick the process. RunAtLoad alone doesn't
-         fire on Tahoe (per project memory note). -->
+    <!-- 2026-05-22 (Phase 6.5-CAD-1): converted from KeepAlive=true to the
+         nohup-wrapper pattern (Pattern F in ~/.claude/knowledge/brain/bug-class-catalog.md).
+         macOS Tahoe TCC kills KeepAlive=true daemons with EX_CONFIG=78. The
+         launch-debug-chrome.mjs script is already idempotent (probes port 9222
+         + returns early if up) and detaches Chrome via child.unref(), so the
+         plist just needs to fire it periodically. Pattern matches
+         dashboard-server-nohup-wrapper.plist + cloudflared-nohup-wrapper.plist.
+         AbandonProcessGroup=true keeps the detached Chrome alive when this
+         script exits. -->
     <key>RunAtLoad</key>
     <true/>
 
     <key>KeepAlive</key>
+    <false/>
+
+    <key>AbandonProcessGroup</key>
     <true/>
 
-    <key>ThrottleInterval</key>
-    <integer>60</integer>
+    <key>StartInterval</key>
+    <integer>300</integer>
 
     <key>StandardOutPath</key>
-    <string>/Users/mitchellwilliams/Documents/career-ops/data/logs/chrome-debugging.out</string>
+    <string>/Users/mitchellwilliams/Library/Logs/career-ops/chrome-debugging.out</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/mitchellwilliams/Documents/career-ops/data/logs/chrome-debugging.err</string>
+    <string>/Users/mitchellwilliams/Library/Logs/career-ops/chrome-debugging.err</string>
 
     <key>EnvironmentVariables</key>
     <dict>

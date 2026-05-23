@@ -23,8 +23,10 @@
 set -u
 
 CONFIG="${HOME}/.cloudflared/config.yml"
-REPO="/Users/mitchellwilliams/Documents/career-ops"
-LOG_DIR="${REPO}/data/logs"
+# Log dir MUST live outside ~/Documents/ — macOS Tahoe TCC blocks /bin/bash
+# spawned by launchd from opening file handles under Documents (exit 78).
+# Fixed 2026-05-22 (Phase 6.5-CAD-1) — see .claude/audit/plist-fix-2026-05-22/.
+LOG_DIR="/Users/mitchellwilliams/Library/Logs/career-ops"
 LOG_OUT="${LOG_DIR}/cloudflared-nohup.out"
 LOG_ERR="${LOG_DIR}/cloudflared-nohup.err"
 

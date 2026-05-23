@@ -5599,6 +5599,115 @@ const server = createServer((req, res) => {
     }
   }
 
+  // Phase 7.1 (2026-05-22): /api/pipeline/flow-state — aggregates the 5
+  // canonical pipeline stages (Scan / Triage / Process / Eval / Publish)
+  // for the new Pipeline modal. Reads data/pipeline-process-state.json,
+  // data/pipeline-ingress-state.json, and batch/triage-advance.tsv into
+  // a single per-stage descriptor.
+  if (url === '/api/pipeline/flow-state' && req.method === 'GET') {
+    try {
+      const stages = [];
+      // Helper — last-modified ms of a file (or null)
+      function fileMtime(rel) {
+        try {
+          const fp = join(ROOT, rel);
+          if (!existsSync(fp)) return null;
+          return Math.floor(statSync(fp).mtimeMs);
+        } catch (_) { return null; }
+      }
+      function tryReadJson(rel) {
+        try {
+          const fp = join(ROOT, rel);
+          if (!existsSync(fp)) return null;
+          return JSON.parse(readFileSync(fp, 'utf-8'));
+        } catch (_) { return null; }
+      }
+      // Locate the most recent process-all job for per-phase status
+      const procState = tryReadJson('data/pipeline-process-state.json') || { jobs: {} };
+      const jobIds = Object.keys(procState.jobs || {});
+      let latestJob = null;
+      let latestStart = 0;
+      for (const id of jobIds) {
+        const j = procState.jobs[id];
+        const t = j && j.started_at ? Date.parse(j.started_at) : 0;
+        if (t > latestStart) { latestStart = t; latestJob = j; }
+      }
+      const phases = (latestJob && latestJob.phases) || {};
+      // Stage 1 — Scan (ingress monitor)
+      const ingress = tryReadJson('data/pipeline-ingress-state.json');
+      const ingressMtime = fileMtime('data/pipeline-ingress-state.json');
+      stages.push({
+        key: 'scan',
+        label: 'Scan',
+        count: (ingress && ingress.summary && ingress.summary.total_scanned) || (ingress && Array.isArray(ingress.scanners) ? ingress.scanners.length : 0),
+        last_run_ms: ingressMtime,
+        status: ingress ? 'idle' : 'unknown',
+        note: ingress && ingress.summary && ingress.summary.note ? ingress.summary.note : null,
+      });
+      // Stage 2 — Triage (batch/triage-advance.tsv depth)
+      let triageBacklog = 0;
+      try {
+        const tsv = join(ROOT, 'batch', 'triage-advance.tsv');
+        if (existsSync(tsv)) {
+          const lines = readFileSync(tsv, 'utf-8').split('\n').filter(l => l.trim());
+          triageBacklog = Math.max(0, lines.length - 1); // header
+        }
+      } catch (_) { /* leave 0 */ }
+      const triageAdvanced = (phases.triage && (phases.triage.advanced || 0)) || 0;
+      stages.push({
+        key: 'triage',
+        label: 'Triage',
+        count: triageBacklog,
+        last_run_ms: latestStart || null,
+        status: phases.triage ? (phases.triage.ok ? 'success' : 'failed') : 'idle',
+        note: triageAdvanced ? (triageAdvanced + ' advanced in latest run') : null,
+      });
+      // Stage 3 — Process (batch phase)
+      stages.push({
+        key: 'process',
+        label: 'Process',
+        count: latestJob && latestJob.pending_before != null ? latestJob.pending_before : 0,
+        last_run_ms: latestStart || null,
+        status: phases.batch ? (phases.batch.ok ? 'success' : 'failed') : 'idle',
+        note: latestJob && latestJob.processed != null ? (latestJob.processed + ' processed') : null,
+      });
+      // Stage 4 — Eval (polish + pregen)
+      const polishOk = phases.polish && phases.polish.ok;
+      const pregenOk = phases.pregen && phases.pregen.ok;
+      const evalStatus = (polishOk && pregenOk) ? 'success' : (phases.polish || phases.pregen) ? 'partial' : 'idle';
+      const pregenCount = (phases.pregen && phases.pregen.generated) || 0;
+      stages.push({
+        key: 'eval',
+        label: 'Eval',
+        count: pregenCount,
+        last_run_ms: latestStart || null,
+        status: evalStatus,
+        note: phases.polish && phases.polish.skipped ? 'polish skipped' : null,
+      });
+      // Stage 5 — Publish (merge + rebuild + email)
+      const publishOk = phases.merge && phases.merge.ok && phases.rebuild && phases.rebuild.ok;
+      const emailOk = phases.email && phases.email.ok;
+      const publishStatus = publishOk ? (emailOk || (phases.email && phases.email.skipped) ? 'success' : 'partial') : (phases.merge || phases.rebuild) ? 'partial' : 'idle';
+      stages.push({
+        key: 'publish',
+        label: 'Publish',
+        count: latestJob && latestJob.published_count != null ? latestJob.published_count : 0,
+        last_run_ms: latestStart || null,
+        status: publishStatus,
+        note: phases.email && phases.email.skipped ? 'email skipped' : null,
+      });
+      return json({
+        ok: true,
+        latest_job_id: latestJob && latestJob.jobId ? latestJob.jobId : null,
+        latest_job_status: latestJob && latestJob.status ? latestJob.status : null,
+        latest_job_started_at: latestJob && latestJob.started_at ? latestJob.started_at : null,
+        stages,
+      });
+    } catch (err) {
+      return json({ ok: false, error: String(err && err.message || err) }, 500);
+    }
+  }
+
   // ── Outreach API ────────────────────────────────────────────────────────
   // Powers the Outreach Pulse section + per-contact intel drawer.
   // resetOutreachCache() ensures every GET reads fresh state (writes come

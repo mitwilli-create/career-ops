@@ -10870,6 +10870,17 @@ async function build() {
     opacity: 0.45;
     cursor: not-allowed;
   }
+  /* P15 (2026-05-22) — Polish Materials soft-gate. When Pre-Apply Check
+     readiness < 90%, the button stays enabled but picks up an amber border
+     and an inline warning glyph (added in client JS) so the user notices
+     "polish anyway" is suboptimal without being hard-blocked. */
+  .drawer-lifecycle-btn.drawer-lifecycle-btn-warn {
+    border-color: var(--amber-fg, #f59e0b);
+    box-shadow: inset 0 0 0 1px rgba(245,158,11,0.35);
+  }
+  .drawer-lifecycle-btn.drawer-lifecycle-btn-warn:hover {
+    background: color-mix(in srgb, var(--amber-fg, #f59e0b) 10%, transparent);
+  }
   .drawer-lifecycle-note {
     font-size: 12px;
     line-height: 1.5;
@@ -20410,6 +20421,35 @@ async function _drawerLoadLifecycle(num, company, mountEl, applyHref) {
     const s = (d && d.states) || { pack_exists: false, drive_synced: false, polished: false, applied: false };
     const driveEnabled = !!d.drive_enabled;
     mountEl.innerHTML = _renderLifecycleRow(s, driveEnabled, num);
+    // P15 (2026-05-22) — apply cached Pre-Apply Check readiness % to the
+    // Polish Materials button label. Pre-Apply Check writes localStorage on
+    // every run; this picks up the last value on every drawer open so the
+    // user can see the readiness without re-running.
+    try {
+      const cacheRaw = localStorage.getItem('preapply:readiness:' + String(num));
+      if (cacheRaw) {
+        const cached = JSON.parse(cacheRaw);
+        const pct = Number(cached.pct);
+        if (Number.isFinite(pct)) {
+          const polishBtnEl = mountEl.querySelector('.drawer-lifecycle-buttons > button[data-drill="lifecycle:polish-materials:' + String(num) + '"]');
+          if (polishBtnEl && !polishBtnEl.disabled) {
+            polishBtnEl.textContent = 'Polish Materials (' + pct + '% ready)';
+            if (pct < 90) {
+              polishBtnEl.title = 'Below 90% readiness — polish anyway? Last Pre-Apply Check returned ' + pct + '%';
+              polishBtnEl.classList.add('drawer-lifecycle-btn-warn');
+              const warnSpan = document.createElement('span');
+              warnSpan.className = 'drawer-lifecycle-btn-warn-icon';
+              warnSpan.setAttribute('aria-hidden', 'true');
+              warnSpan.style.cssText = 'margin-right:4px;color:var(--amber-fg,#f59e0b)';
+              warnSpan.textContent = String.fromCharCode(0x26A0);
+              polishBtnEl.prepend(warnSpan);
+            } else {
+              polishBtnEl.title = 'Ready to polish (last Pre-Apply Check returned ' + pct + '%)';
+            }
+          }
+        }
+      }
+    } catch (_) { /* localStorage privacy mode — no-op */ }
     // Phase 4.5c (2026-05-22): wire the lifecycle "Apply Now" button (the 5th
     // button in the Phase 4.4 cluster) to open the canonical employer URL in a
     // new tab — no clipboard modal, no bookmarklet per Mitchell's Q15 locked
@@ -21249,6 +21289,35 @@ async function _openPreApplyCheckModal(num) {
       '<div style="font-size:11px;color:var(--text-3,#b8b8c0);text-transform:uppercase;letter-spacing:0.06em;margin:14px 0 4px">7-dimension rubric</div>' +
       dimRows +
       '<div style="display:flex;gap:10px;margin-top:18px;justify-content:flex-end">' + polishBtn + closeBtn + '</div>';
+    // P15 (2026-05-22) — soft-gate the drawer Polish Materials button with the
+    // readiness %. Stores the readiness in localStorage so subsequent lifecycle
+    // renders pick it up; directly mutates the current Polish button DOM so the
+    // user sees the % immediately without waiting for a re-render.
+    try {
+      const cacheKey = 'preapply:readiness:' + String(num);
+      localStorage.setItem(cacheKey, JSON.stringify({ pct: pct, ts: Date.now() }));
+      const polishBtnEl = document.querySelector('.drawer-lifecycle-buttons > button[data-drill="lifecycle:polish-materials:' + String(num) + '"]');
+      if (polishBtnEl && !polishBtnEl.disabled) {
+        polishBtnEl.textContent = 'Polish Materials (' + pct + '% ready)';
+        if (pct < 90) {
+          polishBtnEl.title = 'Below 90% readiness — polish anyway? Last Pre-Apply Check returned ' + pct + '%';
+          polishBtnEl.classList.add('drawer-lifecycle-btn-warn');
+          if (!polishBtnEl.querySelector('.drawer-lifecycle-btn-warn-icon')) {
+            const warnSpan = document.createElement('span');
+            warnSpan.className = 'drawer-lifecycle-btn-warn-icon';
+            warnSpan.setAttribute('aria-hidden', 'true');
+            warnSpan.style.cssText = 'margin-left:4px;color:var(--amber-fg,#f59e0b)';
+            warnSpan.textContent = String.fromCharCode(0x26A0);
+            polishBtnEl.prepend(warnSpan);
+          }
+        } else {
+          polishBtnEl.title = 'Ready to polish (last Pre-Apply Check returned ' + pct + '%)';
+          polishBtnEl.classList.remove('drawer-lifecycle-btn-warn');
+          const w = polishBtnEl.querySelector('.drawer-lifecycle-btn-warn-icon');
+          if (w) w.remove();
+        }
+      }
+    } catch (_) { /* localStorage may be unavailable in privacy mode */ }
   } catch (err) {
     modal.innerHTML = '<h2 style="margin:0 0 8px;color:var(--red-fg)">Pre-Apply Check unavailable</h2>' +
       '<p style="color:var(--text-2,#e4e4e7);font-size:12px">Error: ' + String(err.message || err).replace(/</g, '&lt;') + '</p>' +

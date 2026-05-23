@@ -8869,9 +8869,14 @@ async function generatePack(){
       catch (_) { return json({ ok: false, error: 'invalid JSON body' }, 400); }
       const rowId = parsed.rowId || parsed.row;
       if (!rowId || !/^\d+$/.test(String(rowId))) return json({ ok: false, error: 'rowId (numeric) required' }, 400);
-      const args = [join(ROOT, 'scripts/agents/intel-refresh.mjs'), '--row', String(rowId), '--slots', 'hm-intel,toxicity,positioning', '--force', '--mode', 'deep-council-7'];
+      // Phase 4.2 (2026-05-23): --slots all now hits all 7 slots
+      // (hm-intel + toxicity + strategy-ceiling + positioning + liveness + ats-detection + role-enrichment)
+      // matching the button label's "liveness + JD scrape + HM research + corpus reindex + rebuild" promise.
+      // --force bypasses 3-day TTLs on every cache. --mode flag retained for downstream consumers but
+      // intel-refresh's CLI parser ignores unknown flags safely.
+      const args = [join(ROOT, 'scripts/agents/intel-refresh.mjs'), '--row', String(rowId), '--slots', 'all', '--force', '--mode', 'deep-council-7'];
       const { jobId, logPath } = _alphaSpawn({ kind: 'refresh-deep', args });
-      return json({ ok: true, jobId, log_path: logPath, stream_url: `/api/refresh-deep-stream/${jobId}`, projected_cost_usd: 50, council_size: 7 });
+      return json({ ok: true, jobId, log_path: logPath, stream_url: `/api/refresh-deep-stream/${jobId}`, projected_cost_usd: 50, council_size: 7, slots: 'all' });
     });
     return;
   }

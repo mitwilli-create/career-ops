@@ -2,13 +2,19 @@
 /**
  * scripts/agents/intel-refresh.mjs — Intel-refresh agent.
  *
- * Mitchell · ALPHA overnight haul · 2026-05-19.
+ * Mitchell · ALPHA overnight haul · 2026-05-19. Phase 4.2 nuclear sweep ·
+ * 2026-05-23: extended from 4 → 7 slots so the drawer's "Deep refresh"
+ * button label ("re-run liveness + JD scrape + HM research + corpus
+ * reindex + rebuild") finally matches what fires under the hood.
  *
- * Fills 4 cache slots for one apply-now row (or every row when --all):
- *   1. hm-intel        — data/hm-intel/<slug>.json   (HM + recruiter + comp + gaps)
- *   2. toxicity        — data/company-toxicity-cache/<companySlug>.json
+ * Fills 7 cache slots for one apply-now row (or every row when --all):
+ *   1. hm-intel         — data/hm-intel/<slug>.json   (HM + recruiter + comp + gaps)
+ *   2. toxicity         — data/company-toxicity-cache/<companySlug>.json
  *   3. strategy-ceiling — data/strategy-ceiling/<num>-<metric>.json (per-metric advice)
- *   4. positioning     — data/positioning-cache/<num>.json (council-generated)
+ *   4. positioning      — data/positioning-cache/<num>.json (council-generated)
+ *   5. liveness         — data/liveness-cache.json (URL → active|expired|uncertain)
+ *   6. ats-detection    — apply-pack/<padded>-<slug>/*.ai-detection.json (per-artifact)
+ *   7. role-enrichment  — data/role-enrichment/<padded>-<slug>.json (shells enrich-apply-now)
  *
  * Cache TTL: 3 days. Resumable via data/intel-refresh-state.json.
  * Concurrency: serial per slot inside a row (sequencer in caller); rate-limit
@@ -42,9 +48,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..', '..');
 
 const TTL_MS = 3 * 24 * 60 * 60 * 1000;
-const VALID_SLOTS = ['hm-intel', 'toxicity', 'strategy-ceiling', 'positioning'];
+const VALID_SLOTS = ['hm-intel', 'toxicity', 'strategy-ceiling', 'positioning', 'liveness', 'ats-detection', 'role-enrichment'];
 const SLOT_METRICS = ['alignment', 'interview-likelihood', 'hm-noticing'];
 const STATE_PATH = join(ROOT, 'data', 'intel-refresh-state.json');
+const LIVENESS_CACHE_PATH = join(ROOT, 'data', 'liveness-cache.json');
+const LIVENESS_TTL_MS = TTL_MS; // 3 days — same as other slots
+const APPLY_PACK_DIR = join(ROOT, 'apply-pack');
+const ATS_ARTIFACTS = ['cv-tailored.md', 'cover-letter.md']; // prose-only artifacts
 
 function slugify(s) {
   return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
@@ -359,6 +369,137 @@ async function refreshPositioning(row, opts = {}) {
   return { ok: true, cache: 'miss', path: target, cost_usd: cost };
 }
 
+/* -------- SLOT 5: liveness — verify the canonical_url is still active -------- */
+async function refreshLiveness(row, opts = {}) {
+  const url = row.canonical_url || row.url || null;
+  if (!url) {
+    emit({ slot: 'liveness', row: row.num, step: 'no-url' });
+    return { ok: true, cache: 'skipped', reason: 'no canonical_url on row' };
+  }
+  // Lazy-import so non-liveness refreshes don't pay the loader cost.
+  const { verifyApplyNowLink } = await import('../../lib/liveness.mjs');
+  // Read existing cache to support TTL semantics — liveness-cache.json is URL-keyed.
+  let cache = {};
+  if (existsSync(LIVENESS_CACHE_PATH)) {
+    try { cache = JSON.parse(readFileSync(LIVENESS_CACHE_PATH, 'utf-8')) || {}; } catch { cache = {}; }
+  }
+  const prior = cache[url];
+  if (!opts.force && prior && prior.ts && (Date.now() - prior.ts < LIVENESS_TTL_MS)) {
+    emit({ slot: 'liveness', row: row.num, cache: 'hit', status: prior.status });
+    return { ok: true, cache: 'hit', status: prior.status, reason: prior.reason };
+  }
+  emit({ slot: 'liveness', row: row.num, step: 'probing', url: url.slice(0, 80) });
+  let verdict;
+  try {
+    verdict = await verifyApplyNowLink(url);
+  } catch (e) {
+    emit({ slot: 'liveness', row: row.num, error: String(e.message || e) });
+    return { ok: false, error: String(e.message || e) };
+  }
+  cache[url] = { status: verdict.result, reason: verdict.reason, ts: Date.now() };
+  try {
+    mkdirSync(dirname(LIVENESS_CACHE_PATH), { recursive: true });
+    writeFileSync(LIVENESS_CACHE_PATH, JSON.stringify(cache, null, 2), 'utf-8');
+  } catch (e) {
+    emit({ slot: 'liveness', row: row.num, write_error: String(e.message || e) });
+  }
+  emit({ slot: 'liveness', row: row.num, step: 'done', status: verdict.result, reason: verdict.reason });
+  return { ok: true, cache: 'miss', status: verdict.result, reason: verdict.reason, path: LIVENESS_CACHE_PATH };
+}
+
+/* -------- SLOT 6: ats-detection — re-run detectors on prose artifacts -------- */
+async function refreshAtsDetection(row, opts = {}) {
+  const padded = String(row.num).padStart(3, '0');
+  const packSlug = `${padded}-${slugify(row.company)}-${slugify(row.role)}`;
+  const packDir = join(APPLY_PACK_DIR, packSlug);
+  if (!existsSync(packDir)) {
+    emit({ slot: 'ats-detection', row: row.num, step: 'skipped-no-pack', expected: packDir });
+    return { ok: true, cache: 'skipped', reason: 'no apply-pack on disk' };
+  }
+  const { checkArtifact } = await import('../../lib/ai-detection-gate.mjs');
+  const results = {};
+  let writes = 0;
+  let totalProseWords = 0;
+  for (const artifact of ATS_ARTIFACTS) {
+    const filePath = join(packDir, artifact);
+    if (!existsSync(filePath)) {
+      emit({ slot: 'ats-detection', row: row.num, artifact, step: 'skipped-missing' });
+      results[artifact] = { ok: false, reason: 'file missing' };
+      continue;
+    }
+    const sidecar = `${filePath}.ai-detection.json`;
+    if (!opts.force && isCacheFresh(sidecar)) {
+      emit({ slot: 'ats-detection', row: row.num, artifact, cache: 'hit' });
+      results[artifact] = { ok: true, cache: 'hit', path: sidecar };
+      continue;
+    }
+    emit({ slot: 'ats-detection', row: row.num, artifact, step: 'detecting' });
+    try {
+      const result = await checkArtifact(filePath, {});
+      writes++;
+      totalProseWords += result.prose_word_count || 0;
+      results[artifact] = {
+        ok: true,
+        cache: 'miss',
+        band: result.band,
+        path: sidecar,
+        prose_word_count: result.prose_word_count,
+      };
+      emit({ slot: 'ats-detection', row: row.num, artifact, step: 'done', band: result.band });
+    } catch (e) {
+      emit({ slot: 'ats-detection', row: row.num, artifact, error: String(e.message || e) });
+      results[artifact] = { ok: false, error: String(e.message || e) };
+    }
+  }
+  return { ok: true, cache: writes > 0 ? 'miss' : 'hit', per_artifact: results, prose_word_count_total: totalProseWords, pack_dir: packDir };
+}
+
+/* -------- SLOT 7: role-enrichment — shell out to enrich-apply-now -------- */
+async function refreshRoleEnrichment(row, opts = {}) {
+  // enrich-apply-now's writer uses `bf<num>` prefix for --rows mode (backfill) and
+  // `<rankPad2>` prefix for --ranks mode (curated top-35). Most refreshes go through
+  // --rows because the apply-now-queue ranks are stale relative to applications.md.
+  // We check BOTH patterns so a refresh after a curated --ranks run still hits cache.
+  const slug = `${slugify(row.company)}-${slugify(row.role)}`;
+  const bfTarget = join(ROOT, 'data', 'role-enrichment', `bf${row.num}-${slug}.json`);
+  const rankTargetGlob = `${row.num}-${slug}.json`; // unpadded; rankPad search below tolerates leading zeros
+  const enrichDir = join(ROOT, 'data', 'role-enrichment');
+  // Cache freshness check: prefer the backfill path; fall back to any matching slug
+  // (rank-mode files share the slug suffix).
+  let target = bfTarget;
+  let cacheHit = false;
+  if (!opts.force && isCacheFresh(bfTarget)) {
+    cacheHit = true;
+  } else if (!opts.force && existsSync(enrichDir)) {
+    try {
+      const { readdirSync } = await import('node:fs');
+      const matches = readdirSync(enrichDir).filter(f => f.endsWith(`-${slug}.json`));
+      for (const f of matches) {
+        const fp = join(enrichDir, f);
+        if (isCacheFresh(fp)) { target = fp; cacheHit = true; break; }
+      }
+    } catch { /* fall through */ }
+  }
+  if (cacheHit) {
+    emit({ slot: 'role-enrichment', row: row.num, cache: 'hit', path: target });
+    return { ok: true, cache: 'hit', path: target };
+  }
+  const scriptPath = join(ROOT, 'scripts', 'enrich-apply-now.mjs');
+  if (!existsSync(scriptPath)) {
+    emit({ slot: 'role-enrichment', row: row.num, step: 'skipped-missing-script', script: scriptPath });
+    const hasCache = existsSync(bfTarget);
+    return { ok: hasCache, cache: hasCache ? 'kept_due_to_missing_script' : 'no_cache_and_no_script', path: bfTarget, missing_script: true };
+  }
+  emit({ slot: 'role-enrichment', row: row.num, step: 'enriching' });
+  const { spawnSync } = await import('child_process');
+  // enrich-apply-now accepts --rows=N (kebab-with-equals form).
+  const args = [scriptPath, `--rows=${row.num}`];
+  const result = spawnSync('node', args, { cwd: ROOT, stdio: 'inherit', env: process.env, timeout: 600_000 });
+  const ok = result.status === 0;
+  emit({ slot: 'role-enrichment', row: row.num, step: 'enrichment-done', exit_code: result.status, path: bfTarget });
+  return { ok, exit_code: result.status, path: bfTarget };
+}
+
 /* -------- Main orchestrator -------- */
 async function refreshRow(row, slots, opts = {}) {
   const out = {};
@@ -366,6 +507,9 @@ async function refreshRow(row, slots, opts = {}) {
   if (slots.includes('toxicity') || slots.includes('all')) out.toxicity = await refreshToxicity(row, opts);
   if (slots.includes('strategy-ceiling') || slots.includes('strategy') || slots.includes('all')) out['strategy-ceiling'] = await refreshStrategyCeiling(row, opts);
   if (slots.includes('positioning') || slots.includes('all')) out.positioning = await refreshPositioning(row, opts);
+  if (slots.includes('liveness') || slots.includes('all')) out.liveness = await refreshLiveness(row, opts);
+  if (slots.includes('ats-detection') || slots.includes('ats') || slots.includes('all')) out['ats-detection'] = await refreshAtsDetection(row, opts);
+  if (slots.includes('role-enrichment') || slots.includes('role') || slots.includes('all')) out['role-enrichment'] = await refreshRoleEnrichment(row, opts);
   return out;
 }
 

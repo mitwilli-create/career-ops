@@ -15307,7 +15307,10 @@ function openRightRailForDetail(idx, detailRow) {
       lifecycleMount.setAttribute('data-row-num', String(num));
       lifecycleMount.innerHTML = '<div class="drawer-lifecycle-loading" style="color:var(--text-3);font-size:11px;padding:10px 0">Loading lifecycle' + String.fromCharCode(8230) + '</div>';
       bodyEl.appendChild(lifecycleMount);
-      _drawerLoadLifecycle(num, company, lifecycleMount);
+      // Phase 4.5c (2026-05-22): pass applyHref so the lifecycle "Apply Now"
+      // button (Phase 4.4 cluster) opens the canonical employer URL only —
+      // no clipboard modal, no bookmarklet per Mitchell's Q15 locked answer.
+      _drawerLoadLifecycle(num, company, lifecycleMount, applyHref);
       // A4 (2026-05-22) — 3 intel chip popouts (team health / interview
       // likelihood / HM visibility). Sits between lifecycle and polish-modes.
       const intelChipsMount = document.createElement('div');
@@ -20341,7 +20344,7 @@ window._loadHMIntel = _loadHMIntel;
 // contextual note placeholder. Pure string-concat (no backticks, no
 // dollar-brace interpolation — outer-template-unescape-safe per Pattern A
 // in bug-class-catalog.md).
-async function _drawerLoadLifecycle(num, company, mountEl) {
+async function _drawerLoadLifecycle(num, company, mountEl, applyHref) {
   if (!mountEl) return;
   try {
     const res = await fetch('/api/lifecycle-state?num=' + encodeURIComponent(String(num)), { cache: 'no-store' });
@@ -20353,6 +20356,30 @@ async function _drawerLoadLifecycle(num, company, mountEl) {
     const s = (d && d.states) || { pack_exists: false, drive_synced: false, polished: false, applied: false };
     const driveEnabled = !!d.drive_enabled;
     mountEl.innerHTML = _renderLifecycleRow(s, driveEnabled, num);
+    // Phase 4.5c (2026-05-22): wire the lifecycle "Apply Now" button (the 5th
+    // button in the Phase 4.4 cluster) to open the canonical employer URL in a
+    // new tab — no clipboard modal, no bookmarklet per Mitchell's Q15 locked
+    // answer. The button carries data-drill="lifecycle:apply-now:N" but no
+    // server-side handler; the drill-in dispatcher routes other drill IDs.
+    // For Apply Now specifically we want a deterministic window.open + audit
+    // trail, so attach a click listener directly here. Disabled-state buttons
+    // already have the disabled attribute (the btn() helper sets it when state
+    // === 'disabled') so the listener is a no-op for those.
+    const applyNowBtn = mountEl.querySelector(
+      '.drawer-lifecycle-buttons > button[data-drill="lifecycle:apply-now:' + String(num) + '"]'
+    );
+    if (applyNowBtn && applyHref) {
+      applyNowBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        window.open(applyHref, '_blank', 'noopener');
+      });
+    } else if (applyNowBtn && !applyHref) {
+      // No canonical URL resolved for this row — surface the gap rather than
+      // silently no-op'ing the click.
+      applyNowBtn.setAttribute('disabled', '');
+      applyNowBtn.setAttribute('title', 'No canonical application URL is resolved for this row — open the report to verify the JD link');
+    }
     // Fetch + inject contextual note (best-effort; failures hide silently).
     fetch('/api/context-note?num=' + encodeURIComponent(String(num)), { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : null; })

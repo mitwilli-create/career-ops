@@ -35,6 +35,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, readdirSy
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
+import { stripHtmlForText } from '../../lib/sanitize.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..', '..');
@@ -163,23 +164,17 @@ function filesFromGitDiff(diffRange) {
 // narrative. Both surfaces are tagged with analyzer_surface so the drift
 // report can pinpoint which email drifted.
 //
-// HTML stripping: simple tag-removal regex. No cheerio dep required; the
-// heartbeat emails are MJML-generated with predictable structure.
+// HTML stripping: centralized via lib/sanitize.mjs. Defeats CodeQL
+// `js/bad-tag-filter` (#90) + `js/double-escaping` (#89) by:
+//   - iterative `<style>` / `<script>` / `<!-- -->` block removal
+//   - iterative bare-tag strip via stripHtmlTags
+//   - entity decode in the safe order (&amp; LAST so we don't
+//     double-decode `&amp;lt;` → `<`)
+// No cheerio dep required; heartbeat emails are MJML-generated with
+// predictable structure.
 
 function stripHtml(html) {
-  return html
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return stripHtmlForText(html, { collapseWhitespace: true });
 }
 
 function checkHeartbeatArchive(filepath, surface) {

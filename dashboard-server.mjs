@@ -9000,6 +9000,187 @@ async function generatePack(){
     }
   }
 
+  // Phase 4.5a (2026-05-22) — Pre-Apply Check.
+  // Inspects an apply-pack's artifacts (local disk + Drive when enabled),
+  // scores readiness across 7 dimensions, returns a gap list + can_polish
+  // hint + an optional Gemini-generated narrative "why" when readiness is
+  // below the polish threshold. Cached 30 min keyed by pack mtime.
+  // Top-level handler is non-async; the Gemini fetch lives inside an async
+  // IIFE so we can await it without making the handler async.
+  if (url === '/api/pre-apply-check' && req.method === 'GET') {
+    (async () => {
+    try {
+      const slugParam = query.slug || '';
+      const numParam = query.num || query.row || '';
+      let resolvedSlug = slugParam;
+      if (!resolvedSlug && numParam) {
+        const packsDir = join(ROOT, 'apply-pack');
+        if (existsSync(packsDir)) {
+          const padded = String(numParam).padStart(3, '0');
+          const found = readdirSync(packsDir).find(d => d.startsWith(padded + '-'));
+          if (found) resolvedSlug = found;
+        }
+      }
+      if (!resolvedSlug) {
+        return json({ ok: false, error: 'slug or num required' }, 400);
+      }
+      const packDir = join(ROOT, 'apply-pack', resolvedSlug);
+      if (!existsSync(packDir)) {
+        return json({
+          ok: true,
+          slug: resolvedSlug,
+          ready: false,
+          reason: 'pack_missing',
+          readiness_pct: 0,
+          gap_list: ['Apply pack has not been generated yet — click Create Apply Pack first.'],
+          can_polish: false,
+          drive_status: 'pack_missing',
+        });
+      }
+      // Cache key: pack dir mtime + meta mtime
+      const packStat = statSync(packDir);
+      let cacheKey = String(packStat.mtimeMs);
+      const metaPath = join(packDir, '_meta.json');
+      if (existsSync(metaPath)) {
+        try { cacheKey = cacheKey + ':' + statSync(metaPath).mtimeMs; } catch {}
+      }
+      const cacheDir = join(ROOT, 'data', 'pre-apply-check-cache');
+      const cachePath = join(cacheDir, resolvedSlug + '.json');
+      if (existsSync(cachePath)) {
+        try {
+          const cached = JSON.parse(readFileSync(cachePath, 'utf-8'));
+          if (cached && cached._cache_key === cacheKey && (Date.now() - (cached._cached_at || 0)) < 30 * 60 * 1000) {
+            return json({ ...cached, _from_cache: true });
+          }
+        } catch { /* malformed — recompute */ }
+      }
+      // Rubric — 7 dimensions, each 0/0.5/1.
+      const dimensions = [];
+      function check(label, requirement, score, gapMsg) {
+        dimensions.push({ label, score, gap: score < 1 ? (gapMsg || requirement) : null });
+      }
+      function fileSize(rel) {
+        try {
+          const p = join(packDir, rel);
+          if (!existsSync(p)) return -1;
+          return statSync(p).size;
+        } catch { return -1; }
+      }
+      const cvSize = Math.max(fileSize('tailored-cv.md'), fileSize('cv-tailored.md'));
+      check('Tailored CV', 'tailored-cv.md present + ≥1000 chars',
+        cvSize >= 1000 ? 1 : (cvSize > 0 ? 0.5 : 0),
+        cvSize > 0 ? 'Tailored CV is thin — re-run cv-tailor for richer bullets' : 'Tailored CV missing — run cv-tailor');
+      const clSize = fileSize('cover-letter.md');
+      check('Cover letter', 'cover-letter.md present + ≥800 chars',
+        clSize >= 800 ? 1 : (clSize > 0 ? 0.5 : 0),
+        clSize > 0 ? 'Cover letter is thin — extend to 800+ chars' : 'Cover letter missing');
+      const ffSize = fileSize('form-fields.md');
+      check('Form fields', 'form-fields.md present',
+        ffSize >= 500 ? 1 : (ffSize > 0 ? 0.5 : 0),
+        ffSize > 0 ? 'Form fields drafted but thin' : 'Form fields not prepared');
+      const hmIntelPath = join(ROOT, 'data', 'hm-intel', resolvedSlug + '.json');
+      let hmHas = 0;
+      if (existsSync(hmIntelPath)) {
+        try {
+          const hm = JSON.parse(readFileSync(hmIntelPath, 'utf-8'));
+          hmHas = (hm && (hm.hiring_manager || hm.recruiter || hm.team_summary)) ? 1 : 0.5;
+        } catch { hmHas = 0.5; }
+      }
+      check('HM intel', 'data/hm-intel/<slug>.json populated', hmHas,
+        hmHas === 0 ? 'No HM intel collected yet — run hiring-manager-research' : 'HM intel exists but thin');
+      const interviewPrepSize = fileSize('interview-prep-teaser.md');
+      check('Interview prep teaser', 'interview-prep-teaser.md present',
+        interviewPrepSize >= 500 ? 1 : (interviewPrepSize > 0 ? 0.5 : 0),
+        interviewPrepSize > 0 ? 'Interview prep is thin' : 'Interview prep teaser not drafted');
+      const polishedDir = join(packDir, 'polished');
+      let polishScore = 0;
+      if (existsSync(polishedDir)) {
+        try {
+          const polishedFiles = readdirSync(polishedDir).filter(f => /\.(md|pdf)$/.test(f));
+          polishScore = polishedFiles.length >= 4 ? 1 : (polishedFiles.length > 0 ? 0.5 : 0);
+        } catch {}
+      }
+      check('Polish complete', 'polished/ folder has ≥4 artifacts', polishScore,
+        polishScore === 0 ? 'Polish run not done — click Polish Materials' : 'Polish partial — re-run');
+      const refsSize = Math.max(fileSize('references.md'), fileSize('referrals.md'));
+      check('References / referrals', 'references.md or referrals.md present',
+        refsSize >= 300 ? 1 : (refsSize > 0 ? 0.5 : 0),
+        refsSize > 0 ? 'References thin' : 'References + referrals not drafted');
+      const sum = dimensions.reduce((acc, d) => acc + d.score, 0);
+      const readiness_pct = Math.round((sum / dimensions.length) * 100);
+      const gap_list = dimensions.filter(d => d.gap).map(d => d.label + ': ' + d.gap);
+      const driveEnabled = process.env.DRIVE_SYNC_ENABLED === 'true';
+      let drive_status = 'disabled';
+      if (driveEnabled) {
+        try {
+          const cachePathDrive = join(ROOT, 'data/drive-folder-cache.json');
+          if (existsSync(cachePathDrive)) {
+            const cache = JSON.parse(readFileSync(cachePathDrive, 'utf-8'));
+            drive_status = (cache && cache[resolvedSlug]) ? 'synced' : 'missing-folder';
+          } else {
+            drive_status = 'missing-folder';
+          }
+        } catch { drive_status = 'unknown'; }
+      }
+      const can_polish = polishScore < 1 && readiness_pct >= 40;
+      // Lazy-load dotenv (the launchd-wrapped dashboard-server doesn't source
+      // .env at startup) so GEMINI_API_KEY is available. override:true is REQUIRED
+      // — Mitchell's shell pre-sets GEMINI_API_KEY to empty, so dotenv without
+      // override skips the real .env value. Same pattern as /api/polish.
+      try {
+        const dotenv = await import('dotenv');
+        dotenv.config({ path: join(ROOT, '.env'), override: true });
+      } catch {}
+      // Optional Gemini narrative "why" when readiness is in the polish-able band
+      let why = null;
+      const geminiKey = process.env.GEMINI_API_KEY;
+      if (geminiKey && readiness_pct >= 20 && readiness_pct < 95) {
+        try {
+          const prompt = 'You are reviewing a job-application apply-pack readiness check. The pack scored ' + readiness_pct + '%. The gaps are:\n' + gap_list.map(g => '- ' + g).join('\n') + '\n\nIn 1-2 sentences, write a calm, factual "why" explaining what is most-load-bearing to fix next. Direct, no emojis, no preamble. Address Mitchell in second person.';
+          const gReq = {
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            generationConfig: { maxOutputTokens: 200, thinkingConfig: { thinkingBudget: 0 } },
+          };
+          const gUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + encodeURIComponent(geminiKey);
+          const gRes = await fetch(gUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(gReq),
+            signal: AbortSignal.timeout(15_000),
+          });
+          if (gRes.ok) {
+            const gJson = await gRes.json();
+            const text = (gJson.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
+            if (text) why = text;
+          }
+        } catch { /* silent — why is optional */ }
+      }
+      const result = {
+        ok: true,
+        slug: resolvedSlug,
+        ready: readiness_pct >= 80,
+        readiness_pct,
+        gap_list,
+        dimensions,
+        can_polish,
+        drive_status,
+        drive_enabled: driveEnabled,
+        why,
+        _cache_key: cacheKey,
+        _cached_at: Date.now(),
+      };
+      try {
+        if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true });
+        writeFileSync(cachePath, JSON.stringify(result, null, 2));
+      } catch { /* cache write failures are not fatal */ }
+      return json(result);
+    } catch (err) {
+      return json({ ok: false, error: String(err && err.message || err) }, 500);
+    }
+    })();
+    return;
+  }
+
   // ── A1 — contextual note for the drawer ──────────────────────────────────
   // Stubbed in Part 1 closure (2026-05-21). The full implementation pipes
   // corpus snippets (lib/corpus-index.mjs indexQuery) through a 150-token

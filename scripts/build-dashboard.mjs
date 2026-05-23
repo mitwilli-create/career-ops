@@ -20423,6 +20423,13 @@ async function _drawerLoadLifecycle(num, company, mountEl, applyHref) {
       '.drawer-lifecycle-buttons > button[data-drill="lifecycle:apply-now:' + String(num) + '"]'
     );
     if (applyNowBtn && applyHref) {
+      // Section 5.3 fix (2026-05-23): re-enable the button when applyHref
+      // resolves. The lifecycle state machine sets disabled=true based on
+      // !s.pack_exists || !s.polished, but if we have a canonical URL we
+      // CAN open it — the UX inconsistency was: button looked unclickable
+      // but click via JS still fired window.open. Remove the disabled
+      // attribute so the visual state matches the listener attachment.
+      applyNowBtn.removeAttribute('disabled');
       applyNowBtn.addEventListener('click', function (e) {
         e.preventDefault();
         e.stopPropagation();
@@ -20433,6 +20440,30 @@ async function _drawerLoadLifecycle(num, company, mountEl, applyHref) {
       // silently no-op'ing the click.
       applyNowBtn.setAttribute('disabled', '');
       applyNowBtn.setAttribute('title', 'No canonical application URL is resolved for this row — open the report to verify the JD link');
+    }
+    // Phase 4.4 follow-up (2026-05-23): wire the Learn More button to scroll
+    // to + trigger the Why-this-score drill-in. Phase 4.4 left this as a TODO
+    // ("Learn More: always active. Click handler wired downstream in 4.x phases").
+    // Implementation: scroll to the why-this-score card if present in the
+    // drawer, then click it to open the popout. If no why-this-score card,
+    // fall back to drillIn('metric', num + ':tracker_note').
+    const learnMoreBtn = mountEl.querySelector(
+      '.drawer-lifecycle-buttons > button[data-drill="lifecycle:learn-more:' + String(num) + '"]'
+    );
+    if (learnMoreBtn && !learnMoreBtn.disabled) {
+      learnMoreBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var why = document.querySelector('.dcard--tracker-note[data-drill*=":' + String(num) + ':tracker_note"], .dcard--tracker-note[data-drill$="' + String(num) + ':tracker_note"]');
+        if (why) {
+          why.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          setTimeout(function () { why.click(); }, 350);
+          return;
+        }
+        if (typeof window.drillIn === 'function') {
+          window.drillIn('metric', String(num) + ':tracker_note', e);
+        }
+      });
     }
     // Phase 4.1 (2026-05-22): wire the lifecycle Polish Materials + Create
     // Apply Pack buttons to the canonical handlers. Polish Materials triggers

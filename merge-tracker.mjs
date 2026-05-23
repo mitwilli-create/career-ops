@@ -128,6 +128,31 @@ function roleTokens(s) {
 }
 
 function roleFuzzyMatch(a, b) {
+  // Fast-path: exact match after trim+lowercase (most common case + cheapest)
+  const normA = String(a || '').trim().toLowerCase();
+  const normB = String(b || '').trim().toLowerCase();
+  if (normA === normB) return true;
+
+  // Qualifier-suffix guard (post-2026-05-23 fix): roles often have the shape
+  // "{base role}, {qualifier}" — e.g., "Applied AI Architect, Industries" vs
+  // "Applied AI Architect, Commercial". Without this guard, the Jaccard ratio
+  // on the shared base tokens [applied, ai, architect] crosses the 0.6 threshold
+  // and the two roles collapse into one — causing notes from one variant to
+  // append to the other variant's row. Empirical case: 2026-05-23 deployment
+  // 13:45 PT, Anthropic AAA Industries/Commercial both matched to #2251.
+  //
+  // Rule: if either role has a comma, BOTH must have a comma AND the
+  // joined-after-comma qualifier must be exactly equal (after trim+lowercase).
+  const hasCommaA = normA.includes(',');
+  const hasCommaB = normB.includes(',');
+  if (hasCommaA || hasCommaB) {
+    if (hasCommaA !== hasCommaB) return false;  // asymmetric → different roles
+    const qualA = normA.split(',').slice(1).join(',').trim();
+    const qualB = normB.split(',').slice(1).join(',').trim();
+    if (qualA !== qualB) return false;  // qualifiers differ → different roles
+    // fall through — qualifiers match, base must still pass fuzzy check
+  }
+
   const wordsA = roleTokens(a);
   const wordsB = roleTokens(b);
   if (wordsA.length === 0 || wordsB.length === 0) return false;

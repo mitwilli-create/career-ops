@@ -4168,6 +4168,37 @@ async function build() {
       }
     }
   } catch { /* default to ? */ }
+
+  // ── Regression-guard chip (2026-05-23) ───────────────────────────────────
+  // Reads data/dashboard-panels/regression-guard.json (written by the agent's
+  // --scheduled / --seed-baselines / --dashboard modes). Color-coded by
+  // severity tally. Click handler reuses openPipelineHealthModal as a stub
+  // pending a dedicated regression-alerts modal.
+  let initialRegressionChip = { label: 'regressions: —', cls: 'pipeline-health-chip', title: 'regression-guard has not run yet — see /regression-guard skill' };
+  try {
+    const rgp = join(ROOT, 'data/dashboard-panels/regression-guard.json');
+    if (existsSync(rgp)) {
+      const r = JSON.parse(readFileSync(rgp, 'utf-8'));
+      const crit = r.severity_tally?.CRIT || 0;
+      const high = r.severity_tally?.HIGH || 0;
+      const med = r.severity_tally?.MED || 0;
+      const canaryPass = r.canary_pass || 0;
+      const canaryTotal = r.canary_total || 0;
+      const canaryOk = canaryTotal === 0 || canaryPass === canaryTotal;
+      const dateStr = r.date || 'unknown';
+      if (!canaryOk) {
+        initialRegressionChip = { label: 'regressions: canary degraded', cls: 'pipeline-health-chip critical', title: 'regression-guard canary suite degraded — detection pipeline suspect (' + canaryPass + '/' + canaryTotal + ') — see ' + r.decision_doc_path };
+      } else if (crit > 0) {
+        initialRegressionChip = { label: 'regressions: ✗ ' + crit + ' CRIT', cls: 'pipeline-health-chip critical', title: crit + ' CRIT · ' + high + ' HIGH · ' + med + ' MED · as of ' + dateStr + ' · ' + (r.decision_doc_path || '') };
+      } else if (high > 0) {
+        initialRegressionChip = { label: 'regressions: ⚠ ' + high + ' HIGH', cls: 'pipeline-health-chip unhealthy', title: high + ' HIGH · ' + med + ' MED · as of ' + dateStr + ' · ' + (r.decision_doc_path || '') };
+      } else if (med > 0) {
+        initialRegressionChip = { label: 'regressions: ' + med + ' MED', cls: 'pipeline-health-chip', title: med + ' MED · as of ' + dateStr + ' · ' + (r.decision_doc_path || '') };
+      } else {
+        initialRegressionChip = { label: 'regressions: ✓ 0', cls: 'pipeline-health-chip healthy', title: '0 findings · canary ' + canaryPass + '/' + canaryTotal + ' · as of ' + dateStr };
+      }
+    }
+  } catch { /* default to — */ }
   // P4.33 (2026-05-20) — initial dispatch chip baked at build time so first
   // paint reflects pipeline-process-state.json. Runtime updates via
   // _renderBatchData (every 30s via /api/batch-live). Surfaces process-all
@@ -12518,6 +12549,7 @@ async function build() {
       <span id="pipeline-freshness-chip" class="pipeline-freshness-chip fresh" title="Time since last badge refresh — click for pipeline health detail" onclick="openPipelineHealthModal()" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openPipelineHealthModal();}">badges · just now</span>
       <span id="pipeline-health-chip" class="${initialHealthChip.cls}" title="${htmlEscape(initialHealthChip.title)} — click to view full status" onclick="openPipelineHealthModal()">${htmlEscape(initialHealthChip.label)}</span>
       <span id="pipeline-dispatch-chip" class="${initialDispatchChip.cls}" title="${htmlEscape(initialDispatchChip.title)}" onclick="openBatchStatusModal()">${htmlEscape(initialDispatchChip.label)}</span>
+      <span id="regression-guard-chip" class="${initialRegressionChip.cls}" title="${htmlEscape(initialRegressionChip.title)}" onclick="openPipelineHealthModal()">${htmlEscape(initialRegressionChip.label)}</span>
     </div>
     <!-- Recruiter pipeline-density widget (Phase 6, calibration brief 2026-05-16)
          Chevron toggles inline detail. Label click opens full runway modal
@@ -24665,7 +24697,94 @@ function _bsRenderBody(data, changed) {
       '</div>';
   }
 
-  body.innerHTML = sectionP + sectionR + sectionPaC + sectionA + sectionB + sectionC + sectionD;
+  // Section H (NEW 2026-05-23) — researcher-chain pending handoffs.
+  // Renders only when data.pending_handoffs has at least one pending envelope.
+  // Stale (>24h) entries get a red left-border + amber chip; fresh ones get
+  // a blue accent. Each row exposes a copy-path button — run /dealbreaker
+  // <path> in Claude Code to dispatch the adjudication step.
+  let sectionH = '';
+  const handoffData = data.pending_handoffs;
+  if (handoffData && Array.isArray(handoffData.pending) && handoffData.pending.length > 0) {
+    const rows = handoffData.pending.map(function(h) {
+      const ageTxt = (h.age_hours == null) ? '?' : (h.age_hours + 'h');
+      const isStale = !!h.stale;
+      const chipColor = isStale ? 'var(--red-fg,#dc2626)' : 'var(--blue-fg,#2563eb)';
+      const chipBg = isStale ? 'rgba(220,38,38,0.14)' : 'rgba(37,99,235,0.14)';
+      const chipLabel = isStale ? ('STALE ' + ageTxt) : ('pending ' + ageTxt);
+      const modeLabel = String(h.mode || 'impasse-breaking').replace(/-/g, ' ');
+      const ceiling = (h.ceiling_usd == null) ? '?' : ('$' + h.ceiling_usd);
+      const itemCount = h.audit_items_count || 0;
+      const itemsTxt = itemCount === 0 ? 'no flagged impasses' : (itemCount + ' impasse' + (itemCount === 1 ? '' : 's'));
+      const qPreview = _bsEsc((h.original_question || '(no question recorded)').slice(0, 140));
+      const pathEsc = _bsEsc(h.path);
+      const fileEsc = _bsEsc(h.file);
+      // Embed path in a data attribute so the copy handler doesn't need an
+      // inline-string escape pass (outer-template-unescape bug class).
+      return '<div class="bs-handoff-row" style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border,#e5e7eb)">' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-1,#1f2937);font-weight:600">' +
+            '<span style="font-size:10px;background:' + chipBg + ';color:' + chipColor + ';padding:1px 6px;border-radius:3px;letter-spacing:0.3px">' + _bsEsc(chipLabel) + '</span>' +
+            '<span style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--text-2,#374151)">' + fileEsc + '</span>' +
+          '</div>' +
+          '<div style="font-size:10.5px;color:var(--text-3,#6b7280);margin-top:3px">' +
+            _bsEsc(modeLabel) + ' · ceiling ' + _bsEsc(ceiling) + ' · ' + _bsEsc(itemsTxt) +
+          '</div>' +
+          '<div style="font-size:11.5px;color:var(--text-2,#374151);margin-top:5px;font-style:italic">' +
+            String.fromCharCode(0x201C) + qPreview + (h.original_question && h.original_question.length > 140 ? String.fromCharCode(0x2026) : '') + String.fromCharCode(0x201D) +
+          '</div>' +
+        '</div>' +
+        '<button type="button" class="bs-handoff-copy" data-path="' + pathEsc + '" ' +
+          'style="padding:5px 10px;font-size:11px;background:transparent;border:1px solid var(--blue-fg,#2563eb);' +
+          'color:var(--blue-fg,#2563eb);border-radius:5px;cursor:pointer;white-space:nowrap" ' +
+          'title="Copy handoff path; paste into Claude Code as: /dealbreaker <path>">' +
+          'Copy path' +
+        '</button>' +
+      '</div>';
+    }).join('');
+    const staleTally = handoffData.stale_count || 0;
+    const tallyTxt = staleTally > 0
+      ? (staleTally + ' stale (>24h) · ' + (handoffData.pending.length - staleTally) + ' in flight')
+      : (handoffData.pending.length + ' in flight · all fresh');
+    const borderColor = staleTally > 0 ? 'var(--red-fg,#dc2626)' : 'var(--blue-fg,#2563eb)';
+    sectionH =
+      '<div class="batch-status-section" style="border-left:3px solid ' + borderColor + ';padding-left:12px">' +
+        '<h4 class="batch-status-section-title" style="display:flex;justify-content:space-between;align-items:baseline">' +
+          '<span>Researcher chain ' + String.fromCharCode(0x2014) + ' pending handoffs</span>' +
+          '<span style="font-size:11px;color:var(--text-3,#6b7280);font-weight:400">' + _bsEsc(tallyTxt) + '</span>' +
+        '</h4>' +
+        '<div class="bs-handoff-list">' + rows + '</div>' +
+        '<div style="font-size:10.5px;color:var(--text-4,#9ca3af);margin-top:6px">' +
+          'Each pending envelope is a researcher report awaiting dealbreaker adjudication. Copy the path and run ' +
+          '<code style="font-size:10px">/dealbreaker &lt;path&gt;</code> in Claude Code to dispatch the chain.' +
+        '</div>' +
+      '</div>';
+  }
+
+  body.innerHTML = sectionP + sectionR + sectionH + sectionPaC + sectionA + sectionB + sectionC + sectionD;
+
+  // Wire copy-path buttons inside the handoff section (delegated handler).
+  if (sectionH) {
+    const buttons = body.querySelectorAll('.bs-handoff-copy');
+    for (let i = 0; i < buttons.length; i++) {
+      const btn = buttons[i];
+      btn.addEventListener('click', async function(evt) {
+        evt.preventDefault();
+        const p = btn.getAttribute('data-path') || '';
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(p);
+            const prev = btn.textContent;
+            btn.textContent = 'Copied ' + String.fromCharCode(0x2713);
+            setTimeout(function() { btn.textContent = prev; }, 1500);
+          } else {
+            window.prompt('Copy this handoff path:', p);
+          }
+        } catch (err) {
+          window.prompt('Copy this handoff path:', p);
+        }
+      });
+    }
+  }
   // Invariant #8 — apply the universal table baseline (dbl-click expand,
   // [title] tooltips, column-resize handles) to every freshly rendered
   // table inside the batch-status modal body.
@@ -24676,18 +24795,29 @@ function _bsRenderBody(data, changed) {
 
 async function _bsFetchAndRender() {
   let data;
+  let handoffs = null;
   try {
-    if (typeof apiFetch === 'function') {
-      data = await apiFetch('/api/batch/status-detailed');
-    } else {
-      const r = await fetch('/api/batch/status-detailed');
-      data = await r.json();
+    // Parallel fetch: batch status + researcher-chain handoffs. The handoffs
+    // endpoint is best-effort — failure here must NOT block the modal.
+    const fetchBatch = typeof apiFetch === 'function'
+      ? apiFetch('/api/batch/status-detailed')
+      : fetch('/api/batch/status-detailed').then(r => r.json());
+    const fetchHandoffs = (typeof apiFetch === 'function'
+      ? apiFetch('/api/handoffs/pending')
+      : fetch('/api/handoffs/pending').then(r => r.json())
+    ).catch(() => null);
+    const [batchData, handoffData] = await Promise.all([fetchBatch, fetchHandoffs]);
+    data = batchData;
+    if (handoffData && handoffData.ok && Array.isArray(handoffData.pending)) {
+      handoffs = handoffData;
     }
   } catch (e) {
     const body = document.getElementById('batch-status-body');
     if (body) body.innerHTML = '<div style="text-align:center; padding: 30px 16px; color: var(--red-fg, #cf222e); font-size: 13px;">Failed to load batch status — is dashboard-server.mjs running on port 7777?</div>';
     return;
   }
+  // Attach handoff data so _bsRenderBody can pick it up as sectionH.
+  if (data && handoffs) data.pending_handoffs = handoffs;
   if (!data) {
     const body = document.getElementById('batch-status-body');
     if (body) body.innerHTML = '<div style="text-align:center; padding: 30px 16px; color: var(--text-3); font-size: 13px;">No batch data available.</div>';

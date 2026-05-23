@@ -37,9 +37,10 @@
  */
 
 import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import { homedir } from 'node:os';
 import {
   findRepoRoot, snapshotAll,
   checkLaunchdPlists, checkApplicationsTracker, checkHmIntelAge,
@@ -419,6 +420,43 @@ function rankSeverity(s) {
   return { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 }[s] ?? 9;
 }
 
+// Researcher-chain stale-handoff sweep (added 2026-05-23)
+// Scans ~/.claude/agents/runs/_handoffs/dealbreaker-*.json for pending
+// envelopes older than 24h. The handoff-file contract makes the chain
+// invariant under harness restrictions, but if the main session crashes
+// between researcher write and dealbreaker dispatch, the envelope sits
+// at status:pending. This sweep surfaces those to the daily decision doc.
+function scanStaleHandoffs() {
+  const dir = join(homedir(), '.claude', 'agents', 'runs', '_handoffs');
+  if (!existsSync(dir)) return { staleCount: 0, stalePaths: [], pendingCount: 0 };
+  const stalePaths = [];
+  let pendingCount = 0;
+  const now = Date.now();
+  const STALE_MS = 24 * 60 * 60 * 1000;
+  let entries;
+  try { entries = readdirSync(dir); } catch { return { staleCount: 0, stalePaths: [], pendingCount: 0 }; }
+  for (const f of entries) {
+    if (!f.startsWith('dealbreaker-') || !f.endsWith('.json')) continue;
+    const p = join(dir, f);
+    try {
+      const h = JSON.parse(readFileSync(p, 'utf8'));
+      if (h.status !== 'pending') continue;
+      pendingCount += 1;
+      const created = new Date(h.created_at).getTime();
+      if (Number.isFinite(created) && now - created > STALE_MS) {
+        stalePaths.push({
+          path: p,
+          ageHours: Math.round((now - created) / 3.6e6),
+          mode: h.mode || 'unknown',
+          ceilingUsd: h.ceiling_usd ?? null,
+          question: h.original_question || '',
+        });
+      }
+    } catch { /* skip malformed envelope */ }
+  }
+  return { staleCount: stalePaths.length, stalePaths, pendingCount };
+}
+
 function buildDecisionFindings(snap, reviewFindings) {
   const out = [];
 
@@ -515,6 +553,21 @@ function buildDecisionFindings(snap, reviewFindings) {
     });
   }
 
+  // Researcher-chain stale-handoff sweep (added 2026-05-23)
+  const handoffs = scanStaleHandoffs();
+  if (handoffs.staleCount > 0) {
+    const sample = handoffs.stalePaths.slice(0, 3).map(s => `${basename(s.path)} (${s.ageHours}h)`).join(', ');
+    out.push({
+      severity: handoffs.staleCount > 3 ? 'HIGH' : 'MEDIUM',
+      area: 'researcher-chain',
+      finding: `${handoffs.staleCount} dealbreaker handoff(s) stuck at status:pending > 24h (${sample}${handoffs.staleCount > 3 ? '…' : ''})`,
+      recommendation: `Per stale envelope: run /dealbreaker <handoff-path> to resume; OR rm <handoff-path> to abandon. Paths in ~/.claude/agents/runs/_handoffs/.`,
+      decisionPrompt: `RESOLVE_NOW (dispatch dealbreaker per envelope), ABANDON (rm), or INVESTIGATE (read report_path first)?`,
+    });
+  }
+  // Attach for renderDecisionDoc Wins line
+  snap._handoffs = handoffs;
+
   // Review findings (security regressions in dashboard-server)
   for (const f of (reviewFindings || [])) {
     out.push({
@@ -571,6 +624,10 @@ function renderDecisionDoc(snap, reviewFindings) {
   if ((snap.tracker.duplicateIds ?? []).length === 0) wins.push(`✓ Tracker has zero duplicate row IDs (${snap.tracker.totalRows ?? '?'} rows)`);
   if (snap.tmpLeaks.leakedCount === 0) wins.push(`✓ /tmp clean — no career-ops leaks`);
   if ((reviewFindings || []).length === 0) wins.push(`✓ Code-review: 0 security regressions in dashboard-server.mjs`);
+  if (snap._handoffs && snap._handoffs.staleCount === 0) {
+    const pc = snap._handoffs.pendingCount;
+    wins.push(`✓ Researcher chain: no stale dealbreaker handoffs${pc > 0 ? ` (${pc} in flight, all <24h)` : ''}`);
+  }
   if (wins.length === 0) wins.push(`(none — investigate findings below before declaring health)`);
   for (const w of wins) lines.push(`- ${w}`);
   lines.push('');
@@ -619,6 +676,9 @@ function renderDecisionDoc(snap, reviewFindings) {
   lines.push(`- apply-packs: ${snap.applyPacks.totalPacks ?? '?'} · ${(snap.applyPacks.noTrackerRef ?? []).length} no-tracker-ref`);
   lines.push(`- /tmp leaks: ${snap.tmpLeaks.leakedCount}`);
   lines.push(`- dashboard-server listening on :3097: ${snap.dashboardServer.listening}`);
+  if (snap._handoffs) {
+    lines.push(`- researcher-chain handoffs: ${snap._handoffs.pendingCount} pending · ${snap._handoffs.staleCount} stale (>24h)`);
+  }
   lines.push('');
 
   return lines.join('\n');

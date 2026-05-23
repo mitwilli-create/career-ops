@@ -485,6 +485,61 @@ async function appendRefreshEcosystemProposals(recommendations) {
     return recommendations;
 }
 
+/**
+ * Phase 4 ingestion for regression-guard agent (added 2026-05-23).
+ *
+ * Reads data/dashboard-panels/regression-guard.json (written by
+ * `scripts/agents/regression-guard.mjs --scheduled` daily 06:00 PT) and
+ * surfaces CRIT/HIGH findings as omega-steward proposals. Skips MED/LOW
+ * (those stay in the regression-guard decision doc for Mitchell's review;
+ * only the highest-severity items warrant routing into omega's
+ * approval-gated remediation queue).
+ *
+ * Citations: NEVER quote verbatim from sensitive paths. Use the
+ * decision_doc_path reference so Mitchell can review the doc directly.
+ *
+ * Spec: dealbreaker-final § Day-1 PR checklist item 9.
+ */
+async function ingestRegressionGuardFindings(recommendations) {
+    let nextId = recommendations.length ? Math.max(...recommendations.map(r => r.id || 0)) + 1 : 1;
+    try {
+        const panelPath = join(REPO_ROOT, 'data/dashboard-panels/regression-guard.json');
+        if (!existsSync(panelPath)) {
+            log('phase 4 (regression-guard): no panel JSON yet — agent has not run');
+            return recommendations;
+        }
+        const panel = JSON.parse(readFileSync(panelPath, 'utf-8'));
+        const findings = Array.isArray(panel.top_15) ? panel.top_15 : [];
+        const crit = findings.filter(f => f.severity === 'CRIT');
+        const high = findings.filter(f => f.severity === 'HIGH');
+        const eligible = [...crit, ...high];
+        if (eligible.length === 0) {
+            log('phase 4 (regression-guard): 0 CRIT/HIGH findings — no proposals appended');
+            return recommendations;
+        }
+        const docPath = panel.decision_doc_path || '.claude/audit/<DATE>/regression-report-<DATE>.md';
+        for (const f of eligible) {
+            recommendations.push({
+                id: nextId++,
+                target_agent: 'regression-guard',
+                tag: f.severity === 'CRIT' ? 'NEEDS-APPROVAL' : 'NEEDS-DESIGN-DISCUSSION',
+                short_title: `${f.severity} regression: ${f.subtype} at ${f.file}${f.line ? ':' + f.line : ''}`,
+                current_state: f.summary,
+                proposed_change: `Review the regression-guard decision doc at ${docPath} → file:line. Apply FIX_LOCALLY / IGNORE_ONE_TIME / RULE_NEEDS_UPDATE per the doc's "Decisions Required" block. Do NOT quote inline from sensitive paths.`,
+                rationale: `regression-guard Phase 4 ingestion — type ${f.type} regression detected ${panel.date || 'recently'}. Severity ${f.severity} routes to omega-steward approval queue per dealbreaker spec.`,
+                research_citations: [{ url: docPath, retrieved_at: new Date().toISOString(), confidence: f.severity === 'CRIT' ? 'high' : 'medium' }],
+                risk: f.severity === 'CRIT' ? 'HIGH' : 'MED',
+                estimated_effort: 'S',
+                rollback: 'no changes apply — regression-guard is alert-only by default',
+            });
+        }
+        log(`phase 4 (regression-guard): appended ${eligible.length} proposals (${crit.length} CRIT, ${high.length} HIGH) from ${docPath}`);
+    } catch (e) {
+        log(`phase 4 (regression-guard): ingestion failed: ${e.message.slice(0, 200)}`);
+    }
+    return recommendations;
+}
+
 function buildRecommendation(agent, finding, id) {
     // Conservative defaults — most recommendations start as NEEDS-APPROVAL.
     const base = {
@@ -698,6 +753,7 @@ export async function runOmegaSteward(opts = {}) {
         const research = phaseResearch(agents);
         let recommendations = generateRecommendations(agents, health, research);
         recommendations = await appendRefreshEcosystemProposals(recommendations);
+        recommendations = await ingestRegressionGuardFindings(recommendations);
         const path = writeProposalFile(recommendations);
         log(`STOPPING at approval gate. Review ${path} and append approvals to data/omega-approvals.md.`);
         return { path, recommendations };

@@ -51,6 +51,7 @@ import {
   archiveStaleHmIntel, sweepTmpLeaks,
 } from '../../lib/system-health-cleanup.mjs';
 import { installRunRecord } from '../../lib/job-runs-ledger.mjs';
+import { escapeBackslashAndChar } from '../../lib/sanitize.mjs';
 
 const __jobRun = installRunRecord('system-maintainer');
 
@@ -582,8 +583,11 @@ function renderDecisionDoc(snap, reviewFindings) {
     lines.push('|---|---|---|---|---|');
     for (let i = 0; i < findings.length; i++) {
       const f = findings[i];
-      // Pipe-safe cells: escape `|` in user-facing text
-      const cell = (s) => String(s).replace(/\|/g, '\\|');
+      // Pipe-safe cells: escape `|` in user-facing text. Centralized via
+      // lib/sanitize.mjs — defeats CodeQL `js/incomplete-sanitization`
+      // alert #95 by escaping backslash FIRST so a literal `\` in the
+      // input cannot bypass the pipe escape.
+      const cell = (s) => escapeBackslashAndChar(s, '|');
       lines.push(`| ${i + 1} | ${f.severity} | ${f.area} | ${cell(f.finding)} | ${cell(f.recommendation)} |`);
     }
     lines.push('');

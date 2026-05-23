@@ -1,3 +1,39 @@
+> **About this fork** — This repository is Mitchell Williams's working fork of `santifer/career-ops`, used since April 2026 to evaluate 740+ AI roles, generate 100+ tailored CVs, and run an unattended batch-eval pipeline. Santifer's original project is the framework; what follows below the divider is his README, intact, with attribution preserved. This top section explains what I changed and why it matters.
+
+# What I changed (mitwilli-create's fork)
+
+I forked career-ops in April 2026 because I needed a production-grade workflow for evaluating frontier-AI roles at scale — not a job-application script. The original framework gave me the skill modes, the scoring rubric, and the pipeline shape. I extended it into a personal AI career-ops system:
+
+- **Zero-token portal scanning** — direct Greenhouse / Ashby / Lever API hits replaced LLM-based JD discovery, dropping scan cost to zero and making nightly portal sweeps cron-friendly.
+- **Parallel-worker batch processing** — single-orchestrator design with skill-based delegation; full batch-status SSE pipeline; resume support for cancelled jobs.
+- **Corpus integration** — `cv.md`, `article-digest.md`, story-bank, and writing-samples wired into evaluation, tailoring, and outreach skills. The fork reads my actual voice and role bank rather than a generic profile.
+- **740+ role evaluations to date** — production agent serving my own pipeline. The dashboard at `dashboard.careers-ops.com` (private, CF Access) is the operational surface; this repo is the source.
+
+The most recent 30 days of commit activity shipped the Closure 08 + 09 sprint. What landed today (2026-05-22):
+
+- `/api/batch/resume` endpoint for cancelled-batch recovery
+- SSE `last_batch` live update for the dashboard activity chip
+- Next-move drawer panel grounded in `[cv.md]` + `[article-digest.md]` citations
+- Process All confidence panel with rolling 5-run history
+- Dark-by-default story pages — 61 pages migrated
+- Content-density linter at build time (`lib/content-density-linter.mjs`)
+- 11 regex sites fixed inside the outer-template-unescape bug class
+
+## Why this matters for the work I'm looking for
+
+I'm targeting Forward Deployed Engineer, Applied AI, AI Program Manager, AI Enablement, and engineering-editorial roles at frontier AI labs. This repo is the longest-running demonstration of the pattern those roles ask for: shipped AI-native workflows on top of a real corpus, deployed to a real user (me), iterated under production constraints, and documented with editorial discipline.
+
+The original framework is santifer's. The 740 evaluations, the orchestrator architecture, the parallel batch processing, and the corpus integration are mine.
+
+## Attribution + upstream
+
+Built on [`santifer/career-ops`](https://github.com/santifer/career-ops) — the original framework I forked from. Santifer's design is the substrate I extended. Issues / PRs against my fork target `mitwilli-create:main`; the upstream is read-only for me.
+
+---
+
+(Original `santifer/career-ops` README continues below.)
+
+---
 # Career-Ops
 
 [English](README.md) | [Español](README.es.md) | [Português (Brasil)](README.pt-BR.md) | [한국어](README.ko-KR.md) | [日本語](README.ja.md) | [Русский](README.ru.md) | [简体中文](README.cn.md) | [繁體中文](README.zh-TW.md)

@@ -597,13 +597,15 @@ const RESEARCHER_ENRICHMENT_RATE = clampEnvFloat('RESEARCHER_ENRICHMENT_RATE', 0
 //   `lib/next-moves.mjs:121`, `lib/eval-council.mjs:144`. PASS — gated by real code.
 const THRESHOLD_FOR_PUBLISH      = clampEnvFloat('THRESHOLD_FOR_PUBLISH',      4.0, 0, 10);
 // α Run-Batch eval 2026-05-19 — polish stage costs (only surface when POLISH_PACK_ENABLED=1).
-// Default of ~$60/pack is the calibrated typical (per overnight smoke @ 14021db: cover-letter
-// only converged at $46 + $0 cached signals; full 6-artifact ranges $40-180 from operational
-// telemetry). The $500 cap from spec is the hard ceiling, not the expected mean.
+// Default of ~$12/pack is the post-bugfix calibrated typical. The earlier $60 figure was
+// derived from cost-trace records produced before commit 8e83ffa, which had a per-1K-vs-per-1M
+// units bug in MODEL_COST_RATES that inflated every Anthropic Opus + Sonnet cost by ~1000x.
+// Recomputed against actual 2026-05-20 + 2026-05-22 traces (data/polish-cost-trace-corrected-*.json):
+// full 6-artifact pack averages ~$10-15. The $500 cap from spec is the hard ceiling, not the mean.
 // Bounded same as scripts/process-all-pipeline.mjs:phasePolish so dashboard preview stays
-// in sync with the agent's actual behavior.
-const _rawPolishCost = parseFloat(process.env.COST_PER_POLISH_PACK_USD || '60.00');
-const COST_PER_POLISH_PACK_USD     = Number.isFinite(_rawPolishCost) && _rawPolishCost > 0 ? _rawPolishCost : 60;
+// in sync with the agent's actual behavior. See data/cost-trace-bug-postmortem-2026-05-22.md.
+const _rawPolishCost = parseFloat(process.env.COST_PER_POLISH_PACK_USD || '12.00');
+const COST_PER_POLISH_PACK_USD     = Number.isFinite(_rawPolishCost) && _rawPolishCost > 0 ? _rawPolishCost : 12;
 const _rawPolishTopN = parseInt(process.env.POLISH_TOP_N_PER_RUN || '5', 10);
 const POLISH_TOP_N_PER_RUN         = Number.isFinite(_rawPolishTopN) && _rawPolishTopN > 0 ? Math.min(_rawPolishTopN, 20) : 5;
 const _rawPolishCap = parseFloat(process.env.POLISH_PER_PACK_COST_CAP_USD || '120.00');
@@ -663,12 +665,12 @@ const COST_CALIBRATION_PROVENANCE = {
   },
   polish_typical_cost: {
     value: COST_PER_POLISH_PACK_USD,
-    source: 'overnight smoke @ 14021db + apply-pack-polish.mjs operational telemetry',
+    source: 'corrected polish-cost-trace records (2026-05-20 + 2026-05-22) post-bugfix-8e83ffa',
     confidence: 'MED',
-    sample_size: 1,             // single full pack run observed
-    last_calibrated: '2026-05-19',
-    confidence_band_pct: 100,   // ±100% — single-pack telemetry is fragile
-    note: 'env-tunable via COST_PER_POLISH_PACK_USD',
+    sample_size: 95,            // 88 + 7 records across 2 correctly-priced trace days
+    last_calibrated: '2026-05-22',
+    confidence_band_pct: 50,    // ±50% — observed $8-20 range across artifact mixes
+    note: 'env-tunable via COST_PER_POLISH_PACK_USD; was $60 from inflated traces — see data/cost-trace-bug-postmortem-2026-05-22.md',
   },
   // δ DELTA Run-Batch 2026-05-19 — AI-detection cost provenance
   ai_detection_cost: {
@@ -1245,7 +1247,9 @@ function buildPipelinePreview() {
         // α Run-Batch eval 2026-05-19: only surfaced when POLISH_PACK_ENABLED=1.
         // Process All's phasePolish targets top-N Evaluated rows; each pack runs
         // 3-Haiku-critics / Sonnet author / Opus adjudicator / adversarial sweep
-        // until ≥0.99 confidence — typical $60, cap $120 (env-tunable).
+        // until ≥0.99 confidence — typical $12, cap $120 (env-tunable).
+        // (Earlier "typical $60" comment was calibrated against pre-bugfix-8e83ffa
+        //  trace data — see data/cost-trace-bug-postmortem-2026-05-22.md.)
         polish: {
           count: paPolishCount,
           cost_usd: r2(paPolishCost),

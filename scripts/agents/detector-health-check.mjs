@@ -133,9 +133,9 @@ async function callPangram(text) {
   const key = process.env.PANGRAM_API_KEY;
   if (!key) return { skipped: true, reason: 'no key', prob: null, signal: 'UNCONFIGURED' };
   try {
-    const r = await fetch('https://api.pangram.com/v1/classify', {
+    const r = await fetch('https://text.api.pangram.com/v3', {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+      headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: text.slice(0, 5000) }),
       signal: AbortSignal.timeout(30_000),
     });

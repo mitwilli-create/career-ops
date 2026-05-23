@@ -2541,6 +2541,26 @@ const htmlEscape = (s) => String(s)
   .replace(/"/g, '&quot;')
   .replace(/'/g, '&#39;');
 
+// stripHtmlTags — iterative-strip helper that defeats the
+// js/incomplete-multi-character-sanitization CodeQL pattern flagged on the
+// prior `.replace(/<[^>]+>/g, '')` single-pass strip at build-dashboard.mjs:3300
+// (2026-05-22 follow-up). Single-pass is bypassed by crafted nested input
+// like `<scr<script>ipt>` → after one pass `<script>` survives. The
+// iterative version applies `<[^>]*>` (note `*` not `+` so empty `<>` tags
+// also strip) until the string is stable, then defensively strips any
+// remaining lone `<` or `>` characters. Lossy on legitimate angle-bracketed
+// content (existing behaviour); fine for derivable text use cases like
+// interview-prompt payloads.
+const stripHtmlTags = (s) => {
+  let prev;
+  let cur = String(s == null ? '' : s);
+  do {
+    prev = cur;
+    cur = cur.replace(/<[^>]*>/g, '');
+  } while (cur !== prev);
+  return cur.replace(/[<>]/g, '');
+};
+
 // FIX 1 (2026-05-17) — strip table-cell markup residue before escaping so users
 // don't see literal "<br>" or "**" in the WHAT FITS card. Source data is
 // markdown-table cells that intentionally carry inline <br> and **bold** to
@@ -3244,7 +3264,7 @@ function renderRow(r, idx) {
   if (_isAnthropicRow) {
     _matchFooterParts.push('<span class="match-credential-chip" style="display:inline-block;font-size:11px;padding:3px 9px;border-radius:999px;background:rgba(99,102,241,.12);color:var(--blue-fg);border:1px solid rgba(99,102,241,.32);margin-right:6px" title="Mitchell earned 4 Anthropic certifications in March 2026 — directly answers the heavy-Claude-Code-user credibility gate">&#x1f393; Your Anthropic credentials &middot; 4 certs (Mar 2026)</span>');
   }
-  _matchFooterParts.push('<a href="article-digest.md" target="_blank" rel="noopener" style="display:inline-block;font-size:11px;color:var(--blue-fg);text-decoration:underline dotted" title="Open the full article digest — your accumulated proof points across journalism, comms, and AI-builder work">More proof points: your article digest &rarr;</a>');
+  _matchFooterParts.push('<a href="article-digest.html" target="_blank" rel="noopener" style="display:inline-block;font-size:11px;color:var(--blue-fg);text-decoration:underline dotted" title="Open the full article digest — your accumulated proof points across journalism, comms, and AI-builder work">More proof points: your article digest &rarr;</a>');
   const _matchFooter = `<div class="match-footer" style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);line-height:1.7">${_matchFooterParts.join('')}</div>`;
 
   const matchCard = edge.length ? `<div class="dcard dcard--match">
@@ -3297,7 +3317,7 @@ function renderRow(r, idx) {
       // Template-based seed question selection (no LLM call at build time).
       const interviewPrompt = _buildGapInterviewPrompt({
         title: g.title,
-        detail: (g.detail || '').replace(/<[^>]+>/g, '').trim(),
+        detail: stripHtmlTags(g.detail).trim(),
         severity: g.severity || 'medium',
         company: r.company || 'this company',
         role: r.role || 'this role',
@@ -34784,6 +34804,22 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     });
     if (res.status !== 0) {
       console.warn('⚠ build-dashboard: network-database.html shell injection failed (see above). Dashboard itself is OK.');
+    }
+  }
+
+  // 2026-05-22 Phase 6.2 — render article-digest.md → dashboard/article-digest.html.
+  // The drawer footer carries "More proof points: your article digest →"; the link
+  // used to point at article-digest.md (404'd because the static server doesn't
+  // expose .md from the repo root). Now points at the rendered .html which this
+  // step writes. Skip with DASHBOARD_SKIP_ARTICLE_DIGEST=1.
+  if (process.env.DASHBOARD_SKIP_ARTICLE_DIGEST !== '1') {
+    const { spawnSync } = await import('node:child_process');
+    const res = spawnSync('node', [join(ROOT, 'scripts/build-article-digest.mjs'), '--quiet'], {
+      cwd: ROOT,
+      stdio: 'inherit',
+    });
+    if (res.status !== 0) {
+      console.warn('⚠ build-dashboard: article-digest.html rebuild failed (see above). Dashboard itself is OK.');
     }
   }
 }

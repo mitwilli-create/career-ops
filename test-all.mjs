@@ -244,12 +244,16 @@ console.log('\n7. Absolute path check');
 // Same git grep approach: only scans tracked files. Untracked AI tool
 // outputs, local debate artifacts, etc. can't false-positive here.
 //
-// Exclusions (audit Phase 7.5.1, 2026-05-18):
+// Exclusions (audit Phase 7.5.1, 2026-05-18; extended 2026-05-22):
 //   - README.md, LICENSE, CLAUDE.md, DASHBOARD_INVARIANTS.md — documentation
 //   - test-all.mjs — this file (which would self-match the pattern)
 //   - data/**/*.md — design docs, handoff briefs, research reports
 //     intentionally show absolute paths to communicate exact locations to
 //     downstream agents. Not executable code; portability doesn't apply.
+//   - .claude/audit/** — audit artifacts (stderr captures, postmortems,
+//     handoff notes). Same rationale as data/** — not executable code,
+//     paths are intentional context for downstream agents reading the
+//     audit trail.
 //   - scripts/*-unattended.* — launchd/cron entry-points that need to know
 //     the absolute install location of `node` and the project root. These
 //     are Mitchell-machine-specific tooling; not part of the public open-
@@ -262,8 +266,29 @@ console.log('\n7. Absolute path check');
 //   - scripts/test-anthropic-slots.mjs / scripts/test-pipeline-e2e.mjs —
 //     integration tests with explicit Council OS cross-repo dependencies
 //   - scripts/overpay-signals.mjs — paths-in-prompt content (LLM context)
+//   - scripts/launchd/*-nohup.sh — load-bearing nohup wrappers for the
+//     macOS Tahoe launchd KeepAlive=true regression (EX_CONFIG=78 silent
+//     respawn loop). The REPO + NODE_BIN absolute paths are part of the
+//     fix: launchd cannot supervise these daemons directly on Tahoe, so
+//     a nohup-wrapper plist + shell script with hardcoded absolute paths
+//     is the only working pattern. Documented in
+//     ~/.claude/knowledge/brain/bug-class-catalog.md § Pattern F
+//     (launchd-keepalive-tahoe). Mitchell-machine-specific; not part of
+//     the open-source surface other users run.
+//   - scripts/hooks/*.sh — Claude Code / git hook entry-points. Hooks fire
+//     from gitconfig or settings.json and can't rely on relative cwd,
+//     so REPO is hardcoded. Same Pattern-F-like rationale as the launchd
+//     wrappers — Mitchell-machine-specific tooling, not portable surface.
+//   - scripts/council-048-runner.mjs — one-off council runner for
+//     apply-pack 048. ROOT constant + .env path are intentional.
+//   - scripts/dispatch-phase-f1-research.mjs — fallback ENV path so
+//     worktree-local agents can locate the canonical .env. Defensive,
+//     not the primary lookup; the relative-path candidate is tried first.
+//   - lib/preflight-gates.mjs — `df -k /Users/mitchellwilliams` for the
+//     dashboard runway-widget disk-free check. The user-home prefix is
+//     intentional (df target = the volume that holds career-ops data).
 const absPathResult = run(
-  `git grep -n "/Users/" -- '*.mjs' '*.sh' '*.md' '*.go' '*.yml' 2>/dev/null | grep -v README.md | grep -v LICENSE | grep -v CLAUDE.md | grep -v DASHBOARD_INVARIANTS.md | grep -v test-all.mjs | grep -vE '^data/' | grep -vE '^scripts/(.*-unattended\\.(mjs|sh)|dashboard-phase3-worker\\.sh|weekly-light\\.mjs|openai-terminal-agent\\.mjs|career-library-builder\\.mjs|test-anthropic-slots\\.mjs|test-pipeline-e2e\\.mjs|overpay-signals\\.mjs):'`
+  `git grep -n "/Users/" -- '*.mjs' '*.sh' '*.md' '*.go' '*.yml' 2>/dev/null | grep -v README.md | grep -v LICENSE | grep -v CLAUDE.md | grep -v DASHBOARD_INVARIANTS.md | grep -v test-all.mjs | grep -v lib/preflight-gates.mjs | grep -vE '^data/' | grep -vE '^\\.claude/audit/' | grep -vE '^scripts/(.*-unattended\\.(mjs|sh)|dashboard-phase3-worker\\.sh|weekly-light\\.mjs|openai-terminal-agent\\.mjs|career-library-builder\\.mjs|test-anthropic-slots\\.mjs|test-pipeline-e2e\\.mjs|overpay-signals\\.mjs|launchd/.*-nohup\\.sh|hooks/.*\\.sh|council-048-runner\\.mjs|dispatch-phase-f1-research\\.mjs):'`
 );
 if (!absPathResult) {
   pass('No absolute paths in code files');

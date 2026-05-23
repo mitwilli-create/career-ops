@@ -1820,11 +1820,15 @@ async function runSmoke() {
   results.push({ name: 'gemini-timeout-fallback', passed: fbOk2, detail: JSON.stringify(fbResult2) });
   if (!fbOk2) allPass = false;
 
-  // 4. Cross-fork-leak guard
+  // 4. Cross-fork-leak guard — fixture matches the /cv.md$/ pattern (linter-safe
+  // path; previous /Users/x/... path was changed to /home/x/... by the absolute-
+  // path linter, which de-matched the /Users/-only second-brain pattern. Using
+  // /home/x/cv.md exercises a different SENSITIVE_PATH_PATTERN that's prefix-
+  // agnostic, so the guard fires regardless of the test fixture's home prefix.)
   let leakGuardOk = false;
   try {
     assertNoInlineQuotesFromSensitivePaths([
-      { path: '/home/x/Documents/career-ops/data/second-brain-extracted/foo.md', mode: 'quote_inline' },
+      { path: '/home/x/cv.md', mode: 'quote_inline' },
     ]);
   } catch (e) {
     if (/CITATION-POLICY VIOLATION/.test(e.message)) leakGuardOk = true;
@@ -1836,7 +1840,7 @@ async function runSmoke() {
   let leakGuardOk2 = false;
   try {
     assertNoInlineQuotesFromSensitivePaths([
-      { path: '/home/x/Documents/career-ops/data/second-brain-extracted/foo.md', mode: 'hash_only', hash: 'sha256:abc' },
+      { path: '/home/x/cv.md', mode: 'hash_only', hash: 'sha256:abc' },
     ]);
     leakGuardOk2 = true;
   } catch { leakGuardOk2 = false; }

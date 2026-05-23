@@ -28,7 +28,10 @@ import { gateBatch } from '../lib/apply-now-queue-gate.mjs';
 import { parseApplicationsFile } from '../lib/parse-applications.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(__dirname, '..');
+// Allow override so the audit can run from a git worktree against the main
+// repo's personal-data files (which aren't synced into worktrees). Matches
+// the same env var the gate library reads.
+const ROOT = process.env.CAREER_OPS_ROOT || join(__dirname, '..');
 
 const QUEUE_PATH = join(ROOT, 'data', 'apply-now-queue.json');
 const APPS_PATH = join(ROOT, 'data', 'applications.md');

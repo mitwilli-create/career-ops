@@ -367,3 +367,7 @@ data/team-health/*.json
 
 # Phase 1.5 enrichment log — NDJSON heartbeat per row + per-slot
 data/phase-1.5-enrich-log-*.ndjson
+
+# data/credentials/all.json contains personal credential records;
+# data/credentials/all.example.json is the seed template (committed).
+data/credentials/all.json

@@ -14,13 +14,16 @@
     <key>WorkingDirectory</key>
     <string>/Users/mitchellwilliams/Documents/career-ops</string>
 
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>2</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
+    <!-- Phase 6.5 (2026-05-23): switched from StartCalendarInterval { Hour=2 Minute=0 }
+         to StartInterval=86400 (24 hours). StartCalendarInterval has no catch-up
+         semantics on macOS — if the Mac sleeps through 02:00 PT, the scan is
+         silently lost. StartInterval DOES catch up after sleep (per Apple launchd
+         docs). Tradeoff: the firing time after plist load is "load time + 24h"
+         and drifts over weeks. Mitchell's scan window is "overnight," not
+         "exactly 02:00 PT," so the drift is acceptable in exchange for never
+         silently missing a day. -->
+    <key>StartInterval</key>
+    <integer>86400</integer>
 
     <key>RunAtLoad</key>
     <false/>

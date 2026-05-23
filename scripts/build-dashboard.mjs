@@ -13017,7 +13017,7 @@ async function build() {
         <div class="stat-trend">${deltaIndicator(kpiSpark.total.delta)}${sparklineSVG(kpiSpark.total.daily, 'var(--text-3)', 'Total evaluations')}</div>
         <span class="stat-caret" aria-hidden="true">▾</span><span class="sr-only">Click to expand</span>
       </div>
-      <div class="stat stat-cell" onclick="toggleStatPanel('pending')" title="Click to see pipeline">
+      <div class="stat stat-cell" onclick="(window._openPipelineFlowModal||function(){toggleStatPanel('pending')})()" title="Click to see pipeline flow — 5 stages">
         <div class="stat-label"><span class="label-full">Pipeline pending</span><span class="label-short">Pending</span></div>
         <div class="stat-value" id="live-pipeline">${pipelinePending}</div>
         <div class="stat-trend"><span class="stat-delta stat-delta-flat" title="Snapshot — pipeline depth has no daily history">— snapshot</span></div>
@@ -20926,6 +20926,92 @@ async function _openCredentialsModal() {
   }
 }
 window._openCredentialsModal = _openCredentialsModal;
+
+/* Phase 7.1 (2026-05-22) — Pipeline flow modal.
+ * Replaces the Pipeline-pending stat-cell drill-in with a richer 5-stage view
+ * (Scan / Triage / Process / Eval / Publish). Reads /api/pipeline/flow-state
+ * for live per-stage status + window.__PIPELINE_ACTIVITY__ for the build-time
+ * snapshot fallback. Pattern A safe: pure string concat, no template literals,
+ * no backticks, no single-backslash escapes. */
+async function _openPipelineFlowModal() {
+  const existing = document.getElementById('pipeline-flow-backdrop');
+  if (existing) { existing.remove(); }
+  const backdrop = document.createElement('div');
+  backdrop.id = 'pipeline-flow-backdrop';
+  backdrop.setAttribute('role', 'dialog');
+  backdrop.setAttribute('aria-modal', 'true');
+  backdrop.setAttribute('aria-label', 'Pipeline flow — 5 stages');
+  backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:99999;padding:24px';
+  backdrop.addEventListener('click', function(e) {
+    if (e.target === backdrop) backdrop.remove();
+  });
+  const modal = document.createElement('div');
+  modal.style.cssText = 'background:var(--surface,#11131c);border:1px solid var(--border,#232737);border-radius:8px;max-width:560px;width:100%;max-height:80vh;overflow-y:auto;padding:24px;color:var(--text,#fafafa);font-family:inherit';
+  modal.innerHTML = '<div style="font-size:14px;color:var(--text-3,#b8b8c0);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Loading pipeline flow' + String.fromCharCode(8230) + '</div>';
+  backdrop.appendChild(modal);
+  document.body.appendChild(backdrop);
+  function escCloseHandler(e) {
+    if (e.key === 'Escape') { backdrop.remove(); document.removeEventListener('keydown', escCloseHandler); }
+  }
+  document.addEventListener('keydown', escCloseHandler);
+  function relTime(ms) {
+    if (!ms) return 'never';
+    const diff = Date.now() - Number(ms);
+    if (diff < 0) return 'just now';
+    const min = Math.round(diff / 60000);
+    if (min < 1) return 'just now';
+    if (min < 60) return min + ' min ago';
+    const hr = Math.round(min / 60);
+    if (hr < 24) return hr + ' hr ago';
+    const d = Math.round(hr / 24);
+    return d + ' day' + (d === 1 ? '' : 's') + ' ago';
+  }
+  function statusBadge(status) {
+    const map = {
+      success: { bg: 'rgba(22,163,74,0.16)', fg: 'var(--green-fg,#16a34a)', label: 'OK' },
+      failed:  { bg: 'rgba(220,38,38,0.16)', fg: 'var(--red-fg,#fca5a5)',   label: 'FAILED' },
+      partial: { bg: 'rgba(168,123,72,0.16)', fg: 'var(--amber-fg,#f59e0b)', label: 'PARTIAL' },
+      idle:    { bg: 'rgba(99,102,241,0.10)', fg: 'var(--text-3,#b8b8c0)',  label: 'IDLE' },
+      unknown: { bg: 'rgba(99,102,241,0.10)', fg: 'var(--text-3,#b8b8c0)',  label: '—' },
+    };
+    const m = map[status] || map.unknown;
+    return '<span style="font-size:10px;padding:2px 7px;border-radius:999px;background:' + m.bg + ';color:' + m.fg + ';font-weight:600;letter-spacing:0.04em">' + m.label + '</span>';
+  }
+  try {
+    const r = await fetch('/api/pipeline/flow-state');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    if (!data.ok) throw new Error(data.error || 'flow-state unavailable');
+    const stages = data.stages || [];
+    const stageRows = stages.map(function(s) {
+      const noteHtml = s.note ? '<div style="font-size:11px;color:var(--text-3,#b8b8c0);margin-top:3px">' + String(s.note).replace(/</g, '&lt;') + '</div>' : '';
+      return '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border,#232737)">' +
+        '<div style="flex:1;min-width:0">' +
+        '<div style="display:flex;align-items:baseline;gap:8px"><strong style="font-size:14px;color:var(--text,#fafafa)">' + String(s.label).replace(/</g, '&lt;') + '</strong>' +
+        '<span style="font-size:12px;color:var(--text-3,#b8b8c0)">' + (s.count != null ? String(s.count) : '—') + ' item' + (s.count === 1 ? '' : 's') + '</span></div>' +
+        noteHtml +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:10px;flex-shrink:0">' +
+        '<span style="font-size:11px;color:var(--text-3,#b8b8c0)">' + relTime(s.last_run_ms) + '</span>' +
+        statusBadge(s.status) +
+        '</div>' +
+      '</div>';
+    }).join('');
+    const jobLine = data.latest_job_id ? '<div style="font-size:11px;color:var(--text-3,#b8b8c0);margin-bottom:10px">Latest job: <code style="color:var(--text-2,#e4e4e7)">' + String(data.latest_job_id).replace(/</g, '&lt;') + '</code> &middot; status <strong>' + String(data.latest_job_status || '—').replace(/</g, '&lt;') + '</strong></div>' : '<div style="font-size:11px;color:var(--text-3,#b8b8c0);margin-bottom:10px">No process-all job has run yet.</div>';
+    modal.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">' +
+      '<h2 style="margin:0;font-size:18px">Pipeline flow &middot; ' + stages.length + ' stages</h2>' +
+      '<button type="button" onclick="document.getElementById(\\u0027pipeline-flow-backdrop\\u0027).remove()" aria-label="Close" style="background:transparent;border:none;color:var(--text-3);font-size:18px;cursor:pointer;padding:4px 8px;line-height:1">' + String.fromCharCode(0x2715) + '</button>' +
+      '</div>' +
+      jobLine +
+      stageRows +
+      '<div style="font-size:11px;color:var(--text-3,#b8b8c0);margin-top:12px;line-height:1.5">Counts reflect the most recent process-all run + on-disk backlog. Refresh by re-opening.</div>';
+  } catch (err) {
+    modal.innerHTML = '<h2 style="margin:0 0 8px;color:var(--red-fg)">Pipeline flow unavailable</h2>' +
+      '<p style="color:var(--text-2,#e4e4e7);font-size:12px">Error: ' + String(err.message || err).replace(/</g, '&lt;') + '</p>' +
+      '<button type="button" onclick="document.getElementById(\\u0027pipeline-flow-backdrop\\u0027).remove()" style="margin-top:8px;padding:6px 14px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);border-radius:6px;cursor:pointer">Close</button>';
+  }
+}
+window._openPipelineFlowModal = _openPipelineFlowModal;
 
 function _renderLifecycleRow(s, driveEnabled, num) {
   // 5 button states: 'active' (green solid), 'done' (outlined), 'disabled'

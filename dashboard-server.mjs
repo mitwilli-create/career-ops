@@ -4235,6 +4235,18 @@ const server = createServer((req, res) => {
 
   if (url === '/api/stats') return json(computeStats());
 
+  // Phase 6.3 follow-up (2026-05-22): /api/credentials — serves merged
+  // credentials snapshot from lib/credentials.mjs. Drives the Anthropic chip
+  // pop-out + Badges widget click handlers. Falls back to data/credentials/all.example.json
+  // when the real all.json doesn't exist yet. Top-level request handler is
+  // not async, so we use .then/.catch instead of await.
+  if (url === '/api/credentials' && req.method === 'GET') {
+    import('./lib/credentials.mjs')
+      .then(mod => json(mod.snapshotForRender()))
+      .catch(err => json({ available: false, error: String(err && err.message || err) }, 500));
+    return;
+  }
+
   // ── α ALPHA 2026-05-19: /api/contacts/stats — cheap live count for sidebar-contacts polling
   if (url === '/api/contacts/stats') {
     try {

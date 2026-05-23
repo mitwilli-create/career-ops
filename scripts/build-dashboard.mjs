@@ -3262,7 +3262,12 @@ function renderRow(r, idx) {
   const _isAnthropicRow = /^anthropic$/i.test(String(r.company || '').trim());
   const _matchFooterParts = [];
   if (_isAnthropicRow) {
-    _matchFooterParts.push('<span class="match-credential-chip" style="display:inline-block;font-size:11px;padding:3px 9px;border-radius:999px;background:rgba(99,102,241,.12);color:var(--blue-fg);border:1px solid rgba(99,102,241,.32);margin-right:6px" title="Mitchell earned 4 Anthropic certifications in March 2026 — directly answers the heavy-Claude-Code-user credibility gate">&#x1f393; Your Anthropic credentials &middot; 4 certs (Mar 2026)</span>');
+    // Phase 6.3 follow-up (2026-05-22): chip is now clickable. onclick opens
+    // the credentials pop-out via _openCredentialsModal() — fetches
+    // /api/credentials (which serves snapshotForRender from lib/credentials.mjs)
+    // and renders the cert list. event.stopPropagation prevents the row from
+    // expanding when the chip is clicked.
+    _matchFooterParts.push('<button type="button" class="match-credential-chip" onclick="event.stopPropagation();window._openCredentialsModal&&window._openCredentialsModal()" style="display:inline-block;font-size:11px;padding:3px 9px;border-radius:999px;background:rgba(99,102,241,.12);color:var(--blue-fg);border:1px solid rgba(99,102,241,.32);margin-right:6px;cursor:pointer;font-family:inherit" title="Click to see Mitchell&#39;s Anthropic credentials — earned March 2026, answers the heavy-Claude-Code-user credibility gate">&#x1f393; Your Anthropic credentials &middot; 4 certs (Mar 2026)</button>');
   }
   _matchFooterParts.push('<a href="article-digest.html" target="_blank" rel="noopener" style="display:inline-block;font-size:11px;color:var(--blue-fg);text-decoration:underline dotted" title="Open the full article digest — your accumulated proof points across journalism, comms, and AI-builder work">More proof points: your article digest &rarr;</a>');
   const _matchFooter = `<div class="match-footer" style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);line-height:1.7">${_matchFooterParts.join('')}</div>`;
@@ -20851,6 +20856,76 @@ async function _drawerLoadArtifactManifest(num, mountEl) {
   }
 }
 window._drawerLoadArtifactManifest = _drawerLoadArtifactManifest;
+
+/* Phase 6.3 follow-up (2026-05-22) — credentials modal.
+ * Fetches /api/credentials (which serves lib/credentials.mjs::snapshotForRender)
+ * and renders a simple pop-out listing every cert. Falls back gracefully when
+ * data is unavailable. Pattern A safe: pure string concat, no template
+ * literals inside the JS string, no backticks. */
+async function _openCredentialsModal() {
+  const existing = document.getElementById('credentials-modal-backdrop');
+  if (existing) { existing.remove(); }
+  const backdrop = document.createElement('div');
+  backdrop.id = 'credentials-modal-backdrop';
+  backdrop.setAttribute('role', 'dialog');
+  backdrop.setAttribute('aria-modal', 'true');
+  backdrop.setAttribute('aria-label', 'Mitchell credentials');
+  backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:99999;padding:24px';
+  backdrop.addEventListener('click', function(e) {
+    if (e.target === backdrop) backdrop.remove();
+  });
+  const modal = document.createElement('div');
+  modal.style.cssText = 'background:var(--surface,#11131c);border:1px solid var(--border,#232737);border-radius:8px;max-width:640px;width:100%;max-height:80vh;overflow-y:auto;padding:24px;color:var(--text,#fafafa);font-family:inherit';
+  modal.innerHTML = '<div style="font-size:14px;color:var(--text-3,#b8b8c0);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Loading credentials' + String.fromCharCode(8230) + '</div>';
+  backdrop.appendChild(modal);
+  document.body.appendChild(backdrop);
+  function escCloseHandler(e) {
+    if (e.key === 'Escape') { backdrop.remove(); document.removeEventListener('keydown', escCloseHandler); }
+  }
+  document.addEventListener('keydown', escCloseHandler);
+  try {
+    const r = await fetch('/api/credentials');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    if (!data.available) {
+      modal.innerHTML = '<h2 style="margin:0 0 12px">Credentials not yet populated</h2>' +
+        '<p style="color:var(--text-2,#e4e4e7);margin:0 0 12px">No credentials are loaded yet. Add records to <code>data/credentials/all.json</code> (gitignored) — the seed template lives at <code>data/credentials/all.example.json</code>.</p>' +
+        '<button type="button" onclick="document.getElementById(\\u0027credentials-modal-backdrop\\u0027).remove()" style="margin-top:8px;padding:6px 14px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);border-radius:6px;cursor:pointer">Close</button>';
+      return;
+    }
+    const isExample = data.isExample ? '<div style="font-size:11px;color:var(--amber-fg,#b45309);background:rgba(168,123,72,0.14);padding:4px 8px;border-radius:4px;border:1px solid rgba(168,123,72,0.3);display:inline-block;margin-bottom:10px">Showing EXAMPLE credentials. Edit <code>data/credentials/all.json</code> to replace with your real records.</div>' : '';
+    const byProvider = data.by_provider || {};
+    const providerSummary = Object.keys(byProvider).map(function(p) {
+      return p + ': ' + byProvider[p];
+    }).join(' &middot; ');
+    const certRows = (data.all || []).map(function(c) {
+      const featured = c.featured ? ' <span style="font-size:10px;background:var(--green-bg,rgba(22,163,74,0.12));color:var(--green-fg,#16a34a);padding:2px 6px;border-radius:4px;margin-left:4px">FEATURED</span>' : '';
+      const icon = c.icon || String.fromCharCode(0x1f393);
+      const url = c.url ? '<a href="' + String(c.url).replace(/"/g, '&quot;') + '" target="_blank" rel="noopener" style="color:var(--link,#58a6ff);text-decoration:none">' + icon + '</a>' : icon;
+      const desc = c.description ? '<p style="font-size:12px;color:var(--text-2,#e4e4e7);margin:6px 0 0;line-height:1.5">' + String(c.description).replace(/</g, '&lt;') + '</p>' : '';
+      const date = c.earned_date ? '<span style="font-size:11px;color:var(--text-3,#b8b8c0);margin-left:6px">' + c.earned_date + '</span>' : '';
+      return '<div style="border-bottom:1px solid var(--border,#232737);padding:10px 0">' +
+        '<div style="display:flex;align-items:baseline;gap:6px">' +
+        '<span style="font-size:18px">' + url + '</span>' +
+        '<strong style="font-size:13.5px;color:var(--text,#fafafa)">' + String(c.name || c.id || '?').replace(/</g, '&lt;') + '</strong>' +
+        featured + date +
+        '</div>' + desc +
+        '</div>';
+    }).join('');
+    modal.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">' +
+      '<h2 style="margin:0;font-size:18px">' + String.fromCharCode(0x1f393) + ' Credentials &middot; ' + data.total + '</h2>' +
+      '<button type="button" onclick="document.getElementById(\\u0027credentials-modal-backdrop\\u0027).remove()" aria-label="Close" style="background:transparent;border:none;color:var(--text-3);font-size:18px;cursor:pointer;padding:4px 8px;line-height:1">' + String.fromCharCode(0x2715) + '</button>' +
+      '</div>' +
+      isExample +
+      '<div style="font-size:11px;color:var(--text-3,#b8b8c0);margin-bottom:10px">' + providerSummary + '</div>' +
+      certRows;
+  } catch (err) {
+    modal.innerHTML = '<h2 style="margin:0 0 8px;color:var(--red-fg)">Credentials unavailable</h2>' +
+      '<p style="color:var(--text-2,#e4e4e7);font-size:12px">Error: ' + String(err.message || err).replace(/</g, '&lt;') + '</p>' +
+      '<button type="button" onclick="document.getElementById(\\u0027credentials-modal-backdrop\\u0027).remove()" style="margin-top:8px;padding:6px 14px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);border-radius:6px;cursor:pointer">Close</button>';
+  }
+}
+window._openCredentialsModal = _openCredentialsModal;
 
 function _renderLifecycleRow(s, driveEnabled, num) {
   // 5 button states: 'active' (green solid), 'done' (outlined), 'disabled'

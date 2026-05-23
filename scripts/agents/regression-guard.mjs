@@ -13,9 +13,9 @@
  *   8  performance regression (log-stat diff)
  *
  * Source-of-truth specs (do NOT diverge without writing a follow-up dealbreaker):
- *   /Users/mitchellwilliams/.claude/agents/runs/dealbreaker-final-20260523-132911-regression-agent-delta.md
- *   /Users/mitchellwilliams/.claude/agents/runs/researcher-delta-2026-05-23-regression-agent.md
- *   /Users/mitchellwilliams/.claude/agents/runs/researcher-report-2026-05-23-regression-agent.md
+ *   ~/.claude/agents/runs/dealbreaker-final-20260523-132911-regression-agent-delta.md
+ *   ~/.claude/agents/runs/researcher-delta-2026-05-23-regression-agent.md
+ *   ~/.claude/agents/runs/researcher-report-2026-05-23-regression-agent.md
  *
  * Mitchell's locked decisions (override the dealbreaker $10/$3 numbers):
  *   - REGRESSION_GUARD_DAILY_USD=20      (was $10 in dealbreaker)
@@ -287,14 +287,14 @@ function encodeProjectPath(absPath) {
   if (!absPath || !absPath.startsWith('/')) {
     throw new Error(`encodeProjectPath: expected absolute path, got "${absPath}"`);
   }
-  // /Users/x/Documents/career-ops  →  -Users-x-Documents-career-ops
+  // /home/x/Documents/career-ops  →  -home-x-Documents-career-ops
   return absPath.replace(/\//g, '-');
 }
 
 // Self-verifying invariant for the encoder
 function testPathEncoder() {
-  const got = encodeProjectPath('/Users/mitchellwilliams/Documents/career-ops');
-  const want = '-Users-mitchellwilliams-Documents-career-ops';
+  const got = encodeProjectPath('/home/x/Documents/career-ops');
+  const want = '-home-x-Documents-career-ops';
   if (got !== want) {
     throw new Error(`path encoder broken: got=${got} want=${want}`);
   }
@@ -1224,7 +1224,7 @@ async function runSmoke() {
   let leakGuardOk = false;
   try {
     assertNoInlineQuotesFromSensitivePaths([
-      { path: '/Users/x/Documents/career-ops/data/second-brain-extracted/foo.md', mode: 'quote_inline' },
+      { path: '/home/x/Documents/career-ops/data/second-brain-extracted/foo.md', mode: 'quote_inline' },
     ]);
   } catch (e) {
     if (/CITATION-POLICY VIOLATION/.test(e.message)) leakGuardOk = true;
@@ -1236,7 +1236,7 @@ async function runSmoke() {
   let leakGuardOk2 = false;
   try {
     assertNoInlineQuotesFromSensitivePaths([
-      { path: '/Users/x/Documents/career-ops/data/second-brain-extracted/foo.md', mode: 'hash_only', hash: 'sha256:abc' },
+      { path: '/home/x/Documents/career-ops/data/second-brain-extracted/foo.md', mode: 'hash_only', hash: 'sha256:abc' },
     ]);
     leakGuardOk2 = true;
   } catch { leakGuardOk2 = false; }
@@ -1322,7 +1322,7 @@ OUTPUT:
   data/regression-guard-spend.jsonl  (append-only cost ledger)
 
 SOURCE OF TRUTH:
-  /Users/mitchellwilliams/.claude/agents/runs/dealbreaker-final-20260523-132911-regression-agent-delta.md
+  ~/.claude/agents/runs/dealbreaker-final-20260523-132911-regression-agent-delta.md
 `);
 }
 

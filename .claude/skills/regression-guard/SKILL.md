@@ -13,9 +13,9 @@ argument-hint: "[scheduled | seed-baselines | deep <session-id> | smoke | canary
 career-ops accretes state across many parallel sessions, autonomous overnight hauls, and subagent runs. Drift sneaks in: a closure invariant gets re-violated by a fix-elsewhere edit, a memory rule stops firing, a data file silently loses rows, a pipeline phase regresses without anyone noticing. This agent fires daily at 06:00 PT to catch that drift WHILE it's still cheap to revert.
 
 Built from the dealbreaker-adjudicated spec at:
-- `/Users/mitchellwilliams/.claude/agents/runs/dealbreaker-final-20260523-132911-regression-agent-delta.md`
-- `/Users/mitchellwilliams/.claude/agents/runs/researcher-delta-2026-05-23-regression-agent.md`
-- `/Users/mitchellwilliams/.claude/agents/runs/researcher-report-2026-05-23-regression-agent.md`
+- `~/.claude/agents/runs/dealbreaker-final-20260523-132911-regression-agent-delta.md`
+- `~/.claude/agents/runs/researcher-delta-2026-05-23-regression-agent.md`
+- `~/.claude/agents/runs/researcher-report-2026-05-23-regression-agent.md`
 
 Mitchell's locked decisions (override the dealbreaker $10/$3 numbers):
 - `REGRESSION_GUARD_DAILY_USD=20` (was $10 in dealbreaker)

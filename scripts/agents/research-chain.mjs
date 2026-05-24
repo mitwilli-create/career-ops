@@ -27,6 +27,7 @@ import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
+import { recordRun } from '../../lib/run-metrics.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -118,6 +119,7 @@ async function runResearcher({ question, model }) {
     throw new Error(`researcher output missing required sections (got ${body.length} chars). First 200: ${body.slice(0, 200)}`);
   }
   heartbeat('researcher-done', { chars: body.length, cost_usd: r.costUsd ?? null });
+  try { recordRun({ agent: 'research-chain', stage: 'researcher', costUsd: r.costUsd ?? 0, status: 'success', model: r.modelUsed || r.model || model }); } catch {}
   return { body, costUsd: r.costUsd ?? 0, model: r.modelUsed || r.model || model };
 }
 

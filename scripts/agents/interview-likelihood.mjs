@@ -64,6 +64,7 @@ try {
 import { callCouncil } from '../../lib/council.mjs';
 import { fetchJson } from '../../lib/safe-fetch.mjs';
 import { buildGroundedPrompt } from '../../lib/ground-prompt.mjs';
+import { reserveQuota, recordTokens } from '../../lib/quota-tracker.mjs';
 
 const OUT_DIR = join(ROOT, 'data', 'interview-likelihood');
 mkdirSync(OUT_DIR, { recursive: true });
@@ -326,6 +327,7 @@ async function runCouncilResearch(row, opts = {}) {
   });
   const councilMs = Date.now() - t0;
   const councilCost = (council.results || []).reduce((s, r) => s + (r.costUsd || 0), 0);
+  try { recordTokens('anthropic', (council.results || []).reduce((s, r) => s + (r.tokens || 0), 0)); } catch {}
 
   const succeeded = (council.results || []).filter(r => !r.error && r.content);
   const parses = succeeded

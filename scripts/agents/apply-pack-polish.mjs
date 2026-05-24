@@ -64,6 +64,7 @@ import { harvestPolishSignals } from '../../lib/polish-signals.mjs';
 import { polishArtifact } from '../../lib/polish-loop.mjs';
 import { checkPackCoherence } from '../../lib/polish-coherence.mjs';
 import { initCostTrace } from '../../lib/council.mjs';
+import { recordRun } from '../../lib/run-metrics.mjs';
 import { runImpactDoc } from './impact-doc.mjs';
 import { runReferences } from './references.mjs';
 import { runReferrals } from './referrals.mjs';
@@ -263,6 +264,7 @@ export async function runPolishPack(opts = {}) {
     opts: { refresh: noCache, costCap: 40, onCostRecord, phase: 'phase-1' },
   });
   emitProgress({ phase: 'phase-1', step: 'signals-ready', priorities: signals.hiring_manager_priorities?.length || 0, pruned: signals.dealbreaker_pruned?.length || 0, cost_usd: signals.meta?.cost_usd ?? 0, cache: signals.meta?.cache });
+  try { recordRun({ agent: 'apply-pack-polish', stage: 'phase-1-signals', costUsd: signals.meta?.cost_usd ?? 0, status: 'success' }); } catch {}
 
   /* ---------- PHASE 2 — per-artifact polish loop ---------- */
   const perArtifact = {};

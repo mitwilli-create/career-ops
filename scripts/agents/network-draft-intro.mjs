@@ -55,6 +55,7 @@ try {
 } catch { /* dotenv optional */ }
 
 import { personById as networkPersonById, loadDatabase } from '../../lib/network-database-search.mjs';
+import { recordTokens } from '../../lib/quota-tracker.mjs';
 
 const argv = process.argv.slice(2);
 function flag(name) {
@@ -212,6 +213,7 @@ async function callSonnet(prompt) {
   const outputTokens = data.usage?.output_tokens || 0;
   // claude-sonnet-4-6: $3/M input, $15/M output (2026 pricing)
   const costUsd = (inputTokens / 1_000_000) * 3 + (outputTokens / 1_000_000) * 15;
+  try { recordTokens('anthropic', inputTokens + outputTokens); } catch {}
   return { content, inputTokens, outputTokens, costUsd };
 }
 

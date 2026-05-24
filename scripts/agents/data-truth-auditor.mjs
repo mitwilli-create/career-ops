@@ -44,8 +44,11 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from '
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
+import { Parser } from 'acorn';
 // Phase D (2026-05-19): checkHeartbeatTokensDrift() uses globalThis.fetch
 // (Node 18+) with AbortSignal.timeout for hang-prevention compliance.
+// INSTANCE C (2026-05-24): acorn AST parsing replaces the 14-line text-window
+// heuristic in checkSilentZeroPatterns — eliminates window-overlap FPs.
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..', '..');
@@ -297,6 +300,59 @@ const SUSPICIOUS_FIELD_NAMES = new Set([
   'fit', 'match', 'rank', 'rating', 'quality', 'likelihood',
 ]);
 
+// INSTANCE C (2026-05-24) — AST-based return-block extraction.
+//
+// The original 14-line slice (`lines.slice(i, i+14)`) caused false positives
+// when two adjacent return blocks lived within 14 lines of each other: the
+// first block's window caught the second's `confidence: 0` and flagged the
+// first block (which had `confidence: 1.0`) as inconsistent. 8 of the 18
+// PR #151 findings were window-overlap or decimal-fraction FPs surfaced by
+// the dealbreaker chain.
+//
+// Fix: parse the file once with acorn, locate every ReturnStatement whose
+// argument is an ObjectExpression, and build a Map<startLine, exact-source>.
+// The detector loop then asks the map for the precise extent of THIS return
+// block — no neighbor leakage. On parse failure (rare for valid .mjs files),
+// the detector falls back to the legacy 14-line slice.
+//
+// Acorn is already a transitive dependency (v8.16.0 via vite + biome — see
+// `node_modules/acorn/package.json`). Declared explicitly in devDependencies
+// in PR-1 to remove the transitive-dep fragility.
+function buildReturnBlockMap(text) {
+  const map = new Map();
+  let ast;
+  try {
+    ast = Parser.parse(text, {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      locations: true,
+      allowReturnOutsideFunction: true,
+    });
+  } catch {
+    // Parse failure — return empty map; detector falls back to 14-line slice.
+    return map;
+  }
+  walkReturnObjects(ast, text, map);
+  return map;
+}
+
+function walkReturnObjects(node, text, map) {
+  if (!node || typeof node !== 'object') return;
+  if (node.type === 'ReturnStatement' && node.argument && node.argument.type === 'ObjectExpression') {
+    const startLine = node.loc.start.line;
+    map.set(startLine, text.slice(node.start, node.end));
+  }
+  for (const key of Object.keys(node)) {
+    if (key === 'loc' || key === 'start' || key === 'end' || key === 'range') continue;
+    const child = node[key];
+    if (Array.isArray(child)) {
+      for (const c of child) walkReturnObjects(c, text, map);
+    } else if (child && typeof child === 'object' && child.type) {
+      walkReturnObjects(child, text, map);
+    }
+  }
+}
+
 function checkSilentZeroPatterns() {
   const libDir = join(ROOT, 'lib');
   const files = ls(libDir).filter(f => f.endsWith('.mjs'));
@@ -327,15 +383,24 @@ function checkSilentZeroPatterns() {
     const text = safeRead(fp);
     if (!text) continue;
     const lines = text.split('\n');
+    // INSTANCE C (2026-05-24): exact AST-scoped return-block source per line.
+    // Fallback to 14-line slice when the map has no entry (parse failure or
+    // when the loop hits a `return {` inside a multi-line expression acorn
+    // didn't classify as a ReturnStatement-with-ObjectExpression).
+    const returnBlockMap = buildReturnBlockMap(text);
 
     for (let i = 0; i < lines.length; i++) {
       if (!/return\s*\{/.test(lines[i])) continue;
-      const window = lines.slice(i, Math.min(lines.length, i + 14)).join('\n');
+      const window = returnBlockMap.get(i + 1) ?? lines.slice(i, Math.min(lines.length, i + 14)).join('\n');
+      // INSTANCE C (2026-05-24): strip block + line comments before regex test
+      // so `confidence: 0 /* algorithmic floor */,` does not bypass the
+      // `\s*[,}]` trailing-punctuation requirement.
+      const cleanWindow = window.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, '');
 
       const hasCohortIndicator =
-        /unavailable\s*:\s*true/i.test(window) ||
-        /hasData\s*:\s*false/i.test(window) ||
-        /:\s*null\b/.test(window);
+        /unavailable\s*:\s*true/i.test(cleanWindow) ||
+        /hasData\s*:\s*false/i.test(cleanWindow) ||
+        /:\s*null\b/.test(cleanWindow);
 
       // GAP-RES-26: cohort-indicator-present blocks STILL get checked for
       // metric-name fields set to 0 — that's a logical inconsistency.
@@ -344,8 +409,11 @@ function checkSilentZeroPatterns() {
       if (hasCohortIndicator) {
         const inconsistentMatches = [];
         for (const name of SUSPICIOUS_FIELD_NAMES) {
-          const re = new RegExp(`\\b${name}\\s*:\\s*0\\b`, 'i');
-          if (re.test(window)) inconsistentMatches.push(name);
+          // INSTANCE C (2026-05-24): `\s*[,}]` trailing replaces `\b` so the
+          // regex does NOT match decimal-fraction confidences like `0.30`
+          // (the `.` is a non-word char that satisfies the original `\b`).
+          const re = new RegExp(`\\b${name}\\s*:\\s*0\\s*[,}]`, 'i');
+          if (re.test(cleanWindow)) inconsistentMatches.push(name);
         }
         if (inconsistentMatches.length > 0) {
           findings.push({
@@ -368,14 +436,16 @@ function checkSilentZeroPatterns() {
       // (the metric zeros and the word appear in different code branches).
       // Adding the full phrase ensures future code using these patterns
       // gets caught even if the surrounding return block looks clean.
-      if (!/(error|missing|unavailable|not\s*found|fallback-to-score|fallback|low-data)/i.test(window)) continue;
+      if (!/(error|missing|unavailable|not\s*found|fallback-to-score|fallback|low-data)/i.test(cleanWindow)) continue;
 
       // (2) Suspicious-name match: look for "<name>: 0" where <name> is in
       // the allowlist of metric-implying field names.
       const suspiciousMatches = [];
       for (const name of SUSPICIOUS_FIELD_NAMES) {
-        const re = new RegExp(`\\b${name}\\s*:\\s*0\\b`, 'i');
-        if (re.test(window)) suspiciousMatches.push(name);
+        // INSTANCE C (2026-05-24): same `\s*[,}]` trailing as cohort branch
+        // above — excludes decimal-fractions from matching.
+        const re = new RegExp(`\\b${name}\\s*:\\s*0\\s*[,}]`, 'i');
+        if (re.test(cleanWindow)) suspiciousMatches.push(name);
       }
 
       // (3) Backstop: 3+ numeric fields = 0 in the same block (the original
@@ -389,7 +459,7 @@ function checkSilentZeroPatterns() {
       const zeroFields = [];
       const zeroFieldRe = /\b([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*0\s*[,}]/g;
       let zm;
-      while ((zm = zeroFieldRe.exec(window)) !== null) zeroFields.push(zm[1]);
+      while ((zm = zeroFieldRe.exec(cleanWindow)) !== null) zeroFields.push(zm[1]);
       const nonEnvelopeZeros = zeroFields.filter(n => !ENVELOPE_NAMES.has(n));
       const consecutiveZeros = nonEnvelopeZeros.length;
 
@@ -431,9 +501,20 @@ function checkSilentZeroPatterns() {
 //   B. alignment:null + unavailable:true → no finding (legitimate cohort)
 //   C. alignment:0 + unavailable:true → HIGH "inconsistent cohort claim" (GAP-RES-26)
 //   D. interview:0 alone + error → HIGH (suspicious-field detection still works)
+//   E. confidence:0.30 + unavailable:true (INSTANCE C 2026-05-24) → no finding
+//      (decimal-fraction `0.30` was a FALSE positive of the original `\b0\b`
+//      regex; `\s*[,}]` trailing now excludes it)
+//   F. confidence:0 /* inline comment */ + unavailable:true (INSTANCE C 2026-05-24)
+//      → HIGH (comment-strip pre-pass defends `\s*[,}]` against intervening
+//      block comments)
+//   G. Adjacent return blocks where block A is happy-path + block B has
+//      cohort+zero (INSTANCE C 2026-05-24) → only block B flagged
+//      (AST-scoped window means block A's window no longer leaks into block B)
 //
 // Pre-fix behavior (regression baseline): case C produced ZERO findings — the
 // silent-zero gap the v1 changelog flagged. Post-fix: case C produces 1 HIGH.
+// INSTANCE C (2026-05-24): cases E + F + G lock in the detector improvements
+// that drop FP rate from 8/18 (~44%) to 0/0 on real-world lib code.
 
 async function runSelfTest() {
   const fs = await import('node:fs');
@@ -490,6 +571,49 @@ async function runSelfTest() {
   return { interview: 1 };
 }
 ` },
+    // INSTANCE C (2026-05-24): Case E — decimal-fraction is NOT a FP.
+    // The original `\b${name}\s*:\s*0\b` regex matched `0.30` because `.` is
+    // a non-word boundary. Post-fix `\s*[,}]` trailing excludes decimals.
+    { name: '_dt_self_test_e.mjs', src:
+`export function caseE() {
+  if (!ok) {
+    return {
+      unavailable: true,
+      confidence: 0.30,
+      original: 'foo',
+    };
+  }
+  return { confidence: 1 };
+}
+` },
+    // INSTANCE C (2026-05-24): Case F — inline-comment bypass is still caught.
+    // Without the comment-strip pre-pass, `confidence: 0 /* foo */,` would
+    // bypass the `\s*[,}]` trailing-comma requirement (because `0` is
+    // followed by space then `/`, not `,` or `}`).
+    { name: '_dt_self_test_f.mjs', src:
+`export function caseF() {
+  if (!ok) {
+    return {
+      unavailable: true,
+      confidence: 0 /* algorithmic floor */,
+      original: 'foo',
+    };
+  }
+  return { confidence: 1 };
+}
+` },
+    // INSTANCE C (2026-05-24): Case G — adjacent return blocks don't cross-leak.
+    // Pre-fix, the 14-line window from caseG_happy's `return {` would catch
+    // caseG_failure's `confidence: 0` and flag caseG_happy as inconsistent.
+    // Post-fix, AST-scoped window means each return block is its own scope.
+    { name: '_dt_self_test_g.mjs', src:
+`export function caseG_happy() {
+  return { canonical: 'http://ok', confidence: 0.95, source: 'ok' };
+}
+export function caseG_failure() {
+  return { canonical: null, confidence: 0, source: 'unresolved', error: 'x' };
+}
+` },
   ];
   const libDir = join(ROOT, 'lib');
   const written = [];
@@ -510,6 +634,9 @@ async function runSelfTest() {
       { name: 'B (alignment:null + unavailable:true)', file: 'lib/_dt_self_test_b.mjs', expectHits: 0 },
       { name: 'C (alignment:0 + unavailable:true) — GAP-RES-26', file: 'lib/_dt_self_test_c.mjs', expectHits: 1, expectPattern: /inconsistent cohort claim/ },
       { name: 'D (interview:0 alone + error)', file: 'lib/_dt_self_test_d.mjs', expectHits: 1, expectPattern: /metric field.*interview.*set to 0/ },
+      { name: 'E (confidence:0.30 decimal-FP excluded) — INSTANCE C 2026-05-24', file: 'lib/_dt_self_test_e.mjs', expectHits: 0 },
+      { name: 'F (confidence:0 + inline-comment bypass defended) — INSTANCE C 2026-05-24', file: 'lib/_dt_self_test_f.mjs', expectHits: 1, expectPattern: /inconsistent cohort claim/ },
+      { name: 'G (adjacent return blocks no cross-leak) — INSTANCE C 2026-05-24', file: 'lib/_dt_self_test_g.mjs', expectHits: 1, expectPattern: /inconsistent cohort claim/ },
     ];
     let passed = 0, failed = 0;
     for (const c of checks) {

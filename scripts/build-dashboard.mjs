@@ -6252,6 +6252,7 @@ async function build() {
     .app-shell { grid-template-columns: var(--sidebar-w-collapsed) 1fr; }
     .sidebar-brand { justify-content: center; padding: 18px 8px 14px; }
     .sidebar-brand-name { display: none; }
+    .sidebar-brand-byline { display: none; }
     .sidebar-nav { padding: 10px 6px; }
     .sidebar-link {
       justify-content: center;

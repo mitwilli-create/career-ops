@@ -6095,7 +6095,9 @@ async function build() {
     color: #fff; font-size: 13px; font-weight: 700;
     flex-shrink: 0;
   }
+  .sidebar-brand-group { display: flex; flex-direction: column; gap: 0; min-width: 0; overflow: hidden; }
   .sidebar-brand-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sidebar-brand-byline { font-size: 10px; font-weight: 400; color: var(--text-3); letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sidebar-nav {
     display: flex; flex-direction: column;
     padding: 10px 8px;
@@ -6274,6 +6276,7 @@ async function build() {
     body.sidebar-collapsed .app-shell { grid-template-columns: var(--sidebar-w-collapsed) 1fr; }
     body.sidebar-collapsed .sidebar-brand { justify-content: center; padding: 18px 8px 14px; }
     body.sidebar-collapsed .sidebar-brand-name { display: none; }
+    body.sidebar-collapsed .sidebar-brand-byline { display: none; }
     body.sidebar-collapsed .sidebar-nav { padding: 10px 6px; }
     body.sidebar-collapsed .sidebar-link { justify-content: center; padding: 9px 6px; gap: 0; }
     body.sidebar-collapsed .sidebar-link .sidebar-label { display: none; }
@@ -10451,6 +10454,10 @@ async function build() {
       font-size: 13px; font-weight: 600; letter-spacing: 0.02em;
       color: var(--text); white-space: nowrap;
     }
+    .brand-byline {
+      font-size: 10px; font-weight: 400; color: var(--text-3);
+      white-space: nowrap; display: none;
+    }
     .brand-sync {
       font-size: 10px; color: var(--text-3, #6e7781);
       white-space: nowrap; margin-top: 1px;
@@ -12717,6 +12724,7 @@ async function build() {
     <h1 class="sr-only">Career-Ops Dashboard</h1>
     <div class="toolbar-brand" aria-hidden="true">
       <span class="brand-name">Career-Ops</span>
+      <span class="brand-byline">by Mitchell Williams</span>
       <span class="brand-sync" id="toolbar-sync-ts"></span>
     </div>
     <button class="toolbar-btn cmdk-trigger" onclick="openCmdK()" title="Open command palette (⌘K / Ctrl-K)" aria-label="Open command palette (Cmd+K or Ctrl+K)">
@@ -13212,10 +13220,10 @@ async function build() {
         <span class="stat-caret" aria-hidden="true">▾</span>
       </div>`;
       })()}
-      <div class="stat stat-cell" onclick="toggleStatPanel('applied')" title="Click to see in-flight applications">
+      <div class="stat stat-cell" onclick="toggleStatPanel('applied')" title="Click to see in-flight applications — ${applyNow.length} evaluated roles queued and ready to apply">
         <div class="stat-label"><span class="label-full">Applied / In process</span><span class="label-short">Applied</span></div>
         <div class="stat-value" id="live-applied">${applied.length}</div>
-        <div class="stat-trend">${deltaIndicator(kpiSpark.applied.delta)}${sparklineSVG(kpiSpark.applied.daily, 'var(--text-3)', 'Applied / In process')}</div>
+        <div class="stat-trend"><span class="stat-delta ${applyNow.length > 0 ? 'stat-delta-up' : 'stat-delta-flat'}" title="${applyNow.length} evaluated roles queued and ready to apply">${applyNow.length} ready to apply</span></div>
         <span class="stat-caret" aria-hidden="true">▾</span><span class="sr-only">Click to expand</span>
       </div>
     </div>
@@ -26881,13 +26889,16 @@ function _renderPipelineActivity(data) {
   } else {
     html += _chip('pa-chip-muted', 'Integrity: —', 'data/integrity-state.json not generated yet');
   }
-  // Scanner chip
+  // Scanner chip — human-readable label (g/y/r are status tiers: live/lagging/offline)
   if (data.ingress && data.ingress.summary) {
     var s = data.ingress.summary;
     var g = s.green || 0, y = s.yellow || 0, r = s.red || 0;
+    var total = g + y + r;
     var scls = r > 0 ? 'pa-chip-bad' : (y > 0 ? 'pa-chip-warn' : 'pa-chip-ok');
-    var slabel = 'Scanners ' + g + 'g · ' + y + 'y · ' + r + 'r';
-    var stip = 'data/pipeline-ingress-state.json · ' + (data.ingress.generated_at || 'no timestamp') + ' · ' + (data.ingress.scanner_count || 0) + ' scanners total';
+    var slabel = r > 0
+      ? 'Scanners: ' + g + ' live · ' + (y + r) + ' need attention'
+      : (y > 0 ? 'Scanners: ' + g + ' live · ' + y + ' lagging' : 'Scanners: ' + total + ' live');
+    var stip = (data.ingress.scanner_count || total) + ' portal scanners · ' + g + ' live · ' + y + ' lagging · ' + r + ' offline · ' + (data.ingress.generated_at || 'no timestamp');
     html += _chip(scls, slabel, stip);
   } else {
     html += _chip('pa-chip-muted', 'Scanners: —', 'data/pipeline-ingress-state.json not generated yet');
@@ -26900,7 +26911,7 @@ function _renderPipelineActivity(data) {
     if (sw.flagged != null) swl += ' · ' + sw.flagged + ' flagged';
     html += _chip('pa-chip-ok', swl, 'data/background-sweep-state.json · ' + (data.sweep.generated_at || 'no timestamp'));
   } else {
-    html += _chip('pa-chip-muted', 'Overnight sweep: —', 'data/background-sweep-state.json absent — first sweep runs at 03:00 PT');
+    html += _chip('pa-chip-muted', 'Overnight sweep: scheduled', 'Automated sweep runs nightly at 03:00 PT — data/background-sweep-state.json will appear after first run');
   }
   // 4.13 (2026-05-22) — last-batch reliability chip. Click opens the
   // existing batch-status modal for a fuller breakdown.

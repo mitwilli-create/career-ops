@@ -61,6 +61,7 @@ const flags = {
   checkAttribution:  args.includes('--check-attribution'),
   checkDates:        args.includes('--check-dates'),
   checkTokens:       args.includes('--check-tokens'),  // Phase D (2026-05-19)
+  selfTest:          args.includes('--self-test'),     // GAP-RES-26 (2026-05-24)
   all:               args.includes('--all'),
   json:              args.includes('--json'),
   help:              args.includes('--help') || args.includes('-h'),
@@ -85,6 +86,9 @@ Flags:
                        2026-05-19). Tries staging URL first; falls back to
                        local dashboard/index.html. (Phase C drift check)
   --all                Run every check, write the audit report to disk.
+  --self-test          Run the inline self-test fixtures for
+                       checkSilentZeroPatterns (GAP-RES-26 regression
+                       detection). Returns non-zero on test failure.
   --json               Emit JSON instead of human-readable text (where
                        applicable).
   --help, -h           This message.
@@ -101,8 +105,15 @@ Provenance:
   process.exit(0);
 }
 
-// Default to --all if nothing specified
-if (Object.values(flags).every(v => !v) || flags.all) {
+// Default to --all if nothing specified. --self-test runs ONLY the self-test
+// suite and skips the standard sweeps (GAP-RES-26 regression-detection).
+if (flags.selfTest) {
+  flags.checkAttribution = false;
+  flags.checkDates = false;
+  flags.audit = false;
+  flags.checkTokens = false;
+  flags.all = false;
+} else if (Object.values(flags).every(v => !v) || flags.all) {
   flags.checkAttribution = true;
   flags.checkDates = true;
   flags.audit = true;
@@ -291,6 +302,26 @@ function checkSilentZeroPatterns() {
   const files = ls(libDir).filter(f => f.endsWith('.mjs'));
   const findings = [];
 
+  // GAP-RES-26 (2026-05-24) — META-AUDIT-driven extension.
+  //
+  // The pre-fix gate `if (hasCohortIndicator) continue` was too permissive: a
+  // return block claiming `unavailable: true` (cohort indicator) was skipped
+  // ENTIRELY without checking whether the same block also contained
+  // `alignment: 0` (or any other metric-name field set to a confident zero).
+  // That combination is logically inconsistent — claiming "no data" while
+  // simultaneously asserting a confident 0 lets a future regression land an
+  // `alignment: 0` fallback alongside an existing `unavailable: true` line
+  // and have the auditor silently miss it.
+  //
+  // Fix: even when a cohort indicator is present, scan the same window for
+  // SUSPICIOUS_FIELD_NAMES set to `0` (not `null`). If any are found, emit
+  // an INCONSISTENT-COHORT finding rather than the standard silent-zero
+  // finding — different severity, different remediation guidance.
+  //
+  // Test the gap by adding a fixture under lib/ that contains:
+  //   return { unavailable: true, alignment: 0, breakdown: { error: '...' } };
+  // Pre-fix: auditor reported `ok: true` (false negative).
+  // Post-fix: auditor reports HIGH `inconsistent cohort claim` finding.
   for (const f of files) {
     const fp = join(libDir, f);
     const text = safeRead(fp);
@@ -301,13 +332,32 @@ function checkSilentZeroPatterns() {
       if (!/return\s*\{/.test(lines[i])) continue;
       const window = lines.slice(i, Math.min(lines.length, i + 14)).join('\n');
 
-      // (1) Skip if a cohort indicator is present — function explicitly tells
-      // the caller "this is not real data."
       const hasCohortIndicator =
         /unavailable\s*:\s*true/i.test(window) ||
         /hasData\s*:\s*false/i.test(window) ||
         /:\s*null\b/.test(window);
-      if (hasCohortIndicator) continue;
+
+      // GAP-RES-26: cohort-indicator-present blocks STILL get checked for
+      // metric-name fields set to 0 — that's a logical inconsistency.
+      // The standard silent-zero detection below applies only when no
+      // cohort indicator is present.
+      if (hasCohortIndicator) {
+        const inconsistentMatches = [];
+        for (const name of SUSPICIOUS_FIELD_NAMES) {
+          const re = new RegExp(`\\b${name}\\s*:\\s*0\\b`, 'i');
+          if (re.test(window)) inconsistentMatches.push(name);
+        }
+        if (inconsistentMatches.length > 0) {
+          findings.push({
+            severity: 'HIGH',
+            file: `lib/${f}`,
+            line: i + 1,
+            pattern: `inconsistent cohort claim — block contains cohort indicator (unavailable:true / hasData:false / :null) AND metric field(s) [${inconsistentMatches.join(', ')}] set to 0; cohort-flagged blocks should set metric fields to null, not 0`,
+            context_snippet: lines[i].trim().slice(0, 200),
+          });
+        }
+        continue;
+      }
 
       // Must have an error/missing/fallback word to be a candidate at all.
       // γ needhuman-resolution 2026-05-19 (Mitchell decision γ.4b): added
@@ -366,9 +416,126 @@ function checkSilentZeroPatterns() {
     ok: findings.length === 0,
     findings,
     summary: findings.length === 0
-      ? 'No suspicious silent-zero patterns (schema defaults like total:0 / tokens:0 / status:0 excluded)'
+      ? 'No suspicious silent-zero patterns (schema defaults like total:0 / tokens:0 / status:0 excluded; cohort-claim consistency verified)'
       : `${findings.length} suspicious silent-zero pattern(s) found — review`,
   };
+}
+
+// ── Self-test fixtures for checkSilentZeroPatterns (GAP-RES-26) ────────────
+// Inline synthetic test cases verify the detector catches the patterns it
+// must catch + excludes the patterns it must exclude. Runs only when the
+// hidden --self-test flag is passed; never as part of --all / --audit.
+//
+// Fixtures cover:
+//   A. alignment:0 + error → HIGH "metric field [alignment] set to 0"
+//   B. alignment:null + unavailable:true → no finding (legitimate cohort)
+//   C. alignment:0 + unavailable:true → HIGH "inconsistent cohort claim" (GAP-RES-26)
+//   D. interview:0 alone + error → HIGH (suspicious-field detection still works)
+//
+// Pre-fix behavior (regression baseline): case C produced ZERO findings — the
+// silent-zero gap the v1 changelog flagged. Post-fix: case C produces 1 HIGH.
+
+async function runSelfTest() {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'silent-zero-test-'));
+  // The detector reads from <ROOT>/lib so we have to write fixtures into the
+  // real lib dir, run, capture, and clean up. We DO NOT recurse into other
+  // libs — we only care that our fixtures get the right findings.
+  const fixtures = [
+    { name: '_dt_self_test_a.mjs', src:
+`export function caseA() {
+  if (!ok) {
+    return {
+      alignment: 0,
+      breakdown: { error: 'missing' },
+    };
+  }
+  return { alignment: 1 };
+}
+` },
+    { name: '_dt_self_test_b.mjs', src:
+`export function caseB() {
+  if (!ok) {
+    return {
+      unavailable: true,
+      alignment: null,
+      breakdown: { error: 'data missing' },
+    };
+  }
+  return { alignment: 1 };
+}
+` },
+    { name: '_dt_self_test_c.mjs', src:
+`export function caseC() {
+  if (!ok) {
+    return {
+      unavailable: true,
+      alignment: 0,
+      breakdown: { error: 'data missing' },
+    };
+  }
+  return { alignment: 1 };
+}
+` },
+    { name: '_dt_self_test_d.mjs', src:
+`export function caseD() {
+  if (!ok) {
+    return {
+      interview: 0,
+      breakdown: { error: 'no data' },
+    };
+  }
+  return { interview: 1 };
+}
+` },
+  ];
+  const libDir = join(ROOT, 'lib');
+  const written = [];
+  try {
+    for (const fix of fixtures) {
+      const fp = join(libDir, fix.name);
+      writeFileSync(fp, fix.src);
+      written.push(fp);
+    }
+    const result = checkSilentZeroPatterns();
+    const byFile = {};
+    for (const finding of result.findings) {
+      byFile[finding.file] = byFile[finding.file] || [];
+      byFile[finding.file].push(finding);
+    }
+    const checks = [
+      { name: 'A (alignment:0 + error)', file: 'lib/_dt_self_test_a.mjs', expectHits: 1, expectPattern: /metric field.*alignment.*set to 0/ },
+      { name: 'B (alignment:null + unavailable:true)', file: 'lib/_dt_self_test_b.mjs', expectHits: 0 },
+      { name: 'C (alignment:0 + unavailable:true) — GAP-RES-26', file: 'lib/_dt_self_test_c.mjs', expectHits: 1, expectPattern: /inconsistent cohort claim/ },
+      { name: 'D (interview:0 alone + error)', file: 'lib/_dt_self_test_d.mjs', expectHits: 1, expectPattern: /metric field.*interview.*set to 0/ },
+    ];
+    let passed = 0, failed = 0;
+    for (const c of checks) {
+      const hits = (byFile[c.file] || []).length;
+      const pass = hits === c.expectHits &&
+        (c.expectPattern ? (byFile[c.file] || []).some(h => c.expectPattern.test(h.pattern)) : true);
+      console.log(`${pass ? '✓' : '✗'} ${c.name} — expected hits=${c.expectHits}, got ${hits}`);
+      if (!pass) {
+        failed++;
+        if (byFile[c.file]) {
+          for (const h of byFile[c.file]) {
+            console.log(`    actual: ${h.severity} ${h.pattern.slice(0, 140)}`);
+          }
+        }
+      } else {
+        passed++;
+      }
+    }
+    console.log(`\nSelf-test: ${passed}/${passed + failed} passed`);
+    return failed === 0;
+  } finally {
+    for (const fp of written) {
+      try { fs.unlinkSync(fp); } catch { /* ignore */ }
+    }
+    try { fs.rmdirSync(tmpdir); } catch { /* ignore */ }
+  }
 }
 
 // ── Sweep 5: Heartbeat-tokens drift check (Phase D, 2026-05-19) ───────────
@@ -540,6 +707,13 @@ function composeReport(results) {
 // ── Main (async wrapper for heartbeat-tokens drift check) ──────────────────
 
 async function main() {
+  // GAP-RES-26: --self-test short-circuits the regular sweeps and runs only
+  // the inline test suite for checkSilentZeroPatterns.
+  if (flags.selfTest) {
+    const ok = await runSelfTest();
+    process.exit(ok ? 0 : 1);
+  }
+
   const results = {};
 
   if (flags.checkAttribution) {

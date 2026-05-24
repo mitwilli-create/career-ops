@@ -963,6 +963,34 @@ const pageCSS = `
      the grid container still uses auto-fill minmax(420px, 1fr). */
 }
 
+/* GAP-RES-24 (META-AUDIT v3 2026-05-24) — when the "Hide unenriched stubs"
+   checkbox is checked, force-hide stub cards via display:none. Operates
+   independently of the showAllStubs filter so it works even when the
+   "Show all stubs" button is on. Targets .is-stub-compact (set when
+   compact mode is on) AND data-tier="1" cards (always-tier-1 stubs). */
+.grid.hide-stubs .contact-card.is-stub-compact,
+.grid.hide-stubs .contact-card[data-tier="1"] {
+  display: none !important;
+}
+
+/* Checkbox toggle next to the "Show all" button in .contacts-progress. */
+.hide-stubs-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.hide-stubs-toggle input[type="checkbox"] {
+  cursor: pointer;
+  margin: 0;
+}
+.hide-stubs-toggle:hover { color: var(--text); }
+
 /* Result meta + empty state */
 .result-empty {
   text-align: center;
@@ -1243,6 +1271,14 @@ const mainHTML = `
     <button type="button" class="progress-cta" id="toggle-stubs" aria-pressed="false" title="Show or hide the ${totalT1} unenriched stub cards">
       Show all (${totalT1} stubs hidden)
     </button>
+    <!-- GAP-RES-24 (META-AUDIT v3 2026-05-24) — progressive-disclosure
+         "Hide unenriched stubs" toggle. Independent of the Show-all button
+         above: when CHECKED, forces stubs hidden via .hide-stubs CSS class
+         regardless of showAllStubs state. State persists in localStorage. -->
+    <label class="hide-stubs-toggle" id="hide-stubs-toggle-label" title="Hide all unenriched stub cards via CSS, even when 'Show all' is on">
+      <input type="checkbox" id="hide-stubs-toggle" />
+      <span>Hide unenriched stubs (~${totalT1})</span>
+    </label>
   </div>
   <!-- BRAVO followup 2026-05-20 Item 4 — live data freshness chip. Painted
        by the hydration JS at the bottom of pageJS. data-state values:
@@ -1857,6 +1893,33 @@ function initContactsPage() {
     btn.classList.toggle('active', showAllStubs);
     applyFilters();
   });
+
+  // GAP-RES-24 (META-AUDIT v3 2026-05-24) — "Hide unenriched stubs" checkbox.
+  // Independent of the showAllStubs button: when checked, force-hides all
+  // tier-1 stub cards via the .hide-stubs CSS class on the grid. State
+  // persists in localStorage('career-ops-contacts-hide-stubs') across page
+  // refreshes. Default UNCHECKED so pre-change behavior is preserved (the
+  // showAllStubs button already hides stubs by default; this checkbox is an
+  // explicit progressive-disclosure control with a discoverable affordance).
+  var HIDE_STUBS_KEY = 'career-ops-contacts-hide-stubs';
+  var hideStubsCheckbox = document.getElementById('hide-stubs-toggle');
+  function applyHideStubsCssClass(checked) {
+    grid.classList.toggle('hide-stubs', !!checked);
+  }
+  function toggleStubsHandler() {
+    var checked = !!hideStubsCheckbox.checked;
+    try { localStorage.setItem(HIDE_STUBS_KEY, checked ? '1' : '0'); } catch (_) {}
+    applyHideStubsCssClass(checked);
+  }
+  // Restore persisted state on init (default unchecked when key missing or '0').
+  try {
+    var stored = localStorage.getItem(HIDE_STUBS_KEY);
+    if (stored === '1') {
+      hideStubsCheckbox.checked = true;
+      applyHideStubsCssClass(true);
+    }
+  } catch (_) {}
+  hideStubsCheckbox.addEventListener('change', toggleStubsHandler);
 
   // ── Card-internal handlers ──────────────────────────────────────
   window.focusById = function (id) {

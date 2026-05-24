@@ -13661,6 +13661,54 @@ async function build() {
     </table></div>
   </div>
 
+  <!-- GAP-RES-23 (2026-05-24) — META-AUDIT v3 follow-up.
+       Two anchored in-page summary panels for surfaces that previously only
+       lived in modals (toggleStatPanel('pending') + openBatchStatusModal()).
+       The sidebar Dashboard-group nav now scrolls to these anchors; each
+       panel summarizes from data already loaded at build time and links
+       into the existing modal for full detail. -->
+  <div class="panel" id="pipeline-pending-section">
+    <h2 class="panel-title collapsible" onclick="togglePanel('pipeline-pending-section',event)">
+      Pipeline Pending
+      <span class="pill" style="background:${pipelinePending > 0 ? '#0969da' : 'var(--surface-2)'};color:${pipelinePending > 0 ? '#fff' : 'var(--text-3)'}">${pipelinePending}</span>
+      <span class="panel-chevron">▾</span>
+    </h2>
+    ${pipelinePending > 0
+      ? `<p style="color:var(--text-2);font-size:13px;margin:0 0 10px">
+          <strong>${pipelinePending}</strong> URL${pipelinePending === 1 ? '' : 's'} pending in <code>data/pipeline.md</code> &mdash; awaiting triage + evaluation.
+          ${triageAdvanceCount > 0 ? ` <strong>${triageAdvanceCount}</strong> already advanced to triage queue.` : ''}
+        </p>
+        <button type="button"
+          class="dcard-btn"
+          onclick="(window._openPipelineFlowModal||function(){toggleStatPanel('pending');})()"
+          title="Open the 5-stage pipeline flow modal (scan &rarr; triage &rarr; batch &rarr; eval &rarr; publish)"
+          aria-label="Open pipeline flow modal with ${pipelinePending} pending items">
+          Open pipeline flow &rsaquo;
+        </button>`
+      : `<p style="color:var(--text-3);font-size:13px;margin:0">No items pending in <code>data/pipeline.md</code>. Pipeline is drained &mdash; next scan will repopulate.</p>`}
+  </div>
+
+  <div class="panel" id="batch-runs-section">
+    <h2 class="panel-title collapsible" onclick="togglePanel('batch-runs-section',event)">
+      Batch Runs
+      <span class="pill" style="background:${batchRuns > 0 ? '#0969da' : 'var(--surface-2)'};color:${batchRuns > 0 ? '#fff' : 'var(--text-3)'}">${batchRuns}</span>
+      <span class="panel-chevron">▾</span>
+    </h2>
+    ${batchSnapshot && batchSnapshot.total > 0
+      ? `<p style="color:var(--text-2);font-size:13px;margin:0 0 10px">
+          Last batch: <strong>${batchSnapshot.completed}</strong>/${batchSnapshot.total} completed (${batchSnapshot.pct}%)${batchSnapshot.running > 0 ? ` &middot; <strong style="color:var(--blue-fg)">${batchSnapshot.running} running</strong>` : ''}${batchSnapshot.failed > 0 ? ` &middot; <strong style="color:var(--red-fg)">${batchSnapshot.failed} failed</strong>` : ''} &middot; state: <code>${batchSnapshot.state}</code>.
+          ${batchRuns > 1 ? ` <strong>${batchRuns}</strong> distinct batch runs in <code>batch/batch-state.tsv</code>.` : ''}
+        </p>
+        <button type="button"
+          class="dcard-btn"
+          onclick="if(window.openBatchStatusModal)window.openBatchStatusModal()"
+          title="Open the batch status modal (current run &middot; recent runs &middot; queue &middot; failures &middot; resume)"
+          aria-label="Open batch status modal with ${batchRuns} batch runs">
+          Open batch status &rsaquo;
+        </button>`
+      : `<p style="color:var(--text-3);font-size:13px;margin:0">No batch activity recorded in <code>batch/batch-state.tsv</code>. Next Run Batch or Process All will populate.</p>`}
+  </div>
+
   <div class="charts-grid" id="charts-section">
   <div class="panel" id="score-dist-panel">
     <h3 class="panel-title collapsible" onclick="togglePanel('score-dist-panel',event)">Score Distribution <span class="panel-chevron">▾</span></h3>

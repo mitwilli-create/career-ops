@@ -240,6 +240,12 @@ next_report_num_unlocked() {
       local basename
       basename=$(basename "$f")
       local num="${basename%%-*}"
+      # Skip files whose prefix isn't a numeric report number
+      # (e.g. system-audit-*.md, quarantine-*.md). Without this guard,
+      # $((10#system)) raises "value too great for base", which is swallowed
+      # by the enclosing `if subshell=$(...)` and surfaces downstream as
+      # empty report numbers + misleading API-error messages in batch-state.tsv.
+      [[ "$num" =~ ^[0-9]+$ ]] || continue
       num=$((10#$num)) # Remove leading zeros for arithmetic
       if (( num > max_num )); then
         max_num=$num
@@ -250,6 +256,7 @@ next_report_num_unlocked() {
   if [[ -f "$STATE_FILE" ]]; then
     while IFS=$'\t' read -r _ _ _ _ _ rnum _ _ _; do
       [[ "$rnum" == "report_num" || "$rnum" == "-" || -z "$rnum" ]] && continue
+      [[ "$rnum" =~ ^[0-9]+$ ]] || continue
       local n=$((10#$rnum))
       if (( n > max_num )); then
         max_num=$n

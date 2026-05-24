@@ -12,6 +12,7 @@ data/pipeline.md
 data/regression-guard-state.json
 data/regression-guard-spend.jsonl
 data/regression-baselines/
+data/ef-mode-state.json
 data/logs/regression-guard-*.log
 .claude/audit/*/regression-report-*.md
 # Panel JSON reveals file paths from .claude/audit/ work-product directories,

@@ -3270,6 +3270,104 @@ function recent_runs_lookupModel(costRows, startMs) {
 const REPORT_SLUG_RE = /^\d{1,5}-[a-z0-9][a-z0-9-]*-\d{4}-\d{2}-\d{2}\.md$/;
 const EVIDENCE_TEXT_MAX_CHARS = 50_000;
 
+// ─── GAP-RES-14 (2026-05-24) — handoff/row dispatch prompt builders ──────────
+// Both helpers emit self-contained Claude Code prompts that carry the global
+// drift-guidance + EF rules forward so a fresh session can pick up cold.
+// Returned text is what /api/handoffs/dispatch sends back; client writes it to
+// clipboard via navigator.clipboard.writeText.
+function _dispatchDriftFooter() {
+  return [
+    'DRIFT GUIDANCE (carry forward verbatim): if you notice ANY of —',
+    're-reading files, forgetting decisions, contradicting earlier output,',
+    'wrong paths in tool calls, losing the thread on multi-step plans,',
+    'declining synthesis quality, increased hedging, repeating yourself, or',
+    '"I don\'t remember exactly" — STOP at the next safe checkpoint, surface',
+    'what is done, and produce a continuation prompt that includes this',
+    'guidance verbatim. Mitchell prefers a chain of sharp instances over one',
+    'degraded session.',
+  ].join('\n');
+}
+
+function _dispatchHouseRules() {
+  return [
+    'House rules (Mitchell):',
+    '- Quality > speed > cost (Decision-Maximization Policy)',
+    '- EF EF rules: lead-with-next-action, single-thread, surface wins first',
+    '- DISC DI: answer first, context after; no preamble, no menus',
+    '- tone-safe framing: observation + reasoning, never judgment',
+    '- Banned vocab: no leverage / synergy / deep-dive / ideate / circle-back',
+    '- Verify before claiming done (Chrome MCP screenshot for UI changes)',
+    '- NEVER push to santifer upstream; use ./scripts/safe-gh-pr.sh for PRs',
+  ].join('\n');
+}
+
+function buildHandoffDispatchPrompt(envelope, file) {
+  const sourceAgent = envelope.source_agent || 'unknown';
+  const mode = envelope.mode || 'unknown';
+  const ceiling = envelope.ceiling_usd != null ? `$${envelope.ceiling_usd}` : 'unset';
+  const reportPath = envelope.report_path || '(not set)';
+  const originalQ = (envelope.original_question || '').trim() || '(no original question recorded)';
+  const auditItems = Array.isArray(envelope.audit_items) ? envelope.audit_items : [];
+  const auditList = auditItems.length
+    ? auditItems.slice(0, 20).map((item, i) => `${i + 1}. ${typeof item === 'string' ? item : JSON.stringify(item).slice(0, 200)}`).join('\n')
+    : '(no audit items recorded)';
+  return [
+    `You are picking up a pending research-chain handoff: ${file}`,
+    '',
+    `Source agent: ${sourceAgent}`,
+    `Mode: ${mode}`,
+    `Spend ceiling: ${ceiling}`,
+    `Original question:`,
+    originalQ,
+    '',
+    'Source report:',
+    reportPath,
+    '',
+    `Audit items (${auditItems.length} total${auditItems.length > 20 ? ', first 20 shown' : ''}):`,
+    auditList,
+    '',
+    'Your job: load the source report, work through the audit items in priority order, and produce the next chain output (dealbreaker adjudication, implementer PR, or further research as the handoff envelope indicates).',
+    '',
+    'When done: update the handoff envelope status from "pending" to "resolved" with a one-line summary + result_path. Write a brief completion report to ~/Documents/career-ops/data/handoff-completion-<date>.md.',
+    '',
+    _dispatchHouseRules(),
+    '',
+    _dispatchDriftFooter(),
+  ].join('\n');
+}
+
+function buildRowDispatchPrompt({ num, slug, company, role, focusHint }) {
+  const identity = [
+    num ? `Row #${num}` : null,
+    company,
+    role,
+  ].filter(Boolean).join(' / ');
+  const slugLine = slug ? `Slug: ${slug}` : '';
+  const focusLine = focusHint || 'Polish or extend the apply-pack for this role; surface gaps; sync edits across artifacts.';
+  return [
+    `You are picking up apply-pack work for ${identity || '(no identity provided)'}.`,
+    '',
+    'Context to load:',
+    '- Master CV: cv.md',
+    slug ? `- Role intel: data/hm-intel/${slug}.json` : '- Role intel: data/hm-intel/<slug>.json',
+    slug ? `- Apply pack: data/apply-pack/${slug}/` : '- Apply pack: data/apply-pack/<slug>/',
+    '- Brain docs: ~/.claude/knowledge/brain/personality-*.md (tone-safe framing required)',
+    '- Voice reference: ~/Documents/career-ops/writing-samples/voice-reference.md',
+    '',
+    slugLine,
+    '',
+    'Focus for this session:',
+    focusLine,
+    '',
+    _dispatchHouseRules(),
+    '',
+    'When done: write a brief report to ~/Documents/career-ops/data/dispatch-reports/' + (slug || '<slug>') + '-' + new Date().toISOString().slice(0, 10) + '.md with what changed + what remains.',
+    '',
+    _dispatchDriftFooter(),
+  ].join('\n');
+}
+
+
 function buildVerifyPayload(reportSlug) {
   // Path-traversal hardening (epsilon Ε.3 2026-05-19): reportSlug came from
   // the /api/verify/(.+\.md) capture group — the regex captures any path
@@ -6386,6 +6484,82 @@ const server = createServer((req, res) => {
     } catch (err) {
       return json({ ok: false, error: err.message }, 500);
     }
+  }
+
+  // POST /api/handoffs/dispatch — GAP-RES-14 (2026-05-24)
+  // Returns a ready-to-paste Claude Code prompt for a given context (a specific
+  // pending handoff envelope OR a row from the apply-pack queue). The client
+  // copies the returned text to clipboard via navigator.clipboard.writeText —
+  // user pastes into a fresh Claude Code session. Paste-to-clipboard chosen
+  // over spawn-via-launchd (Tahoe KeepAlive quirks) and spawn-via-MCP (no
+  // existing Claude-spawn MCP server) for v1; both alternatives can be added
+  // later without breaking the clipboard path.
+  if (url === '/api/handoffs/dispatch' && req.method === 'POST') {
+    let body = '';
+    let total = 0;
+    req.on('data', c => {
+      total += c.length;
+      if (total > 16 * 1024) { req.destroy(); return; }
+      body += c;
+    });
+    req.on('end', () => {
+      let parsed;
+      try { parsed = JSON.parse(body); }
+      catch {
+        return json({ ok: false, error: 'Invalid JSON body' }, 400);
+      }
+      try {
+        const mode = String(parsed.mode || 'row').toLowerCase();
+        let prompt = '';
+        let context = {};
+        if (mode === 'handoff') {
+          const file = String(parsed.file || '').trim();
+          if (!/^dealbreaker-[\w.-]+\.json$/.test(file)) {
+            return json({ ok: false, error: 'invalid handoff file name' }, 400);
+          }
+          const handoffPath = join(homedir(), '.claude', 'agents', 'runs', '_handoffs', file);
+          if (!existsSync(handoffPath)) {
+            return json({ ok: false, error: 'handoff envelope not found' }, 404);
+          }
+          const envelope = JSON.parse(readFileSync(handoffPath, 'utf8'));
+          context = {
+            file,
+            mode: envelope.mode || 'unknown',
+            source_agent: envelope.source_agent || 'unknown',
+            ceiling_usd: envelope.ceiling_usd ?? null,
+            report_path: envelope.report_path || null,
+            original_question: envelope.original_question || '',
+            audit_items_count: Array.isArray(envelope.audit_items) ? envelope.audit_items.length : 0,
+          };
+          prompt = buildHandoffDispatchPrompt(envelope, file);
+        } else if (mode === 'row') {
+          const num = parsed.num != null ? String(parsed.num) : null;
+          const slug = parsed.slug ? String(parsed.slug) : null;
+          const company = parsed.company ? String(parsed.company) : null;
+          const role = parsed.role ? String(parsed.role) : null;
+          const focusHint = parsed.focus_hint ? String(parsed.focus_hint).slice(0, 400) : null;
+          if (!num && !slug) {
+            return json({ ok: false, error: 'row dispatch requires num or slug' }, 400);
+          }
+          context = { num, slug, company, role, focus_hint: focusHint };
+          prompt = buildRowDispatchPrompt({ num, slug, company, role, focusHint });
+        } else {
+          return json({ ok: false, error: 'unknown mode (expected: handoff | row)' }, 400);
+        }
+        return json({
+          ok: true,
+          mode_used: 'paste-to-clipboard',
+          mode,
+          context,
+          prompt,
+          dispatched_at: new Date().toISOString(),
+          instructions: 'Paste into a fresh Claude Code session at ~/Documents/career-ops/. The prompt is self-contained.',
+        });
+      } catch (err) {
+        return json({ ok: false, error: err.message }, 500);
+      }
+    });
+    return;
   }
 
   const verifyMatch = url.match(/^\/api\/verify\/(.+\.md)$/);

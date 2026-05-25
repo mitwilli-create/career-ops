@@ -10905,6 +10905,25 @@ async function build() {
     cursor: progress;
     border-style: dashed;
   }
+  /* GAP-RES-14 (2026-05-24) — Dispatch handoff button: copies a ready-to-paste
+     Claude Code prompt for THIS row's context to clipboard. Distinct purple
+     accent so it groups with the action buttons but signals "external session"
+     rather than "in-dashboard work." */
+  .drawer-action-bar .drawer-btn-dispatch {
+    background: var(--surface-2);
+    border-color: var(--purple-fg, #8b5cf6);
+    color: var(--purple-fg, #8b5cf6);
+  }
+  .drawer-action-bar .drawer-btn-dispatch:hover {
+    background: var(--purple-fg, #8b5cf6);
+    color: #fff;
+  }
+  .drawer-action-bar .drawer-btn-dispatch[disabled] { opacity: .5; cursor: not-allowed; }
+  .drawer-action-bar .drawer-btn-dispatch.is-copied {
+    background: var(--green-fg, #16a34a);
+    color: #fff;
+    border-color: var(--green-fg, #16a34a);
+  }
   /* Selected-row indicator: 3px left accent + subtle bg highlight so the
      user always knows which row the drawer is showing. */
   tr.row.row-selected > td { background: var(--surface-2); }
@@ -15563,6 +15582,11 @@ function openRightRailForDetail(idx, detailRow) {
     const materialsBtnHtml = num
       ? '<button type="button" class="drawer-btn-materials" data-drawer-action="materials" data-drill="drawer-action:materials:' + num + '" title="Build apply pack (CV + cover letter + outreach + intel)">Generate apply pack</button>'
       : '<button type="button" class="drawer-btn-materials" data-drill="drawer-action:materials:" disabled title="No row number — apply pack needs a tracker row">Generate apply pack</button>';
+    // GAP-RES-14 (2026-05-24) — DISPATCH (copies row-context Claude Code prompt
+    // to clipboard for paste-into-fresh-session workflow).
+    const dispatchBtnHtml = num
+      ? '<button type="button" class="drawer-btn-dispatch" data-drawer-action="dispatch" data-drill="drawer-action:dispatch:' + num + '" title="Copy a ready-to-paste Claude Code prompt for this row to clipboard">Dispatch handoff</button>'
+      : '<button type="button" class="drawer-btn-dispatch" data-drill="drawer-action:dispatch:" disabled title="No row number — dispatch needs a tracker row">Dispatch handoff</button>';
     // DISCARD (permanent, destructive — requires confirm + optional reason)
     const discardBtnHtml = num
       ? '<button type="button" class="drawer-btn-discard" data-drawer-action="discard" data-drill="drawer-action:discard:' + num + '" title="Permanently discard this row (Status → Discarded). Will prompt for a reason. Irreversible from the queue." style="color:var(--red-fg,#cf222e);border-color:var(--red-fg,#cf222e)">Discard this row</button>'
@@ -15571,7 +15595,7 @@ function openRightRailForDetail(idx, detailRow) {
     const dismissBtnHtml = num
       ? '<button type="button" class="drawer-btn-dismiss" data-drawer-action="dismiss" data-drill="drawer-action:dismiss:' + num + '" title="Hide from Apply-Now queue until midnight PT. Status unchanged — row reappears tomorrow.">Dismiss for today</button>'
       : '<button type="button" class="drawer-btn-dismiss" data-drill="drawer-action:dismiss:" disabled>Dismiss for today</button>';
-    actionsEl.innerHTML = applyBtnHtml + materialsBtnHtml + discardBtnHtml + dismissBtnHtml;
+    actionsEl.innerHTML = applyBtnHtml + materialsBtnHtml + dispatchBtnHtml + discardBtnHtml + dismissBtnHtml;
     // Wire actions after innerHTML — keeps the HTML-as-string clean of
     // nested-quote escaping and lets us close the rail in one place.
     const applyBtnEl = actionsEl.querySelector('button[data-drawer-action="apply"]');
@@ -15586,6 +15610,12 @@ function openRightRailForDetail(idx, detailRow) {
     const materialsBtnEl = actionsEl.querySelector('button[data-drawer-action="materials"]');
     if (materialsBtnEl && num) {
       materialsBtnEl.addEventListener('click', () => drawerCreateMaterials(num, company, role, materialsBtnEl));
+    }
+    // GAP-RES-14 (2026-05-24) — Dispatch handoff button: copy a ready-to-paste
+    // Claude Code prompt for this row to clipboard via POST /api/handoffs/dispatch.
+    const dispatchBtnEl = actionsEl.querySelector('button[data-drawer-action="dispatch"]');
+    if (dispatchBtnEl && num) {
+      dispatchBtnEl.addEventListener('click', () => drawerDispatchHandoff(num, company, role, dispatchBtnEl));
     }
     // DISCARD: destructive, permanent. Prompts for a reason then writes Discarded status.
     const discardBtnEl = actionsEl.querySelector('button[data-drawer-action="discard"]');
@@ -16146,6 +16176,58 @@ window.drawerQuickStatus = drawerQuickStatus;
 //   - 409 path retries with force:true — current script will overwrite stubs
 //     on --force, but does not clean up extra files
 let _drawerMaterialsPollers = {};  // jobId → setTimeout handle
+
+// GAP-RES-14 (2026-05-24) — Dispatch handoff: POST /api/handoffs/dispatch
+// returns a ready-to-paste Claude Code prompt for the row. We copy it to
+// clipboard and surface a 1.5s "✓ Copied" affordance on the button.
+async function drawerDispatchHandoff(num, company, role, btnEl) {
+  if (!btnEl) return;
+  const origLabel = btnEl.textContent;
+  btnEl.disabled = true;
+  btnEl.textContent = 'Copying…';
+  try {
+    const res = await fetch('/api/handoffs/dispatch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'row', num: num, company: company || null, role: role || null }),
+    });
+    const data = await res.json();
+    if (!data || !data.ok || !data.prompt) {
+      throw new Error((data && data.error) || 'dispatch endpoint returned no prompt');
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(data.prompt);
+    } else {
+      // Fallback for older browsers: select-and-copy via hidden textarea.
+      const ta = document.createElement('textarea');
+      ta.value = data.prompt;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } finally { document.body.removeChild(ta); }
+    }
+    btnEl.classList.add('is-copied');
+    btnEl.textContent = '✓ Copied — paste into Claude Code';
+    setTimeout(() => {
+      btnEl.classList.remove('is-copied');
+      btnEl.textContent = origLabel;
+      btnEl.disabled = false;
+    }, 2500);
+    if (typeof window.toast === 'function') {
+      window.toast('Handoff prompt copied. Paste into a fresh Claude Code session at ~/Documents/career-ops/', 'success');
+    }
+  } catch (err) {
+    btnEl.textContent = origLabel;
+    btnEl.disabled = false;
+    if (typeof window.toast === 'function') {
+      window.toast('Dispatch failed: ' + (err && err.message ? err.message : err), 'error');
+    } else if (typeof console !== 'undefined') {
+      console.error('[dispatch] failed', err);
+    }
+  }
+}
+
 async function drawerCreateMaterials(num, company, role, btnEl, opts) {
   opts = opts || {};
   const force = !!opts.force;

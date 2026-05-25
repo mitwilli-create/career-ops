@@ -1257,6 +1257,32 @@ function renderLocationCell(reportPath, company, role) {
   return `<span class="location-chip ${chipCls} pill-popover-trigger" data-location-status="${cls.status}" title="${htmlEscape(tip)}" aria-label="${htmlEscape(`${label}: ${tip}`)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">${icon} ${htmlEscape(label)}${reloMark}</span>`;
 }
 
+// Confidence badge (PR-10, 2026-05-25): subtle inline marker showing the
+// confidence band (H/M/L) on role-enrichment-derived chips. Per the
+// apply-now-ux PR-10 adjudication (strategy.md §6 R51): annotate, don't
+// gate — Mitchell sees the band at-a-glance, the tooltip explains what it
+// means, and an L-band row is NEVER hidden. Subtle styling matches the
+// "minimize visual noise via subtle styling + hover-expand for detail"
+// resolution from the 4-model dialogue.
+//
+// Returns empty string when confidence is absent (don't render an empty
+// badge). tone-safe: no "low quality" or "WARNING" language; the L badge is
+// amber (calibration signal), not red (alarm).
+function renderConfidenceBadge(confidence, source) {
+  if (!confidence || typeof confidence !== 'string') return '';
+  const c = confidence.trim().toUpperCase();
+  if (c !== 'H' && c !== 'M' && c !== 'L') return '';
+  // Subtle dot + letter. Per-band tooltip explains the calibration signal in
+  // plain language (no jargon, no judgment).
+  const meta = c === 'H'
+    ? { cls: 'rec-conf-h', label: 'H confidence', tip: 'H: enrichment data is corroborated across multiple sources (e.g. recruiter named in JD + LinkedIn + role intel sources agree).' }
+    : c === 'L'
+      ? { cls: 'rec-conf-l', label: 'L confidence', tip: 'L: enrichment is single-source or partially inferred — useful as a starting point; verify before acting.' }
+      : { cls: 'rec-conf-m', label: 'M confidence', tip: 'M: backed by mini-mode research with single-source enrichment — typical for a first-pass role-enrichment row.' };
+  const srcHint = source ? ` (source: ${source})` : '';
+  return `<span class="rec-conf-badge ${meta.cls}" title="${htmlEscape(meta.tip + srcHint)}" aria-label="${htmlEscape(meta.label + ': ' + meta.tip)}" role="img"><span class="rec-conf-dot" aria-hidden="true"></span>${htmlEscape(c)}</span>`;
+}
+
 // Benefits cell: shows a single primary signal (toxicity grade or "—") with
 // a popover that expands to the full breakdown (401k, healthcare, sentiment,
 // mental health, etc.). Empty when no data/role-enrichment/{slug}.json exists.
@@ -1301,7 +1327,8 @@ function renderBenefitsCell(company, role) {
     biweekly_math: enrich.biweekly_math || null,
     confidence: enrich.confidence || '',
   });
-  return `<span class="benefits-chip ${toxCls} pill-popover-trigger" data-tox-grade="${toxValid ? tox : ''}" aria-label="${htmlEscape(tip)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">${htmlEscape(label)}</span>`;
+  const confBadge = renderConfidenceBadge(enrich.confidence, 'role-enrichment');
+  return `<span class="benefits-chip ${toxCls} pill-popover-trigger" data-tox-grade="${toxValid ? tox : ''}" aria-label="${htmlEscape(tip)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">${htmlEscape(label)}</span>${confBadge}`;
 }
 
 // People cell: shows recruiter + hiring-manager LinkedIn links. Compact chip
@@ -1351,7 +1378,8 @@ function renderPeopleCell(company, role) {
     network: network || null,
     confidence: enrich?.confidence || '',
   });
-  return `<span class="people-chip pill-popover-trigger" aria-label="${htmlEscape(tip)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">${htmlEscape(labelMark)}</span>`;
+  const confBadge = renderConfidenceBadge(enrich?.confidence, 'role-enrichment');
+  return `<span class="people-chip pill-popover-trigger" aria-label="${htmlEscape(tip)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">${htmlEscape(labelMark)}</span>${confBadge}`;
 }
 
 // Safe wrapper — returns null if the CSV is absent so the dashboard
@@ -8978,6 +9006,39 @@ async function build() {
     background: transparent; border-color: transparent;
     color: var(--text-4); font-weight: 400; padding: 2px 4px;
   }
+
+  /* Role-enrichment confidence badge (PR-10, 2026-05-25):
+     small subtle pill rendered next to benefits/people chips.
+     H = green dot · M = neutral gray · L = amber.
+     De-emphasized vs the primary chip — annotate, don't gate. */
+  .rec-conf-badge {
+    display: inline-flex; align-items: center; gap: 3px;
+    margin-left: 4px;
+    padding: 1px 5px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    font-size: 9px; font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--text-3);
+    cursor: help;
+    vertical-align: middle;
+    line-height: 1;
+    opacity: 0.78;
+    transition: opacity .12s, border-color .12s;
+  }
+  .rec-conf-badge:hover { opacity: 1; border-color: var(--border-strong); }
+  .rec-conf-dot {
+    display: inline-block;
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--text-4);
+  }
+  .rec-conf-h .rec-conf-dot { background: var(--green-fg); }
+  .rec-conf-h { color: var(--green-fg-dark, var(--green-fg)); }
+  .rec-conf-m .rec-conf-dot { background: var(--text-4); }
+  .rec-conf-l .rec-conf-dot { background: var(--amber-fg, #d97706); }
+  .rec-conf-l { color: var(--amber-fg-dark, var(--amber-fg, #b45309)); }
 
   /* People chip — recruiter + hiring-manager indicators */
   .people-chip {
@@ -18299,33 +18360,34 @@ _drillInRegister('percentage', function(id) {
   if (!cardHtml) {
     var barEl = document.querySelector('.alignbar-row[title*="' + key + '"] .alignbar-pct');
     var pct = barEl ? barEl.textContent.trim() : '';
+    // 2026-05-25 — Mitchell ask: popouts should surface action-completed content
+    // (what the system already knows about THIS row) rather than generic
+    // "how to raise this" prescriptions. The closeActions[] arrays previously
+    // here were the same for every row → generic advice-mode UX. They've been
+    // removed; when richSummary doesn't populate tailoredHtml for this row,
+    // the popout now surfaces a gap statement + queue-action CTA inline
+    // (see _renderUntailoredGap below). The live /api/drill/percentage call
+    // still swaps in lib/strategy-ceiling.mjs role-grounded synthesis when it
+    // returns. Definition strings retained for the "WHAT THIS NUMBER MEANS"
+    // band at the top of every popout (purely informational, not actionable).
     var defs = {
       'alignment': {
         title: 'How well your background fits this role',
         definition: 'How well your CV + portfolio match the job description, scored by the eval pipeline. 100% = every must-have requirement is hit with a documented metric or proof point.',
-        closeActions: [
-          'Open the role report and look at Honest gaps — these are the requirements your CV does not cleanly hit.',
-          'For each gap, pick the closest analog from your background and add a sentence in the cover letter that maps the analog onto the requirement.',
-          'If a must-have is missing entirely, mark the role as Discarded with that gap as the discard reason.',
-        ],
+        agentSlug: 'strategy-ceiling',
+        agentLabel: 'alignment trace',
       },
       'interview': {
         title: 'Interview likelihood',
         definition: 'Estimated probability that your application converts to an interview, based on score band, comp band, and the HM-research outcome (if hm-intel exists). Calibrated against the apply-now history.',
-        closeActions: [
-          'Generate the apply pack (CV + cover letter tailored to the JD) — raw applications convert ~3-8%; tailored packs convert ~15-25% in this dataset.',
-          'Run hiring-manager research for this role — direct outreach to the HM after the application lands moves conversion to ~30-40%.',
-          'Check the Comp Intel section: if your ask is above the disclosed JD range, you are self-screening out before review.',
-        ],
+        agentSlug: 'interview-likelihood',
+        agentLabel: 'interview-likelihood research',
       },
       'hmNoticing': {
         title: 'Chance a hiring manager will see you',
         definition: 'Estimated probability that the HM personally reviews your application (vs. ATS-filtered or recruiter-screened out). Lifted by warm intros, direct outreach, and posting-platform-of-origin signal.',
-        closeActions: [
-          'Find a warm contact via the Contacts directory + send a referral request before applying.',
-          'After the application lands, send a 3-sentence LinkedIn DM to the HM (see Outreach Pulse for tactic).',
-          'If no warm path exists, post on LinkedIn referencing the role + tag the HM — public surfaces lift HM-noticing by ~2x in this dataset.',
-        ],
+        agentSlug: 'hm-chance',
+        agentLabel: 'HM-chance research',
       },
     };
     // BRAVO 2026-05-19 (content sweep): if a future metric arrives that's
@@ -18335,7 +18397,8 @@ _drillInRegister('percentage', function(id) {
     var d = defs[key] || {
       title: _humanizeKey(key),
       definition: 'This number was computed from your evaluation pipeline. The compute logic lives in lib/strategy-ceiling.mjs and lib/alignment-scorer.mjs.',
-      closeActions: [],
+      agentSlug: null,
+      agentLabel: null,
     };
     // 2026-05-20 — Personalize the popout using richSummary baked from the
     // role's report file. Replaces the generic "how to raise this" with
@@ -18392,19 +18455,37 @@ _drillInRegister('percentage', function(id) {
         }
       }
     }
-    // P0.6 v1 (2026-05-20) — interview-likelihood popout surfaces a live
-    // Polish-pack button so "raise this score" stops being a text suggestion
-    // and starts being a one-click action. Gated on rowId being numeric so
-    // the button never fires against an unknown row. Generate-equivalent
-    // ships in v2 once apply-pack-generate.mjs emits NDJSON phases.
+    // Lift-this-score CTA (Mitchell ask 2026-05-25): the Interview Likelihood
+    // popout's primary lift action is "Run pre-apply check" (cheap, fast,
+    // surfaces ATS/HM/voice deltas the system can act on) rather than polish
+    // (expensive, slow, polishes content the pre-apply check should validate
+    // first). Gated on rowId being numeric so the button never fires against
+    // an unknown row. _openPreApplyCheckModal at line ~23304 is the modal opener.
     var polishActionHtml = '';
     if (key === 'interview' && rowId && /^\\d+$/.test(String(rowId))) {
       polishActionHtml = '<div style="margin:0 0 14px;padding:10px 12px;background:var(--surface-2);border:1px solid var(--border);border-left:3px solid var(--green-fg,#16a34a);border-radius:6px">'
         + '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-bottom:4px">Lift this score now</div>'
         + '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
-        +   '<button type="button" onclick="window.alphaPolishPack(\\'' + rowId + '\\')" style="padding:7px 14px;font-size:12.5px;background:var(--green-fg,#16a34a);border:1px solid var(--green-fg,#16a34a);color:#fff;border-radius:5px;cursor:pointer;font-weight:600">Polish apply pack</button>'
-        +   '<span style="font-size:11.5px;color:var(--text-3);line-height:1.4">Polished packs convert ~15-25% vs ~3-8% raw. ~10-20 min · streams live in a popout.</span>'
+        +   '<button type="button" onclick="if(typeof window._openPreApplyCheckModal===\\'function\\'){window._openPreApplyCheckModal(\\'' + rowId + '\\');}else{alert(\\'Pre-apply check modal not loaded — refresh dashboard.\\');}" style="padding:7px 14px;font-size:12.5px;background:var(--green-fg,#16a34a);border:1px solid var(--green-fg,#16a34a);color:#fff;border-radius:5px;cursor:pointer;font-weight:600">Run pre-apply check</button>'
+        +   '<span style="font-size:11.5px;color:var(--text-3);line-height:1.4">Scores ATS-keyword, HM-persona, and voice retention against this JD in &lt;30s for ~$2. Flags exactly which artifact needs work before you spend on a polish.</span>'
         + '</div>'
+        + '</div>';
+    }
+    // Gap-honest fallback (2026-05-25 — Mitchell ask): when richSummary is empty
+    // for THIS row + metric, surface "system doesn't have tailored data for
+    // this row yet" + an inline action button instead of a generic prescriptive
+    // list. The /api/drill/percentage onMount call will swap in role-grounded
+    // synthesis from lib/strategy-ceiling.mjs when it returns; this gap
+    // statement is the holding state until that arrives (or the persistent
+    // state if no agent is wired for this metric).
+    var gapFallbackHtml = '';
+    if (!tailoredHtml && d.agentSlug && rowId && /^\\d+$/.test(String(rowId))) {
+      var agentEndpoint = '/api/drill/percentage/' + encodeURIComponent(rowId) + '/' + encodeURIComponent(key);
+      gapFallbackHtml = '<div style="margin:14px 0 0;padding:11px 13px;background:var(--surface-2);border:1px solid var(--border);border-radius:6px">'
+        + '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-bottom:5px">No tailored synthesis cached for this row</div>'
+        + '<p style="margin:0 0 9px;font-size:12.5px;color:var(--text-2);line-height:1.5">The system reads ' + d.agentLabel + ' from your apply pack, hm-intel, and JD context for this position. None has been generated yet for this row + metric.</p>'
+        + '<button type="button" onclick="(function(btn){btn.textContent=\\'Generating…\\';btn.disabled=true;fetch(\\'' + agentEndpoint + '?refresh=1\\').then(function(r){return r.ok?r.json():null;}).then(function(data){var body=btn.closest(\\'[id=drill-in-body]\\')||document.getElementById(\\'drill-in-body\\');if(data&&data.ok&&data.html&&body){body.innerHTML=\\'<div class=strat-live>\\'+data.html+\\'</div>\\';}else{btn.textContent=\\'Generation queued — refresh in ~30s\\';btn.disabled=false;}}).catch(function(){btn.textContent=\\'Failed — try refresh\\';btn.disabled=false;});})(this)" style="padding:7px 14px;font-size:12.5px;background:var(--text);color:var(--bg,#06070d);border:1px solid var(--text);border-radius:5px;cursor:pointer;font-weight:600">Generate now</button>'
+        + '<span style="margin-left:10px;font-size:11.5px;color:var(--text-3)">Runs the ' + d.agentLabel + ' agent against this row\\'s data. Live result swaps in here.</span>'
         + '</div>';
     }
     cardHtml = '<div style="font-size:13px;line-height:1.55">'
@@ -18413,12 +18494,7 @@ _drillInRegister('percentage', function(id) {
       + '<p style="margin:0 0 12px;color:var(--text-2)">' + d.definition + '</p>'
       + polishActionHtml
       + tailoredHtml
-      + (!tailoredHtml && d.closeActions.length
-          ? '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-bottom:6px">How to raise this</div>'
-            + '<ol style="margin:0;padding-left:20px;color:var(--text-2)">'
-            + d.closeActions.map(function(a) { return '<li style="margin-bottom:6px">' + a + '</li>'; }).join('')
-            + '</ol>'
-          : '')
+      + gapFallbackHtml
       + '</div>';
   }
   // BRAVO 2026-05-19 (content sweep): use the humanizer so unknown keys

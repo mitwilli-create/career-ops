@@ -9,6 +9,12 @@ on:
 jobs:
   welcome:
     runs-on: ubuntu-latest
+    # 2026-05-24: skip on activity from the repo owner. actions/first-interaction
+    # paginates the actor's full issue/PR history on every event, which exhausts
+    # the GITHUB_TOKEN installation rate limit when the actor is the owner
+    # (hundreds of issues/PRs). The owner is never a first-time contributor by
+    # definition, so the call is pure waste.
+    if: github.actor != github.repository_owner
     permissions:
       issues: write
       pull-requests: write

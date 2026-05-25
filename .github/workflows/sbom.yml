@@ -23,4 +23,8 @@ jobs:
       - name: Upload SBOM to release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload ${{ github.event.release.tag_name }} career-ops-sbom.spdx.json
+        # --clobber: overwrite the SBOM if it's already attached to the release.
+        # Without it, this step fails when a release is re-published, re-tagged,
+        # or wrapped manually with an asset (2026-05-24: v1.8.0 anchor Release
+        # created during release-please rate-limit debugging hit this exact fail).
+        run: gh release upload --clobber ${{ github.event.release.tag_name }} career-ops-sbom.spdx.json

@@ -144,41 +144,20 @@
     </mj-section>
 
     <!-- ════════════════════════════════════════════════════════════════════
-         TODAY'S FOCUS — italic serif pull-quote, centered, generous
-         tracking, top + bottom hairline rules.
-         ════════════════════════════════════════════════════════════════════ -->
-    <mj-section padding="2px 12px 4px 12px">
-      <mj-column>
-        <mj-text padding="0">{{focusPullquoteHtml}}</mj-text>
-      </mj-column>
-    </mj-section>
-
-    <!-- ════════════════════════════════════════════════════════════════════
-         KPI STRIP — 4 horizontal tiles (Ready · Evaluated · Tracked ·
-         Runway), tabular monospace numerals, top + bottom rules.
+         KPI STRIP — 3 horizontal tiles (Ready · Evaluated · Tracked).
+         Note: the prior 4th KPI tile + an italic pull-quote between Apply-Now
+         and KPI + a context-section banner below KPI were all retired
+         2026-05-25; see scripts/heartbeat-dispatch.mjs git history.
          ════════════════════════════════════════════════════════════════════ -->
     <mj-section padding="6px 12px 4px 12px" border-top="1px solid {{ruleStrong}}" border-bottom="1px solid {{ruleStrong}}" css-class="masthead-rule">
       <mj-column padding="2px 4px">
-        <mj-text padding="0" align="center"><span class="editorial-grotesk" style="display:block;font-size:9px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:{{ink4}};margin-bottom:2px">Ready</span><span class="editorial-mono" style="display:block;font-size:22px;font-weight:600;color:{{ink}};letter-spacing:-0.02em">{{kpiQueueCount}}</span></mj-text>
+        <mj-text padding="0" align="center"><a href="https://dashboard.careers-ops.com/?focus=apply-now" style="text-decoration:none;color:inherit;display:block"><span class="editorial-grotesk" style="display:block;font-size:9px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:{{ink4}};margin-bottom:2px">Ready</span><span class="editorial-mono" style="display:block;font-size:22px;font-weight:600;color:{{ink}};letter-spacing:-0.02em">{{kpiQueueCount}}</span></a></mj-text>
       </mj-column>
       <mj-column padding="2px 4px">
-        <mj-text padding="0" align="center"><span class="editorial-grotesk" style="display:block;font-size:9px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:{{ink4}};margin-bottom:2px">Evaluated</span><span class="editorial-mono" style="display:block;font-size:22px;font-weight:600;color:{{ink}};letter-spacing:-0.02em">{{kpiEvaluatedToday}}</span></mj-text>
+        <mj-text padding="0" align="center"><a href="https://dashboard.careers-ops.com/" style="text-decoration:none;color:inherit;display:block"><span class="editorial-grotesk" style="display:block;font-size:9px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:{{ink4}};margin-bottom:2px">Evaluated</span><span class="editorial-mono" style="display:block;font-size:22px;font-weight:600;color:{{ink}};letter-spacing:-0.02em">{{kpiEvaluatedToday}}</span></a></mj-text>
       </mj-column>
       <mj-column padding="2px 4px">
-        <mj-text padding="0" align="center"><span class="editorial-grotesk" style="display:block;font-size:9px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:{{ink4}};margin-bottom:2px">Tracked</span><span class="editorial-mono" style="display:block;font-size:22px;font-weight:600;color:{{ink}};letter-spacing:-0.02em">{{kpiTrackedCount}}</span></mj-text>
-      </mj-column>
-      <mj-column padding="2px 4px">
-        <mj-text padding="0" align="center"><span class="editorial-grotesk" style="display:block;font-size:9px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:{{ink4}};margin-bottom:2px">Runway</span><span class="editorial-mono" style="display:block;font-size:22px;font-weight:600;color:{{kpiRunwayColor}};letter-spacing:-0.02em">{{kpiRunwayLabel}}</span></mj-text>
-      </mj-column>
-    </mj-section>
-
-    <!-- ════════════════════════════════════════════════════════════════════
-         RUNWAY ALERT / SYSTEM STATUS slot — when relevant, brass
-         left-rule, italic-serif headline, mono stats.
-         ════════════════════════════════════════════════════════════════════ -->
-    <mj-section padding="6px 12px 4px 12px">
-      <mj-column>
-        <mj-text padding="0">{{runwayAlertHtml}}</mj-text>
+        <mj-text padding="0" align="center"><a href="https://dashboard.careers-ops.com/" style="text-decoration:none;color:inherit;display:block"><span class="editorial-grotesk" style="display:block;font-size:9px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:{{ink4}};margin-bottom:2px">Tracked</span><span class="editorial-mono" style="display:block;font-size:22px;font-weight:600;color:{{ink}};letter-spacing:-0.02em">{{kpiTrackedCount}}</span></a></mj-text>
       </mj-column>
     </mj-section>
 

@@ -445,9 +445,9 @@ function renderLede(state, surface, palette) {
   if (surface === 'morning') {
     if (state.tonightsApply) {
       const co = state.tonightsApply.company || 'the queue';
-      const role = (state.tonightsApply.role || '').slice(0, 80);
-      lines.push(`A queue of ${state.queueCount} sits ready; one of them — ${escapeHtml(co)} — is the leverage point for the morning.`);
-    } else if (state.queueCount === 0 && state.runwayState !== 'healthy') {
+      const score = state.tonightsApply.score ? state.tonightsApply.score.toFixed(2) : '—';
+      lines.push(`Top of the apply-now queue this morning: ${escapeHtml(co)} — ${score} / 5.`);
+    } else if (state.queueCount === 0) {
       lines.push(`The queue is empty. Today's work is generation, not closure.`);
     } else {
       lines.push(`The pipeline runs in the background; the day's lift sits upstream.`);
@@ -458,7 +458,7 @@ function renderLede(state, surface, palette) {
     } else if (state.evaluatedToday > 0) {
       lines.push(`${state.evaluatedToday} new evaluation${state.evaluatedToday === 1 ? '' : 's'} landed today; the apply-now table is reordered for the morning.`);
     } else {
-      lines.push(`A quiet evening on the wire. Systems ran unattended; the runway holds.`);
+      lines.push(`A quiet evening on the wire. Systems ran unattended.`);
     }
   }
   return `<p style="margin:4px 0 0 0;font-family:'Fraunces','GT Sectra',Georgia,serif;font-style:italic;font-weight:400;font-size:16px;line-height:1.45;color:${palette.ink_2}">${lines.join(' ')}</p>`;
@@ -498,13 +498,15 @@ function renderTonightsApply(state, palette) {
   const markUrl = `${DASHBOARD_PUBLIC_URL}/mark?num=${num}&status=Applied`;
   const packUrl = `${DASHBOARD_PUBLIC_URL}/apply-pack/${num}/`;
 
+  // Hero headline + score wrap in anchors to the dashboard row drawer so
+  // every visible number/widget/claim is clickable (Mitchell ask 2026-05-25).
+  const heroAnchor = `text-decoration:none;color:inherit;display:inline-block`;
   return `
 <div style="margin:6px 0;padding:10px 0;border-top:1px solid ${palette.rule_strong}">
-  <div style="font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;font-size:10px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:${palette.accent};margin-bottom:8px">Tonight's Apply &middot; № ${num}</div>
-  <p style="margin:0 0 8px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:600;font-size:32px;line-height:1.15;color:${palette.ink};letter-spacing:-0.012em">${escapeHtml(co)} &mdash; ${escapeHtml(role)}</p>
+  <div style="font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;font-size:10px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:${palette.accent};margin-bottom:8px"><a href="${rowDeep}" style="${heroAnchor};color:${palette.accent}">Tonight's Apply &middot; № ${num}</a></div>
+  <p style="margin:0 0 8px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:600;font-size:32px;line-height:1.15;color:${palette.ink};letter-spacing:-0.012em"><a href="${rowDeep}" style="${heroAnchor};color:${palette.ink};font-weight:600">${escapeHtml(co)} &mdash; ${escapeHtml(role)}</a></p>
   <p style="margin:0 0 12px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:15px;line-height:1.5;color:${palette.ink_3}">
-    <span class="editorial-mono" style="font-family:'JetBrains Mono','SF Mono',monospace;font-style:normal;font-variant-numeric:tabular-nums;color:${palette.ink_2}">${score} / 5</span>
-    ${ageLabel ? `&middot; <span style="font-style:normal;color:${palette.ink_4}">${ageLabel}</span>` : ''}
+    <a href="${rowDeep}" style="${heroAnchor}"><span class="editorial-mono" style="font-family:'JetBrains Mono','SF Mono',monospace;font-style:normal;font-variant-numeric:tabular-nums;color:${palette.ink_2}">${score} / 5</span>${ageLabel ? ` <span style="color:${palette.ink_4}">&middot; <span style="font-style:normal">${ageLabel}</span></span>` : ''}</a>
   </p>
   <p style="margin:14px 0 0 0;line-height:1.8">
     <a href="${reportUrl}" style="font-family:'Inter',sans-serif;font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:${palette.accent};border-bottom:1px solid ${palette.accent};text-decoration:none;padding-bottom:1px;margin-right:18px">Open apply pack &rarr;</a>
@@ -517,12 +519,21 @@ function renderTonightsApply(state, palette) {
 
 function renderTodaysResult(state, palette) {
   const result = state.todaysResult;
+  const dashHref = `${DASHBOARD_PUBLIC_URL}/`;
+  const headlineAnchor = `text-decoration:none;color:${palette.ink};display:block`;
+  const detailAnchor   = `text-decoration:none;color:${palette.ink_3};display:block`;
   if (!result) {
+    const headlineText = state.evaluatedToday > 0
+      ? `${state.evaluatedToday} new evaluation${state.evaluatedToday === 1 ? '' : 's'} on the wire.`
+      : 'Systems ran unattended.';
+    const detailText = state.evaluatedToday > 0
+      ? 'The apply-now table is reordered for the morning. Tomorrow opens with the new ranking.'
+      : 'The pipeline runs unattended; tomorrow opens fresh.';
     return `
 <div style="margin:6px 0;padding:10px 0;border-top:1px solid ${palette.rule_strong}">
   <div style="font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;font-size:10px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:${palette.accent};margin-bottom:8px">Today's Result</div>
-  <p style="margin:0 0 12px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:28px;line-height:1.2;color:${palette.ink};letter-spacing:-0.01em">${state.evaluatedToday > 0 ? `${state.evaluatedToday} new evaluation${state.evaluatedToday === 1 ? '' : 's'} on the wire.` : 'Systems ran unattended.'}</p>
-  <p style="margin:0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:14px;line-height:1.5;color:${palette.ink_3}">${state.evaluatedToday > 0 ? 'The apply-now table is reordered for the morning. Tomorrow opens with the new ranking.' : 'The runway holds; the queue holds; the systems work continues.'}</p>
+  <p style="margin:0 0 12px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:28px;line-height:1.2;color:${palette.ink};letter-spacing:-0.01em"><a href="${dashHref}" style="${headlineAnchor}">${headlineText}</a></p>
+  <p style="margin:0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:14px;line-height:1.5;color:${palette.ink_3}"><a href="${dashHref}" style="${detailAnchor}">${detailText}</a></p>
 </div>`.trim();
   }
   const headline = result.headline || 'Today\'s movement on the board';
@@ -530,8 +541,8 @@ function renderTodaysResult(state, palette) {
   return `
 <div style="margin:6px 0;padding:10px 0;border-top:1px solid ${palette.rule_strong}">
   <div style="font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;font-size:10px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:${palette.accent};margin-bottom:8px">Today's Result</div>
-  <p style="margin:0 0 12px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:600;font-size:32px;line-height:1.15;color:${palette.ink};letter-spacing:-0.012em">${escapeHtml(headline)}</p>
-  ${detail ? `<p style="margin:0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:15px;line-height:1.55;color:${palette.ink_3}">${escapeHtml(detail)}</p>` : ''}
+  <p style="margin:0 0 12px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:600;font-size:32px;line-height:1.15;color:${palette.ink};letter-spacing:-0.012em"><a href="${dashHref}" style="${headlineAnchor};font-weight:600">${escapeHtml(headline)}</a></p>
+  ${detail ? `<p style="margin:0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:15px;line-height:1.55;color:${palette.ink_3}"><a href="${dashHref}" style="${detailAnchor}">${escapeHtml(detail)}</a></p>` : ''}
 </div>`.trim();
 }
 
@@ -569,12 +580,18 @@ function renderApplyNowTicker(state, palette) {
     const score = r.score ? r.score.toFixed(2) : '—';
     const company = (r.company || '').slice(0, 28);
     const role = (r.role || '').slice(0, 50);
+    // Row deep-link → dashboard row drawer (JD + apply form + report + pack
+    // all live one click in). Every TD wraps content in an anchor so the
+    // entire visible row is clickable regardless of which cell the reader
+    // hits — addresses "every item must lead to dashboard or JD".
     const reportUrl = r.reportPath ? `${DASHBOARD_PUBLIC_URL}/${r.reportPath.replace(/^\.?\//, '')}` : `${DASHBOARD_PUBLIC_URL}/?focus=row:${num}`;
+    const rowDeep = `${DASHBOARD_PUBLIC_URL}/?focus=row:${num}`;
+    const anchorBase = 'text-decoration:none;display:block';
     return `
 <tr class="ticker-row">
-  <td style="padding:4px 0;border-bottom:1px solid ${palette.rule};font-family:'JetBrains Mono','SF Mono',monospace;font-variant-numeric:tabular-nums;font-size:11px;color:${palette.ink_4};width:54px;vertical-align:top">№ ${num}</td>
-  <td style="padding:4px 0;border-bottom:1px solid ${palette.rule};font-family:'Inter',sans-serif;font-size:13px;color:${palette.ink};vertical-align:top"><a href="${reportUrl}" style="color:${palette.ink};text-decoration:none;border-bottom:1px solid ${palette.rule}">${escapeHtml(company)}</a> <span style="color:${palette.ink_3};font-weight:400">${escapeHtml(role)}</span></td>
-  <td style="padding:4px 0;border-bottom:1px solid ${palette.rule};font-family:'JetBrains Mono','SF Mono',monospace;font-variant-numeric:tabular-nums;font-size:12px;color:${palette.ink_2};text-align:right;width:64px;vertical-align:top">${score} / 5</td>
+  <td style="padding:4px 0;border-bottom:1px solid ${palette.rule};font-family:'JetBrains Mono','SF Mono',monospace;font-variant-numeric:tabular-nums;font-size:11px;color:${palette.ink_4};width:54px;vertical-align:top"><a href="${rowDeep}" style="${anchorBase};color:${palette.ink_4}">№ ${num}</a></td>
+  <td style="padding:4px 0;border-bottom:1px solid ${palette.rule};font-family:'Inter',sans-serif;font-size:13px;color:${palette.ink};vertical-align:top"><a href="${reportUrl}" style="${anchorBase};color:${palette.ink};border-bottom:1px solid ${palette.rule}"><span style="font-weight:600">${escapeHtml(company)}</span> <span style="color:${palette.ink_3};font-weight:400">${escapeHtml(role)}</span></a></td>
+  <td style="padding:4px 0;border-bottom:1px solid ${palette.rule};font-family:'JetBrains Mono','SF Mono',monospace;font-variant-numeric:tabular-nums;font-size:12px;color:${palette.ink_2};text-align:right;width:64px;vertical-align:top"><a href="${rowDeep}" style="${anchorBase};color:${palette.ink_2};text-align:right">${score} / 5</a></td>
 </tr>`.trim();
   }).join('');
 
@@ -595,6 +612,10 @@ function renderApplyNowTicker(state, palette) {
 
 function renderMovementsTicker(state, palette) {
   const movements = state.todaysMovements;
+  const dashHref = `${DASHBOARD_PUBLIC_URL}/`;
+  // Each movement row's cells wrap in an anchor → dashboard, matching the
+  // Apply-Now ticker pattern. Every number/widget/claim is clickable.
+  const anchorBase = 'text-decoration:none;display:block';
   if (!movements || movements.length === 0) {
     // Fall back to a small computed summary so the section still renders.
     const items = [];
@@ -604,14 +625,14 @@ function renderMovementsTicker(state, palette) {
       return `
 <div style="margin:6px 0;padding:14px 0">
   <div class="editorial-grotesk" style="font-family:'Inter',sans-serif;font-size:10px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:${palette.ink_4};margin-bottom:8px">Today's Movements</div>
-  <p style="margin:0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:14px;color:${palette.ink_3}">A quiet day on the wire. The pipeline ran unattended.</p>
+  <p style="margin:0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:14px;color:${palette.ink_3}"><a href="${dashHref}" style="${anchorBase};color:${palette.ink_3}">A quiet day on the wire. The pipeline ran unattended.</a></p>
 </div>`.trim();
     }
     return `
 <div style="margin:6px 0">
   <div class="editorial-grotesk" style="font-family:'Inter',sans-serif;font-size:10px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:${palette.ink_4};margin-bottom:10px">Today's Movements</div>
   <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;border-top:1px solid ${palette.rule_strong}">
-    ${items.map(i => `<tr><td style="padding:8px 0;border-bottom:1px solid ${palette.rule};font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;font-size:11px;color:${palette.ink_4};width:64px;vertical-align:top">${i.time}</td><td style="padding:8px 0;border-bottom:1px solid ${palette.rule};font-family:'Inter',sans-serif;font-size:13px;color:${palette.ink}">${escapeHtml(i.label)}</td></tr>`).join('')}
+    ${items.map(i => `<tr><td style="padding:8px 0;border-bottom:1px solid ${palette.rule};font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;font-size:11px;color:${palette.ink_4};width:64px;vertical-align:top"><a href="${dashHref}" style="${anchorBase};color:${palette.ink_4}">${i.time}</a></td><td style="padding:8px 0;border-bottom:1px solid ${palette.rule};font-family:'Inter',sans-serif;font-size:13px;color:${palette.ink}"><a href="${dashHref}" style="${anchorBase};color:${palette.ink}">${escapeHtml(i.label)}</a></td></tr>`).join('')}
   </table>
 </div>`.trim();
   }
@@ -619,8 +640,8 @@ function renderMovementsTicker(state, palette) {
   // Movements explicitly provided (timestamped log).
   const rowsHtml = movements.slice(0, 8).map(m => `
 <tr>
-  <td style="padding:8px 0;border-bottom:1px solid ${palette.rule};font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;font-size:11px;color:${palette.ink_4};width:64px;vertical-align:top">${escapeHtml(m.time || '—')}</td>
-  <td style="padding:8px 0;border-bottom:1px solid ${palette.rule};font-family:'Inter',sans-serif;font-size:13px;color:${palette.ink}">${escapeHtml(m.label || '')}</td>
+  <td style="padding:8px 0;border-bottom:1px solid ${palette.rule};font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;font-size:11px;color:${palette.ink_4};width:64px;vertical-align:top"><a href="${dashHref}" style="${anchorBase};color:${palette.ink_4}">${escapeHtml(m.time || '—')}</a></td>
+  <td style="padding:8px 0;border-bottom:1px solid ${palette.rule};font-family:'Inter',sans-serif;font-size:13px;color:${palette.ink}"><a href="${dashHref}" style="${anchorBase};color:${palette.ink}">${escapeHtml(m.label || '')}</a></td>
 </tr>`.trim()).join('');
 
   return `
@@ -895,7 +916,7 @@ function buildPreheader(state, surface) {
   }
   // evening
   if (state.evaluatedToday > 0) {
-    return `${state.evaluatedToday} new evaluation${state.evaluatedToday === 1 ? '' : 's'} &middot; ${state.queueCount} apply-ready &middot; the runway holds`;
+    return `${state.evaluatedToday} new evaluation${state.evaluatedToday === 1 ? '' : 's'} &middot; ${state.queueCount} apply-ready &middot; ${state.trackedCount} tracked`;
   }
   return `Quiet evening on the wire &middot; ${state.queueCount} apply-ready &middot; ${state.trackedCount} tracked`;
 }
@@ -1004,21 +1025,17 @@ async function renderDispatch(state, surface) {
   const heroStoryHtml     = renderHeroStory(extracted, surface, palette);
   const heroCaptionHtml   = renderImageCaption(image, palette);
   const tickerHtml        = renderTicker(extracted, surface, palette);
-  const focusPullquoteHtml= renderFocusPullquote(extracted, palette);
-  const runwayAlertHtml   = renderRunwayAlertEditorial(extracted, surface, palette);
   const featureBlocksHtml = renderFeatureBlocks(extracted, surface, palette);
   const quote             = pickQuote(surface, date);
   const quoteHtml         = renderQuote(quote, palette);
   const closerHtml        = renderCloser(surface, palette);
   const colophonHtml      = renderColophon(extracted, surface, palette);
 
-  // KPIs
-  const runwayInfo = kpiRunway(extracted, palette);
+  // KPIs (3-tile strip: Ready · Evaluated · Tracked; Runway tile retired
+  // alongside the runway-critical model, 2026-05-25)
   const kpiQueueCount     = String(extracted.queueCount);
   const kpiEvaluatedToday = String(extracted.evaluatedToday);
   const kpiTrackedCount   = String(extracted.trackedCount);
-  const kpiRunwayLabel    = runwayInfo.label;
-  const kpiRunwayColor    = runwayInfo.color;
 
   const preheaderText = buildPreheader(extracted, surface);
 
@@ -1034,8 +1051,6 @@ async function renderDispatch(state, surface) {
     heroImageAlt: imageAlt,
     heroCaptionHtml,
     tickerHtml,
-    focusPullquoteHtml,
-    runwayAlertHtml,
     featureBlocksHtml,
     quoteHtml,
     closerHtml,
@@ -1043,8 +1058,6 @@ async function renderDispatch(state, surface) {
     kpiQueueCount,
     kpiEvaluatedToday,
     kpiTrackedCount,
-    kpiRunwayLabel,
-    kpiRunwayColor,
     paperBg:     paletteVars.paperBg,
     ink:         paletteVars.ink,
     ink2:        paletteVars.ink2,

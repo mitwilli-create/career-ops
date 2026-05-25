@@ -955,7 +955,11 @@ async function renderDispatchHtml(meta) {
     // applyNow, whatsNew. F-5 needs todaysFocus and density too — recompute
     // both here so the dispatch module stays decoupled from heartbeat.mjs's
     // private state.
-    todaysFocus: await getTodaysFocus(meta).catch(() => ''),
+    // Today's Focus pull-quote retired 2026-05-25 alongside the runway model
+    // removal — Haiku call was coupled to runway-state prompt context; the
+    // Apply-Now Queue ticker + hero "Tonight's Apply" already carry the
+    // single-target directive without LLM overhead.
+    todaysFocus: '',
     density:     computeRunwayDensityForHeartbeat(),
     markdownBody: meta._markdownBody || '',
   });

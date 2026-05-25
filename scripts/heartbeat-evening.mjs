@@ -41,7 +41,8 @@ import nodemailer from 'nodemailer';
 import { marked } from 'marked';
 import mjml2html from 'mjml';
 import { buildSummary as buildOutreachSummary, listContacts as listOutreachContacts } from '../lib/outreach-tracker.mjs';
-import { renderSystemBanner, renderDiscardPatternSection, renderRunwayAlert } from '../lib/heartbeat-system-banner.mjs';
+// renderRunwayAlert dropped from import 2026-05-25 — runway model retired.
+import { renderSystemBanner, renderDiscardPatternSection } from '../lib/heartbeat-system-banner.mjs';
 // ARCH.42 (2026-05-21) — typography role helpers (Q1 evening rollout).
 // Currently used only by sectionLabel below; expand to h2/h3/th regex
 // replacements only after Friday morning eval confirms the plumbing.
@@ -231,85 +232,12 @@ function sectionLabel(text) {
   return `<div style="${style}">${text}</div>`;
 }
 
-// ── Runway density (same inline compute as heartbeat.mjs) ──────────────────
-function computeRunwayDensityForEvening() {
-  let contacts = [];
-  try { contacts = listOutreachContacts(); } catch { return { ok: false, error: 'outreach tracker unavailable' }; }
-  const now = Date.now();
-  const sevenDaysAgo  = now - 7  * 86400000;
-  const thirtyDaysAgo = now - 30 * 86400000;
-  let active = 0, responded = 0, dead = 0, total = contacts.length;
-  let touches7d = 0, touches30d = 0, lastTouchTs = 0;
-  for (const c of contacts) {
-    if (c.status === 'dead') { dead++; continue; }
-    if (c.status === 'awaiting_reply' || c.status === 'warm' || c.status === 'responded') active++;
-    if (c.status === 'responded') responded++;
-    for (const t of (c.touches || [])) {
-      const ts = Date.parse(t.ts);
-      if (!isFinite(ts)) continue;
-      if (ts >= sevenDaysAgo)  touches7d++;
-      if (ts >= thirtyDaysAgo) touches30d++;
-      if (ts > lastTouchTs)    lastTouchTs = ts;
-    }
-  }
-  const responseRate = total > 0 ? Math.round((responded / total) * 100) / 100 : 0;
-  const runwayWeeks  = parseInt(process.env.RUNWAY_WEEKS || '12');
-  let health, runway_alert;
-  if (active >= 5 && touches7d >= 10) {
-    health = 'healthy';
-    runway_alert = `Cushion holding — pipeline on track for ${runwayWeeks}-week runway.`;
-  } else if (active >= 3 || touches7d >= 5) {
-    health = 'stretched';
-    runway_alert = `Cushion shrinking — add ${Math.max(0, 5 - active)} more active conversations and ${Math.max(0, 10 - touches7d)} more touches this week to stay on track for ${runwayWeeks} weeks.`;
-  } else {
-    health = 'critical';
-    runway_alert = `Past your runway floor — push outreach to 10+ touches/week right now. The ${runwayWeeks}-week window is at risk.`;
-  }
-  return {
-    ok: true, runway_weeks: runwayWeeks, health, runway_alert,
-    contacts: { total, active, responded, dead, response_rate: responseRate },
-    velocity: {
-      touches_last_7d:   touches7d,
-      touches_last_30d:  touches30d,
-      days_since_last_touch: lastTouchTs ? Math.round((now - lastTouchTs) / 86400000) : null,
-    },
-  };
-}
-
-// ── renderEveningRunwayAlert — persistent, full detail, mid-digest ─────────
-// Unlike the morning's escalation-gated banner, evening always shows the
-// full runway state. Uses a neutral palette on healthy days (no red/amber
-// alarm color) so it reads as informational, not urgent, at 18:00 PT.
-// Council recommendation: placed mid-digest (before ERRORS), not at end,
-// to prevent "sleep-sabotage" anxiety from being the final item of the email.
-function renderEveningRunwayAlert(density) {
-  if (!density || !density.ok) {
-    return `<div class="runway-unavailable" style="margin:12px 0;padding:10px;background:${BRAND.amberBg};border:1px solid rgba(168,123,72,0.35);border-radius:6px;color:${BRAND.amber};font-size:12px">Runway: pipeline-density data unavailable.</div>`;
-  }
-  const { health, runway_alert, contacts, velocity, runway_weeks } = density;
-  // Phase E2 (2026-05-19) dark-first palette — muted slate on healthy days
-  // at 18:00 PT. Saturated amber/red only when escalated.
-  const tiers = {
-    healthy:  { bg: BRAND.blueBg,   border: 'rgba(148,163,184,0.30)', fg: BRAND.blue,   icon: '🟢', label: 'On track' },
-    stretched:{ bg: BRAND.amberBg,  border: 'rgba(168,123,72,0.45)',  fg: BRAND.amber,  icon: '🟡', label: 'Cushion shrinking' },
-    critical: { bg: BRAND.redBg,    border: 'rgba(220,38,38,0.45)',   fg: BRAND.red,    icon: '🔴', label: 'Past runway floor' },
-  };
-  const t = tiers[health] || tiers.stretched;
-  return `
-<div class="runway-card" style="margin:14px 0;padding:12px 14px;background:${t.bg};border:1px solid ${t.border};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
-  <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${t.fg};margin-bottom:6px">
-    <span role="img" aria-label="Runway health indicator">${t.icon}</span> Runway — ${runway_weeks}-week window · <strong>${t.label}</strong>
-  </div>
-  <div style="font-size:13px;color:${t.fg};font-weight:600;margin-bottom:8px;line-height:1.4">${escapeHtml(runway_alert)}</div>
-  <div style="display:flex;gap:18px;flex-wrap:wrap;font-size:11.5px;color:${BRAND.text2}">
-    <span><strong>${contacts.active}</strong> active</span>
-    <span><strong>${contacts.responded}</strong> replied (${Math.round(contacts.response_rate * 100)}%)</span>
-    <span><strong>${velocity.touches_last_7d}</strong>/7d</span>
-    <span><strong>${velocity.touches_last_30d}</strong>/30d</span>
-    <span>last: <strong>${velocity.days_since_last_touch != null ? velocity.days_since_last_touch + 'd' : 'n/a'}</strong></span>
-  </div>
-</div>`.trim();
-}
+// ── Runway model — RETIRED 2026-05-25 ─────────────────────────────────────
+// computeRunwayDensityForEvening + renderEveningRunwayAlert (+ their morning
+// counterparts in heartbeat.mjs and heartbeat-dispatch.mjs) deleted together
+// alongside the markdown "## Runway Alert" section + the dispatch composer's
+// runway widget + the runway KPI tile. Restore from git history if the model
+// returns. See AGENTS.md § stale-coupling-after-primitive-removal.
 
 // ── grokStatus (shared helper — same as heartbeat.mjs) ────────────────────
 function grokStatus(date) {
@@ -547,32 +475,11 @@ async function generateEveningMarkdownBody() {
     lines.push('');
   }
 
-  // ── SECTION 4: RUNWAY ALERT (persistent, mid-digest) ───────────────────
-  // Council: place before ERRORS so the digest doesn't end on anxiety.
-  // This is rendered as markdown so the evening script's renderContentHtml()
-  // can handle it — the full HTML rendering happens in renderEveningHtmlEmail().
-  lines.push('## Runway Alert');
-  lines.push('');
-  try {
-    const density = computeRunwayDensityForEvening();
-    if (density && density.ok) {
-      const { health, runway_alert, contacts, velocity, runway_weeks } = density;
-      const healthGlyph = { healthy: '🟢', stretched: '🟡', critical: '🔴' }[health] || '🟡';
-      const healthLabel = { healthy: 'On track', stretched: 'Cushion shrinking', critical: 'Past runway floor' }[health] || health;
-      lines.push(`**${healthGlyph} ${healthLabel}** — ${runway_weeks}-week window`);
-      lines.push('');
-      lines.push(runway_alert);
-      lines.push('');
-      lines.push(`Active: **${contacts.active}** · Responded: **${contacts.responded}** (${Math.round(contacts.response_rate * 100)}%) · Touches 7d: **${velocity.touches_last_7d}** · 30d: **${velocity.touches_last_30d}** · Last touch: **${velocity.days_since_last_touch != null ? velocity.days_since_last_touch + 'd' : 'n/a'}**`);
-      lines.push('');
-    } else {
-      lines.push('_Runway data unavailable — outreach tracker may be offline._');
-      lines.push('');
-    }
-  } catch {
-    lines.push('_Runway compute error — check lib/outreach-tracker.mjs._');
-    lines.push('');
-  }
+  // ── SECTION 4: RUNWAY ALERT — RETIRED 2026-05-25 ───────────────────────
+  // Runway model removed system-wide; the mid-digest runway block + density
+  // compute + escalation labels are gone with it. Apply-now queue + outreach
+  // section above already carry the evening's status without the runway
+  // framing. See AGENTS.md § stale-coupling-after-primitive-removal.
 
   // ── SECTION 5: ACTION REQUIRED → ERRORS / WARNINGS ──────────────────────
   // Phase E2 finding-003 (council-divergence-analysis.md) — invert positions
@@ -706,13 +613,12 @@ async function generateEveningMarkdownBody() {
   } catch { commitSha = 'unknown'; }
   lines.push(`*heartbeat-evening.mjs · 18:00 PT · v.${commitSha} · [dashboard →](${DASHBOARD_PUBLIC_URL}/)*`);
 
-  // Build meta for subject line
-  const density = (() => { try { return computeRunwayDensityForEvening(); } catch { return null; } })();
+  // Build meta for subject line — runway segment retired 2026-05-25 alongside
+  // the runway-model removal; subject now reads {features · tracked · errors?}.
   const systemHealthSummary = (() => {
     const tierFeatureCount = tierFeatures.filter(f => f.active).length;
     const errorsFlag = todaysErrors.length > 0 ? ` · ${todaysErrors.length} error${todaysErrors.length === 1 ? '' : 's'}` : '';
-    const health = density?.health || 'unknown';
-    return `${tierFeatureCount}/${tierFeatures.length} features · ${applicationsRows} tracked · runway ${health}${errorsFlag}`;
+    return `${tierFeatureCount}/${tierFeatures.length} features · ${applicationsRows} tracked${errorsFlag}`;
   })();
 
   return {
@@ -723,7 +629,6 @@ async function generateEveningMarkdownBody() {
       applyNowCount,
       applicationsRows,
       reportsToday,
-      density,
       todaysErrorCount: todaysErrors.length,
     },
   };
@@ -769,12 +674,9 @@ async function renderEveningHtmlEmail(markdownBody, meta = {}) {
 </div>`.trim();
   } catch { /* non-fatal */ }
 
-  // Evening runway alert panel (HTML)
-  let runwayAlertHtml = '';
-  try {
-    const density = meta.density || computeRunwayDensityForEvening();
-    runwayAlertHtml = renderEveningRunwayAlert(density);
-  } catch { /* non-fatal */ }
+  // Evening runway alert panel — retired 2026-05-25; HTML context section
+  // emits empty content so the legacy template variable still binds cleanly.
+  const runwayAlertHtml = '';
 
   // Discard pattern section (HTML) — always in evening when data exists
   let discardSectionHtml = '';
@@ -839,13 +741,13 @@ async function renderDispatchEveningHtml(body, meta) {
     trackedCount: meta.applicationsRows || trackerRows.length,
     evaluatedToday: meta.reportsToday || 0,
     outreachDue: 0,
-    runwayState: meta.density?.health || 'healthy',
-    runwayAlert: meta.density?.health && meta.density.health !== 'healthy',
+    // Runway state retired 2026-05-25 — dispatch composer no longer reads
+    // runwayState / runwayAlert / density, and the values were coupled to
+    // the removed runway model.
     newRoles: 0,
     todaysFocus: meta.todaysFocus || '',
     applyNow,
     whatsNew: [],
-    density: meta.density || computeRunwayDensityForEvening(),
     todaysResult: meta.todaysResult || null,
     todaysMovements: meta.todaysMovements || [],
     errorCount: meta.todaysErrorCount || 0,

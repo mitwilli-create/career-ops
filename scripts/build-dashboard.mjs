@@ -57,6 +57,10 @@ import { snapshotForRender as _snapshotCredentials }               from '../lib/
 // referral" sentence with a grounded statement naming a warm contact (when one
 // exists in data/network-database.json) or honestly noting no warm coverage.
 import { resolveCooldownContext } from '../lib/cooldown-context.mjs';
+// PR-09 (apply-now UX overhaul, 2026-05-25) — cache freshness registry.
+// Provides build-time staleness badges for drawer cache surfaces.
+// See lib/cache-freshness.mjs for the threshold registry + tone-safe badge renderer.
+import { cacheAgeBucket, renderCacheStalenessInline } from '../lib/cache-freshness.mjs';
 const parseYaml = yaml.load;
 
 // ── Phase 4.1 (2026-05-22 closure / P8) — credentials cache for chip + modal ──
@@ -3123,6 +3127,20 @@ function _computeIntelFreshness(r) {
   }
 }
 
+// ── PR-09 (2026-05-25) — build-time cache-staleness badge helper ──────────
+// Wraps renderCacheStalenessInline from lib/cache-freshness.mjs.
+// Returns an tone-safe badge HTML string (or '') linking to the auto-enrich
+// endpoint. Used in drawer card headers for hm-intel, role-enrichment, etc.
+// Outer-template-unescape rule: no backtick template literals inside the
+// returned HTML — renderCacheStalenessInline uses only string concat. Safe.
+function _buildTimeStalenessInline(cacheDir, filePath, slot, slug) {
+  try {
+    return renderCacheStalenessInline({ cacheDir, cacheFile: filePath, slot, slug });
+  } catch (_) {
+    return '';
+  }
+}
+
 function renderRow(r, idx) {
   const archetype = getReportArchetype(r.reportPath);
   // Prefer the queue's canonical_url (resolved by lib/jd-url-canonicalizer.mjs
@@ -3374,7 +3392,7 @@ function renderRow(r, idx) {
     return `<div class="dcard-stale-eval-label muted-text" style="font-size:11px;font-style:italic;margin-bottom:6px;opacity:.7" title="Eval is more than 30 days old. The fit-evidence, gaps, and stories below were generated from a stale snapshot — re-run via the per-row Deep Refresh chip in the action cell, or queue a fresh eval through the pipeline.">Eval ${_days} days old (regenerated nightly)</div>`;
   })();
   const tldrCard = (tldr || roleFunction || comp || toxLine || alignmentBars || _staleEvalLabel) ? `<div class="dcard dcard--static" style="margin-bottom:8px">
-    <div class="dcard-label">Quick role summary</div>
+    <div class="dcard-label">Quick role summary${_pr09ReBadge}</div>
     ${_staleEvalLabel}
     ${tldr ? `<div class="dcard-body dcard-body--unclamped">${htmlEscape(tldr)}</div>` : ''}
     ${respLine}
@@ -3454,18 +3472,51 @@ function renderRow(r, idx) {
   // data/hm-intel/<slug>.json (when present) append below as a structured
   // "+ close actions" list. The whole block is one card.
   const _slugifyGap = (s) => String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,60);
+  // PR-09 (2026-05-25) — compute build-time cache-staleness badges for
+  // hm-intel and role-enrichment drawer sections. tone-safe: "Updated N days
+  // ago — refresh?" — no "stale/broken/missing" language in user-facing copy.
+  const _pr09CSlug = String(r.company||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+  const _pr09RSlug = String(r.role||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+  // Row slug for auto-enrich endpoint (company-role format, max 80 chars)
+  const _pr09RowSlug = (_pr09CSlug + '-' + _pr09RSlug).replace(/^-+|-+$/g,'').slice(0, 80);
+  const _pr09HmPath = join(ROOT, 'data', 'hm-intel', `${_pr09CSlug}-${_pr09RSlug}.json`);
+  const _pr09HmBadge = _buildTimeStalenessInline('hm-intel', _pr09HmPath, 'hm-intel', _pr09RowSlug);
+  // Role-enrichment: find file path by scanning the cache map (key = company|role lowercase)
+  const _pr09ReBadge = (() => {
+    try {
+      const _reMap = loadRoleEnrichment();
+      const _reKey = _pr09CSlug.replace(/-/g,'') + '|' + _pr09RSlug.replace(/-/g,'');
+      // Use tolerant key lookup same as getRoleEnrichment
+      const _reCo = String(r.company||'').toLowerCase();
+      const _reRo = String(r.role||'').toLowerCase();
+      let _rePath = null;
+      // Scan the role-enrichment dir for a file whose JSON matches company+role
+      if (existsSync(ROLE_ENRICHMENT_DIR)) {
+        for (const f of readdirSync(ROLE_ENRICHMENT_DIR).filter(fn => fn.endsWith('.json'))) {
+          const fp = join(ROLE_ENRICHMENT_DIR, f);
+          try {
+            const obj = JSON.parse(readFileSync(fp, 'utf-8'));
+            if (String(obj.company||'').toLowerCase() === _reCo &&
+                String(obj.role||'').toLowerCase() === _reRo) {
+              _rePath = fp; break;
+            }
+          } catch { /* skip */ }
+        }
+      }
+      if (!_rePath) return '';
+      return _buildTimeStalenessInline('role-enrichment', _rePath, 'role-enrichment', _pr09RowSlug);
+    } catch { return ''; }
+  })();
   let _honestGaps = [];
   try {
-    const _companySlug = String(r.company||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
-    const _roleSlug = String(r.role||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
-    const _hmPath = join(ROOT, 'data', 'hm-intel', `${_companySlug}-${_roleSlug}.json`);
+    const _hmPath = _pr09HmPath;
     if (existsSync(_hmPath)) {
       const _hmData = JSON.parse(readFileSync(_hmPath, 'utf-8'));
       _honestGaps = Array.isArray(_hmData.honest_gaps_vs_requirements) ? _hmData.honest_gaps_vs_requirements : [];
     }
   } catch (_) { _honestGaps = []; }
   const gapCard = (gaps.length || _honestGaps.length) ? `<div class="dcard dcard--gap">
-    <div class="dcard-label">Gaps to address <span style="font-size:9px;font-weight:400;color:var(--text-4);margin-left:4px">click any chip for what to fix before applying</span></div>
+    <div class="dcard-label">Gaps to address${_pr09HmBadge} <span style="font-size:9px;font-weight:400;color:var(--text-4);margin-left:4px">click any chip for what to fix before applying</span></div>
     ${_staleEvalLabel}
     ${gaps.length ? `<div class="dcard-gaps">${gaps.map(g => {
       const strategy = getGapStrategy(r.reportPath, g.title);
@@ -5327,6 +5378,34 @@ async function build() {
   });
   const _deepRefreshStaleJson = JSON.stringify(_deepRefreshStaleRows).replace(/<\//g, '<\\/');
   const _deepRefreshStaleCount = _deepRefreshStaleRows.filter(r => r.status === 'stale' || r.status === 'missing').length;
+
+  // ── PR-09 (2026-05-25) — build-time cache-age map for drawer staleness UI ──
+  // Keyed by row.num (string). Values: per-surface age bucket. Injected as
+  // window.__CACHE_AGE_MAP__ so client-side code can show badges for lazy-
+  // loaded surfaces (context-notes, strategy-ceiling, interview-likelihood,
+  // hm-chance) without a second build-time pass or extra API call.
+  // Only surfaces where the file path is known at build time are included;
+  // lazy-loaded surfaces get their badge from the API response timing.
+  const _cacheAgeMap = {};
+  try {
+    for (const _r of applyNowSorted) {
+      const _rNum = String(_r.num || '');
+      if (!_rNum) continue;
+      const _rCSlug = String(_r.company||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+      const _rRSlug = String(_r.role||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+      const _entry = { num: _rNum };
+      // hm-intel
+      const _hmP = join(ROOT, 'data', 'hm-intel', `${_rCSlug}-${_rRSlug}.json`);
+      const _hmB = cacheAgeBucket('hm-intel', _hmP);
+      _entry.hm = { isFresh: _hmB.isFresh, ageDays: Number.isFinite(_hmB.ageDays) ? Number(_hmB.ageDays.toFixed(1)) : null, ageDaysDisplay: _hmB.ageDaysDisplay || null, missing: _hmB.missing };
+      // context-notes (keyed by row.num)
+      const _cnP = join(ROOT, 'data', 'context-notes', `${_rNum}.json`);
+      const _cnB = cacheAgeBucket('context-notes', _cnP);
+      _entry.cn = { isFresh: _cnB.isFresh, ageDays: Number.isFinite(_cnB.ageDays) ? Number(_cnB.ageDays.toFixed(1)) : null, ageDaysDisplay: _cnB.ageDaysDisplay || null, missing: _cnB.missing };
+      _cacheAgeMap[_rNum] = _entry;
+    }
+  } catch (_caeErr) { /* never break the build */ }
+  const _cacheAgeMapJson = JSON.stringify(_cacheAgeMap).replace(/<\//g, '<\\/');
 
   // ── Wave C-B: pre-bake data for drill-in renderers ───────────────────────
   // All data computed here at build time. Browser renderers reference
@@ -8152,6 +8231,24 @@ async function build() {
   .intel-age-stale   { color: #b91c1c; border-color: rgba(220, 38, 38, 0.5); background: rgba(220, 38, 38, 0.08); font-weight: 700; }
   body.dark .intel-age-stale { color: #fca5a5; border-color: rgba(248, 113, 113, 0.55); background: rgba(248, 113, 113, 0.10); }
   .intel-age-missing { color: var(--text-3); border-style: dashed; font-style: italic; }
+  /* PR-09 (2026-05-25) — cache freshness badge from lib/cache-freshness.mjs.
+     Sits inline after dcard-label text. tone-safe: "Updated N days ago — refresh?"
+     Rendered at build time; visible when the cache surface has aged past its TTL. */
+  .cache-freshness-badge {
+    display: inline-block;
+    font-size: 11px;
+    color: var(--text-3, #8a8b96);
+    margin-left: 6px;
+    white-space: nowrap;
+    font-weight: 400;
+    vertical-align: middle;
+  }
+  .cache-freshness-badge a {
+    color: var(--blue-fg, #0a84ff);
+    text-decoration: underline dotted;
+    font-size: 11px;
+  }
+  .cache-freshness-badge a:hover { text-decoration: underline; }
 
   /* ── Deep Refresh confirmation modal ──────────────────────────────── */
   #deep-refresh-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 2300; backdrop-filter: blur(2px); }
@@ -14132,6 +14229,13 @@ async function build() {
   // Null when no status file exists for today (not yet run, or day-0).
   // Shape: { mode, ready, total, deferred, last_run, completed_at, cost_usd }
   window.__PREWARM_STATUS__ = ${JSON.stringify(prewarmStatus)};
+  // PR-09 (2026-05-25) — build-time cache age map. Keys are row.num strings.
+  // Each entry: { num, hm: { isFresh, ageDays, ageDaysDisplay, missing },
+  //              cn: { isFresh, ageDays, ageDaysDisplay, missing } }
+  // Used by client-side code to render staleness badges in lazy-loaded sections
+  // (e.g., context-notes, strategy-ceiling drawers) without extra API calls.
+  // Never mutate from client side — read-only snapshot.
+  window.__CACHE_AGE_MAP__ = ${_cacheAgeMapJson};
   </script>
 
   ${applyNow.length > 0 ? `

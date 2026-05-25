@@ -36,7 +36,7 @@
  *  - Never claims a fix shipped that didn't.
  */
 
-import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, readdirSync, statSync, renameSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -756,6 +756,137 @@ async function runAtsWatch() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// --archive-old-cache (PR-09, 2026-05-25)
+// Walks each cache directory from CACHE_FRESHNESS_THRESHOLDS_MS (9 dirs).
+// Files with mtime > ARCHIVE_AGE_DAYS are moved to data/_archive/<cache-dir>/.
+// Never deletes — purely reversible archival.
+// ───────────────────────────────────────────────────────────────────────────
+
+// Cache directories and their data/ subdirectory path.
+// align with lib/cache-freshness.mjs CACHE_FRESHNESS_THRESHOLDS_MS keys.
+const CACHE_DIR_PATHS = {
+  'hm-intel':             join(ROOT, 'data', 'hm-intel'),
+  'team-health':          join(ROOT, 'data', 'team-health'),
+  'context-notes':        join(ROOT, 'data', 'context-notes'),
+  'role-enrichment':      join(ROOT, 'data', 'role-enrichment'),
+  'strategy-ceiling':     join(ROOT, 'data', 'strategy-cache'),
+  'interview-likelihood': join(ROOT, 'data', 'interview-likelihood'),
+  'hm-chance':            join(ROOT, 'data', 'hm-chance'),
+  // 'apply-pack' is Infinity — never archive
+  'network-database':     join(ROOT, 'data', 'network-database'),
+};
+
+const ARCHIVE_AGE_DAYS = 90;
+const ARCHIVE_BASE     = join(ROOT, 'data', '_archive');
+
+async function runArchiveOldCache(opts = {}) {
+  const dryRun = opts.dryRun !== false; // default: dry-run
+  const ageThresholdMs = ARCHIVE_AGE_DAYS * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+
+  log(`▶ --archive-old-cache: scanning 9 cache dirs for files > ${ARCHIVE_AGE_DAYS}d (${dryRun ? 'DRY-RUN' : 'APPLY'})`);
+
+  const report = [];
+  let totalMoved = 0;
+  let totalSkipped = 0;
+  let totalErrors  = 0;
+
+  for (const [cacheKey, cacheDir] of Object.entries(CACHE_DIR_PATHS)) {
+    if (!existsSync(cacheDir)) {
+      log(`  [skip] ${cacheKey}: ${cacheDir} does not exist`);
+      report.push({ cacheKey, cacheDir, status: 'dir-missing', files: [] });
+      continue;
+    }
+
+    let files;
+    try {
+      files = readdirSync(cacheDir).filter(f => f.endsWith('.json'));
+    } catch (err) {
+      log(`  [warn] ${cacheKey}: cannot read dir — ${err.message}`);
+      totalErrors++;
+      report.push({ cacheKey, cacheDir, status: 'read-error', files: [] });
+      continue;
+    }
+
+    const destDir = join(ARCHIVE_BASE, cacheKey);
+    const moved   = [];
+    const kept    = [];
+
+    for (const f of files) {
+      const fp = join(cacheDir, f);
+      let mtimeMs;
+      try { mtimeMs = statSync(fp).mtimeMs; }
+      catch { totalErrors++; continue; }
+
+      const ageMs = now - mtimeMs;
+      if (ageMs < ageThresholdMs) { kept.push(f); continue; }
+
+      const ageDays = Math.floor(ageMs / (24 * 60 * 60 * 1000));
+      const dest    = join(destDir, f);
+
+      if (!dryRun) {
+        try {
+          if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true });
+          renameSync(fp, dest);
+          moved.push({ file: f, ageDays });
+          totalMoved++;
+        } catch (err) {
+          log(`  [warn] ${cacheKey}/${f}: rename failed — ${err.message}`);
+          totalErrors++;
+        }
+      } else {
+        moved.push({ file: f, ageDays }); // would move in dry-run
+        totalMoved++;
+      }
+    }
+
+    const lineVerb = dryRun ? 'would move' : 'moved';
+    log(`  ${cacheKey}: ${lineVerb} ${moved.length}/${files.length} files; kept ${kept.length}`);
+    if (moved.length) {
+      for (const m of moved.slice(0, 5)) {
+        log(`    ${lineVerb}: ${m.file} (${m.ageDays}d old) → _archive/${cacheKey}/`);
+      }
+      if (moved.length > 5) log(`    … and ${moved.length - 5} more`);
+    }
+    report.push({ cacheKey, cacheDir, destDir, status: 'ok', moved, kept });
+  }
+
+  // Summary
+  log('');
+  log('── Cache archive summary ────────────────────────────────────────');
+  log(`  Mode       : ${dryRun ? 'DRY-RUN (pass --apply to write)' : 'APPLY'}`);
+  log(`  Threshold  : > ${ARCHIVE_AGE_DAYS} days old`);
+  log(`  ${dryRun ? 'Would archive' : 'Archived'}: ${totalMoved} files`);
+  log(`  Errors     : ${totalErrors}`);
+  log('──────────────────────────────────────────────────────────────────');
+
+  // Write summary doc
+  const outPath = join(ROOT, `data/cache-archive-log-${dateStamp}.md`);
+  const lines = [
+    `# Cache Archive Log — ${dateStamp}`,
+    '',
+    `Mode: **${dryRun ? 'DRY-RUN' : 'APPLY'}** · Threshold: > ${ARCHIVE_AGE_DAYS} days`,
+    '',
+    '| Cache dir | Total files | Archived | Kept |',
+    '|---|---|---|---|',
+    ...report.map(r => {
+      const total = (r.moved?.length ?? 0) + (r.kept?.length ?? 0);
+      return `| ${r.cacheKey} | ${total} | ${r.moved?.length ?? 0} | ${r.kept?.length ?? 0} |`;
+    }),
+    '',
+    dryRun ? '_Re-run with `--apply` to write the archive._' : '_Archive complete. Files are recoverable from `data/_archive/`._',
+  ];
+  try {
+    writeFileSync(outPath, lines.join('\n'));
+    log(`✓ wrote ${outPath}`);
+  } catch (err) {
+    log(`[warn] Could not write cache-archive log: ${err.message}`);
+  }
+
+  return { totalMoved, totalErrors, dryRun };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // Main
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -769,13 +900,16 @@ Usage:
   node scripts/agents/system-maintainer.mjs [flags]
 
 Flags:
-  --health         System-health snapshot
-  --cleanup        Reversible archive + /tmp sweep
-  --review         Re-scan dashboard-server.mjs for security regressions
-  --decision-doc   Consolidated force-ranked findings + Decisions Required (B4.1)
-  --expand         Stub — see --help body
-  --ats-watch      Stub — see --help body
-  --all            Run --health → --cleanup → --review → --decision-doc
+  --health                System-health snapshot
+  --cleanup               Reversible archive + /tmp sweep
+  --review                Re-scan dashboard-server.mjs for security regressions
+  --decision-doc          Consolidated force-ranked findings + Decisions Required (B4.1)
+  --expand                Stub — see --help body
+  --ats-watch             Stub — see --help body
+  --all                   Run --health → --cleanup → --review → --decision-doc
+  --archive-old-cache     Move files older than 90d from each cache dir to
+                          data/_archive/<cache-dir>/ (reversible).
+                          Default: dry-run. Pass --apply to write.
 
 Always logs to data/logs/system-maintainer-<DATE>.log
 `);
@@ -804,6 +938,11 @@ Always logs to data/logs/system-maintainer-<DATE>.log
   }
   if (flags.has('--ats-watch')) {
     await runAtsWatch();
+  }
+  if (flags.has('--archive-old-cache')) {
+    // --apply means do actual renameSync; otherwise dry-run.
+    const applyMode = flags.has('--apply');
+    await runArchiveOldCache({ dryRun: !applyMode });
   }
 
   log('system-maintainer done');

@@ -350,6 +350,10 @@ data/applications/
 data/system-health-*.md
 data/system-maintenance-decision-doc-*.md
 data/system-maintenance-log-*.md
+# PR-09 (2026-05-25) — cache archive log (dated runtime output from --archive-old-cache)
+data/cache-archive-log-*.md
+# PR-09 — cache archive destination (personal file data, reversible move destination)
+data/_archive/
 
 # 2026-05-20 overnight DECISION_2 — apply-pack archive (mirrors apply-pack/ + data/apply-packs/ gitignores; contains personal apply-pack content)
 data/apply-pack-archive-2026-05-20/

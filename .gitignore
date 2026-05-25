@@ -13,6 +13,15 @@ data/api-cost-audit-*.md
 data/regression-guard-state.json
 data/regression-guard-spend.jsonl
 data/regression-baselines/
+# v2 autonomous-remediation pipeline operational state (PR #201-#215, 2026-05-25):
+# - regression-bug-queue.jsonl: bridge from regression-guard → bug-resolver
+# - v2-rollback-counter.jsonl: rollback events, thrash counter input
+# - v2-fix-log.jsonl: append-only audit trail of v2 pipeline fixes
+# - v2-verify-spend.jsonl: per-invocation spend for v2-verify-subset runs
+data/regression-bug-queue.jsonl
+data/v2-rollback-counter.jsonl
+data/v2-fix-log.jsonl
+data/v2-verify-spend.jsonl
 data/ef-mode-state.json
 data/logs/regression-guard-*.log
 # Decision-pending docs — contain personal architectural decisions + workflow choices

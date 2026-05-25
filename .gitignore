@@ -159,7 +159,10 @@ modes/_profile.md
 
 # Generated
 .resolved-prompt-*
-node_modules/
+# Match node_modules as DIR or SYMLINK or FILE — trailing slash only matched
+# dirs, which let a worktree's `ln -sfn` symlink slip into PR #250 via
+# `git add -A`. Without the slash, git ignores any node_modules entry by name.
+node_modules
 bun.lock
 data/strategy-cache/
 

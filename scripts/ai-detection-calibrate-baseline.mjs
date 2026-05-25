@@ -207,30 +207,45 @@ async function run() {
   const aiMinOrig    = summary.ai.originality.min  ?? 1;
   const aiMinPangram = summary.ai.pangram.min      ?? 1;
 
+  // GAP-RES-06 (2026-05-24) — phantom-separation fix. When a detector is
+  // disabled via env flag (G38: ORIGINALITY_DISABLED=1 / PANGRAM_DISABLED=1)
+  // OR skipped because the API key is missing, it returns all-null prob and
+  // the `?? 0` / `?? 1` fallbacks above synthesize clean separation
+  // (0 < 1 = true). Without the flags below, anySeparates flips true on
+  // not-actually-called detectors, current-thresholds.json gets overwritten
+  // with phantom bands (CLEAR.max=0, CRIT.min=1, gap=1.0), and downstream
+  // signalQuality() returns phantom 'GOOD' on the disabled detectors. Track
+  // whether each detector was actually invoked so we can exclude not-called
+  // detectors from the separation check + threshold-band emission.
+  const gptzeroCalled     = human_results.some(r => r.gptzero_prob     !== null) || ai_results.some(r => r.gptzero_prob     !== null);
+  const originalityCalled = human_results.some(r => r.originality_prob !== null) || ai_results.some(r => r.originality_prob !== null);
+  const pangramCalled     = human_results.some(r => r.pangram_prob     !== null) || ai_results.some(r => r.pangram_prob     !== null);
+
   // CLEAR band ceiling: human-MAX (anything Mitchell himself produces).
   // CRIT band floor: AI-decoy-MIN (anything as bad as a known AI decoy).
   // MED/HIGH split the middle.
+  const DISABLED_REASON = 'detector returned all-null results (env flag set, missing API key, or all calls errored) — bands omitted to prevent phantom signal-quality downstream (GAP-RES-06)';
   const thresholds = {
     derived_at: summary.calibrated_at,
     rationale: 'Bands anchored to empirical baseline: CLEAR ceiling = max prob observed on Mitchell\'s own writing; CRIT floor = min prob observed on AI decoys; HIGH = upper-mid; MED = lower-mid.',
-    gptzero: {
+    gptzero: gptzeroCalled ? {
       CLEAR: { max: round2(humanMaxGz) },
       MED:   { min: round2(humanMaxGz), max: round2((humanMaxGz + aiMinGz) / 2) },
       HIGH:  { min: round2((humanMaxGz + aiMinGz) / 2), max: round2(aiMinGz) },
       CRIT:  { min: round2(aiMinGz) },
-    },
-    originality: {
+    } : { disabled: true, reason: DISABLED_REASON },
+    originality: originalityCalled ? {
       CLEAR: { max: round2(humanMaxOrig) },
       MED:   { min: round2(humanMaxOrig), max: round2((humanMaxOrig + aiMinOrig) / 2) },
       HIGH:  { min: round2((humanMaxOrig + aiMinOrig) / 2), max: round2(aiMinOrig) },
       CRIT:  { min: round2(aiMinOrig) },
-    },
-    pangram: {
+    } : { disabled: true, reason: DISABLED_REASON },
+    pangram: pangramCalled ? {
       CLEAR: { max: round2(humanMaxPangram) },
       MED:   { min: round2(humanMaxPangram), max: round2((humanMaxPangram + aiMinPangram) / 2) },
       HIGH:  { min: round2((humanMaxPangram + aiMinPangram) / 2), max: round2(aiMinPangram) },
       CRIT:  { min: round2(aiMinPangram) },
-    },
+    } : { disabled: true, reason: DISABLED_REASON },
     notes: [
       'These bands are RELATIVE to Mitchell\'s baseline, not absolute. A 0.95 GPTZero score may sit in CLEAR if Mitchell\'s own writing scores 0.99 — the gate is calibrated to authenticity vs Mitchell, not detection-evasion vs the platform.',
       'Re-run `node scripts/ai-detection-calibrate-baseline.mjs --refresh` after every meaningful voice-corpus update to refresh these bands.',
@@ -262,9 +277,15 @@ async function run() {
   // 0.004% FPR) has clean separation, that detector alone is enough to anchor the
   // band-driven gate — the gate's `anyGood` check (lib/ai-detection-gate.mjs:451)
   // already supports this.
-  const gzSeparates      = humanMaxGz      < aiMinGz;
-  const origSeparates    = humanMaxOrig    < aiMinOrig;
-  const pangramSeparates = humanMaxPangram < aiMinPangram;
+  // GAP-RES-06 (2026-05-24) — exclude not-called detectors from separation
+  // check. A detector that wasn't invoked has summary stats null → falls back
+  // to 0/1 via ?? operators above → synthesizes phantom separation (0 < 1).
+  // The AND with *Called flags below blocks the phantom case so degenerate
+  // correctly reflects the real-detector state (e.g. with G38 flags active,
+  // GPTZero alone separates? if not, the run is correctly degenerate).
+  const gzSeparates      = gptzeroCalled     && humanMaxGz      < aiMinGz;
+  const origSeparates    = originalityCalled && humanMaxOrig    < aiMinOrig;
+  const pangramSeparates = pangramCalled     && humanMaxPangram < aiMinPangram;
   const anySeparates = gzSeparates || origSeparates || pangramSeparates;
 
   if (human_results.length < MIN_HUMAN_SAMPLES || ai_results.length < MIN_AI_SAMPLES) {

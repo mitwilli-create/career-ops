@@ -4233,6 +4233,37 @@ async function build() {
       triageAdvanceCount = lines.length;
     }
   } catch { /* default 0 */ }
+  // Polish-picker data (2026-05-24) — sidebar "✨ Polish materials" button +
+  // openPolishPickerModal() inject this. Each entry pairs an apply-now-queue
+  // ranked row with its polish status (from _polishStatusMap.byRowId). The
+  // count badge shows rows that NEED polish (never/needs_human/rejected).
+  // Approved + abandoned rows still render in the modal (for re-polish) but
+  // don't bump the badge.
+  let polishPickerData = [];
+  let polishNeededCount = 0;
+  try {
+    const aQforPick = JSON.parse(readFileSync(join(ROOT, 'data', 'apply-now-queue.json'), 'utf-8'));
+    for (const r of (aQforPick.ranked || [])) {
+      if (!r || r.num == null) continue;
+      const pStat = _polishStatusMap.byRowId.get(Number(r.num)) || null;
+      const verdict = pStat && pStat.verdict ? pStat.verdict : null;
+      const icon = pStat && pStat.status_icon ? pStat.status_icon : '⚪';
+      const label = pStat && pStat.status_label ? pStat.status_label : 'Never polished';
+      const needsPolish = !verdict || verdict === 'NEEDS_HUMAN' || verdict === 'REJECTED';
+      if (needsPolish) polishNeededCount++;
+      polishPickerData.push({
+        num: r.num,
+        company: r.company || '',
+        role: r.role || '',
+        composite: typeof r.composite === 'number' ? r.composite : null,
+        eval_score: typeof r.eval_score === 'number' ? r.eval_score : null,
+        verdict,
+        status_icon: icon,
+        status_label: label,
+        needs_polish: needsPolish,
+      });
+    }
+  } catch { /* default empty — modal shows empty-state */ }
   let initialHealthChip = { label: 'health: ?', cls: 'pipeline-health-chip', title: 'Health check not run yet' };
   try {
     const hp = join(ROOT, 'data/pipeline-health.json');
@@ -9399,6 +9430,9 @@ async function build() {
   }
   .pipeline-btn-nuclear { border-color: rgba(245,158,11,.35); }
   .pipeline-btn-nuclear:hover { border-color: rgba(245,158,11,.7); background: rgba(245,158,11,.05); }
+  /* Polish-materials picker — opens a modal listing apply-now rows + their per-row polish state. */
+  .pipeline-btn-polish { border-color: rgba(132,122,153,.35); }
+  .pipeline-btn-polish:hover { border-color: rgba(132,122,153,.7); background: rgba(132,122,153,.06); }
   /* View-flow button — quieter than the two action buttons. */
   .pipeline-btn-flow {
     background: transparent; color: var(--text-2);
@@ -12945,6 +12979,18 @@ async function build() {
         <span class="pipeline-btn-icon" aria-hidden="true">🔍</span>
         <span class="pipeline-btn-label">View flow</span>
       </button>
+      <!-- Polish materials picker (2026-05-24). Sidebar entry to the
+           apply-now-row picker — opens a full-screen modal listing apply-now
+           rows with their per-row polish state + a "Polish this row" button.
+           Lets Mitchell pick a row to polish without drilling into each
+           drawer. Count badge = rows that need polish (never/needs/rejected). -->
+      <button type="button" class="pipeline-btn pipeline-btn-polish"
+              onclick="(window.openPolishPickerModal||function(){})()"
+              title="Pick a row from the apply-now queue to polish without opening its drawer">
+        <span class="pipeline-btn-icon" aria-hidden="true">✨</span>
+        <span class="pipeline-btn-label">Polish materials</span>
+        <span class="pipeline-btn-count" id="pipeline-btn-polish-count">${polishNeededCount}</span>
+      </button>
     </div>
     <!-- 2026-05-19 Mitchell trust-fix — freshness chip + health chip.
          Chip shows "updated Ns ago" with live ticking. Color-codes on staleness.
@@ -13915,6 +13961,10 @@ async function build() {
        always available, even when builderLog.latest is empty (first run). -->
   <script>
   window.__PIPELINE_ACTIVITY__ = ${JSON.stringify(pipelineActivity)};
+  // Polish-picker data (2026-05-24) — read by openPolishPickerModal(). Each
+  // entry is one apply-now row + its current polish state. Modal lets
+  // Mitchell pick a row to polish without drilling into its drawer.
+  window.__POLISH_PICKER_DATA__ = ${JSON.stringify(polishPickerData)};
   // Deep Refresh stale-row inventory (2026-05-24) — drives the bulk modal.
   // Each entry: { num, company, role, status: 'stale'|'missing'|'cooling',
   //               ageDays: number|null, score: number }.
@@ -20439,8 +20489,13 @@ window.tonightPickCreateMaterials = tonightPickCreateMaterials;
 
 // 2026-05-20 — Polish CTA. Surfaces only when the apply-pack exists but
 // polishState ∈ {never_polished, stale, failed}. Fires the apply-pack-polish
-// skill via POST /api/apply-pack-polish (dashboard-server.mjs:8533). Falls
-// back to a toast with the manual CLI command if the API isn't available.
+// skill via POST /api/apply-pack-polish (dashboard-server.mjs:8533, returns
+// {ok, jobId, stream_url, log_path}). 2026-05-24: switched from
+// /api/polish/start (which had no matching server route — dashboard-server
+// only registers /api/polish and /api/apply-pack-polish, so the old endpoint
+// was always falling through to the CLI-fallback toast). Same fix shipped
+// independently via PR #191; merged here for completeness. The new sidebar
+// polish picker uses the same endpoint.
 async function tonightPickPolish() {
   // Canonical accessor — matches every other tonightPick* handler. Reads
   // TONIGHT_PICK_QUEUE[_currentPickIdx] first so "Pick another" cycling is
@@ -20455,18 +20510,20 @@ async function tonightPickPolish() {
     var res = await fetch('/api/apply-pack-polish', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ row: pick.num })
+      body: JSON.stringify({ row: Number(pick.num) })
     });
     var data = await res.json().catch(function(){ return null; });
     if (data && data.ok) {
+      var jobLabel = data.jobId ? ' (job ' + data.jobId + ')' : '';
       if (typeof showToast === 'function') {
-        showToast('Polish started (job ' + (data.jobId || 'unknown') + ') — see Batch Runs for live progress', 'success');
+        showToast('Polish started' + jobLabel + ' — see Batch Runs for live progress', 'success');
       }
       if (btn) { btn.textContent = '✨ Polishing in progress…'; }
     } else {
       var cmd = 'node scripts/agents/apply-pack-polish.mjs --row ' + pick.num;
+      var errMsg = (data && data.error) ? data.error : 'Endpoint unavailable';
       if (typeof showToast === 'function') {
-        showToast('Polish endpoint unavailable — run: ' + cmd, 'warn');
+        showToast('Polish failed: ' + errMsg + ' — CLI: ' + cmd, 'warn');
       } else {
         alert('To polish this pack, run in terminal:' + String.fromCharCode(10) + String.fromCharCode(10) + cmd);
       }
@@ -22424,6 +22481,167 @@ function _intelEsc(s) {
     .replace(/"/g, '&quot;');
 }
 window._intelEsc = _intelEsc;
+
+// ── Polish picker modal (2026-05-24) ─────────────────────────────────────
+// Sidebar "✨ Polish materials" entry. Opens a full-screen modal listing
+// every apply-now row + its per-row polish state. Click a row button to
+// trigger /api/apply-pack-polish (fire-and-forget background spawn) without
+// opening that row drawer first. Data comes from
+// window.__POLISH_PICKER_DATA__ (build-time bake from apply-now-queue.json
+// crossed with _polishStatusMap.byRowId).
+//
+// Follows the no-template-literal rule for inline-JS-inside-outer-template:
+// pure string concat, no backticks anywhere (including comments — the outer
+// template eats them), String.fromCharCode for unicode escapes, no
+// single-backslash regex literals.
+function openPolishPickerModal() {
+  var oldBackdrop = document.getElementById('polish-picker-backdrop');
+  if (oldBackdrop) oldBackdrop.remove();
+
+  var data = window.__POLISH_PICKER_DATA__ || [];
+
+  var backdrop = document.createElement('div');
+  backdrop.id = 'polish-picker-backdrop';
+  backdrop.setAttribute('role', 'dialog');
+  backdrop.setAttribute('aria-modal', 'true');
+  backdrop.setAttribute('aria-label', 'Polish apply-pack materials');
+  backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:99999;padding:24px';
+
+  function escCloseHandler(e) {
+    if (e.key === 'Escape') {
+      backdrop.remove();
+      document.removeEventListener('keydown', escCloseHandler);
+    }
+  }
+
+  backdrop.addEventListener('click', function (e) {
+    if (e.target === backdrop) {
+      backdrop.remove();
+      document.removeEventListener('keydown', escCloseHandler);
+    }
+  });
+
+  var modal = document.createElement('div');
+  modal.style.cssText = 'background:var(--surface,#11131c);border:1px solid var(--border,#232737);border-radius:8px;max-width:900px;width:100%;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;color:var(--text,#fafafa);font-family:inherit;box-shadow:0 18px 48px rgba(0,0,0,0.5)';
+
+  var html = '';
+  html += '<div style="padding:18px 24px;border-bottom:1px solid var(--border,#232737);display:flex;justify-content:space-between;align-items:flex-start;gap:14px">';
+  html += '<div>';
+  html += '<h2 style="margin:0 0 4px;font-size:16px;color:var(--text,#fafafa)">' + String.fromCharCode(10024) + ' Polish apply-pack materials</h2>';
+  html += '<p style="margin:0;font-size:12px;color:var(--text-3,#9a9aa6);line-height:1.5">Pick a row to polish without opening its drawer. ~$15&ndash;$30 and 20&ndash;40 min per pack.</p>';
+  html += '</div>';
+  html += '<button type="button" id="polish-picker-close" aria-label="Close picker" style="background:transparent;border:1px solid var(--border,#232737);color:var(--text-2,#b8b8c0);font-size:18px;line-height:1;padding:4px 10px;border-radius:6px;cursor:pointer">' + String.fromCharCode(215) + '</button>';
+  html += '</div>';
+
+  html += '<div style="overflow-y:auto;flex:1;padding:12px 16px">';
+
+  if (data.length === 0) {
+    html += '<p style="padding:24px;text-align:center;color:var(--text-3,#9a9aa6);font-size:13px">No apply-now rows to show. Add rows to the apply-now queue first.</p>';
+  } else {
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12.5px">';
+    html += '<thead><tr style="text-align:left;color:var(--text-3,#9a9aa6);border-bottom:1px solid var(--border,#232737)">';
+    html += '<th style="padding:8px 6px;font-weight:600;font-size:11px">State</th>';
+    html += '<th style="padding:8px 6px;font-weight:600;font-size:11px">#</th>';
+    html += '<th style="padding:8px 6px;font-weight:600;font-size:11px">Composite</th>';
+    html += '<th style="padding:8px 6px;font-weight:600;font-size:11px">Company / Role</th>';
+    html += '<th style="padding:8px 6px;font-weight:600;font-size:11px;text-align:right">Action</th>';
+    html += '</tr></thead><tbody>';
+
+    for (var i = 0; i < data.length; i++) {
+      var r = data[i];
+      var compFmt = (typeof r.composite === 'number') ? r.composite.toFixed(2) : ((typeof r.eval_score === 'number') ? r.eval_score.toFixed(2) : String.fromCharCode(8212));
+      var btnLabel = r.needs_polish ? 'Polish' : 'Re-polish';
+      var btnBg = r.needs_polish ? 'rgba(132,122,153,0.18)' : 'transparent';
+      var btnBorder = r.needs_polish ? 'rgba(132,122,153,0.55)' : 'var(--border,#232737)';
+      var ariaLabel = (r.needs_polish ? 'Polish row ' : 'Re-polish row ') + r.num + ' ' + r.company + ' ' + r.role;
+
+      html += '<tr style="border-bottom:1px solid var(--border,#232737)">';
+      html += '<td style="padding:10px 6px"><span title="' + _intelEsc(r.status_label) + '" style="font-size:14px">' + _intelEsc(r.status_icon) + '</span></td>';
+      html += '<td style="padding:10px 6px;color:var(--text-2,#b8b8c0);font-variant-numeric:tabular-nums">#' + _intelEsc(r.num) + '</td>';
+      html += '<td style="padding:10px 6px;color:var(--text-2,#b8b8c0);font-variant-numeric:tabular-nums">' + _intelEsc(compFmt) + '</td>';
+      html += '<td style="padding:10px 6px"><div style="color:var(--text,#fafafa);font-weight:600">' + _intelEsc(r.company) + '</div><div style="color:var(--text-3,#9a9aa6);font-size:11.5px;margin-top:2px">' + _intelEsc(r.role) + '</div></td>';
+      html += '<td style="padding:10px 6px;text-align:right"><button type="button" class="polish-picker-action" data-row="' + _intelEsc(r.num) + '" data-company="' + _intelEsc(r.company) + '" data-role="' + _intelEsc(r.role) + '" style="padding:5px 12px;border:1px solid ' + btnBorder + ';background:' + btnBg + ';color:var(--text,#fafafa);border-radius:4px;cursor:pointer;font-size:11.5px;font-weight:600" aria-label="' + _intelEsc(ariaLabel) + '">' + btnLabel + '</button></td>';
+      html += '</tr>';
+    }
+
+    html += '</tbody></table>';
+  }
+  html += '</div>';
+
+  html += '<div style="padding:10px 24px;border-top:1px solid var(--border,#232737);font-size:11px;color:var(--text-3,#9a9aa6)">';
+  html += 'Tip: press Esc to close. Polish runs in the background ' + String.fromCharCode(8212) + ' track progress in the sidebar Batch Runs panel.';
+  html += '</div>';
+
+  modal.innerHTML = html;
+  backdrop.appendChild(modal);
+  document.body.appendChild(backdrop);
+
+  var closeBtn = modal.querySelector('#polish-picker-close');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', function () {
+      backdrop.remove();
+      document.removeEventListener('keydown', escCloseHandler);
+    });
+  }
+
+  var polishBtns = modal.querySelectorAll('.polish-picker-action');
+  for (var j = 0; j < polishBtns.length; j++) {
+    polishBtns[j].addEventListener('click', function (ev) {
+      var btn = ev.currentTarget;
+      var rowId = btn.getAttribute('data-row');
+      var company = btn.getAttribute('data-company');
+      var role = btn.getAttribute('data-role');
+      runPolishFromPicker(rowId, company, role, btn);
+    });
+  }
+
+  document.addEventListener('keydown', escCloseHandler);
+}
+window.openPolishPickerModal = openPolishPickerModal;
+
+async function runPolishFromPicker(rowId, company, role, btn) {
+  var NL = String.fromCharCode(10);
+  var msg = 'Polish row #' + rowId + ' (' + company + ' / ' + role + ')?' + NL + NL + 'Cost: ~$15-30 over 20-40 min.';
+  if (!confirm(msg)) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Starting' + String.fromCharCode(8230); }
+  try {
+    // Endpoint: /api/apply-pack-polish (POST, spawns the 4-round critic/author/
+    // adjudicator loop via apply-pack-polish.mjs in the background, returns
+    // {ok, jobId, stream_url}). Only row is required.
+    var r = await fetch('/api/apply-pack-polish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ row: Number(rowId) })
+    });
+    var j = await r.json().catch(function () { return null; });
+    if (j && j.ok) {
+      var jobLabel = j.jobId ? ' (job ' + j.jobId + ')' : '';
+      if (typeof showToast === 'function') {
+        showToast('Polish started for row #' + rowId + jobLabel + ' ' + String.fromCharCode(8212) + ' see Batch Runs for progress', 'success');
+      } else {
+        alert('Polish started for row #' + rowId + jobLabel + '. See Batch Runs for progress.');
+      }
+      if (btn) { btn.textContent = 'Polishing' + String.fromCharCode(8230); }
+    } else {
+      var cmd = 'node scripts/agents/apply-pack-polish.mjs --row ' + rowId;
+      var err = (j && j.error) ? j.error : 'Endpoint unavailable';
+      if (typeof showToast === 'function') {
+        showToast('Polish failed: ' + err + '. CLI: ' + cmd, 'warn');
+      } else {
+        alert('Polish failed: ' + err + NL + NL + 'To run from CLI:' + NL + cmd);
+      }
+      if (btn) { btn.disabled = false; btn.textContent = 'Polish'; }
+    }
+  } catch (e) {
+    if (typeof showToast === 'function') {
+      showToast('Polish API call failed: ' + e.message, 'warn');
+    } else {
+      alert('Polish API call failed: ' + e.message);
+    }
+    if (btn) { btn.disabled = false; btn.textContent = 'Polish'; }
+  }
+}
+window.runPolishFromPicker = runPolishFromPicker;
 
 function _intelRenderModalError(modal, backdrop, msg) {
   let h = '<div style="padding:24px"><h2 style="margin:0 0 10px;font-size:15px">Pop-out data unavailable</h2>';

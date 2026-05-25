@@ -222,14 +222,17 @@ function canonicalCoherence() {
     });
 
     check('T2.a runPolishPack completed', result?.ok === true, { ok: result?.ok });
-    // Only cv should have run polish (cost-warn fires after cv completes)
-    check('T2.b polishArtifact called only once (cv-tailored)', callsObserved.length === 1 && callsObserved[0] === 'cv-tailored', { callsObserved });
+    // Post-PR-#200 (bug-2026-05-25-022): cost-warn is informational only — does
+    // NOT force-abandon remaining artifacts. All 3 artifacts run regardless of
+    // the $5 threshold being crossed by cv-tailored. The real runaway guards
+    // are POLISH_MAX_ROUNDS=6 (per-artifact) and POLISH_COST_CAP_USD=500 (per-pack).
+    check('T2.b polishArtifact called for all 3 artifacts (cost-warn does not block)', callsObserved.length === 3, { callsObserved });
 
     const finalSummary = JSON.parse(readFileSync(tp.summaryPath, 'utf-8'));
     check('T2.c cv-tailored has its real polish result', finalSummary.artifacts['cv-tailored']?.abandoned === true && finalSummary.artifacts['cv-tailored']?.abandon_reason === 'max-rounds-exceeded', finalSummary.artifacts['cv-tailored']);
-    check('T2.d cover-letter abandoned via cost-warn (not started)', finalSummary.artifacts['cover-letter']?.abandoned === true && finalSummary.artifacts['cover-letter']?.abandon_reason === 'cost-warn-threshold', finalSummary.artifacts['cover-letter']);
-    check('T2.e form-fields abandoned via cost-warn (not started)', finalSummary.artifacts['form-fields']?.abandoned === true && finalSummary.artifacts['form-fields']?.abandon_reason === 'cost-warn-threshold', finalSummary.artifacts['form-fields']);
-    check('T2.f cost-warn artifacts have rounds_used=0 (didn\'t run)', finalSummary.artifacts['cover-letter']?.rounds_used === 0 && finalSummary.artifacts['form-fields']?.rounds_used === 0, { cover: finalSummary.artifacts['cover-letter']?.rounds_used, form: finalSummary.artifacts['form-fields']?.rounds_used });
+    check('T2.d cover-letter ran + abandoned via max-rounds (not cost-warn)', finalSummary.artifacts['cover-letter']?.abandoned === true && finalSummary.artifacts['cover-letter']?.abandon_reason === 'max-rounds-exceeded', finalSummary.artifacts['cover-letter']);
+    check('T2.e form-fields ran + abandoned via max-rounds (not cost-warn)', finalSummary.artifacts['form-fields']?.abandoned === true && finalSummary.artifacts['form-fields']?.abandon_reason === 'max-rounds-exceeded', finalSummary.artifacts['form-fields']);
+    check('T2.f all artifacts have rounds_used > 0 (ran despite cost-warn)', finalSummary.artifacts['cover-letter']?.rounds_used > 0 && finalSummary.artifacts['form-fields']?.rounds_used > 0, { cover: finalSummary.artifacts['cover-letter']?.rounds_used, form: finalSummary.artifacts['form-fields']?.rounds_used });
   } finally {
     cleanupTestPack(tp);
   }

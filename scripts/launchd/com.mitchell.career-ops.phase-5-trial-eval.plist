@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.mitchell.career-ops.phase-5-trial-eval — one-time evaluation of the
+  Phase 5 ledger-summary-injection hook 4-week trial.
+
+  Trial start: 2026-05-25 (PR #211 merge)
+  Trial end / eval fire: 2026-06-22 09:00 PT
+
+  Output: data/phase-5-trial-eval-<DATE>.md
+
+  Belt-and-suspenders partner: /schedule remote agent fires the same day
+  (Claude-native cron). Either trigger generates the eval; Mitchell reviews.
+
+  After the eval fires on 2026-06-22, this plist can be safely unloaded +
+  removed. The script is idempotent so accidental re-runs are no-ops.
+
+  Per CLAUDE.md § Tahoe launchd KeepAlive bug — logs MUST live outside
+  ~/Documents/ to avoid the sandbox issue.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.mitchell.career-ops.phase-5-trial-eval</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/mitchellwilliams/.nvm/versions/node/v24.14.0/bin/node</string>
+    <string>/Users/mitchellwilliams/Documents/career-ops/scripts/agents/phase-5-trial-eval.mjs</string>
+    <string>--check</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/mitchellwilliams/Documents/career-ops</string>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Month</key>
+    <integer>6</integer>
+    <key>Day</key>
+    <integer>22</integer>
+    <key>Hour</key>
+    <integer>9</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>KeepAlive</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/mitchellwilliams/Library/Logs/career-ops/phase-5-trial-eval.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/mitchellwilliams/Library/Logs/career-ops/phase-5-trial-eval.err</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/mitchellwilliams/.nvm/versions/node/v24.14.0/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+</dict>
+</plist>

@@ -616,12 +616,85 @@ export async function runCvTailor(input) {
   // because only the bullets get submitted to employers. The summary is
   // internal diagnostic metadata and should not inflate the AI-risk score.
   const bulletsOnlyText = parsed.tailored_bullets.map(b => `- ${b.text}`).join('\n');
-  const humanize = runHumanizeCheckText(bulletsOnlyText);
-  const humanizeScore = typeof humanize.score === 'number' ? humanize.score : 0;
+  let humanize = runHumanizeCheckText(bulletsOnlyText);
+  let humanizeScore = typeof humanize.score === 'number' ? humanize.score : 0;
+  let humanizeAutoRetryAttempted = false;
+  let humanizeAutoRetryReason = null;
 
+  if (humanizeScore > 20) {
+    // Auto-retry on humanize-check trip — one shot. Humanize-check is a
+    // stochastic guard against LLM-style phrasing; a single resample usually
+    // clears it. Tradeoff: +1 LLM call (~$0.025) for a much smoother UX
+    // (no spurious failure widget when the next sampling would have passed).
+    // Implemented 2026-05-24. If the retry also trips, surface the failure
+    // with both scores in the error message so the user knows we tried.
+    humanizeAutoRetryAttempted = true;
+    try {
+      const retryCouncil = await callCouncil({
+        prompt: userPrompt,
+        models: [modelKey],
+        opts: { timeoutMs: 180000, systemPrompt: SYSTEM_PROMPT, maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
+      });
+      const retryLlm = retryCouncil.results?.[0];
+      if (!retryLlm || retryLlm.error) {
+        humanizeAutoRetryReason = `retry LLM call failed: ${retryLlm?.error || 'no result'}`;
+      } else {
+        const addTok = retryLlm.tokens || 0;
+        tokensUsed.input  += Math.round(addTok * 0.85);
+        tokensUsed.output += Math.round(addTok * 0.15);
+
+        let retryParsed = null;
+        try {
+          retryParsed = CvTailorLlmResponseSchema.parse(JSON.parse(extractJson(retryLlm.content)));
+        } catch (parseErr) {
+          humanizeAutoRetryReason = `retry parse failed: ${String(parseErr.message || parseErr).slice(0, 200)}`;
+        }
+
+        if (retryParsed) {
+          // Apply same cv_ref correction logic as section 6 to the retry output.
+          const retryCorrectedBullets = retryParsed.tailored_bullets.map((b) => {
+            const ref = b.cv_ref || '';
+            if (!ref || preambleRefs.has(ref)) return b;
+            const rankIdx = typeof b.original_rank === 'number' ? b.original_rank - 1 : -1;
+            const correctRef = rankIdx >= 0 && rankIdx < rankedBullets.length
+              ? rankedBullets[rankIdx].cv_ref
+              : rankedBullets[0]?.cv_ref || '';
+            return { ...b, cv_ref: correctRef };
+          });
+          const retryBulletsText = retryCorrectedBullets.map(b => `- ${b.text}`).join('\n');
+          const retryHumanize = runHumanizeCheckText(retryBulletsText);
+          const retryScore = typeof retryHumanize.score === 'number' ? retryHumanize.score : 0;
+
+          if (retryScore <= 20) {
+            // Retry succeeded — replace parsed + overwrite artifact + update
+            // downstream variables so sections 8-9 see the retry state.
+            parsed = { ...retryParsed, tailored_bullets: retryCorrectedBullets };
+            const retryMarkdown = buildMarkdownArtifact(parsed, company, role);
+            writeFileSync(artifactPath, retryMarkdown, 'utf-8');
+            humanize = retryHumanize;
+            humanizeScore = retryScore;
+            humanizeAutoRetryReason = `succeeded on retry: score went from ${typeof humanizeScore === 'number' ? '?' : '?'} to ${retryScore}`;
+            // Note: humanizeScore is now the retry score, so downstream branch
+            // (humanizeScore > 20) is false and we fall through normally.
+          } else {
+            humanizeAutoRetryReason = `retry also tripped humanize-check: score ${retryScore} (${retryHumanize.risk})`;
+          }
+        }
+      }
+    } catch (retryErr) {
+      humanizeAutoRetryReason = `retry threw: ${String(retryErr.message || retryErr).slice(0, 200)}`;
+    }
+  }
+
+  // Re-evaluate humanize gate AFTER possible retry. If retry succeeded above,
+  // humanizeScore was lowered; if retry failed or wasn't attempted with a clean
+  // first-pass, this branch is skipped.
   if (humanizeScore > 20) {
     // Flag the phrases but do NOT delete the artifact — return error with detail
     const flaggedPhrases = humanize.checks?.phrases?.hits?.map(h => h.label || h).join(', ') || 'see humanize-check output';
+    const retrySuffix = humanizeAutoRetryAttempted
+      ? ` Auto-retry attempted: ${humanizeAutoRetryReason || 'unknown'}.`
+      : '';
     return {
       stage: STAGE,
       status: 'error',
@@ -639,8 +712,9 @@ export async function runCvTailor(input) {
         cost_estimate_usd: estimateCostUsd(tokensUsed),
         tokens_used: tokensUsed,
         model_used: modelUsed,
+        humanize_auto_retry_attempted: humanizeAutoRetryAttempted,
       },
-      error: `humanize-check failed: score ${humanizeScore} > 20 (${humanize.risk}). Flagged: ${flaggedPhrases}`,
+      error: `humanize-check failed: score ${humanizeScore} > 20 (${humanize.risk}). Flagged: ${flaggedPhrases}.${retrySuffix}`,
     };
   }
 
@@ -779,6 +853,7 @@ export async function runCvTailor(input) {
         gptzero: apiDetection?.gptzero_signal_quality ?? null,
         originality: apiDetection?.originality_signal_quality ?? null,
       },
+      humanize_auto_retry_attempted: humanizeAutoRetryAttempted,
     },
     error: null,
   };

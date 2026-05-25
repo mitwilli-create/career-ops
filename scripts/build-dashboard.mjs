@@ -20142,15 +20142,34 @@ function _tpSetFailedStageDetail(stageId, rawError) {
     ? window._bsTranslateError(rawError) : ('Error: ' + String(rawError || '').slice(0, 120));
   var fix = (typeof window._bsFixGuidance === 'function')
     ? window._bsFixGuidance(rawError) : '';
-  // Per-artifact-specific guidance overlay. The stage-id-keyed guidance
-  // wins when present, otherwise we fall through to the generic fix.
-  var artifactHints = {
-    'cv-tailor':    'CV tailor failed. Check cv.md for unescaped Typst characters (< > $) — see escape-typst troubleshooting in scripts/render-cv-typst.mjs.',
-    'cover-letter': 'Cover letter generation failed. Check that cv.md + the JD parse both loaded — server logs will show the exact stage that errored.',
-    'linkedin-dm':  'LinkedIn DM generation failed. Common cause: corpus index lookup empty for this company. Run /intel-refresh on this row first.',
-    'form-fields':  'Form-fields agent failed. The JD may not contain a parseable application form. Check data/apply-now-queue.json for the canonical URL.',
-  };
-  var artifactHint = artifactHints[stageId] || '';
+  // Per-artifact hints are CONDITIONAL on the raw error matching a known
+  // pattern. The previous version (pre-2026-05-24) surfaced a stage-keyed
+  // hint unconditionally, which produced misleading guidance like "Check
+  // cv.md for unescaped Typst characters" on every cv-tailor failure —
+  // including humanize-check trips, LLM timeouts, API key shadows where the
+  // Typst hint was irrelevant. Only emit the hint when the rawError text
+  // actually corroborates it.
+  var rawStr = String(rawError == null ? '' : rawError);
+  var artifactHint = '';
+  if (stageId === 'cv-tailor') {
+    if (/typst|unclosed delimiter|escape|render-cv-typst/i.test(rawStr)) {
+      artifactHint = 'CV tailor failed on Typst rendering. Check cv.md for unescaped Typst characters (< > $) — see escape-typst troubleshooting in scripts/render-cv-typst.mjs.';
+    } else if (/humanize-check/i.test(rawStr)) {
+      artifactHint = 'CV tailor output failed the humanize-check guard (LLM-style phrasing detected). Click Regenerate — the next attempt usually clears it.';
+    } else if (/AI detection gate/i.test(rawStr)) {
+      artifactHint = 'CV tailor output was blocked by the AI-detection gate after retries. Review the bullet ledger and edit flagged sentences, or click Regenerate.';
+    } else if (/LLM call failed|LLM error/i.test(rawStr)) {
+      artifactHint = 'CV tailor LLM call failed. Could be a transient API timeout, rate limit, or key issue. Click Regenerate; if it repeats, check data/logs/dashboard-server.log.';
+    } else if (/cv\.md.*not found|parsed 0 bullets/i.test(rawStr)) {
+      artifactHint = 'CV tailor could not read cv.md or parsed zero bullets. Confirm cv.md exists at repo root and uses "- " bullet markers.';
+    }
+  } else if (stageId === 'cover-letter' && /LLM|timeout|rate.?limit/i.test(rawStr)) {
+    artifactHint = 'Cover letter LLM call failed. Click Regenerate; if it repeats, check data/logs/dashboard-server.log.';
+  } else if (stageId === 'linkedin-dm' && /corpus|empty/i.test(rawStr)) {
+    artifactHint = 'LinkedIn DM generation failed: corpus index lookup empty for this company. Run /intel-refresh on this row first.';
+  } else if (stageId === 'form-fields' && /(ENOENT|parse|JD)/i.test(rawStr)) {
+    artifactHint = 'Form-fields agent failed. The JD may not contain a parseable application form. Check data/apply-now-queue.json for the canonical URL.';
+  }
   function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
   host.innerHTML = '<div class="tp-failure-widget" style="border:1px solid var(--red-fg, #dc2626);border-radius:6px;padding:10px 12px;background:rgba(220,38,38,0.06);font-size:12.5px;line-height:1.5;color:var(--text-1)">'
     + '<div style="font-weight:700;color:var(--red-fg,#dc2626);margin-bottom:4px">'
@@ -20423,7 +20442,17 @@ async function tonightPickCreateMaterials() {
         _tpStopStageTimer(stageId, 'failed');
         stageStates[stageId] = 'failed';
         _tpRenderStages(stageStates);
-        _tpSetFailedStageDetail(stageId, String(data.error || resp.status));
+        // Defense-in-depth: prefer top-level data.error, then nested
+        // data.result.error (legacy shape before 2026-05-24 server fix),
+        // then a descriptive HTTP-status string. Never surface a raw status
+        // code as if it were an error message — the previous behavior
+        // produced "Error: 200" when the API returned 200 with ok:false
+        // and no error field at top level. See dashboard-server.mjs
+        // /api/build-pack-stage for the canonical error shape.
+        var realError = (data && data.error)
+          || (data && data.result && data.result.error)
+          || ('HTTP ' + resp.status + ' (no error message in response body)');
+        _tpSetFailedStageDetail(stageId, String(realError));
         _tpSetFooterRetry(stageId, rowNum);
         failedStage = stageId;
         break;
@@ -25212,8 +25241,22 @@ function _bsEsc(s) {
 // ([0-9], [a-zA-Z], [ ]) instead of shorthand classes, and skipping word
 // boundaries (substring match is good enough for error keyword detection).
 function _bsTranslateError(raw) {
-  if (!raw) return 'Unknown error — check logs for details.';
+  if (!raw) return 'Unknown error — check data/logs/dashboard-server.log for details.';
   var s = String(raw);
+  // humanize-check fired in cv-tailor — surface the actual score so the
+  // user knows what tier (MEDIUM/HIGH/CRIT) tripped the guard.
+  // NOTE: regex uses character classes [(] [)] instead of escaped \\( \\)
+  // because this function lives inside the outer-template-unescape danger
+  // zone — see AGENTS.md § outer-template-unescape. Double-backslashes get
+  // stripped by the outer template literal + non-strict JS string parser,
+  // converting \\( to ( which becomes a capture group start. Character
+  // classes survive the unescape intact.
+  var humCheck = s.match(new RegExp('humanize-check failed: score[ ]+([0-9]+)[^(]*[(]([A-Z]+)[)]', 'i'));
+  if (humCheck) {
+    var hScore = parseInt(humCheck[1], 10) || 0;
+    var hBand  = humCheck[2] || 'MEDIUM';
+    return 'Humanize-check tripped: bullet text scored ' + hScore + ' (' + hBand + ' band, > 20 threshold). The LLM output had phrasing that pattern-matched as AI-written. Click Regenerate — the next attempt usually clears it.';
+  }
   // band crit / band X flagged — AI-detection language. Translate first
   // so the broader 'flagged' pattern below does not swallow it.
   var bandFlagged = s.match(new RegExp('band[ ]+[a-z]+[ ]*[-—:][ ]*([0-9]+)[ ]+flagged', 'i'));
@@ -25270,8 +25313,10 @@ function _bsTranslateError(raw) {
 // Fix-guidance text for a raw batch error. Keys mirror _bsTranslateError
 // patterns so the user sees what to DO, not just what went wrong.
 function _bsFixGuidance(raw) {
-  if (!raw) return 'Check data/errors.log for the full stack trace.';
+  if (!raw) return 'Check data/logs/dashboard-server.log for the full stack trace.';
   var s = String(raw);
+  if (new RegExp('humanize-check failed', 'i').test(s))
+    return '1. Click Regenerate — humanize-check trips are often resolved on the next sampling pass. 2. If it repeats 3+ times, open data/apply-packs/<pack>/cv-tailored.md and edit the flagged bullets to be more concrete (specific tools / metrics / outcomes). 3. Re-run the stage.';
   if (new RegExp('timeout|ETIMEDOUT|ECONNRESET|aborted', 'i').test(s))
     return '1. Wait 30 seconds for any pending connections to drain. 2. Click "Run Batch" again. 3. If it repeats more than twice, reduce the batch size to 10 items.';
   if (new RegExp('rate.?limit|429|quota.?(exceed|reached)', 'i').test(s))
@@ -25281,7 +25326,7 @@ function _bsFixGuidance(raw) {
   if (new RegExp('ENOENT|no such file|cannot find module', 'i').test(s))
     return '1. Identify the missing file from the error. 2. Re-run /apply-pack-polish for that row to regenerate. 3. If it is a script file, run npm install / git status to spot a missing dep.';
   if (new RegExp('JSON|SyntaxError|parse', 'i').test(s))
-    return '1. Retry — most parse failures are transient model output drift. 2. If retry fails, capture the raw response from data/errors.log and check for trailing markdown fences.';
+    return '1. Retry — most parse failures are transient model output drift. 2. If retry fails, capture the raw response from data/logs/dashboard-server.log and check for trailing markdown fences.';
   if (new RegExp('memory|heap|OOM|out of memory', 'i').test(s))
     return '1. Reduce batch size to 10 items. 2. Close other heavy processes (Chrome tabs with screenshots). 3. If still failing, restart node + dashboard server.';
   if (new RegExp('network|ENOTFOUND|DNS|EHOSTUNREACH', 'i').test(s))
@@ -25294,7 +25339,7 @@ function _bsFixGuidance(raw) {
     return '1. Wait 1 minute for the upstream API to recover. 2. Retry. 3. If sustained, the provider may have an incident — check their status page.';
   if (new RegExp('band[ ]+[a-z]+[ ]*[-—:][ ]*[0-9]+[ ]+flagged|[0-9]+[ ]+flagged', 'i').test(s))
     return '1. Open the affected artifact (cover-letter.md / cv-tailored.md). 2. Rewrite the highlighted sentences in your own voice. 3. Re-run /apply-pack-polish for that row.';
-  return 'No automated fix available. Check data/errors.log for the full context, or paste the raw error into the Claude Code prompt for diagnosis.';
+  return 'No automated fix available. Check data/logs/dashboard-server.log for the full context, or paste the raw error into the Claude Code prompt for diagnosis.';
 }
 // Closure E (2026-05-22): expose to window so the apply-pack creation
 // failure widget at _tpSetFailedStageDetail can reach these helpers.

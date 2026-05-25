@@ -7638,10 +7638,28 @@ const server = createServer((req, res) => {
         // don't get reported as ok=true.
         const apiDet = result?.output?.api_detection ?? null;
         const editingPriority = computeEditingPriority(apiDet, result);
+        const isError = result?.status === 'error';
+        if (isError) {
+          const errMsg = result?.error || '(no error message on result)';
+          _d25Log(`[build-pack-stage] stage=${stage} rowId=${rowId} status=error: ${errMsg}`);
+          // Also append a parser-formatted line to data/errors.log so the
+          // existing batch-failures widget (parseErrorLine at line ~222) +
+          // system-health tail come back to life. Best-effort: never throw
+          // out of an error-logging path.
+          try {
+            const errLogLine = `[${new Date().toISOString()}] BUILDPACK FAIL id=${rowId} exit=1: ${stage}: ${String(errMsg).replace(/\r?\n/g, ' ').slice(0, 400)}\n`;
+            appendFileSync(join(ROOT, 'data/errors.log'), errLogLine);
+          } catch (_) { /* logging errors must never break the response */ }
+        }
         const respPayload = {
-          ok: result?.status !== 'error',
+          ok: !isError,
           stage,
           rowId,
+          // Hoist agent error to top-level so the client doesn't need to dig
+          // into result.error. Prevents the "Error: 200" UX bug where the
+          // client's `data.error || resp.status` fallback surfaced HTTP 200
+          // as if it were the error code.
+          error: isError ? (result?.error || 'agent returned status=error with no message') : null,
           result,
           // top-level convenience fields read by build-dashboard.mjs client code
           ai_detection_failed: apiDet?.gateBlocks === true,

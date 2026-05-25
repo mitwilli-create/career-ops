@@ -20,12 +20,18 @@ const CACHE_DIR = join(ROOT, 'data', 'strategy-cache');
 // Use a separate test cache dir to avoid polluting real data
 const TEST_CACHE_SUFFIX = '-test-' + Date.now();
 
+// 2026-05-25 popout-action-completed-mode — the legacy actions[] tests below
+// run under env='0' (legacy mode). A new describe block at the bottom tests
+// the new evidence[]/open_gaps[] schema under env='1' (data-first mode).
+process.env.POPOUT_DATA_FIRST_MODE = '0';
+
 import {
   computeStrategyCeiling,
   getCachedStrategy,
   forceRefresh,
   renderStrategyCard,
   buildCacheKey,
+  currentPopoutMode,
 } from '../../lib/strategy-ceiling.mjs';
 
 // ── Mock LLM client factory ─────────────────────────────────────────────────
@@ -137,7 +143,9 @@ describe('computeStrategyCeiling — mock LLM client', () => {
     });
     assert.equal(result._degraded, true, 'should be degraded');
     assert.ok(Array.isArray(result.actions));
-    assert.ok(result.actions.length >= 3);
+    // GAMMA fix 2026-05-19: degraded path emits ONE honest "unavailable" action
+    // (not the 3 generic actions with fabricated lift numbers from pre-fix).
+    assert.ok(result.actions.length >= 1, 'degraded path emits at least 1 action');
   });
 
   test('falls back to degraded result when LLM schema is invalid', async () => {
@@ -305,5 +313,176 @@ describe('renderStrategyCard', () => {
     };
     const html = renderStrategyCard(result);
     assert.ok(html.includes('story-bank.md'), 'should include corpus_ref');
+  });
+});
+
+// ── DATA-FIRST MODE — 2026-05-25 popout-action-completed-mode refactor ───────
+//
+// New schema: evidence[] (what's on disk) + open_gaps[] (what's missing +
+// suggested_agent). Mode dispatched via POPOUT_DATA_FIRST_MODE env (default
+// '1'); the existing tests above force '0' for legacy. This block runs under '1'.
+
+describe('computeStrategyCeiling — data-first mode (POPOUT_DATA_FIRST_MODE=1)', () => {
+  let originalEnv;
+  beforeEach(() => { originalEnv = process.env.POPOUT_DATA_FIRST_MODE; process.env.POPOUT_DATA_FIRST_MODE = '1'; });
+  afterEach(() => { if (originalEnv == null) delete process.env.POPOUT_DATA_FIRST_MODE; else process.env.POPOUT_DATA_FIRST_MODE = originalEnv; });
+
+  test('currentPopoutMode reports "data-first" when env=1', () => {
+    assert.equal(currentPopoutMode(), 'data-first');
+  });
+
+  test('currentPopoutMode reports "legacy" when env=0', () => {
+    process.env.POPOUT_DATA_FIRST_MODE = '0';
+    assert.equal(currentPopoutMode(), 'legacy');
+  });
+
+  test('dry mode returns evidence[]+open_gaps[] stub with _mode flag', async () => {
+    const result = await computeStrategyCeiling({
+      rowId: 200,
+      role: 'AI PgM',
+      company: 'Anthropic',
+      metricKey: 'alignment',
+      currentValue: 45,
+      opts: { dry: true },
+    });
+    assert.equal(result._dry, true);
+    assert.equal(result._mode, 'data-first');
+    assert.ok(Array.isArray(result.evidence));
+    assert.ok(Array.isArray(result.open_gaps));
+    assert.ok(result.evidence.length + result.open_gaps.length >= 1);
+    // Should NOT have legacy actions[] field
+    assert.equal(result.actions, undefined);
+  });
+
+  test('mock LLM emitting data-first shape passes validation + writes cache', async () => {
+    const dataFirstClient = {
+      call: async () => JSON.stringify({
+        current: 45,
+        ceiling: 75,
+        gap_pct: 30,
+        evidence: [
+          { what_data: 'cv.md frontend-comms section', what_it_reveals: 'Mitchell has 4 years of AI-aligned comms experience at Anthropic-adjacent orgs.', source_path: 'cv.md', source_date: '2026-05-24', confidence: 'high' },
+          { what_data: 'hm-intel: Sarah Chen LinkedIn 2026-04', what_it_reveals: 'HM posts about AI-PgM hires emphasizing scrappy execution.', source_path: 'data/hm-intel/anthropic-ai-pgm.json', confidence: 'medium' },
+        ],
+        open_gaps: [
+          { what_is_missing: 'apply-pack tailored to this JD', why_it_matters: 'Cover letter currently uses generic framing — should mirror Sarah Chen post language.', suggested_agent: 'build-apply-pack', est_cost_usd: 0.35 },
+        ],
+        reasoning: 'Strong fit; gap is in artifact polish not in candidate-evidence.',
+      }),
+    };
+    const result = await computeStrategyCeiling({
+      rowId: 201,
+      role: 'AI PgM',
+      company: 'Anthropic',
+      metricKey: 'alignment',
+      currentValue: 45,
+      opts: { llmClient: dataFirstClient, maxAgeMs: 0 },
+    });
+    assert.equal(result._mode, 'data-first');
+    assert.equal(result.current, 45);
+    assert.equal(result.ceiling, 75);
+    assert.ok(Array.isArray(result.evidence));
+    assert.equal(result.evidence.length, 2);
+    assert.equal(result.evidence[0].source_path, 'cv.md');
+    assert.ok(Array.isArray(result.open_gaps));
+    assert.equal(result.open_gaps[0].suggested_agent, 'build-apply-pack');
+    // Should NOT have legacy actions[] field
+    assert.equal(result.actions, undefined);
+  });
+
+  test('validator rejects data-first response when evidence+gaps total is 0', async () => {
+    const emptyClient = {
+      call: async () => JSON.stringify({
+        current: 50,
+        ceiling: 80,
+        gap_pct: 30,
+        evidence: [],
+        open_gaps: [],
+        reasoning: 'Empty.',
+      }),
+    };
+    const result = await computeStrategyCeiling({
+      rowId: 202,
+      role: 'AI Architect',
+      company: 'OpenAI',
+      metricKey: 'interview_likelihood',
+      currentValue: 50,
+      opts: { llmClient: emptyClient, maxAgeMs: 0 },
+    });
+    // Validator rejects → 2 attempts fail → degraded
+    assert.equal(result._degraded, true);
+    assert.equal(result._mode, 'data-first');
+    assert.ok(Array.isArray(result.evidence));
+    assert.ok(Array.isArray(result.open_gaps));
+    // Degraded path emits one honest open_gap explaining the LLM didn't respond
+    assert.ok(result.open_gaps.length >= 1);
+  });
+
+  test('cache key includes mode discriminator (data-first vs legacy)', async () => {
+    const dataFirstClient = {
+      call: async () => JSON.stringify({
+        current: 60,
+        ceiling: 85,
+        gap_pct: 25,
+        evidence: [{ what_data: 'X', what_it_reveals: 'Y', source_path: 'cv.md', confidence: 'medium' }],
+        open_gaps: [{ what_is_missing: 'X', why_it_matters: 'Y', suggested_agent: 'intel-refresh', est_cost_usd: 1.0 }],
+      }),
+    };
+    const result = await computeStrategyCeiling({
+      rowId: 300,
+      role: 'CacheModeRole',
+      company: 'CacheModeCo',
+      metricKey: 'alignment',
+      currentValue: 60,
+      opts: { llmClient: dataFirstClient, maxAgeMs: 60_000 },
+    });
+    assert.ok(result.cache_key.endsWith('-data-first'), `cache_key should embed mode, got: ${result.cache_key}`);
+  });
+
+  test('renderStrategyCard auto-dispatches data-first shape', () => {
+    const result = {
+      current: 45,
+      ceiling: 75,
+      gap_pct: 30,
+      evidence: [
+        { what_data: 'cv.md AI-comms section', what_it_reveals: 'Mitchell ran AI-bot comms at WDRB.', source_path: 'cv.md', source_date: '2026-05-24', confidence: 'high' },
+      ],
+      open_gaps: [
+        { what_is_missing: 'apply pack', why_it_matters: 'No cover letter yet.', suggested_agent: 'build-apply-pack', est_cost_usd: 0.35 },
+      ],
+      _mode: 'data-first',
+    };
+    const html = renderStrategyCard(result);
+    assert.ok(typeof html === 'string');
+    assert.ok(html.includes('cv.md'), 'should cite source path');
+    assert.ok(html.includes('AI-bot comms'), 'should include evidence synthesis');
+    assert.ok(html.includes('apply pack'), 'should include open gap');
+    assert.ok(html.includes('build-apply-pack'), 'should show suggested_agent in button');
+    assert.ok(html.includes('strategy-card--data-first'), 'should tag the card with data-first class');
+  });
+
+  test('renderStrategyCard data-first auto-detects via evidence[] presence even without _mode flag', () => {
+    const result = {
+      current: 50,
+      ceiling: 80,
+      gap_pct: 30,
+      evidence: [{ what_data: 'X', what_it_reveals: 'Y', source_path: 'cv.md', confidence: 'medium' }],
+      open_gaps: [],
+    };
+    const html = renderStrategyCard(result);
+    assert.ok(html.includes('strategy-card--data-first'), 'should detect data-first shape from evidence[] presence');
+  });
+
+  test('renderStrategyCard surfaces noContent block when both arrays empty', () => {
+    const result = {
+      current: 50,
+      ceiling: 80,
+      gap_pct: 30,
+      evidence: [],
+      open_gaps: [],
+      _mode: 'data-first',
+    };
+    const html = renderStrategyCard(result);
+    assert.ok(html.includes('No evidence cited'), 'noContent block should surface');
   });
 });

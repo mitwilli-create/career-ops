@@ -151,7 +151,7 @@ function extractJson(content) {
   return null;
 }
 
-function buildResearchPrompt({ company, role, num, cvSnippet, articleSnippet, reportSnippet, hmIntel, jdSnippet }) {
+function buildResearchPrompt({ company, role, num, cvSnippet, articleSnippet, reportSnippet, hmIntel, jdSnippet, packArtifacts, teamHealth }) {
   const lines = [
     `# Task — assess Mitchell Williams's INTERVIEW LIKELIHOOD for a specific role`,
     ``,
@@ -160,6 +160,10 @@ function buildResearchPrompt({ company, role, num, cvSnippet, articleSnippet, re
     ``,
     `Your job: estimate the realistic interview likelihood (0-100%) and back it with corpus-grounded evidence.`,
     `Be honest, not optimistic. Cite specific lines from cv.md, article-digest.md, the JD, or hm-intel in every claim.`,
+    ``,
+    `# 2026-05-25 popout-action-completed-mode — DATA-FIRST behavior`,
+    ``,
+    `Beyond the headline likelihood_pct, you MUST also surface what's ALREADY on disk (evidence[]) and what's HONESTLY MISSING (open_gaps[]). The Mitchell-facing popout renders evidence + open_gaps as the primary content; "Run X agent" suggestions belong in open_gaps[].suggested_agent, NOT scattered across reason_bullets[]. Lead with what the system already knows.`,
     ``,
     `# Mitchell's CV (cv.md, top 6000 chars)`,
     cvSnippet || '(empty)',
@@ -175,6 +179,12 @@ function buildResearchPrompt({ company, role, num, cvSnippet, articleSnippet, re
     ``,
     `# HM intel (synthesized from council research, top 5000 chars)`,
     hmIntel || '(no HM intel)',
+    ``,
+    `# Apply-pack artifacts on disk (read at popout-request time)`,
+    packArtifacts || '(no apply-pack files yet — gap: build-apply-pack would create cv-tailored.md + cover-letter.md + polish-summary.json)',
+    ``,
+    `# Team health intel (data/team-health/<company-slug>.json)`,
+    teamHealth || '(no team-health snapshot — gap: team-health-scrapers would Glassdoor/Indeed/Blind/Levels.fyi)',
     ``,
     `# Output — STRICT JSON, first char "{", last char "}". No markdown, no preamble, no code fences.`,
     ``,
@@ -195,13 +205,36 @@ function buildResearchPrompt({ company, role, num, cvSnippet, articleSnippet, re
     `    "<plain-language reason with [cv.md:N] / [article-digest.md:N] / [hm-intel] citation>",`,
     `    ...   // 3-5 items`,
     `  ],`,
-    `  "rationale": "<2-3 sentence justification of the percentage>"`,
+    `  "rationale": "<2-3 sentence justification of the percentage>",`,
+    ``,
+    `  // 2026-05-25 popout-action-completed-mode — NEW FIELDS:`,
+    `  "evidence": [`,
+    `    {`,
+    `      "what_data": "<short name of the data point on disk (e.g. 'cv.md AI-comms section', 'hm-intel: Sarah Chen LinkedIn 2026-04', 'reports/048 alignment block')>",`,
+    `      "what_it_reveals": "<1-2 sentence synthesis of what THIS DATA reveals about likelihood at this role>",`,
+    `      "source_path": "<concrete: cv.md / article-digest.md / data/hm-intel/<slug>.json / reports/NNN-...md / data/team-health/<slug>.json / data/apply-packs/<slug>/cv-tailored.md / data/apply-packs/<slug>/cover-letter.md / data/apply-packs/<slug>/polish-orchestrator-summary.json>",`,
+    `      "source_date": "<YYYY-MM-DD when known>",`,
+    `      "confidence": "high" | "medium" | "low"`,
+    `    }`,
+    `    // 0-5 items. Cite what's ACTUALLY in the context provided. Do NOT cite a file you don't see above.`,
+    `  ],`,
+    `  "open_gaps": [`,
+    `    {`,
+    `      "what_is_missing": "<short — what data, artifact, or research is absent that would sharpen the read>",`,
+    `      "why_it_matters": "<1 sentence — why this gap reduces confidence in likelihood_pct>",`,
+    `      "suggested_agent": "<specific agent name: 'build-apply-pack' | 'apply-pack-polish' | 'intel-refresh' | 'team-health-scrapers' | 'hm-chance' | 'network-enricher' | 'cv-tailor' | 'cover-letter'>",`,
+    `      "est_cost_usd": <number — your honest cost estimate>`,
+    `    }`,
+    `    // 0-5 items. If everything needed is already on disk, emit zero gaps.`,
+    `  ]`,
     `}`,
     ``,
     `Anti-hallucination rules:`,
     `- DO NOT invent metrics, employers, or experiences not visible in the corpus.`,
     `- Cite line numbers OR file names. "cv.md" with no line is acceptable when the claim spans the whole file.`,
     `- If you can't ground a claim, drop it. Cutting beats hallucinating.`,
+    `- For evidence[], cite paths from the context above. Do NOT cite a file marked "(empty)" or "(no X)".`,
+    `- For open_gaps[], suggested_agent must be a real script name from the list above. est_cost_usd is your honest estimate.`,
     `- Calibration: 0-20% = no chance, 21-40% = unlikely, 41-60% = competitive, 61-80% = strong, 81-100% = near-certain.`,
   ];
   return lines.join('\n');
@@ -245,7 +278,30 @@ function buildAdjudicationPrompt({ company, role, num, councilResponses }) {
   lines.push(`    "corroborated": ["<claim text>"],   // 2 models`);
   lines.push(`    "cut":          ["<claim text> — reason cut"]`);
   lines.push(`  },`);
-  lines.push(`  "model_estimates": [{ "model": "...", "pct": <int>, "confidence": "..." }]`);
+  lines.push(`  "model_estimates": [{ "model": "...", "pct": <int>, "confidence": "..." }],`);
+  lines.push(``);
+  lines.push(`  // 2026-05-25 popout-action-completed-mode — adjudicated data-first fields:`);
+  lines.push(`  // Pull evidence[] from the union of all models' evidence[] arrays; keep ONLY items where`);
+  lines.push(`  // ≥2 models cited the same source_path or where 1 model cited it with confidence='high'.`);
+  lines.push(`  // For open_gaps[], the union of model gaps tells the truth — if every model flagged "no apply-pack on disk",`);
+  lines.push(`  // that's the load-bearing gap to surface (with suggested_agent='build-apply-pack').`);
+  lines.push(`  "evidence": [`);
+  lines.push(`    {`);
+  lines.push(`      "what_data": "<short>",`);
+  lines.push(`      "what_it_reveals": "<1-2 sentences>",`);
+  lines.push(`      "source_path": "<concrete path>",`);
+  lines.push(`      "source_date": "<YYYY-MM-DD or omit>",`);
+  lines.push(`      "confidence": "high" | "medium" | "low"`);
+  lines.push(`    }`);
+  lines.push(`  ],`);
+  lines.push(`  "open_gaps": [`);
+  lines.push(`    {`);
+  lines.push(`      "what_is_missing": "<short>",`);
+  lines.push(`      "why_it_matters": "<1 sentence>",`);
+  lines.push(`      "suggested_agent": "<real agent name>",`);
+  lines.push(`      "est_cost_usd": <number>`);
+  lines.push(`    }`);
+  lines.push(`  ]`);
   lines.push(`}`);
   return lines.join('\n');
 }
@@ -275,13 +331,51 @@ async function runCouncilResearch(row, opts = {}) {
     }
   }
 
+  // 2026-05-25 popout-action-completed-mode — read existing apply-pack artifacts
+  // + team-health snapshot so the LLM can SYNTHESIZE what's already on disk
+  // rather than prescribing actions for what would be on disk if the user ran
+  // every agent. Each section is small + clearly tagged so the LLM can cite
+  // source_path accurately in evidence[].
+  let packArtifacts = '';
+  if (packDir) {
+    const parts = [];
+    for (const cand of [
+      { name: 'cv-tailored.md',                limit: 2500, path: join(packDir, 'cv-tailored.md') },
+      { name: 'cover-letter.md',               limit: 2500, path: join(packDir, 'cover-letter.md') },
+      { name: 'polish-orchestrator-summary.json', limit: 2500, path: join(packDir, 'polish-orchestrator-summary.json') },
+    ]) {
+      if (existsSync(cand.path)) {
+        const content = readSafe(cand.path, cand.limit);
+        parts.push(`## ${cand.name} (top ${cand.limit} chars)\n${content}`);
+      }
+    }
+    packArtifacts = parts.length > 0 ? parts.join('\n\n') : '';
+  }
+
+  // Team-health snapshot (data/team-health/<company-slug>.json) — loaded if a
+  // prior team-health-scrapers run cached it. Synthesizer in lib/team-health.mjs
+  // produces a structured record with scores + narrative + anecdotes + flags.
+  let teamHealth = '';
+  try {
+    const companySlug = String(company || '').toLowerCase()
+      .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^\w\s-]/g, '').replace(/\s+/g, '-')
+      .replace(/--+/g, '-').replace(/^-+|-+$/g, '');
+    const thPath = join(ROOT, 'data', 'team-health', companySlug + '.json');
+    if (existsSync(thPath)) {
+      const thJson = readJsonSafe(thPath);
+      if (thJson) teamHealth = JSON.stringify(thJson, null, 2).slice(0, 3000);
+    }
+  } catch { /* soft-fail */ }
+
   emit({ slot: 'il', row: num, phase: 'council-research',
-    inputs: { cv: cvSnippet.length, article: articleSnippet.length, report: reportSnippet.length, hm: hmIntel.length, jd: jdSnippet.length },
+    inputs: { cv: cvSnippet.length, article: articleSnippet.length, report: reportSnippet.length, hm: hmIntel.length, jd: jdSnippet.length, pack: packArtifacts.length, teamHealth: teamHealth.length },
   });
 
   const prompt = buildResearchPrompt({
     company, role, num,
     cvSnippet, articleSnippet, reportSnippet, hmIntel, jdSnippet,
+    packArtifacts, teamHealth,
   });
 
   // 2026-05-23 B5 — popout grounding (locked decision #1: all 4 popouts grounded).

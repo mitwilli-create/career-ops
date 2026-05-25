@@ -7986,7 +7986,10 @@ const server = createServer((req, res) => {
   //
   // Endpoint-level dotenv re-load with override:true is belt-and-suspenders to
   // the top-of-file dotenv (B4) — preserves the existing endpoint pattern.
-  const drillPctMatch = url.match(/^\/api\/drill\/percentage\/([^/]+)\/([^/]+)$/);
+  // Path-only match; query string parsed separately so ?refresh=1 works.
+  const drillPctPath = url.split('?')[0];
+  const drillPctQuery = url.includes('?') ? url.split('?')[1] : '';
+  const drillPctMatch = drillPctPath.match(/^\/api\/drill\/percentage\/([^/]+)\/([^/]+)$/);
   if (drillPctMatch) {
     (async () => {
       try {
@@ -7998,6 +8001,10 @@ const server = createServer((req, res) => {
         const { getCachedStrategy, computeStrategyCeiling, renderStrategyCard } = await import(join(ROOT, 'lib/strategy-ceiling.mjs'));
         const rowId = decodeURIComponent(drillPctMatch[1]);
         const key   = decodeURIComponent(drillPctMatch[2]);
+        // 2026-05-25 popout-action-completed-mode — ?refresh=1 forces cache miss
+        // so the data-first gap-fallback's "Generate now" button produces a
+        // fresh synthesis. maxAgeMs=0 makes computeStrategyCeiling skip cache read.
+        const refreshRequested = /(^|&)refresh=1(&|$)/.test(drillPctQuery || '');
 
         let role = '', company = '', hmIntel = null;
         try {
@@ -8023,9 +8030,10 @@ const server = createServer((req, res) => {
         const result = await computeStrategyCeiling({
           rowId, metricKey: key, role, company,
           currentValue: null, jdText: '', hmIntel,
+          opts: refreshRequested ? { maxAgeMs: 0 } : {},
         });
         const html = renderStrategyCard(result);
-        return json({ ok: true, rowId, key, html, strategy: result });
+        return json({ ok: true, rowId, key, html, strategy: result, refresh: refreshRequested });
       } catch (err) {
         _d25Log(`[drill/percentage] ${err.message}`);
         return json({ ok: false, error: err.message }, 500);

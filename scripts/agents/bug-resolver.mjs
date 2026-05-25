@@ -42,6 +42,8 @@ import { loadUnifiedQueue, updateUnifiedEntry, entrySource } from '../../lib/bug
 // v2 PR #8: freeze enforcement + fix-log writes.
 import { isV2Frozen, getActiveFreeze } from '../../lib/v2-thrash-counter.mjs';
 import { appendV2FixLogEntry } from '../../lib/v2-fix-log.mjs';
+// v2 PR #9: unified $300/day v2 budget gate.
+import { checkV2Budget, BUDGET_USD_CAP as V2_BUDGET_CAP } from '../../lib/v2-budget.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(__filename), '..', '..');
@@ -294,11 +296,22 @@ async function main() {
     process.exit(3);
   }
 
-  // Daily cap pre-check
+  // Daily cap pre-check (per-agent: BUG_RESOLVER_DAILY_USD)
   const startSpend = getTodaySpend();
   if (startSpend >= DAILY_USD_CAP) {
     console.error(`[bug-resolver] daily cap $${DAILY_USD_CAP} already exceeded ($${startSpend.toFixed(2)} spent today). Exiting.`);
     process.exit(4);
+  }
+
+  // v2 PR #9: unified v2 pipeline budget gate (V2_BUDGET_USD, default $300).
+  // Refuses to start if combined v2 spend already exhausts the cross-agent cap.
+  if (!opts.dryRun) {
+    const v2Budget = checkV2Budget();
+    if (!v2Budget.ok) {
+      console.error(`[bug-resolver] v2 unified budget exceeded — ${v2Budget.abortReason}`);
+      process.exit(4);
+    }
+    console.log(`[bug-resolver] v2-budget: $${v2Budget.spent.toFixed(2)} of $${V2_BUDGET_CAP} spent today (${v2Budget.remaining.toFixed(2)} remaining)`);
   }
 
   const effectivePerBugCap = opts.capOverride || PER_BUG_CAP;
@@ -336,6 +349,16 @@ async function main() {
     if (currentSpend >= DAILY_USD_CAP) {
       console.log(`[bug-resolver] daily cap $${DAILY_USD_CAP} reached mid-run. Stopping at ${summary.length}/${queue.length}.`);
       break;
+    }
+
+    // v2 PR #9: unified v2 budget mid-pipeline check.
+    // Abort the loop if the unified $300/day cap is exhausted mid-run.
+    if (!opts.dryRun) {
+      const v2MidCheck = checkV2Budget();
+      if (!v2MidCheck.ok) {
+        console.warn(`[bug-resolver] v2 unified budget exhausted mid-run — ${v2MidCheck.abortReason}. Stopping at ${summary.length}/${queue.length}.`);
+        break;
+      }
     }
 
     // v2 PR #8: freeze enforcement. rg-* entries (regression-guard findings)

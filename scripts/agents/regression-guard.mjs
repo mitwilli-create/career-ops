@@ -136,6 +136,8 @@ import { appendRegressionFindings, isImmediateInvocationFinding } from '../../li
 import { spawn as spawnChild } from 'node:child_process';
 // v2 PR #8: freeze enforcement — isV2Frozen() checked before any bug-resolver spawn.
 import { isV2Frozen, getActiveFreeze } from '../../lib/v2-thrash-counter.mjs';
+// v2 PR #9: unified $300/day v2 budget gate.
+import { checkV2Budget, BUDGET_USD_CAP as V2_BUDGET_CAP } from '../../lib/v2-budget.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 
@@ -308,12 +310,23 @@ async function runScheduled({ dryRun = false } = {}) {
   log(`▶ scheduled run — ${TODAY} PT`);
   testPathEncoder();
 
-  // Daily-cap pre-check
+  // Daily-cap pre-check (per-agent: REGRESSION_GUARD_DAILY_USD)
   const cap = checkDailyCap();
   if (cap.exhausted) {
     log(`CRIT: daily cap exhausted ($${cap.spent.toFixed(4)} / $${cap.cap}) — no-op`);
     return { ok: false, reason: 'daily_cap_exhausted' };
   }
+
+  // v2 PR #9: unified v2 pipeline budget gate (V2_BUDGET_USD, default $300).
+  // Refuses to start if the combined regression-guard + bug-resolver + verify
+  // spend for today already exceeds the unified cap. This is a cross-agent
+  // cap — distinct from the per-agent regression-guard cap above.
+  const v2Budget = checkV2Budget();
+  if (!v2Budget.ok) {
+    log(`CRIT: v2 unified budget exceeded — ${v2Budget.abortReason}`);
+    return { ok: false, reason: 'v2_budget_exhausted' };
+  }
+  log(`v2-budget: $${v2Budget.spent.toFixed(2)} of $${V2_BUDGET_CAP} spent today (${v2Budget.remaining.toFixed(2)} remaining)`);
 
   // Canary suite — REQUIRED before any real detection
   const canaryResults = runCanarySuite();

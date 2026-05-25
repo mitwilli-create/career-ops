@@ -444,7 +444,7 @@ function readPriorEveningArchiveSummary() {
 }
 
 // ── Generate the evening markdown body ────────────────────────────────────
-function generateEveningMarkdownBody() {
+async function generateEveningMarkdownBody() {
   const lines = [];
   lines.push(`_Generated: ${new Date().toISOString()}_`);
   lines.push('');
@@ -632,6 +632,70 @@ function generateEveningMarkdownBody() {
   if (!renderedRejectedPattern) {
     lines.push(`_— end of digest · all systems running unattended ·_`);
     lines.push('');
+  }
+
+  // ── SECTION 8: v2 auto-fix activity (PR #6 of 10, 2026-05-25) ───────────
+  // Reads data/v2-fix-log.jsonl (written by lib/v2-fix-log.mjs, PR #7).
+  // Gracefully returns empty section if the file is absent (pre-PR-#7).
+  // Surfaces freeze state from lib/v2-thrash-counter.mjs (PR #5).
+  {
+    let v2Lines = [];
+    try {
+      // Lazy imports so this section fails gracefully before PR #5 / #7 land.
+      const { isV2Frozen, getActiveFreeze } = await import('../lib/v2-thrash-counter.mjs').catch(() => ({}));
+      const { readLast24hEntries } = await import('../lib/v2-fix-log.mjs').catch(() => ({}));
+
+      const frozen = typeof isV2Frozen === 'function' ? isV2Frozen() : false;
+      const freeze = frozen && typeof getActiveFreeze === 'function' ? getActiveFreeze() : null;
+      const entries = typeof readLast24hEntries === 'function' ? readLast24hEntries() : [];
+
+      if (frozen && freeze) {
+        // CRIT banner at top of section — visible immediately.
+        v2Lines.push('> ⚠️ **v2 auto-fix FROZEN** until ' + freeze.frozen_until + ' due to thrash (3+ auto-reverts in 24h)');
+        v2Lines.push('');
+      }
+
+      v2Lines.push('## 🛠️ v2 Auto-Fix Activity');
+      v2Lines.push('');
+
+      if (entries.length === 0) {
+        const { autoRevertsLast24h } = await import('../lib/v2-thrash-counter.mjs').catch(() => ({}));
+        const silentAlarm = typeof autoRevertsLast24h === 'function' && autoRevertsLast24h().length === 0;
+        if (silentAlarm) {
+          v2Lines.push('_v2 + regression-guard quiet today (7d MED suspiciously-quiet alarm active)_');
+        } else {
+          v2Lines.push('_No v2 auto-fix activity in the last 24h._');
+        }
+        v2Lines.push('');
+      } else {
+        v2Lines.push('| PR | Detector | Severity | Outcome | Cost | Files | TTR |');
+        v2Lines.push('|-----|----------|----------|---------|-----:|-------|-----|');
+        for (const e of entries) {
+          const stateGlyph = { DRAFT: '📝', MERGED: '✅', VERIFIED: '✓', REVERTED: '✗' }[e.pr_state] || '?';
+          const verifyGlyph = e.verification?.overall === 'PASS' ? '✓ PASSED' : e.verification?.overall === 'FAIL' ? '✗ FAILED (auto-reverted)' : '—';
+          const costStr = typeof e.cost_usd === 'number' ? '$' + e.cost_usd.toFixed(2) : '—';
+          const ttrStr = typeof e.time_to_resolution_ms === 'number' ? Math.round(e.time_to_resolution_ms / 60000) + 'm' : '—';
+          const filesStr = Array.isArray(e.files_changed) && e.files_changed.length > 0
+            ? e.files_changed.slice(0, 3).join(', ') + (e.files_changed.length > 3 ? ' +' + (e.files_changed.length - 3) : '')
+            : '—';
+          const prLink = e.pr_url ? '[PR](' + e.pr_url + ')' : '—';
+          v2Lines.push(`| ${prLink} ${stateGlyph} | ${e.detector || '—'} | ${e.detector_severity || '—'} | ${verifyGlyph} | ${costStr} | ${filesStr} | ${ttrStr} |`);
+        }
+        v2Lines.push('');
+
+        // Aggregate: total cost + fix count.
+        const totalCost = entries.reduce((s, e) => s + (typeof e.cost_usd === 'number' ? e.cost_usd : 0), 0);
+        const passCount = entries.filter(e => e.verification?.overall === 'PASS').length;
+        const failCount = entries.filter(e => e.verification?.overall === 'FAIL').length;
+        v2Lines.push(`_${entries.length} fix${entries.length === 1 ? '' : 'es'} · ${passCount} verified · ${failCount} auto-reverted · $${totalCost.toFixed(2)} total_`);
+        v2Lines.push('');
+      }
+    } catch (err) {
+      // Non-fatal — log to console, emit quiet placeholder in email.
+      console.warn('[heartbeat-evening] v2 auto-fix section error:', err.message);
+      v2Lines = ['## 🛠️ v2 Auto-Fix Activity', '', '_v2 recap unavailable (see console)._', ''];
+    }
+    for (const l of v2Lines) lines.push(l);
   }
 
   lines.push('---');
@@ -837,7 +901,7 @@ async function main() {
     return;
   }
 
-  const { body, meta } = generateEveningMarkdownBody();
+  const { body, meta } = await generateEveningMarkdownBody();
 
   // Write the markdown body to disk (same convention as morning heartbeat.mjs)
   const mdPath = join(ROOT, `data/heartbeat-evening-${TARGET_DATE}.md`);

@@ -3376,6 +3376,44 @@ function renderRow(r, idx) {
   // pre-baked content → provenance-error fallback). Killed the click —
   // this card is display-only, no nav, no expand.
   const _rowDrillNum = htmlEscape(String(r.num||''));
+  // PR-09 (2026-05-25) — compute build-time cache-staleness badges for
+  // hm-intel and role-enrichment drawer sections. tone-safe: "Updated N days
+  // ago — refresh?" — no "stale/broken/missing" language in user-facing copy.
+  // Moved before tldrCard 2026-05-25 to fix TDZ: _pr09ReBadge was referenced
+  // at line 3395 (Quick role summary template) before its original definition
+  // at line 3485.
+  const _pr09CSlug = String(r.company||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+  const _pr09RSlug = String(r.role||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+  // Row slug for auto-enrich endpoint (company-role format, max 80 chars)
+  const _pr09RowSlug = (_pr09CSlug + '-' + _pr09RSlug).replace(/^-+|-+$/g,'').slice(0, 80);
+  const _pr09HmPath = join(ROOT, 'data', 'hm-intel', `${_pr09CSlug}-${_pr09RSlug}.json`);
+  const _pr09HmBadge = _buildTimeStalenessInline('hm-intel', _pr09HmPath, 'hm-intel', _pr09RowSlug);
+  // Role-enrichment: find file path by scanning the cache map (key = company|role lowercase)
+  const _pr09ReBadge = (() => {
+    try {
+      const _reMap = loadRoleEnrichment();
+      const _reKey = _pr09CSlug.replace(/-/g,'') + '|' + _pr09RSlug.replace(/-/g,'');
+      // Use tolerant key lookup same as getRoleEnrichment
+      const _reCo = String(r.company||'').toLowerCase();
+      const _reRo = String(r.role||'').toLowerCase();
+      let _rePath = null;
+      // Scan the role-enrichment dir for a file whose JSON matches company+role
+      if (existsSync(ROLE_ENRICHMENT_DIR)) {
+        for (const f of readdirSync(ROLE_ENRICHMENT_DIR).filter(fn => fn.endsWith('.json'))) {
+          const fp = join(ROLE_ENRICHMENT_DIR, f);
+          try {
+            const obj = JSON.parse(readFileSync(fp, 'utf-8'));
+            if (String(obj.company||'').toLowerCase() === _reCo &&
+                String(obj.role||'').toLowerCase() === _reRo) {
+              _rePath = fp; break;
+            }
+          } catch { /* skip */ }
+        }
+      }
+      if (!_rePath) return '';
+      return _buildTimeStalenessInline('role-enrichment', _rePath, 'role-enrichment', _pr09RowSlug);
+    } catch { return ''; }
+  })();
   // PR-07 (apply-now UX audit 2026-05-25): stale-eval soft label. When the
   // eval is more than 30 days old, prepend a muted notice so the operator
   // knows the cards below were generated against a stale baseline. No button
@@ -3472,41 +3510,13 @@ function renderRow(r, idx) {
   // data/hm-intel/<slug>.json (when present) append below as a structured
   // "+ close actions" list. The whole block is one card.
   const _slugifyGap = (s) => String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,60);
-  // PR-09 (2026-05-25) — compute build-time cache-staleness badges for
-  // hm-intel and role-enrichment drawer sections. tone-safe: "Updated N days
-  // ago — refresh?" — no "stale/broken/missing" language in user-facing copy.
-  const _pr09CSlug = String(r.company||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
-  const _pr09RSlug = String(r.role||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
-  // Row slug for auto-enrich endpoint (company-role format, max 80 chars)
-  const _pr09RowSlug = (_pr09CSlug + '-' + _pr09RSlug).replace(/^-+|-+$/g,'').slice(0, 80);
-  const _pr09HmPath = join(ROOT, 'data', 'hm-intel', `${_pr09CSlug}-${_pr09RSlug}.json`);
-  const _pr09HmBadge = _buildTimeStalenessInline('hm-intel', _pr09HmPath, 'hm-intel', _pr09RowSlug);
-  // Role-enrichment: find file path by scanning the cache map (key = company|role lowercase)
-  const _pr09ReBadge = (() => {
-    try {
-      const _reMap = loadRoleEnrichment();
-      const _reKey = _pr09CSlug.replace(/-/g,'') + '|' + _pr09RSlug.replace(/-/g,'');
-      // Use tolerant key lookup same as getRoleEnrichment
-      const _reCo = String(r.company||'').toLowerCase();
-      const _reRo = String(r.role||'').toLowerCase();
-      let _rePath = null;
-      // Scan the role-enrichment dir for a file whose JSON matches company+role
-      if (existsSync(ROLE_ENRICHMENT_DIR)) {
-        for (const f of readdirSync(ROLE_ENRICHMENT_DIR).filter(fn => fn.endsWith('.json'))) {
-          const fp = join(ROLE_ENRICHMENT_DIR, f);
-          try {
-            const obj = JSON.parse(readFileSync(fp, 'utf-8'));
-            if (String(obj.company||'').toLowerCase() === _reCo &&
-                String(obj.role||'').toLowerCase() === _reRo) {
-              _rePath = fp; break;
-            }
-          } catch { /* skip */ }
-        }
-      }
-      if (!_rePath) return '';
-      return _buildTimeStalenessInline('role-enrichment', _rePath, 'role-enrichment', _pr09RowSlug);
-    } catch { return ''; }
-  })();
+  // PR-09 const block (_pr09CSlug / _pr09RSlug / _pr09RowSlug / _pr09HmPath /
+  // _pr09HmBadge / _pr09ReBadge) was moved to the top of renderRow on
+  // 2026-05-25 (this session) to fix a TDZ error: _pr09ReBadge was referenced
+  // at line 3395 (Quick role summary template) before its prior definition
+  // here. See bug-class entry "pr-scope-without-gitignore-preflight" in
+  // AGENTS.md for the broader pattern (constraint discovery ordering); this
+  // is the same shape applied to JavaScript declaration ordering.
   let _honestGaps = [];
   try {
     const _hmPath = _pr09HmPath;

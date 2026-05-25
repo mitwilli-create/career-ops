@@ -24,6 +24,12 @@ data/v2-fix-log.jsonl
 data/v2-verify-spend.jsonl
 data/ef-mode-state.json
 data/logs/regression-guard-*.log
+# Drawer auto-enrich (PR-03 2026-05-25) — job state cache + lock files + daily spend ledger
+data/drawer-jobs/
+data/drawer-auto-enrich-spend-*.json
+# Apply-now UX audit (PR-01 through PR-10, 2026-05-25) — strategy + worker verification
+# notes contain personal pipeline data (specific role slugs, hm-intel state, etc.)
+.claude/audit/apply-now-ux-audit-2026-05-25/
 # Decision-pending docs — contain personal architectural decisions + workflow choices
 # (pre-existing data/decisions-pending-2026-05-20.md was tracked before this pattern;
 # run `git rm --cached data/decisions-pending-2026-05-20.md` to untrack while keeping the file)

@@ -5227,6 +5227,215 @@ const server = createServer((req, res) => {
     }
     return json({ ok: true, job, log_tail: tail, readme_rel: readmeRel });
   }
+
+  // ── PR-03 (2026-05-25) — Drawer auto-enrich dispatch + SSE ───────────────
+  // Generic auto-spawn endpoint that replaces 5 CRIT/HIGH CLI-instruction
+  // leakage sites in the drawer with a single dispatch primitive.
+  // Spec: .claude/audit/apply-now-ux-audit-2026-05-25/strategy.md §4 R13-R20
+  // Lib: lib/drawer-auto-enrich.mjs
+  //
+  // POST body: { rowId, slot, confirmed_at?, slug? }
+  // Returns:   { ok, job_id, eta_seconds, est_cost_usd, state, cache_path? }
+  //
+  // Feature flag: DRAWER_AUTO_ENRICH=false to no-op (returns 503).
+  if (url === '/api/drawer/auto-enrich' && req.method === 'POST') {
+    if (String(process.env.DRAWER_AUTO_ENRICH || 'true') === 'false') {
+      return json({ ok: false, state: 'disabled', error: 'DRAWER_AUTO_ENRICH feature flag is off' }, 503);
+    }
+    let body = '';
+    let total = 0;
+    req.on('data', c => {
+      total += c.length;
+      if (total > 4 * 1024) { req.destroy(); return; }
+      body += c;
+    });
+    req.on('end', async () => {
+      let parsed;
+      try { parsed = JSON.parse(body || '{}'); }
+      catch { return json({ ok: false, error: 'Invalid JSON' }, 400); }
+
+      const rowId = parsed.rowId ?? parsed.row;
+      const slot = String(parsed.slot || '').trim();
+      const confirmed_at = parsed.confirmed_at || null;
+      const slug = parsed.slug ? String(parsed.slug).trim() : null;
+
+      // env-shadow rule: lazy-loaded dotenv MUST use override:true per
+      // env-shadow-on-lazy-dotenv bug class (AGENTS.md). The dispatcher
+      // spawns subprocess agents that read process.env directly, so we
+      // proactively reload .env so the spawned children inherit fresh values.
+      try {
+        const dotenv = await import('dotenv');
+        dotenv.config({ path: join(ROOT, '.env'), override: true });
+      } catch { /* dotenv missing — fall through */ }
+
+      try {
+        const { dispatchAutoEnrich } = await import('./lib/drawer-auto-enrich.mjs');
+        const result = await dispatchAutoEnrich({ rowId, slot, confirmed_at, slug });
+        const statusCode = result.requires_confirmation ? 403
+          : result.daily_cap_reached ? 429
+          : result.ok ? 200
+          : 400;
+        return json(result, statusCode);
+      } catch (err) {
+        return json({ ok: false, state: 'error', error: err.message || String(err) }, 500);
+      }
+    });
+    return;
+  }
+
+  // ── PR-03 (2026-05-25) — Drawer auto-enrich job-status SSE stream ────────
+  // Endpoint: GET /api/drawer/jobs/:job_id/events
+  // Streams:
+  //   event: progress      — keepalive heartbeat every ≤30s
+  //   event: cache_written — when target cache file is written (mtime > start)
+  //   event: complete      — when job state transitions to complete
+  //   event: error         — on job error
+  //
+  // Auto-closes on cache_written/complete/error, or after 5 min (per CLAUDE.md
+  // hang-prevention rule + convergence-impossible-runaway prevention).
+  const drawerJobsMatch = url.match(/^\/api\/drawer\/jobs\/([A-Za-z0-9._-]+)\/events$/);
+  if (drawerJobsMatch) {
+    const jobId = drawerJobsMatch[1];
+    res.writeHead(200, {
+      'Content-Type':  'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection':    'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+      'X-Accel-Buffering': 'no',
+    });
+    res.flushHeaders?.();
+
+    (async () => {
+      // Lazy import + initial state
+      let jobState = null;
+      try {
+        const mod = await import('./lib/drawer-auto-enrich.mjs');
+        jobState = mod.readJobState(jobId);
+      } catch {}
+      if (!jobState) {
+        try { res.write('event: error\ndata: ' + JSON.stringify({ error: 'job not found', job_id: jobId }) + '\n\n'); } catch {}
+        try { res.end(); } catch {}
+        return;
+      }
+
+      const cachePath = jobState.cache_path || null;
+      const startMtime = jobState.cache_mtime_at_start || 0;
+      let closed = false;
+      function safeWrite(s) {
+        if (closed) return;
+        try { res.write(s); } catch { closed = true; }
+      }
+      function safeClose() {
+        if (closed) return;
+        closed = true;
+        try { res.end(); } catch {}
+      }
+
+      // Send initial snapshot
+      safeWrite('event: progress\ndata: ' + JSON.stringify({
+        job_id: jobId,
+        state: jobState.state,
+        eta_seconds: jobState.eta_seconds,
+        slot: jobState.slot,
+        rowId: jobState.rowId,
+      }) + '\n\n');
+
+      // Poll loop — checks job state + cache mtime every 5s, emits events.
+      // 5min hard timeout per hang-prevention.
+      const POLL_INTERVAL_MS = 5000;
+      const MAX_LIFETIME_MS = 5 * 60 * 1000;
+      const KEEPALIVE_INTERVAL_MS = 25000;
+      const startedAt = Date.now();
+      let lastKeepalive = startedAt;
+
+      const poll = setInterval(async () => {
+        if (closed) { clearInterval(poll); return; }
+        // Hard timeout
+        if (Date.now() - startedAt > MAX_LIFETIME_MS) {
+          safeWrite('event: error\ndata: ' + JSON.stringify({ error: 'event stream lifetime exceeded (5min)', job_id: jobId }) + '\n\n');
+          clearInterval(poll);
+          safeClose();
+          return;
+        }
+        // Re-read job state
+        let cur = null;
+        try {
+          const mod = await import('./lib/drawer-auto-enrich.mjs');
+          cur = mod.readJobState(jobId);
+        } catch {}
+        if (!cur) {
+          // Job state vanished — could be job-TTL expiry or write error
+          safeWrite('event: error\ndata: ' + JSON.stringify({ error: 'job state lost', job_id: jobId }) + '\n\n');
+          clearInterval(poll);
+          safeClose();
+          return;
+        }
+        // Check cache file mtime
+        if (cachePath && existsSync(cachePath)) {
+          try {
+            const m = statSync(cachePath).mtimeMs;
+            if (m > startMtime) {
+              safeWrite('event: cache_written\ndata: ' + JSON.stringify({
+                job_id: jobId,
+                cache_path: cachePath.replace(ROOT + '/', ''),
+                state: cur.state,
+                slot: cur.slot,
+                rowId: cur.rowId,
+              }) + '\n\n');
+              clearInterval(poll);
+              safeClose();
+              return;
+            }
+          } catch {}
+        }
+        // State transitions
+        if (cur.state === 'complete') {
+          safeWrite('event: complete\ndata: ' + JSON.stringify({ job_id: jobId, state: 'complete' }) + '\n\n');
+          clearInterval(poll);
+          safeClose();
+          return;
+        }
+        if (cur.state === 'error') {
+          safeWrite('event: error\ndata: ' + JSON.stringify({ job_id: jobId, error: cur.error || 'unknown error' }) + '\n\n');
+          clearInterval(poll);
+          safeClose();
+          return;
+        }
+        // Keepalive
+        if (Date.now() - lastKeepalive >= KEEPALIVE_INTERVAL_MS) {
+          safeWrite(': keepalive\n\n');
+          lastKeepalive = Date.now();
+        }
+      }, POLL_INTERVAL_MS);
+
+      req.on('close', () => { closed = true; clearInterval(poll); });
+      req.on('error', () => { closed = true; clearInterval(poll); });
+      // SIGTERM handler hook — when dashboard-server reloads, close all streams
+      // gracefully. The keep-alive ensures the connection won't appear dead.
+    })().catch((err) => {
+      try { res.write('event: error\ndata: ' + JSON.stringify({ error: err?.message || String(err) }) + '\n\n'); } catch {}
+      try { res.end(); } catch {}
+    });
+    return;
+  }
+
+  // GET /api/drawer/jobs/:job_id — one-shot state lookup (polling fallback)
+  const drawerJobStateMatch = url.match(/^\/api\/drawer\/jobs\/([A-Za-z0-9._-]+)$/);
+  if (drawerJobStateMatch && req.method === 'GET') {
+    const jobId = drawerJobStateMatch[1];
+    (async () => {
+      try {
+        const { readJobState } = await import('./lib/drawer-auto-enrich.mjs');
+        const state = readJobState(jobId);
+        if (!state) return json({ ok: false, error: 'job not found or expired', job_id: jobId }, 404);
+        return json({ ok: true, job: state });
+      } catch (err) {
+        return json({ ok: false, error: err.message || String(err) }, 500);
+      }
+    })();
+    return;
+  }
+
   if (url === '/api/pipeline/defer-company' && req.method === 'POST') {
     // Task 2 — "Defer" action on the per-company preview table. Writes a row
     // to data/deferred-companies.jsonl (gitignored) so the next Process All
@@ -8748,15 +8957,35 @@ async function generatePack(){
             generated_at: il.generated_at || null,
           };
         } else {
+          // PR-03 (2026-05-25): replace CLI hint with auto-enrich CTA metadata.
+          // Client renders <button class="cta-generate" data-auto-enrich="interview-likelihood" data-row-id="N">…
           interview_likelihood = {
             source: 'absent',
-            reason: 'no scored analysis yet — run scripts/agents/interview-likelihood.mjs --row N',
+            reason: 'no scored analysis yet — click Generate to run council research',
+            auto_enrich_available: {
+              slot: 'interview-likelihood',
+              est_cost_usd: 1.20,
+              eta_seconds: 120,
+              cta_label: 'Generate Interview Likelihood (~$1.20)',
+              requires_confirmation: true,
+            },
           };
         }
 
         // ─── hm_visibility ───
         const hmIntel = _readJsonSafe(join(ROOT, 'data', 'hm-intel', roleSlug + '.json'));
-        let hm_visibility = { source: 'absent', reason: 'no HM intel — click "Re-run HM research" in the drawer' };
+        // PR-03 (2026-05-25): replace CLI hint with auto-enrich CTA metadata.
+        let hm_visibility = {
+          source: 'absent',
+          reason: 'no HM intel cached for this role yet',
+          auto_enrich_available: {
+            slot: 'hm-intel',
+            est_cost_usd: 0.50,
+            eta_seconds: 300,
+            cta_label: 'Generate HM Intel (~$0.50)',
+            requires_confirmation: false,
+          },
+        };
         if (hmIntel?.hiring_managers?.length) {
           const primary = hmIntel.hiring_managers[0];
           const otherHMs = hmIntel.hiring_managers.slice(1, 3).map(h => ({ name: h.name, title: h.title, linkedin_url: h.linkedin_url }));
@@ -8829,9 +9058,17 @@ async function generatePack(){
             generated_at: hc.generated_at || null,
           };
         } else {
+          // PR-03 (2026-05-25): replace CLI hint with auto-enrich CTA metadata.
           hm_chance = {
             source: 'absent',
-            reason: 'no HM-chance analysis yet — run scripts/agents/hm-chance.mjs',
+            reason: 'no HM-chance analysis yet — click Generate to run council research',
+            auto_enrich_available: {
+              slot: 'hm-chance',
+              est_cost_usd: 0.80,
+              eta_seconds: 90,
+              cta_label: 'Generate HM Chance (~$0.80)',
+              requires_confirmation: false,
+            },
           };
         }
 
@@ -8867,7 +9104,19 @@ async function generatePack(){
         if (!slug) return json({ ok: false, error: 'slug or row required' }, 400);
         if (!/^[A-Za-z0-9_.-]+$/.test(slug)) return json({ ok: false, error: 'invalid slug' }, 400);
         const p = join(ROOT, 'data', 'interview-likelihood', slug + '.json');
-        if (!existsSync(p)) return json({ ok: false, error: 'not-found', slug, reason: 'no scored analysis yet — run scripts/agents/interview-likelihood.mjs --row N' }, 404);
+        if (!existsSync(p)) return json({
+          ok: false,
+          error: 'not-found',
+          slug,
+          reason: 'no scored analysis yet — click Generate to run council research',
+          auto_enrich_available: {
+            slot: 'interview-likelihood',
+            est_cost_usd: 1.20,
+            eta_seconds: 120,
+            cta_label: 'Generate Interview Likelihood (~$1.20)',
+            requires_confirmation: true,
+          },
+        }, 404);
         const j = JSON.parse(readFileSync(p, 'utf-8'));
         const ageMs = j.generated_at ? Date.now() - Date.parse(j.generated_at) : null;
         const ageDays = ageMs != null ? Math.floor(ageMs / (1000 * 60 * 60 * 24)) : null;
@@ -8900,7 +9149,19 @@ async function generatePack(){
         if (!slug) return json({ ok: false, error: 'slug or row required' }, 400);
         if (!/^[A-Za-z0-9_.-]+$/.test(slug)) return json({ ok: false, error: 'invalid slug' }, 400);
         const p = join(ROOT, 'data', 'hm-chance', slug + '.json');
-        if (!existsSync(p)) return json({ ok: false, error: 'not-found', slug, reason: 'no HM-chance analysis yet — run scripts/agents/hm-chance.mjs --row N' }, 404);
+        if (!existsSync(p)) return json({
+          ok: false,
+          error: 'not-found',
+          slug,
+          reason: 'no HM-chance analysis yet — click Generate to run council research',
+          auto_enrich_available: {
+            slot: 'hm-chance',
+            est_cost_usd: 0.80,
+            eta_seconds: 90,
+            cta_label: 'Generate HM Chance (~$0.80)',
+            requires_confirmation: false,
+          },
+        }, 404);
         const j = JSON.parse(readFileSync(p, 'utf-8'));
         const ageMs = j.generated_at ? Date.now() - Date.parse(j.generated_at) : null;
         const ageDays = ageMs != null ? Math.floor(ageMs / (1000 * 60 * 60 * 24)) : null;
@@ -8931,7 +9192,21 @@ async function generatePack(){
         if (!slug) return json({ ok: false, error: 'slug or company required' }, 400);
         if (!/^[a-z0-9._-]+$/.test(slug)) return json({ ok: false, error: 'invalid slug' }, 400);
         const p = join(ROOT, 'data', 'team-health', slug + '.json');
-        if (!existsSync(p)) return json({ ok: false, error: 'not-found', slug, reason: 'no team-health cache yet — run scripts/agents/role-enrichment.mjs --slug ' + slug }, 404);
+        if (!existsSync(p)) return json({
+          ok: false,
+          error: 'not-found',
+          slug,
+          reason: 'Team-health synthesis queued behind PR-04 ship',
+          auto_enrich_available: {
+            slot: 'team-health',
+            est_cost_usd: 0.30,
+            eta_seconds: 60,
+            cta_label: 'Team-health synthesis queued behind PR-04 ship',
+            requires_confirmation: false,
+            deferred: true,
+            deferred_reason: 'lib/team-health-synthesis.mjs ships in PR-04',
+          },
+        }, 404);
         const j = JSON.parse(readFileSync(p, 'utf-8'));
         const synthAt = j.synthesized_at || (j._meta && j._meta.source_as_of) || null;
         const ageMs = synthAt ? Date.now() - Date.parse(synthAt) : null;

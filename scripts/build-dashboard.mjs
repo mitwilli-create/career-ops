@@ -16133,7 +16133,7 @@ function openRightRailForDetail(idx, detailRow) {
     const hmMount = document.createElement('div');
     hmMount.className = 'hm-intel-mount';
     bodyEl.appendChild(hmMount);
-    if (company && role) _loadHMIntel(company, role, hmMount);
+    if (company && role) _loadHMIntel(company, role, hmMount, num);
 
     // ── A1 (2026-05-21) — drawer lifecycle row + contextual note ─────────
     // 5-button row (Create / Sync edits / Pre-apply / Polish / Apply) keyed
@@ -21396,17 +21396,23 @@ function _renderHMIntel(d, slug) {
     + '</div>';
 }
 
-async function _loadHMIntel(company, role, mountEl) {
+async function _loadHMIntel(company, role, mountEl, rowNum) {
   if (!mountEl) return;
   const slug = _hmSlugify(company, role);
   mountEl.innerHTML = '<div class="hm-intel-loading">Loading hiring intel…</div>';
   try {
     const res = await fetch('/api/hm-intel?slug=' + encodeURIComponent(slug));
     if (res.status === 404) {
+      // PR-03 (2026-05-25): replace CLI hint with auto-enrich CTA.
+      // Outer-template-unescape rule: pure string concat (no backticks, no
+      // single-backslash escapes in inner JS strings). String.fromCharCode(8594)
+      // is the right-arrow → that survives any outer-template layers.
+      var rowIdAttr = rowNum ? String(rowNum) : '';
+      var arrowChar = String.fromCharCode(8594);
       mountEl.innerHTML = '<div class="hm-intel-missing">'
-        + '<p><strong>No hiring intel yet.</strong> Generate the 7-LLM council research pack:</p>'
-        + '<pre class="hm-cli">node scripts/hiring-manager-research.mjs --role "' + _hmEsc(company) + '" --skip-deep</pre>'
-        + '<p class="muted">~$5/role · 8-12 min · see data/hm-intel/_SCHEMA.md</p>'
+        + '<p><strong>No hiring intel cached for this role yet.</strong></p>'
+        + '<button class="cta-generate" data-auto-enrich="hm-intel" data-row-id="' + _hmEsc(rowIdAttr) + '" data-slug="' + _hmEsc(slug) + '" type="button" style="background:#0a84ff;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:500;font-size:13px;margin:6px 0">Generate HM Intel (~$0.50) ' + arrowChar + '</button>'
+        + '<p class="muted" style="margin-top:8px;font-size:12px">~5 min wall-clock · Sonnet 4.6 council research · cached for 3 days</p>'
         + '</div>';
       return;
     }
@@ -21421,6 +21427,229 @@ async function _loadHMIntel(company, role, mountEl) {
   }
 }
 window._loadHMIntel = _loadHMIntel;
+
+// ── PR-03 (2026-05-25) — Drawer auto-enrich client ───────────────────────
+// Replaces the 5 CRIT/HIGH CLI-instruction leakage sites with a single
+// click → POST → cost-modal-if-needed → skeleton + EventSource flow.
+// Spec: .claude/audit/apply-now-ux-audit-2026-05-25/strategy.md §4 R13-R20
+//
+// Per row+slot retry cap: 3 attempts per day stored in localStorage to
+// prevent convergence-impossible-runaway. Storage key:
+//   ae:retry:<rowId>:<slot>:<YYYY-MM-DD>
+//
+// Outer-template-unescape rule: pure string-concat (no backticks, no
+// single-backslash escapes in inner JS strings). String.fromCharCode() for
+// any chars that might be interpolation-sensitive.
+async function _drawerAutoEnrichDispatch(rowId, slot, slug, confirmedAt) {
+  if (!rowId || !slot) return { ok: false, error: 'rowId+slot required' };
+  // Retry cap — 3 attempts per row per slot per day
+  var today = new Date().toISOString().slice(0, 10);
+  var retryKey = 'ae:retry:' + rowId + ':' + slot + ':' + today;
+  var attempts = 0;
+  try { attempts = parseInt(window.localStorage.getItem(retryKey) || '0', 10) || 0; } catch (e) {}
+  if (attempts >= 3) {
+    return { ok: false, error: 'daily retry limit (3) reached for this slot — try again tomorrow' };
+  }
+  var body = { rowId: rowId, slot: slot };
+  if (slug) body.slug = slug;
+  if (confirmedAt) body.confirmed_at = confirmedAt;
+  try {
+    var resp = await fetch('/api/drawer/auto-enrich', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    var data = await resp.json();
+    // Increment retry counter on successful dispatch (not validation rejection)
+    if (data && data.ok && (data.state === 'queued' || data.state === 'in_flight')) {
+      try { window.localStorage.setItem(retryKey, String(attempts + 1)); } catch (e) {}
+    }
+    return Object.assign({ http_status: resp.status }, data);
+  } catch (err) {
+    return { ok: false, error: 'network: ' + (err && err.message ? err.message : String(err)) };
+  }
+}
+window._drawerAutoEnrichDispatch = _drawerAutoEnrichDispatch;
+
+function _drawerRenderAutoEnrichConfirmModal(rowId, slot, slug, estCost, ctaLabel) {
+  // Simple modal with Skip (default-focus) + Confirm. Reuses existing
+  // overlay z-index pattern. Returns Promise<boolean>.
+  return new Promise(function (resolve) {
+    var bd = document.createElement('div');
+    bd.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10000;display:flex;align-items:center;justify-content:center';
+    var modal = document.createElement('div');
+    modal.style.cssText = 'background:var(--surface,#1a1b22);color:var(--text,#e9ebf1);padding:24px 28px;border-radius:12px;min-width:420px;max-width:520px;border:1px solid var(--border,#2a2b35);box-shadow:0 10px 40px rgba(0,0,0,0.5);font-family:-apple-system,BlinkMacSystemFont,sans-serif';
+    var arrowChar = String.fromCharCode(8594);
+    modal.innerHTML = ''
+      + '<h2 style="margin:0 0 10px;font-size:16px;font-weight:600">Confirm spend</h2>'
+      + '<p style="margin:0 0 14px;font-size:13px;color:var(--text-2,#b8b9c4);line-height:1.55">' + _hmEsc(ctaLabel || 'Auto-enrich') + ' will cost approximately <strong>$' + estCost.toFixed(2) + '</strong> in council API calls. Continue?</p>'
+      + '<p style="margin:0 0 18px;font-size:12px;color:var(--text-3,#8a8b96);line-height:1.5">Results cache for 3 days. Daily auto-enrich cap is $50.</p>'
+      + '<div style="display:flex;gap:8px;justify-content:flex-end">'
+      + '<button type="button" id="ae-confirm-skip" style="padding:8px 16px;border:1px solid var(--border,#2a2b35);background:#0a84ff;color:white;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500">Skip</button>'
+      + '<button type="button" id="ae-confirm-go" style="padding:8px 16px;border:1px solid var(--border,#2a2b35);background:var(--surface-2,#22232c);color:var(--text,#e9ebf1);border-radius:6px;cursor:pointer;font-size:13px">Confirm spend ' + arrowChar + '</button>'
+      + '</div>';
+    bd.appendChild(modal);
+    document.body.appendChild(bd);
+    var skipBtn = modal.querySelector('#ae-confirm-skip');
+    var goBtn = modal.querySelector('#ae-confirm-go');
+    skipBtn.focus();
+    skipBtn.addEventListener('click', function () { bd.remove(); resolve(false); });
+    goBtn.addEventListener('click', function () { bd.remove(); resolve(true); });
+    bd.addEventListener('click', function (e) {
+      if (e.target === bd) { bd.remove(); resolve(false); }
+    });
+  });
+}
+window._drawerRenderAutoEnrichConfirmModal = _drawerRenderAutoEnrichConfirmModal;
+
+function _drawerRenderAutoEnrichSkeleton(mountEl, rowId, slot, etaSeconds, jobId) {
+  if (!mountEl) return;
+  var minutes = Math.ceil((etaSeconds || 120) / 60);
+  var skeletonHTML = ''
+    + '<div class="auto-enrich-skeleton" data-job-id="' + _hmEsc(jobId) + '" data-row-id="' + _hmEsc(String(rowId)) + '" data-slot="' + _hmEsc(slot) + '" style="padding:14px;background:var(--surface-2,#22232c);border-radius:8px;border:1px solid var(--border,#2a2b35);margin:8px 0">'
+    + '<div style="display:flex;align-items:center;gap:10px">'
+    + '<div class="ae-spinner" style="width:14px;height:14px;border:2px solid var(--text-3,#8a8b96);border-top-color:transparent;border-radius:50%;animation:ae-spin 0.8s linear infinite"></div>'
+    + '<div><strong style="font-size:13px">Agent working' + String.fromCharCode(8230) + '</strong>'
+    + '<div style="font-size:11px;color:var(--text-3,#8a8b96);margin-top:2px">Estimated ~' + minutes + ' min · refresh will populate when ready</div></div>'
+    + '</div>'
+    + '<style>@keyframes ae-spin { to { transform: rotate(360deg); } }</style>'
+    + '</div>';
+  mountEl.innerHTML = skeletonHTML;
+}
+window._drawerRenderAutoEnrichSkeleton = _drawerRenderAutoEnrichSkeleton;
+
+function _drawerSubscribeAutoEnrichEvents(jobId, onCacheWritten, onError) {
+  if (!jobId) return null;
+  var es;
+  try {
+    es = new EventSource('/api/drawer/jobs/' + encodeURIComponent(jobId) + '/events');
+  } catch (err) {
+    if (onError) onError({ error: 'EventSource unsupported: ' + (err && err.message ? err.message : String(err)) });
+    return null;
+  }
+  // Polling fallback if EventSource drops within 30s
+  var fallbackTimer = null;
+  var resolved = false;
+  function startPollingFallback() {
+    if (fallbackTimer) return;
+    fallbackTimer = setInterval(async function () {
+      if (resolved) { clearInterval(fallbackTimer); return; }
+      try {
+        var r = await fetch('/api/drawer/jobs/' + encodeURIComponent(jobId), { cache: 'no-store' });
+        if (r.ok) {
+          var d = await r.json();
+          if (d && d.ok && d.job && (d.job.state === 'complete' || d.job.state === 'error')) {
+            resolved = true;
+            clearInterval(fallbackTimer);
+            if (d.job.state === 'complete' && onCacheWritten) onCacheWritten({ job_id: jobId, source: 'polling' });
+            if (d.job.state === 'error' && onError) onError({ job_id: jobId, error: d.job.error });
+          }
+        }
+      } catch (e) {}
+    }, 60000);
+  }
+  es.addEventListener('cache_written', function (ev) {
+    resolved = true;
+    try { es.close(); } catch (e) {}
+    if (fallbackTimer) clearInterval(fallbackTimer);
+    var payload = {};
+    try { payload = JSON.parse(ev.data || '{}'); } catch (e) {}
+    if (onCacheWritten) onCacheWritten(payload);
+  });
+  es.addEventListener('complete', function (ev) {
+    resolved = true;
+    try { es.close(); } catch (e) {}
+    if (fallbackTimer) clearInterval(fallbackTimer);
+    var payload = {};
+    try { payload = JSON.parse(ev.data || '{}'); } catch (e) {}
+    if (onCacheWritten) onCacheWritten(payload);
+  });
+  es.addEventListener('error', function (ev) {
+    if (resolved) return;
+    // EventSource errors mid-stream → start polling fallback instead of giving up
+    startPollingFallback();
+  });
+  return es;
+}
+window._drawerSubscribeAutoEnrichEvents = _drawerSubscribeAutoEnrichEvents;
+
+// Click delegation — any element with data-auto-enrich routes through this.
+// One handler for the entire dashboard; click-bubbling catches dynamically
+// inserted CTAs (HM intel missing, IL/HC popout empty states, etc.).
+document.addEventListener('click', async function (ev) {
+  var btn = ev.target && ev.target.closest ? ev.target.closest('[data-auto-enrich]') : null;
+  if (!btn) return;
+  var slot = btn.getAttribute('data-auto-enrich');
+  var rowId = btn.getAttribute('data-row-id') || '';
+  var slug = btn.getAttribute('data-slug') || '';
+  if (!slot || !rowId) {
+    if (typeof showToast === 'function') showToast('Generate failed: missing row-id', 'warn');
+    return;
+  }
+  ev.preventDefault();
+  ev.stopPropagation();
+  // First-try dispatch (no confirmation). If endpoint says requires_confirmation,
+  // surface modal + retry with confirmed_at.
+  btn.disabled = true;
+  var origText = btn.textContent;
+  btn.textContent = 'Starting' + String.fromCharCode(8230);
+  var result = await _drawerAutoEnrichDispatch(rowId, slot, slug, null);
+  if (!result.ok && result.requires_confirmation && result.est_cost_usd) {
+    btn.disabled = false;
+    btn.textContent = origText;
+    var ok = await _drawerRenderAutoEnrichConfirmModal(rowId, slot, slug, result.est_cost_usd, btn.textContent);
+    if (!ok) return; // User declined
+    btn.disabled = true;
+    btn.textContent = 'Starting' + String.fromCharCode(8230);
+    result = await _drawerAutoEnrichDispatch(rowId, slot, slug, new Date().toISOString());
+  }
+  if (!result.ok) {
+    btn.disabled = false;
+    btn.textContent = origText;
+    var msg = 'Generate failed: ' + (result.error || ('HTTP ' + (result.http_status || '?')));
+    if (typeof showToast === 'function') showToast(msg, 'warn');
+    else alert(msg);
+    return;
+  }
+  // Find the closest mount-point ancestor — typically the .hm-intel-missing
+  // div, the popout empty-state div, or the closest [data-row-num].
+  var mount = btn.closest('.hm-intel-missing, .auto-enrich-empty, [data-row-num]') || btn.parentElement;
+  if (mount && result.state === 'queued') {
+    _drawerRenderAutoEnrichSkeleton(mount, rowId, slot, result.eta_seconds, result.job_id);
+    _drawerSubscribeAutoEnrichEvents(result.job_id, function (payload) {
+      // cache_written or complete — re-fetch + re-render. For HM Intel,
+      // call _loadHMIntel; for others, re-render via popout opener.
+      if (slot === 'hm-intel') {
+        // Find the HM intel mount + retrigger _loadHMIntel
+        var hmMount = document.querySelector('.hm-intel-mount');
+        if (hmMount && typeof window._loadHMIntel === 'function') {
+          // Need company + role — read from drawer state if available
+          var drawer = document.getElementById('drawer-body');
+          var hd = drawer ? drawer.querySelector('[data-company]') : null;
+          var company = hd ? hd.getAttribute('data-company') : '';
+          var role = hd ? hd.getAttribute('data-role') : '';
+          if (company && role) {
+            window._loadHMIntel(company, role, hmMount, rowId);
+          } else {
+            // Fallback: replace skeleton with success state
+            mount.innerHTML = '<p style="color:var(--text-2);font-size:13px">HM intel generated. Refresh the drawer to view.</p>';
+          }
+        }
+      } else {
+        // For IL / HC / TH: replace skeleton with success state + reopen-popout hint
+        mount.innerHTML = '<p style="color:var(--text-2);font-size:13px">' + _hmEsc(slot.replace(/-/g, ' ')) + ' generated. Reopen the popout to view.</p>';
+      }
+    }, function (err) {
+      mount.innerHTML = '<p style="color:var(--text-warn,#f5a623);font-size:13px">Generate failed: ' + _hmEsc(err.error || 'unknown') + '. Try again tomorrow.</p>';
+    });
+  } else if (result.state === 'in_flight') {
+    btn.disabled = true;
+    btn.textContent = 'Already running' + String.fromCharCode(8230);
+  } else if (result.state === 'deferred') {
+    btn.disabled = true;
+    btn.textContent = result.reason || 'Deferred';
+  }
+});
 
 // ── A1 (2026-05-21) — drawer lifecycle row renderer ───────────────────────
 // Hits /api/lifecycle-state?num=N to get 4 booleans (pack_exists,

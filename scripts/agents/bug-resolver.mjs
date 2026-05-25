@@ -31,11 +31,14 @@ import {
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { loadLedger, updateEntry } from '../../lib/bug-resolver/ledger.mjs';
 import { processBug, CostCapExceeded } from '../../lib/bug-resolver/pipeline.mjs';
 import { createDraftPr, DraftPrError } from '../../lib/bug-resolver/draft-pr.mjs';
 import { resetBreaker, getBreakerStatus } from '../../lib/bug-resolver/vendor-router.mjs';
 import { appendHardeningSuggestion } from '../../lib/bug-resolver/hardening-writer.mjs';
+// v2 (2026-05-25): unified-queue routes by id prefix (bug-... → bug-ledger.jsonl,
+// rg-... → regression-bug-queue.jsonl). Per
+// data/decisions-pending-regression-auto-action-2026-05-25.md (gitignored).
+import { loadUnifiedQueue, updateUnifiedEntry, entrySource } from '../../lib/bug-resolver/unified-queue.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(__filename), '..', '..');
@@ -306,18 +309,18 @@ async function main() {
   // Reset circuit-breaker at start of run
   resetBreaker();
 
-  // Load + prioritize
-  const allEntries = loadLedger();
+  // Load + prioritize. v2: unified queue spans bug-ledger.jsonl + regression-bug-queue.jsonl.
+  const allEntries = loadUnifiedQueue();
   const queue = prioritize(allEntries, maxBugsEffective, opts.bugId);
 
   if (queue.length === 0) {
-    console.log(`[bug-resolver] ledger has no OPEN entries (of ${allEntries.length} total). Nothing to do.`);
+    console.log(`[bug-resolver] unified queue has no OPEN entries (of ${allEntries.length} total). Nothing to do.`);
     process.exit(0);
   }
 
   console.log(`[bug-resolver] processing ${queue.length} bug(s):`);
   for (const bug of queue) {
-    console.log(`  ${bug.id.padEnd(22)} ${bug.severity.padEnd(5)} ${bug.title.slice(0, 100)}`);
+    console.log(`  ${bug.id.padEnd(22)} ${bug.severity.padEnd(5)} ${entrySource(bug.id).padEnd(17)} ${bug.title.slice(0, 80)}`);
   }
   console.log('');
 
@@ -332,8 +335,8 @@ async function main() {
       break;
     }
 
-    console.log(`\n[bug-resolver] processing ${bug.id} (${bug.severity})...`);
-    if (!opts.dryRun) updateEntry(bug.id, { status: 'IN_PROGRESS' });
+    console.log(`\n[bug-resolver] processing ${bug.id} (${bug.severity}) [${entrySource(bug.id)}]...`);
+    if (!opts.dryRun) updateUnifiedEntry(bug.id, { status: 'IN_PROGRESS' });
 
     let result;
     try {
@@ -344,7 +347,7 @@ async function main() {
     } catch (err) {
       console.error(`  EXCEPTION: ${err.message}`);
       if (!opts.dryRun) {
-        updateEntry(bug.id, {
+        updateUnifiedEntry(bug.id, {
           status: 'NEEDS_HUMAN',
           needs_human_reasons: [`orchestrator-exception: ${err.message}`],
         });
@@ -375,7 +378,7 @@ async function main() {
           isDryRun: opts.dryRun,
         });
         if (!opts.dryRun) {
-          updateEntry(bug.id, {
+          updateUnifiedEntry(bug.id, {
             status: 'DRAFT_PR',
             draft_pr_url: prResult.prUrl,
             resolution_commit: prResult.commitSha,
@@ -388,7 +391,7 @@ async function main() {
         const reasons = (result.needs_human_reasons || []).slice();
         reasons.push(`draft-pr-failed (${err instanceof DraftPrError ? err.phase : 'unknown'}): ${err.message}`);
         if (!opts.dryRun) {
-          updateEntry(bug.id, {
+          updateUnifiedEntry(bug.id, {
             status: 'NEEDS_HUMAN',
             needs_human_reasons: reasons,
             vendor_log: result.vendor_log,
@@ -401,7 +404,7 @@ async function main() {
     } else if (result.status === 'WONT_FIX') {
       // Pipeline already called linkEntries — just record vendor_log
       if (!opts.dryRun) {
-        updateEntry(bug.id, {
+        updateUnifiedEntry(bug.id, {
           vendor_log: result.vendor_log,
           total_cost_usd: result.total_cost_usd,
         });
@@ -409,7 +412,7 @@ async function main() {
     } else {
       // NEEDS_HUMAN or other — update ledger with reasons
       if (!opts.dryRun) {
-        updateEntry(bug.id, {
+        updateUnifiedEntry(bug.id, {
           status: result.status || 'NEEDS_HUMAN',
           needs_human_reasons: result.needs_human_reasons || [],
           vendor_log: result.vendor_log,

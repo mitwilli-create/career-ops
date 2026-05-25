@@ -128,6 +128,10 @@ import { detectType6Closure } from './regression-guard/detectors/type-06-closure
 import { detectType7Memory } from './regression-guard/detectors/type-07-memory.mjs';
 import { detectType8Performance } from './regression-guard/detectors/type-08-performance.mjs';
 
+// v2 (2026-05-25) — bridge CRIT/HIGH/MED type-1-4 findings to bug-resolver.
+// Per data/decisions-pending-regression-auto-action-2026-05-25.md (gitignored).
+import { appendRegressionFindings } from '../../lib/bug-resolver/regression-queue.mjs';
+
 const __filename = fileURLToPath(import.meta.url);
 
 // ─── Decision-doc render ────────────────────────────────────────────────────
@@ -341,6 +345,27 @@ async function runScheduled({ dryRun = false } = {}) {
   // Day-1 stub — log only
   if (findings.length > SELF_THROTTLE_THRESHOLD) {
     log(`WARN: ${findings.length} findings exceeds self-throttle threshold ${SELF_THROTTLE_THRESHOLD}`);
+  }
+
+  // v2 bridge (2026-05-25): write eligible findings to bug-resolver's
+  // regression-bug-queue.jsonl. Filter is enforced inside
+  // appendRegressionFindings (types 1-4, severity CRIT/HIGH/MED, dedup on
+  // citation hash). Cross-fork-leak guard throws on inline sensitive content;
+  // we catch and surface as a CRIT finding so the daily report still ships.
+  try {
+    const queueResult = appendRegressionFindings(findings);
+    log(`v2-bridge: ${queueResult.written} written / ` +
+        `${queueResult.skipped_not_eligible} not-eligible / ` +
+        `${queueResult.skipped_duplicate} duplicate`);
+  } catch (err) {
+    log(`v2-bridge: ERROR ${err.message}`, 'error');
+    findings.push({
+      type: 0, severity: 'CRIT', confidence: 'HIGH',
+      subtype: 'v2-bridge-failure',
+      file: 'lib/bug-resolver/regression-queue.mjs',
+      summary: `v2 bridge write failed: ${err.message}`,
+      citation: { path: 'lib/bug-resolver/regression-queue.mjs', mode: 'hash_only', hash: hashCite('v2-bridge-fail-' + err.message) },
+    });
   }
 
   // Persist state + write report

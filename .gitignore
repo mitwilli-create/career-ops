@@ -2,6 +2,7 @@
 cv.md
 data/applications.md
 data/pipeline.md
+data/api-cost-audit-*.md
 
 # regression-guard outputs (shipped 2026-05-23) — personal pipeline data
 # - decision doc has `[PERSONAL — DO NOT PUBLISH]` frontmatter
@@ -14,6 +15,10 @@ data/regression-guard-spend.jsonl
 data/regression-baselines/
 data/ef-mode-state.json
 data/logs/regression-guard-*.log
+# Decision-pending docs — contain personal architectural decisions + workflow choices
+# (pre-existing data/decisions-pending-2026-05-20.md was tracked before this pattern;
+# run `git rm --cached data/decisions-pending-2026-05-20.md` to untrack while keeping the file)
+data/decisions-pending-*.md
 .claude/audit/*/regression-report-*.md
 # Panel JSON reveals file paths from .claude/audit/ work-product directories,
 # which can include personal workflow names (e.g. apply-now-clipboard-modal).

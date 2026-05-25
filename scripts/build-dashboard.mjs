@@ -17536,7 +17536,7 @@ _drillInRegister('company', function(id) {
   // ── Section 9: Network leverage (always available if graph populated) ────
   var networkSection = netHtml
     ? _dcard('Network Leverage', netHtml)
-    : _dcard('Network Leverage', '<p style="font-size:12px;color:var(--text-4)">Run <code>node scripts/build-network-graph.mjs</code> to populate warm-intro paths.</p>');
+    : _dcard('Network Leverage', '<p style="font-size:12px;color:var(--text-4)">Warm-intro paths not yet populated for this company. The network graph is rebuilt nightly.</p>');
 
   // ── Refresh-all button ───────────────────────────────────────────────────
   // Queues a researcher-agent run by writing data/company-research-queue/{slug}.json.
@@ -18149,7 +18149,7 @@ _drillInRegister('story', function(id) {
   var _pageExists = !_spArr || (_spArr.indexOf(storySlug) !== -1);
   var _storyBtn = _pageExists
     ? '<a href="' + storyHref + '" target="_blank" rel="noopener" style="display:inline-block;padding:6px 14px;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;color:var(--fg)">Open full story &rarr;</a>'
-    : '<span style="font-size:11px;color:var(--text-3);font-style:italic">Full story not yet generated &mdash; run node scripts/generate-story-pages.mjs to build it.</span>';
+    : '<span style="font-size:11px;color:var(--text-3);font-style:italic">Full story page not yet generated. Story pages are rebuilt with each dashboard refresh.</span>';
   var html = '<div style="padding:4px 0">'
     + '<p style="font-size:13px;font-weight:600;margin:0 0 8px">' + title + '</p>'
     + '<p style="font-size:12px;color:var(--text-3);margin:0 0 12px">' + excerpt + '</p>'
@@ -19544,7 +19544,7 @@ _drillInRegister('scan-batch', function(id) {
     html:
       '<p style="font-size:12px;color:var(--text-3);margin:0 0 12px">Scanned ' + ev.ts.slice(0, 10) + ' via ' + ((ev.roles[0] || {}).portal || 'multi-portal') + '. These rows are pre-triage — none have been evaluated yet. Click a title to open the JD; the next batch run will pull whichever ones pass the title filter.</p>'
       + '<ul style="list-style:none;padding:0;margin:0;max-height:520px;overflow:auto">' + rowsHtml + '</ul>'
-      + (ev.roles.length < ev.count ? '<p style="font-size:11px;color:var(--text-4);margin:12px 0 0">Showing ' + ev.roles.length + ' of ' + ev.count + ' (truncated). Run <code>node scripts/scan-stats.mjs --slug=' + _esc(slug) + '</code> for the full list.</p>' : ''),
+      + (ev.roles.length < ev.count ? '<p style="font-size:11px;color:var(--text-4);margin:12px 0 0">Showing ' + ev.roles.length + ' of ' + ev.count + ' (truncated). The next batch run will surface any that pass triage.</p>' : ''),
   };
 });
 
@@ -21465,11 +21465,11 @@ window._loadHMIntel = _loadHMIntel;
 // Outer-template-unescape rule: pure string-concat (no backticks, no
 // single-backslash escapes in inner JS strings). String.fromCharCode() for
 // any chars that might be interpolation-sensitive.
-async function _drawerAutoEnrichDispatch(rowId, slot, slug, confirmedAt) {
+async function _drawerAutoEnrichDispatch(rowId, slot, slug, confirmedAt, metricKey) {
   if (!rowId || !slot) return { ok: false, error: 'rowId+slot required' };
-  // Retry cap — 3 attempts per row per slot per day
+  // Retry cap — 3 attempts per row per slot per day (+ per metricKey if passed)
   var today = new Date().toISOString().slice(0, 10);
-  var retryKey = 'ae:retry:' + rowId + ':' + slot + ':' + today;
+  var retryKey = 'ae:retry:' + rowId + ':' + slot + (metricKey ? ':' + metricKey : '') + ':' + today;
   var attempts = 0;
   try { attempts = parseInt(window.localStorage.getItem(retryKey) || '0', 10) || 0; } catch (e) {}
   if (attempts >= 3) {
@@ -21478,6 +21478,7 @@ async function _drawerAutoEnrichDispatch(rowId, slot, slug, confirmedAt) {
   var body = { rowId: rowId, slot: slot };
   if (slug) body.slug = slug;
   if (confirmedAt) body.confirmed_at = confirmedAt;
+  if (metricKey) body.metric_key = metricKey;
   try {
     var resp = await fetch('/api/drawer/auto-enrich', {
       method: 'POST',
@@ -21607,6 +21608,9 @@ document.addEventListener('click', async function (ev) {
   var slot = btn.getAttribute('data-auto-enrich');
   var rowId = btn.getAttribute('data-row-id') || '';
   var slug = btn.getAttribute('data-slug') || '';
+  // PR-08 (2026-05-25) — strategy-ceiling retry button passes a metric_key
+  // so the server-side counter can scope retries per row+metric (not just per row).
+  var metricKey = btn.getAttribute('data-metric-key') || '';
   if (!slot || !rowId) {
     if (typeof showToast === 'function') showToast('Generate failed: missing row-id', 'warn');
     return;
@@ -21618,7 +21622,7 @@ document.addEventListener('click', async function (ev) {
   btn.disabled = true;
   var origText = btn.textContent;
   btn.textContent = 'Starting' + String.fromCharCode(8230);
-  var result = await _drawerAutoEnrichDispatch(rowId, slot, slug, null);
+  var result = await _drawerAutoEnrichDispatch(rowId, slot, slug, null, metricKey);
   if (!result.ok && result.requires_confirmation && result.est_cost_usd) {
     btn.disabled = false;
     btn.textContent = origText;
@@ -21626,7 +21630,7 @@ document.addEventListener('click', async function (ev) {
     if (!ok) return; // User declined
     btn.disabled = true;
     btn.textContent = 'Starting' + String.fromCharCode(8230);
-    result = await _drawerAutoEnrichDispatch(rowId, slot, slug, new Date().toISOString());
+    result = await _drawerAutoEnrichDispatch(rowId, slot, slug, new Date().toISOString(), metricKey);
   }
   if (!result.ok) {
     btn.disabled = false;
@@ -22870,10 +22874,14 @@ async function _openIntelPopoutModal(opts) {
   // Resolve endpoint + query params per kind.
   let endpointUrl = '';
   let debugDataUrl = '';
+  // PR-08 (2026-05-25) — build a ctaContext to pass to renderModalError +
+  // renderModalEmptyState so they can surface inline "Generate now ($X est.)"
+  // CTAs instead of legacy CLI-style "Run Deep Refresh (sidebar)" hints.
+  const ctaContext = { kind, rowId: opts.row, slug: opts.slug };
   if (kind === 'th') {
     const slug = String(opts.slug || '').trim().toLowerCase();
     if (!slug) {
-      _intelRenderModalError(modal, backdrop, 'Team Health needs a company slug. None was passed from the chip click.');
+      _intelRenderModalError(modal, backdrop, 'Team Health needs a company slug. None was passed from the chip click.', ctaContext);
       return;
     }
     endpointUrl = '/api/team-health?slug=' + encodeURIComponent(slug);
@@ -22886,7 +22894,7 @@ async function _openIntelPopoutModal(opts) {
       endpointUrl = '/api/interview-likelihood?row=' + encodeURIComponent(opts.row);
       debugDataUrl = endpointUrl;
     } else {
-      _intelRenderModalError(modal, backdrop, 'Interview Likelihood needs a row number or slug.');
+      _intelRenderModalError(modal, backdrop, 'Interview Likelihood needs a row number or slug.', ctaContext);
       return;
     }
   } else if (kind === 'hc') {
@@ -22897,7 +22905,7 @@ async function _openIntelPopoutModal(opts) {
       endpointUrl = '/api/hm-chance?row=' + encodeURIComponent(opts.row);
       debugDataUrl = endpointUrl;
     } else {
-      _intelRenderModalError(modal, backdrop, 'HM Chance needs a row number or slug.');
+      _intelRenderModalError(modal, backdrop, 'HM Chance needs a row number or slug.', ctaContext);
       return;
     }
   }
@@ -22906,7 +22914,7 @@ async function _openIntelPopoutModal(opts) {
     const r = await fetch(endpointUrl, { cache: 'no-store' });
     if (r.status === 404) {
       const body = await r.json().catch(function () { return {}; });
-      _intelRenderModalEmptyState(modal, backdrop, kind, title, body && body.reason ? body.reason : 'No cached analysis yet.');
+      _intelRenderModalEmptyState(modal, backdrop, kind, title, body && body.reason ? body.reason : 'No cached analysis yet.', ctaContext);
       return;
     }
     if (!r.ok) {
@@ -22923,7 +22931,7 @@ async function _openIntelPopoutModal(opts) {
     });
   } catch (err) {
     const msg = String(err && err.message ? err.message : err);
-    _intelRenderModalError(modal, backdrop, msg);
+    _intelRenderModalError(modal, backdrop, msg, ctaContext);
   }
 }
 window._openIntelPopoutModal = _openIntelPopoutModal;
@@ -23098,10 +23106,37 @@ async function runPolishFromPicker(rowId, company, role, btn) {
 }
 window.runPolishFromPicker = runPolishFromPicker;
 
-function _intelRenderModalError(modal, backdrop, msg) {
+// PR-08 (2026-05-25) — kind→auto-enrich-slot map + cost surface for inline CTAs.
+// kinds: 'th' (team-health) | 'il' (interview-likelihood) | 'hc' (hm-chance).
+// Costs match lib/drawer-auto-enrich.mjs SLOT_COST_ESTIMATES.
+function _intelKindSlotMeta(kind) {
+  if (kind === 'th') return { slot: 'team-health', cost: 0.30, label: 'Team Health' };
+  if (kind === 'il') return { slot: 'interview-likelihood', cost: 1.20, label: 'Interview Likelihood' };
+  if (kind === 'hc') return { slot: 'hm-chance', cost: 0.80, label: 'HM Chance' };
+  return null;
+}
+
+// Build the inline "Generate now ($X est.) →" CTA for the modal-empty + error
+// paths. PR-08 replaces the legacy "Run Deep Refresh (sidebar)..." CLI-style
+// hint with a one-click CTA that hits /api/drawer/auto-enrich for THIS row
+// (no sidebar navigation, no whole-sweep regeneration).
+function _intelGenerateNowCta(kind, rowId, slug) {
+  const meta = _intelKindSlotMeta(kind);
+  if (!meta) return '';
+  const arrow = String.fromCharCode(8594);
+  const rowIdAttr = rowId != null ? String(rowId).replace(/[^0-9]/g, '') : '';
+  const slugAttr = slug != null ? String(slug).replace(/[^a-zA-Z0-9_-]/g, '') : '';
+  // data-auto-enrich + data-row-id are picked up by PR-03's _drawerAutoEnrichDispatch.
+  return '<button type="button" class="cta-generate" data-auto-enrich="' + meta.slot + '" data-row-id="' + rowIdAttr + '" data-slug="' + slugAttr + '" style="background:#0a84ff;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:500;font-size:13px;margin:6px 0">Generate now (~$' + meta.cost.toFixed(2) + ' est.) ' + arrow + '</button>';
+}
+
+function _intelRenderModalError(modal, backdrop, msg, ctaContext) {
   let h = '<div style="padding:24px"><h2 style="margin:0 0 10px;font-size:15px">Pop-out data unavailable</h2>';
   h += '<p style="color:var(--text-2);margin:0 0 16px;font-size:13px;line-height:1.55">' + _intelEsc(msg) + '</p>';
-  h += '<p style="color:var(--text-3);margin:0 0 16px;font-size:12px;line-height:1.55">Run Deep Refresh (sidebar) to regenerate the 7-slot nuclear sweep including this cache.</p>';
+  // PR-08 (2026-05-25) — inline CTA when caller passes ctaContext.{kind,rowId,slug}.
+  if (ctaContext && ctaContext.kind) {
+    h += '<div style="margin:8px 0 16px">' + _intelGenerateNowCta(ctaContext.kind, ctaContext.rowId, ctaContext.slug) + '</div>';
+  }
   h += '<div style="display:flex;gap:8px;justify-content:flex-end">';
   h += '<button type="button" id="intel-popout-close" style="padding:6px 14px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);border-radius:6px;cursor:pointer;font-size:12px">Close</button>';
   h += '</div></div>';
@@ -23110,14 +23145,20 @@ function _intelRenderModalError(modal, backdrop, msg) {
   if (closeBtn) closeBtn.addEventListener('click', function () { backdrop.remove(); });
 }
 
-function _intelRenderModalEmptyState(modal, backdrop, kind, title, reason) {
+function _intelRenderModalEmptyState(modal, backdrop, kind, title, reason, ctaContext) {
   let h = '<div style="padding:18px 24px 14px;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;align-items:flex-start;justify-content:space-between;gap:12px">';
   h += '<h2 style="margin:0;font-size:15px;font-weight:600;color:var(--text)">' + _intelEsc(title) + '</h2>';
   h += '<button type="button" id="intel-popout-close" aria-label="Close" style="background:transparent;border:none;color:var(--text-3);font-size:20px;cursor:pointer;padding:0 4px;line-height:1">' + String.fromCharCode(215) + '</button>';
   h += '</div>';
   h += '<div style="padding:24px">';
   h += '<p style="margin:0 0 12px;font-size:13px;color:var(--text-2);line-height:1.6">' + _intelEsc(reason) + '</p>';
-  h += '<p style="margin:0 0 16px;font-size:12.5px;color:var(--text-3);line-height:1.6">Run Deep Refresh (sidebar) to regenerate the 7-slot nuclear sweep, or wait for the next scheduled refresh-master tick.</p>';
+  // PR-08 (2026-05-25) — inline CTA replaces the "Run Deep Refresh (sidebar)..." hint.
+  // CTA hits /api/drawer/auto-enrich for THIS row + slot. Cost surfaced in label.
+  if (ctaContext && ctaContext.kind) {
+    h += '<div style="margin:6px 0 16px">' + _intelGenerateNowCta(ctaContext.kind, ctaContext.rowId, ctaContext.slug) + '</div>';
+  } else {
+    h += '<p style="margin:0 0 16px;font-size:12.5px;color:var(--text-3);line-height:1.6">Open the row drawer and click <strong>Deep refresh</strong> to regenerate this cache.</p>';
+  }
   h += '</div>';
   modal.innerHTML = h;
   const closeBtn = modal.querySelector('#intel-popout-close');
@@ -28585,7 +28626,7 @@ async function refreshHealthChip() {
     if (!data.present) {
       chip.textContent = 'health: not run';
       chip.className = 'pipeline-health-chip';
-      chip.title = 'Health check has not run yet — wait 5 min or run scripts/agents/pipeline-health-check.mjs';
+      chip.title = 'Health check has not run yet. It runs automatically every 5 min — try again shortly.';
       return;
     }
     const ageMin = Math.floor((data.age_seconds || 0) / 60);
@@ -30388,13 +30429,13 @@ function _renderPillPopover(d) {
   if (d.kind === 'equity') {
     if (d.empty) {
       // BRAVO 2026-05-19 (content sweep): name what's missing + when it
-      // auto-fills. Command moves to muted footer.
-      var equityCmd = (d.populateCmd ? esc(d.populateCmd) : 'node scripts/overpay-signals.mjs');
+      // auto-fills. PR-08 (2026-05-25): drop the CLI-hint footer; the overpay
+      // sweep runs nightly + the field auto-fills.
       return '<div class="pill-popover-kind">Equity / IPO posture</div>'
         + '<h4 class="pill-popover-headline">' + esc(d.company || '?') + ' — no equity stage on file yet</h4>'
         + '<div class="pill-popover-body pill-popover-empty">'
         + esc(d.hint || '') + ' When populated, this shows the funding stage for this company (Seed / Series A-B / Series C-D / Pre-IPO Late / Public), an equity-disclosure posture (transparent / opaque / hostile), a confidence band, and links to the public signals that informed the call.</div>'
-        + '<div class="pill-popover-meta">Run <code>' + equityCmd + '</code> to enrich.</div>';
+        + '<div class="pill-popover-meta">Auto-fills on the next overpay-signals sweep.</div>';
     }
     const sources = (d.sources || []).slice(0, 4)
       .map(u => '<a href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(u) + '</a>').join('');
@@ -30448,14 +30489,12 @@ function _renderPillPopover(d) {
   if (d.kind === 'benefits') {
     if (d.empty) {
       // BRAVO 2026-05-19 (content sweep): name what this popover would show
-      // when populated + explain when it auto-fills. Command stays in the
-      // muted meta line for power users; data-pill JSON's populateCmd
-      // overrides if present.
-      var benefitsCmd = (d.populateCmd ? esc(d.populateCmd) : 'node scripts/enrich-roles.mjs --top=5');
+      // when populated + explain when it auto-fills. PR-08 (2026-05-25): drop
+      // the CLI-hint footer; the role-enrichment pass runs nightly.
       return '<div class="pill-popover-kind">Benefits + Team Health</div>'
         + '<h4 class="pill-popover-headline">Not researched for this company yet</h4>'
         + '<div class="pill-popover-body pill-popover-empty">' + esc(d.hint || '') + ' Once populated, this shows the team-health grade (Glassdoor / Blind / Reddit sentiment, 1=healthy → 5=avoid), benefits summary (401k match, healthcare, parental leave), and biweekly take-home math.</div>'
-        + '<div class="pill-popover-meta">Auto-fills in the next role-enrichment pass. To populate now: <code>' + benefitsCmd + '</code></div>';
+        + '<div class="pill-popover-meta">Auto-fills in the next role-enrichment pass.</div>';
     }
     const b = d.benefits || {};
     const s = d.sentiment || {};
@@ -30496,12 +30535,12 @@ function _renderPillPopover(d) {
   if (d.kind === 'people') {
     if (d.empty) {
       // BRAVO 2026-05-19 (content sweep): name what would be here once
-      // populated + when it auto-fills.
-      var peopleCmd = (d.populateCmd ? esc(d.populateCmd) : 'node scripts/enrich-roles.mjs --top=5');
+      // populated + when it auto-fills. PR-08 (2026-05-25): drop the CLI-hint
+      // footer — the role-enrichment pass runs nightly.
       return '<div class="pill-popover-kind">Recruiter + Hiring Manager</div>'
         + '<h4 class="pill-popover-headline">Not researched for this role yet</h4>'
         + '<div class="pill-popover-body pill-popover-empty">' + esc(d.hint || '') + ' Once populated, this surfaces the likely recruiter and hiring manager (with LinkedIn links + the rationale chain that identified them), plus any first or second-degree LinkedIn connections you already have at the company.</div>'
-        + '<div class="pill-popover-meta">Auto-fills in the next role-enrichment pass. To populate now: <code>' + peopleCmd + '</code></div>';
+        + '<div class="pill-popover-meta">Auto-fills in the next role-enrichment pass.</div>';
     }
     const personBlock = (label, p) => {
       if (!p || !p.name || p.name === 'unknown') {
@@ -37040,7 +37079,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     var groups = renderGroup('Due today', summary.due_today, 'due_today') +
                  renderGroup('Breakup window', summary.breakup, 'breakup') +
                  renderGroup('Referral opportunities', summary.referrals, 'referral');
-    if (!groups) groups = '<div class="op-empty">No contacts need attention right now. Log a touch with <code>node scripts/log-touch.mjs</code>.</div>';
+    if (!groups) groups = '<div class="op-empty">No contacts need attention right now.</div>';
     var snoozedHtml = renderSnoozedSection(summary.snoozed || []);
     groups = groups + snoozedHtml;
 
@@ -37113,7 +37152,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     }
     function emailBlock() {
       var eg = intel.email_guess;
-      if (!eg) return '<li><em>no email guess yet &mdash; run <code>node scripts/refresh-intel.mjs --contact ...</code></em></li>';
+      if (!eg) return '<li><em>no email guess yet &mdash; auto-fills on the next contact-intel refresh</em></li>';
       var line = '<li><code>' + escapeHtml(eg.address || '?') + '</code> (' + escapeHtml(eg.pattern || '?') + ', ' + escapeHtml(eg.confidence || '?') + ' confidence, validator: ' + escapeHtml(eg.validator || '?') + ')</li>';
       if (eg.alternates && eg.alternates.length) line += '<li><em>alternates: ' + eg.alternates.map(function (a) { return '<code>' + escapeHtml(a.address) + '</code>'; }).join(', ') + '</em></li>';
       if (eg.note) line += '<li><em>' + escapeHtml(eg.note) + '</em></li>';

@@ -372,6 +372,7 @@ data/metric-drift-state.json
 data/positioning-cache/
 data/refresh-master-state.json
 data/strategy-ceiling/
+data/strategy-ceiling-retry-count/
 data/system-review-findings-*.md
 data/integrity-state.json
 data/pipeline-ingress-state.json

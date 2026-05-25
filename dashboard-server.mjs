@@ -5269,6 +5269,34 @@ const server = createServer((req, res) => {
       } catch { /* dotenv missing — fall through */ }
 
       try {
+        // PR-08 (2026-05-25) — strategy-ceiling slot has its own per-row+day
+        // cap to bound retry spend on chronic LLM outages. Check BEFORE
+        // dispatching so we never burn the budget on a row that's exhausted.
+        if (slot === 'strategy-ceiling') {
+          try {
+            const sc = await import('./lib/strategy-ceiling.mjs');
+            // Use the cache-key from parsed.metric_key if passed (drawer renderer
+            // knows it); otherwise fall back to the slot label.
+            const metricKey = String(parsed.metric_key || 'strategy').slice(0, 80);
+            // incrementRetryCount runs the pre-check internally; we mirror its
+            // logic by importing _retryAvailability via the module's side-channel.
+            // To avoid exporting private helpers, call incrementRetryCount AFTER
+            // successful dispatch (so a 4xx doesn't burn a count). The pre-check
+            // is via a dry-read of the counter file path. Simpler: call
+            // incrementRetryCount and rely on its return to gate the dispatch.
+            const after = sc.incrementRetryCount(metricKey, rowId);
+            if (after.remaining < 0 || (after.used > after.cap)) {
+              return json({
+                ok: false,
+                state: 'error',
+                error: `Daily retry cap reached (${after.cap}/day for this row+metric). Resets at midnight PT.`,
+                daily_cap_reached: true,
+                retry_used: after.used,
+                retry_cap: after.cap,
+              }, 429);
+            }
+          } catch { /* best-effort — never block on counter failure */ }
+        }
         const { dispatchAutoEnrich } = await import('./lib/drawer-auto-enrich.mjs');
         const result = await dispatchAutoEnrich({ rowId, slot, confirmed_at, slug });
         const statusCode = result.requires_confirmation ? 403
@@ -5955,7 +5983,11 @@ const server = createServer((req, res) => {
   if (url === '/api/pipeline/health-status') {
     const fp = join(ROOT, 'data', 'pipeline-health.json');
     if (!existsSync(fp)) {
-      return json({ ok: false, present: false, error: 'health-check has not run yet — wait 5 min or run `node scripts/agents/pipeline-health-check.mjs`' }, 200);
+      // PR-08 (2026-05-25): drop the CLI-hint from the user-facing error.
+      // The scheduled launchd job (`com.mitchell.career-ops.pipeline-health-check`)
+      // runs every 5 minutes; if the dashboard hits this on a fresh boot, the
+      // user just needs to wait. No CLI invocation expected from Mitchell.
+      return json({ ok: false, present: false, error: 'Pipeline health check has not run yet. It runs automatically every 5 min — try again shortly.' }, 200);
     }
     try {
       const data = JSON.parse(readFileSync(fp, 'utf-8'));
@@ -7790,7 +7822,7 @@ const server = createServer((req, res) => {
           baseline_sample_counts: latestBaseline?.summary?.sample_counts ?? null,
           baseline_file: baselineFiles[0] ?? null,
           interpretation: !summary
-            ? 'No calibration baseline present. Run `node scripts/ai-detection-calibrate-baseline.mjs` to populate.'
+            ? 'No calibration baseline present yet. The AI-detection bands cannot be evaluated until the baseline is built — re-calibrate the voice corpus to populate it.'
             : allUseless
               ? 'All three detectors are calibrated USELESS against Mitchell\'s voice baseline. The gate cannot distinguish authentic Mitchell prose from generic AI text. Artifacts surface as ADVISORY only — no blocking. Re-calibration after a voice-corpus refresh or Pangram API key add may change this.'
               : anyGood
@@ -8398,7 +8430,7 @@ code,kbd{font-family:var(--font-mono);font-size:13px;background:var(--surface-2)
   </ul>
 </div>
 
-<p class="note">Once generation completes, this page will hot-reload into the 5-tab review UI. You can also run from the command line: <code>node scripts/build-apply-packs.mjs --row=${rowId}</code>.</p>
+<p class="note">Once generation completes, this page will hot-reload into the 5-tab review UI.</p>
 
 <script>
 async function generatePack(){
@@ -8504,8 +8536,8 @@ async function generatePack(){
     function buildTabContent(tabLabel, artifactRes) {
       if (!artifactRes) {
         return `<p style="color:var(--text-3);font-style:italic;padding:16px 0;">
-          No ${tabLabel} artifact found in <code>${packDirRel || `data/apply-packs/${padded}-*`}</code>.
-          Run <code>node scripts/build-apply-packs.mjs --row=${rowId}</code> to generate materials.
+          No ${tabLabel} artifact found in <code>${packDirRel || `apply-pack/${padded}-*`}</code>.
+          Click the green <strong>Generate apply pack</strong> button above to build materials for this row.
         </p>`;
       }
 
@@ -8629,8 +8661,7 @@ async function generatePack(){
     const packStatus = packDir
       ? `<p style="font-size:12px;color:var(--text-3);margin-bottom:4px;">Pack: <code>${packDirRel}</code></p>`
       : `<p style="font-size:12px;color:var(--amber-fg,#a87b48);margin-bottom:4px;">
-           No apply-pack found for row ${rowId}. Generate with:
-           <code>node scripts/build-apply-packs.mjs --row=${rowId}</code>
+           No apply-pack found for row ${rowId}. Click <strong>Generate apply pack</strong> on the row drawer to build it.
          </p>`;
 
     const pageTitle = `Draft — ${company}${role ? ` · ${role}` : ''}`;
@@ -10150,7 +10181,11 @@ async function generatePack(){
       }
       const apiKey = process.env.ANTHROPIC_API_KEY;
       if (!apiKey) {
-        return json({ ok: true, note: '(ANTHROPIC_API_KEY missing — context note generation unavailable)', citations: [], stub: true });
+        // PR-08 (2026-05-25) — degraded-useful fallback instead of raw error stub.
+        // Spec: composeFallbackContextNote() in lib/context-note-fallback.mjs.
+        const { composeFallbackContextNote } = await import('./lib/context-note-fallback.mjs');
+        const fb = composeFallbackContextNote({ rowNum: numInt, role: row.role, company: row.company });
+        return json({ ok: true, note: fb.note, citations: fb.citations, stub: fb.stub, fallback_tier: fb.tier });
       }
       // Query the corpus index for the role + company.
       const queryStr = `${row.role || ''} at ${row.company || ''} — what makes Mitchell distinctively qualified, and what gaps should he address?`;
@@ -10159,10 +10194,16 @@ async function generatePack(){
         const { indexQuery } = await import('./lib/corpus-index.mjs');
         chunks = await indexQuery({ query: queryStr, topK: 10 });
       } catch (e) {
-        return json({ ok: true, note: '(corpus index unavailable: ' + (e.message || 'unknown').slice(0, 80) + ')', citations: [], stub: true });
+        // PR-08 (2026-05-25) — degraded-useful fallback.
+        const { composeFallbackContextNote } = await import('./lib/context-note-fallback.mjs');
+        const fb = composeFallbackContextNote({ rowNum: numInt, role: row.role, company: row.company });
+        return json({ ok: true, note: fb.note, citations: fb.citations, stub: fb.stub, fallback_tier: fb.tier });
       }
       if (!chunks || chunks.length === 0) {
-        return json({ ok: true, note: '(corpus index returned 0 chunks for this role)', citations: [], stub: true });
+        // PR-08 (2026-05-25) — degraded-useful fallback.
+        const { composeFallbackContextNote } = await import('./lib/context-note-fallback.mjs');
+        const fb = composeFallbackContextNote({ rowNum: numInt, role: row.role, company: row.company });
+        return json({ ok: true, note: fb.note, citations: fb.citations, stub: fb.stub, fallback_tier: fb.tier });
       }
       const snippetText = chunks.slice(0, 8).map((c, i) =>
         '## Snippet ' + (i + 1) + ' [source: ' + (c.source || 'unknown') + ']\n' + ((c.text || '').slice(0, 600))
@@ -10196,7 +10237,10 @@ async function generatePack(){
         for (const c of chunks.slice(0, 8)) if (c.source) sources.add(c.source);
         citations = Array.from(sources);
       } catch (e) {
-        return json({ ok: true, note: '(Sonnet synthesis timed out: ' + (e.message || 'unknown').slice(0, 80) + ')', citations: [], stub: true });
+        // PR-08 (2026-05-25) — degraded-useful fallback instead of raw error stub.
+        const { composeFallbackContextNote } = await import('./lib/context-note-fallback.mjs');
+        const fb = composeFallbackContextNote({ rowNum: numInt, role: row.role, company: row.company });
+        return json({ ok: true, note: fb.note, citations: fb.citations, stub: fb.stub, fallback_tier: fb.tier });
       }
       const payload = {
         cachedAt: new Date().toISOString(),

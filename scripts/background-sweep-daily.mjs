@@ -83,6 +83,37 @@ function shouldRefresh(lastCheckedAt, maxAgeHours) {
 
 // ─────────────────────────────────────────────────────────────────────────
 // Queue loader
+//
+// apply-now-queue.json canonical shape (per rebuild-apply-now-queue.mjs):
+//   { generated_at, ranked: [{ num, company, role, status, _dropped, url?, ... }], ... }
+//
+// Historical compat: prior shape used `queue` or `applyNow` keys — fall back
+// to either if `ranked` is absent. Row id resolution: prefer `r.id`, fall back
+// to `r.num` (canonical) so the in-flight rename from id → num doesn't break.
+//
+// Filtering: `_dropped: true` rows + Discarded/Rejected/SKIP status are
+// excluded — the sweep only checks live / pending applications.
+//
+// URL resolution: queue rows often lack `url` (rebuild script's
+// `applications.md` source doesn't carry URLs). When missing, parse the
+// **URL:** line from the linked report (reports/<file>.md, 99.5% coverage).
+
+const EXCLUDED_STATUSES = new Set(['discarded', 'rejected', 'skip']);
+
+function resolveUrlFromReport(reportField) {
+  if (!reportField) return '';
+  // reportField shape: "[NNN](reports/path.md)" or raw "reports/path.md"
+  const m = String(reportField).match(/\(([^)]+)\)/);
+  const path = m ? m[1] : String(reportField);
+  if (!path.startsWith('reports/')) return '';
+  const full = join(ROOT, path);
+  if (!existsSync(full)) return '';
+  try {
+    const head = readFileSync(full, 'utf-8').slice(0, 4_000);
+    const um = head.match(/^\*\*URL:\*\*\s*(\S+)/m);
+    return um ? um[1] : '';
+  } catch { return ''; }
+}
 
 function loadQueue() {
   if (!existsSync(QUEUE_FILE)) {
@@ -90,21 +121,36 @@ function loadQueue() {
     return [];
   }
   const data = JSON.parse(readFileSync(QUEUE_FILE, 'utf-8'));
-  // apply-now-queue.json shape: { generated_at, queue: [{ id, url, company, role, score, ... }] }
-  const queue = data.queue || data.applyNow || [];
-  if (FLAGS.rowId) return queue.filter(r => String(r.id) === FLAGS.rowId);
-  return queue;
+  const raw = Array.isArray(data) ? data : (data.ranked || data.queue || data.applyNow || []);
+  const normalized = [];
+  for (const r of raw) {
+    if (r._dropped) continue;
+    const status = String(r.status || '').toLowerCase();
+    if (EXCLUDED_STATUSES.has(status)) continue;
+    const id = String(r.id ?? r.num ?? '');
+    if (!id) continue;
+    const url = r.url || resolveUrlFromReport(r.report);
+    normalized.push({ ...r, id, url });
+  }
+  if (FLAGS.rowId) return normalized.filter(r => r.id === FLAGS.rowId);
+  return normalized;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
 // Signal: liveness
 
 async function checkLiveness(row, prev) {
-  // Reuse existing liveness logic; lightweight via http-liveness first.
+  // Reuse existing liveness logic. lib/http-liveness exports `checkUrl` which
+  // returns { live: true|false|null, reason, body, status } (null = uncertain).
+  if (!row.url) return { status: 'no_url' };
   try {
-    const { httpLiveness } = await import('../lib/http-liveness.mjs');
-    const result = await httpLiveness(row.url, { timeoutMs: 8_000 });
-    return { status: result.alive ? 'alive' : 'expired', classification: result.classification, http: result.status };
+    const { checkUrl } = await import('../lib/http-liveness.mjs');
+    const r = await checkUrl(row.url, { timeoutMs: 8_000 });
+    let status;
+    if (r.live === true)      status = 'alive';
+    else if (r.live === false) status = 'expired';
+    else                       status = 'uncertain';
+    return { status, reason: r.reason, http: r.status };
   } catch (e) {
     return { status: 'unknown', error: e.message?.slice(0, 80) };
   }
@@ -114,6 +160,7 @@ async function checkLiveness(row, prev) {
 // Signal: jd_diff (re-scrape + sha-diff against cached)
 
 async function checkJdDiff(row, prev) {
+  if (!row.url) return { status: 'no_url' };
   try {
     const r = await fetch(row.url, {
       signal: AbortSignal.timeout(15_000),

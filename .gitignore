@@ -370,6 +370,13 @@ data/system-review-findings-*.md
 data/integrity-state.json
 data/pipeline-ingress-state.json
 data/quarantine/
+# PR-01 (apply-now UX overhaul, 2026-05-25) quarantine sink for personal data
+# moved out of role-enrichment / context-notes / apply-packs / plists. Contents
+# include cv.md citations, recruiter names, comp ranges, role-specific intel —
+# all gitignored elsewhere, must stay gitignored here for cross-fork-leak safety.
+# Scripts: scripts/quarantine/*.mjs — see AGENTS.md "apply-now UX overhaul (PR-01)"
+# for reversal commands.
+data/_quarantine/
 data/tmp/
 # -prev calibration snapshots are seeded by scripts/integrity-check-nightly.mjs
 # on first run; drift detection compares current vs prev locally. Gitignored

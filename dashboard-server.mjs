@@ -591,9 +591,11 @@ const COST_PER_APPLY_PACK_USD  = clampEnvFloat('COST_PER_APPLY_PACK_USD', 2.50, 
 //   This is the BUDGET CAP, not observed mean; researcher agent self-budgets
 //   under this cap and may come in well below (data/cost-log.tsv N=2 observed
 //   mean = $0.625 for researcher-mixed entries).
-//   PRIOR HALLUCINATION (`$11.30 from scripts/hiring-manager-research.mjs
-//   COST_ESTIMATE`): that file does NOT exist in the codebase. The reference
-//   was generated, not read. Corrected to real $3 budget cap. See
+//   PRIOR HALLUCINATION (`$11.30 from scripts/agents/intel-refresh.mjs --slots
+//   hm-intel COST_ESTIMATE`): the originally-cited script (`scripts/hiring-
+//   manager-research.mjs`) never existed in the codebase. The reference was
+//   generated, not read. The hm-intel slot is now served by
+//   scripts/agents/intel-refresh.mjs. Corrected to real $3 budget cap. See
 //   data/agent-hallucination-log.md entry 2026-05-19-γ-runbatch for details.
 //   Confidence: MED (budget cap, not observed mean; observed mean from N=2
 //   logged runs is $0.625 — actual cost likely $0.5-$3 per call).
@@ -4570,7 +4572,7 @@ const server = createServer((req, res) => {
     return;
   }
 
-  // ── Hiring-manager intel (from scripts/hiring-manager-research.mjs) ─────
+  // ── Hiring-manager intel (from scripts/agents/intel-refresh.mjs --slots hm-intel) ─────
   // GET /api/hm-intel?slug=anthropic-comms-manager  → returns the JSON
   // synthesized by the 7-LLM council, or 404 if no intel exists yet.
   // The dashboard drawer fetches this lazily on row click.
@@ -7838,7 +7840,7 @@ const server = createServer((req, res) => {
   }
 
   // ── 1. POST /api/build-pack-stage ─────────────────────────────────────────
-  // body: { rowId, stage: 'cv-tailor'|'cover-letter'|'why-statement'|'linkedin-dm'|'form-fields', config? }
+  // body: { rowId, stage: 'cv-tailor'|'cover-letter'|'why-statement'|'linkedin-dm'|'form-fields'|'impact-doc'|'references'|'referrals', config? }
   // Invokes scripts/agents/{stage}.mjs and returns SubAgentOutput JSON.
   //
   // Slug-resolution fix (2026-05-25 Worker C): resolveRowToPackInput()
@@ -7852,7 +7854,13 @@ const server = createServer((req, res) => {
       try {
         const body = await _readBody(req);
         const { rowId, stage, config } = body || {};
-        const VALID_STAGES = new Set(['cv-tailor', 'cover-letter', 'why-statement', 'linkedin-dm', 'form-fields']);
+        // PR-07 (apply-now UX audit 2026-05-25): added impact-doc / references /
+        // referrals so the build-pack-stage endpoint reaches every artifact the
+        // apply-pack-polish loop expects. Pre-PR-07, the dashboard could regenerate
+        // 5 of 8 polished artifacts via this endpoint; the remaining 3 were
+        // documented-but-unbuilt at the HTTP surface even though the agent scripts
+        // (scripts/agents/impact-doc.mjs etc) exist on disk.
+        const VALID_STAGES = new Set(['cv-tailor', 'cover-letter', 'why-statement', 'linkedin-dm', 'form-fields', 'impact-doc', 'references', 'referrals']);
         if (!rowId) return json({ ok: false, error: 'rowId is required' }, 400);
         if (!stage || !VALID_STAGES.has(stage)) {
           return json({ ok: false, error: `stage must be one of: ${[...VALID_STAGES].join(', ')}` }, 400);
@@ -7877,6 +7885,12 @@ const server = createServer((req, res) => {
           'why-statement': 'runWhyStatement',
           'linkedin-dm':  'runLinkedinDm',
           'form-fields':  'runFormFields',
+          // PR-07 (2026-05-25): impact-doc / references / referrals dispatch.
+          // Exports verified at scripts/agents/{impact-doc,references,referrals}.mjs
+          // — runImpactDoc, runReferences, runReferrals.
+          'impact-doc':   'runImpactDoc',
+          'references':   'runReferences',
+          'referrals':    'runReferrals',
         };
         const fnName = fnMap[stage];
         const fn = mod[fnName];

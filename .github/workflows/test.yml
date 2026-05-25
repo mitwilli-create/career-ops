@@ -28,4 +28,9 @@ jobs:
         # Always file a follow-up issue to remove the bypass within 24h.
         if: ${{ env.TOKENS_SKIP_CI_GATE != '1' }}
         run: node scripts/transform-tokens.mjs --check
+      - name: Ghost-script lint (PR-07 documented-but-unbuilt cleanup)
+        # Fails if any new code references scripts/<KNOWN_GHOST>.mjs that doesn't
+        # exist in the repo. Comment-prefixed historical references are allowed.
+        # See AGENTS.md § Bug class: documented-but-unbuilt for the broader pattern.
+        run: node scripts/lint-ghost-scripts.mjs
       - run: node test-all.mjs --quick

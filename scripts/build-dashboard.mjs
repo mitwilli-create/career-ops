@@ -3320,8 +3320,24 @@ function renderRow(r, idx) {
   // pre-baked content → provenance-error fallback). Killed the click —
   // this card is display-only, no nav, no expand.
   const _rowDrillNum = htmlEscape(String(r.num||''));
-  const tldrCard = (tldr || roleFunction || comp || toxLine || alignmentBars) ? `<div class="dcard dcard--static" style="margin-bottom:8px">
+  // PR-07 (apply-now UX audit 2026-05-25): stale-eval soft label. When the
+  // eval is more than 30 days old, prepend a muted notice so the operator
+  // knows the cards below were generated against a stale baseline. No button
+  // attached deliberately — a "refresh" button without a real regeneration
+  // pipeline wired is worse than no button (per the strategy doc). Operator
+  // action: trigger a fresh eval through the normal /pipeline flow or the
+  // per-row Deep Refresh chip in the action cell.
+  const _staleEvalLabel = (() => {
+    if (!r.date) return '';
+    const _d = new Date(r.date);
+    if (isNaN(_d.getTime())) return '';
+    const _days = Math.floor((Date.now() - _d.getTime()) / 86400000);
+    if (_days <= 30) return '';
+    return `<div class="dcard-stale-eval-label muted-text" style="font-size:11px;font-style:italic;margin-bottom:6px;opacity:.7" title="Eval is more than 30 days old. The fit-evidence, gaps, and stories below were generated from a stale snapshot — re-run via the per-row Deep Refresh chip in the action cell, or queue a fresh eval through the pipeline.">Eval ${_days} days old (regenerated nightly)</div>`;
+  })();
+  const tldrCard = (tldr || roleFunction || comp || toxLine || alignmentBars || _staleEvalLabel) ? `<div class="dcard dcard--static" style="margin-bottom:8px">
     <div class="dcard-label">Quick role summary</div>
+    ${_staleEvalLabel}
     ${tldr ? `<div class="dcard-body dcard-body--unclamped">${htmlEscape(tldr)}</div>` : ''}
     ${respLine}
     ${compLine}
@@ -3338,6 +3354,7 @@ function renderRow(r, idx) {
   // pipeline in Wave D.
   const posCard = positioning ? `<div class="dcard dcard--static" style="margin-bottom:8px">
     <div class="dcard-label">How to position yourself</div>
+    ${_staleEvalLabel}
     <div class="dcard-body htp-md">${renderHowToPosition(positioning)}</div>
   </div>` : '';
 
@@ -3373,6 +3390,7 @@ function renderRow(r, idx) {
 
   const matchCard = edge.length ? `<div class="dcard dcard--match">
     <div class="dcard-label">Fit evidence — what matches your background</div>
+    ${_staleEvalLabel}
     <ul class="match-list">
       ${edge.map(e => {
         const reqSlug = _slugifyReq(String(e.requirement||''));
@@ -3410,6 +3428,7 @@ function renderRow(r, idx) {
   } catch (_) { _honestGaps = []; }
   const gapCard = (gaps.length || _honestGaps.length) ? `<div class="dcard dcard--gap">
     <div class="dcard-label">Gaps to address <span style="font-size:9px;font-weight:400;color:var(--text-4);margin-left:4px">click any chip for what to fix before applying</span></div>
+    ${_staleEvalLabel}
     ${gaps.length ? `<div class="dcard-gaps">${gaps.map(g => {
       const strategy = getGapStrategy(r.reportPath, g.title);
       const detailHtml = g.detail ? marked.parse(g.detail) : '';
@@ -3463,8 +3482,19 @@ function renderRow(r, idx) {
     return existsSync(fp) ? `stories/${slug}.html` : null;
   };
   // Wave C-A drill-in: each story row → story:{num}:{story-slug}
+  // PR-07 (apply-now UX 2026-05-25): D6 — when no stories have been generated
+  // yet, show a muted CTA instead of an empty card. The CTA links to the
+  // drawer-auto-enrich endpoint so the operator can trigger generation
+  // without leaving the dashboard. Use company+role slug (same pattern as
+  // _hmSlugify) so the endpoint resolves the correct slot cache path.
+  const _storyRowSlug = (() => {
+    const c = String(r.company || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    const ro = String(r.role || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    return (c + '-' + ro).replace(/^-+|-+$/g, '').slice(0, 80);
+  })();
   const storyCard = stories.length ? `<div class="dcard dcard--story">
     <div class="dcard-label">Stories to use in your application</div>
+    ${_staleEvalLabel}
     ${stories.map((s, i) => {
       const childHref = _storyChildPath(s);
       const storySlug = _slugifyStory(String(s.story || '').slice(0, 60));
@@ -3482,7 +3512,10 @@ function renderRow(r, idx) {
         </div>
       </div>`;
     }).join('')}
-  </div>` : '';
+  </div>` : `<div class="dcard dcard--story">
+    <div class="dcard-label">Stories to use in your application</div>
+    <div class="dcard-story-empty muted-text" style="font-size:12px;font-style:italic;padding:6px 0;opacity:.7">No stories generated yet for this match. <a href="/api/drawer/auto-enrich?slot=story-card&amp;slug=${htmlEscape(_storyRowSlug)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="story-cta-link" style="color:var(--blue-fg);text-decoration:underline dotted" title="Trigger story generation via drawer-auto-enrich pipeline">Generate story for this match? &rarr;</a></div>
+  </div>`;
 
   // Notes & activity card fully scrubbed 2026-05-19 (UI removed first;
   // dead CSS + JS + server routes scrubbed in follow-up commit). Status
@@ -20882,7 +20915,7 @@ if (document.readyState === 'loading') {
 // Lazy-load the 7-LLM council intel pack for a row and render the 9
 // sections (role summary, alignment, fit evidence, contacts, outreach
 // tactic, team gaps, honest gaps, tradeoffs, Apply/Discard). Slug
-// derivation MUST match scripts/hiring-manager-research.mjs:slugify().
+// derivation MUST match the slug shape produced by scripts/agents/intel-refresh.mjs.
 function _hmSlugify(company, role) {
   return String(company + '-' + role)
     .toLowerCase()
@@ -20895,6 +20928,26 @@ function _hmEsc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// PR-07 (apply-now UX 2026-05-25): D2 — inline voice-purity check for
+// outreach_hook + outreach_strategy. Mirrors lib/ground-prompt.mjs
+// VOICE_PURITY_RULES (Layer 2 regex, same 3 rule families). Double-backslash
+// required on all regex metacharacters per outer-template-unescape bug class
+// (AGENTS.md). Score 0 = clean; score > 0 = voice violations found.
+function _voicePurityOk(text) {
+  var t = String(text == null ? '' : text);
+  var score = 0;
+  // Rule 1: first-person Mitchell self-talk (weight 3)
+  var r1 = t.match(/\\b(?:I (?:think|feel|believe|want|would|will|should|can|cannot|don't|do not)|my fit|my background|my strengths|my weaknesses|looking at this role I|in my view|from my perspective)\\b/gi);
+  if (r1 && r1.length) score += r1.length * 3;
+  // Rule 2: tone-unsafe language (weight 3)
+  var r2 = t.match(/\\b(?:failed|broken|wrong|bad|poor|weak|deficient|lacking)\\b/gi);
+  if (r2 && r2.length) score += r2.length * 3;
+  // Rule 3: banned corporate vocab (weight 1)
+  var r3 = t.match(/\\b(?:leverage|synergy|deep[ -]dive|ideate|circle back|touch base|bandwidth|moving forward|reach out)\\b/gi);
+  if (r3 && r3.length) score += r3.length * 1;
+  return score === 0;
 }
 
 function _hmConfChip(conf) {
@@ -20937,7 +20990,7 @@ function _hmPersonCard(p) {
     + (links.length ? '<div class="hm-person-links">' + links.join(' · ') + '</div>' : '')
     + (emails.length ? '<div class="hm-person-emails">' + emails.join('<br>') + '</div>' : '')
     + (activityHtml ? '<div class="hm-person-activity"><strong>Recent activity:</strong><ul>' + activityHtml + '</ul></div>' : '')
-    + (p.outreach_hook ? '<div class="hm-person-hook"><strong>Hook:</strong> ' + _hmEsc(_cleanOutreachProse(p.outreach_hook)) + '</div>' : '')
+    + (p.outreach_hook ? (_voicePurityOk(p.outreach_hook) ? '<div class="hm-person-hook"><strong>Hook:</strong> ' + _hmEsc(_cleanOutreachProse(p.outreach_hook)) + '</div>' : '<div class="hm-person-hook muted-text" style="font-size:11px;font-style:italic;opacity:.7" title="Voice-purity check found style issues. Regenerate via intel-refresh to get a corrected version.">Voice-check pending — regenerate via intel-refresh</div>') : '')
     + '</div>';
 }
 
@@ -21285,7 +21338,7 @@ function _renderHMIntel(d, slug) {
     + (recCards ? '<section class="hm-section"><h4>Likely recruiters (' + recHigh.length + ')</h4>' + recCards + '</section>' : '')
     + filterFootnote
 
-    + (d.outreach_strategy     ? '<section class="hm-section"><h4>Outreach tactic</h4>' + _formatOutreachSection(d.outreach_strategy) + '</section>' : '')
+    + (d.outreach_strategy     ? '<section class="hm-section"><h4>Outreach tactic</h4>' + (_voicePurityOk(d.outreach_strategy) ? _formatOutreachSection(d.outreach_strategy) : '<p class="muted-text" style="font-size:12px;font-style:italic;opacity:.7" title="Voice-purity check found style issues. Regenerate via intel-refresh to get a corrected version.">Voice-check pending — regenerate via intel-refresh</p>') + '</section>' : '')
     // FIX 4 (2026-05-17) — clump prose broken into scannable bullets.
     + (d.team_gap_analysis     ? '<section class="hm-section"><h4>Team gaps I fill</h4>' + _hmProseBullets(d.team_gap_analysis) + '</section>' : '')
 

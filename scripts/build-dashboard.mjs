@@ -23204,11 +23204,109 @@ function _intelRenderModalBody(modal, backdrop, kind, title, data, meta) {
 }
 
 function _intelRenderTeamHealthBody(d) {
-  const scores = d.scores || {};
   let h = '';
 
+  // PR-04 (2026-05-25) — Corpus-grounded format detection. New synthesizer
+  // shape from lib/team-health-synthesis.mjs has what_we_know /
+  // what_uncertain / what_to_ask_in_screen / confidence / synthesis_mode.
+  // Legacy scraper-based shape has scores{} / narrative / anecdotes[].
+  // BOTH shapes pass through TEAM_HEALTH_SCHEMA validation.
+  var isCorpusGrounded = d.synthesis_mode === 'corpus-grounded'
+    || Array.isArray(d.what_we_know)
+    || Array.isArray(d.what_to_ask_in_screen);
+
+  if (isCorpusGrounded) {
+    // ─── New corpus-grounded layout (PR-04) ───
+    // Prominent header banner: "Synthesis (no live scrape) — Confidence: <label>"
+    // tone-safe styling — no warning/error/missing language; calibration only.
+    var conf = String(d.confidence || 'Medium');
+    var confLower = conf.toLowerCase();
+    // Banner color band: positive (Medium/High) = neutral; calibration signal (Low/Guessing) = subtle amber
+    var bannerBg = confLower === 'high' ? 'rgba(34,134,58,0.12)'
+                 : confLower === 'medium' ? 'rgba(88,166,255,0.10)'
+                 : confLower === 'low' ? 'rgba(168,123,72,0.14)'
+                 : 'rgba(168,123,72,0.20)';  // Guessing = stronger amber tint
+    var bannerBorder = confLower === 'high' ? 'rgba(34,134,58,0.35)'
+                     : confLower === 'medium' ? 'rgba(88,166,255,0.30)'
+                     : 'rgba(168,123,72,0.45)';
+    var bannerText = confLower === 'high' ? '#3fb95e'
+                   : confLower === 'medium' ? '#58a6ff'
+                   : '#d2a766';
+    h += '<div style="background:' + bannerBg + ';border:1px solid ' + bannerBorder + ';border-radius:6px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px">';
+    h += '<div style="display:flex;flex-direction:column;gap:2px">';
+    h += '<div style="font-size:12px;font-weight:600;color:' + bannerText + ';letter-spacing:0.02em">Synthesis (no live scrape)</div>';
+    h += '<div style="font-size:11px;color:var(--text-3);line-height:1.4">Grounded in cached HM intel + Mitchell’s profile corpus. No Glassdoor / Blind / levels.fyi data backing this.</div>';
+    h += '</div>';
+    h += '<div style="text-align:right;flex-shrink:0">';
+    h += '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-4)">Confidence</div>';
+    h += '<div style="font-size:16px;font-weight:700;color:' + bannerText + ';line-height:1.2">' + _intelEsc(conf) + '</div>';
+    h += '</div>';
+    h += '</div>';
+
+    // Section 1 — What we know (claims with source_field citations)
+    var ww = Array.isArray(d.what_we_know) ? d.what_we_know : [];
+    h += '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">What we know</div>';
+    if (ww.length === 0) {
+      h += '<p style="margin:0;font-size:12.5px;color:var(--text-3);font-style:italic">No grounded claims surfaced in this synthesis.</p>';
+    } else {
+      h += '<ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px">';
+      for (var i = 0; i < ww.length; i++) {
+        var item = ww[i] || {};
+        var claim = item.claim || item.observation || String(item);
+        var src = item.source_field || item.source || '';
+        h += '<li style="background:var(--surface-2,#0f1118);border:1px solid var(--border);border-radius:6px;padding:9px 11px">';
+        h += '<div style="font-size:12.5px;line-height:1.5;color:var(--text)">' + _intelEsc(claim) + '</div>';
+        if (src) {
+          h += '<div style="margin-top:4px;font-size:10px;color:var(--text-4);letter-spacing:0.04em">Source: <code style="font-family:ui-monospace,SFMono-Regular,monospace;color:var(--text-3);background:rgba(255,255,255,0.04);padding:1px 4px;border-radius:3px">' + _intelEsc(src) + '</code></div>';
+        }
+        h += '</li>';
+      }
+      h += '</ul>';
+    }
+    h += '</div>';
+
+    // Section 2 — What we're uncertain about (explicit gaps; builds trust)
+    var wu = Array.isArray(d.what_uncertain) ? d.what_uncertain : [];
+    if (wu.length > 0) {
+      h += '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">What’s uncertain</div>';
+      h += '<ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px">';
+      for (var j = 0; j < wu.length; j++) {
+        h += '<li style="font-size:12px;line-height:1.5;color:var(--text-2)">' + _intelEsc(String(wu[j])) + '</li>';
+      }
+      h += '</ul></div>';
+    }
+
+    // Section 3 — What to ask in screen (3-5 questions in Mitchell's voice)
+    var wta = Array.isArray(d.what_to_ask_in_screen) ? d.what_to_ask_in_screen : [];
+    if (wta.length > 0) {
+      h += '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">What to ask in screen</div>';
+      h += '<ol style="margin:0;padding-left:22px;display:flex;flex-direction:column;gap:6px">';
+      for (var k = 0; k < wta.length; k++) {
+        h += '<li style="font-size:12.5px;line-height:1.55;color:var(--text);padding-left:4px"><span style="color:var(--text-2)">' + _intelEsc(String(wta[k])) + '</span></li>';
+      }
+      h += '</ol></div>';
+    }
+
+    // Footer meta (synthesis details + timestamp)
+    var meta = d._meta || {};
+    var metaLines = [];
+    if (meta.source_signals_count != null) metaLines.push('signals: ' + meta.source_signals_count);
+    if (meta.hm_intel_present === false) metaLines.push('no hm-intel cache');
+    if (meta.cost_usd != null) metaLines.push('cost: $' + Number(meta.cost_usd).toFixed(4));
+    if (meta.model_used) metaLines.push('model: ' + String(meta.model_used).replace('anthropic:', ''));
+    var synthAt = meta.generated_at || d.synthesized_at;
+    if (synthAt) metaLines.push('synthesized: ' + String(synthAt).slice(0, 10));
+    if (metaLines.length > 0) {
+      h += '<div style="font-size:10.5px;color:var(--text-4);border-top:1px dashed var(--border);padding-top:10px;line-height:1.6">' + metaLines.map(function (m) { return _intelEsc(m); }).join(' ' + String.fromCharCode(183) + ' ') + '</div>';
+    }
+    return h;
+  }
+
+  // ─── Legacy scraper-based layout (kept for backward compatibility) ───
+  var scores = d.scores || {};
+
   // 5-score grid
-  const rows = [
+  var rows = [
     { key: 'overall',    label: 'Overall' },
     { key: 'leadership', label: 'Leadership' },
     { key: 'comp',       label: 'Compensation' },
@@ -23216,12 +23314,12 @@ function _intelRenderTeamHealthBody(d) {
     { key: 'balance',    label: 'Work-life balance' },
   ];
   h += '<div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px">';
-  for (let i = 0; i < rows.length; i++) {
-    const v = scores[rows[i].key];
-    const pct = v != null ? Math.max(0, Math.min(100, Number(v))) : null;
-    const bandCls = pct == null ? '' : pct >= 75 ? 'high' : pct >= 50 ? 'medium' : 'low';
+  for (var i2 = 0; i2 < rows.length; i2++) {
+    var v = scores[rows[i2].key];
+    var pct = v != null ? Math.max(0, Math.min(100, Number(v))) : null;
+    var bandCls = pct == null ? '' : pct >= 75 ? 'high' : pct >= 50 ? 'medium' : 'low';
     h += '<div style="background:var(--surface-2,#0f1118);border:1px solid var(--border);border-radius:6px;padding:10px 8px;text-align:center">';
-    h += '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:4px">' + _intelEsc(rows[i].label) + '</div>';
+    h += '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:4px">' + _intelEsc(rows[i2].label) + '</div>';
     h += '<div style="font-size:20px;font-weight:600;color:var(--text)">' + (pct == null ? String.fromCharCode(8212) : _intelEsc(pct)) + '</div>';
     if (bandCls) h += '<div style="font-size:9.5px;color:var(--text-4);text-transform:uppercase;margin-top:2px">' + bandCls + '</div>';
     h += '</div>';
@@ -23235,7 +23333,7 @@ function _intelRenderTeamHealthBody(d) {
   }
 
   // Anecdotes / sources list
-  const anecdotes = Array.isArray(d.anecdotes) ? d.anecdotes : (Array.isArray(d.sources) ? d.sources : []);
+  var anecdotes = Array.isArray(d.anecdotes) ? d.anecdotes : (Array.isArray(d.sources) ? d.sources : []);
   if (anecdotes.length) {
     h += '<div><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);margin-bottom:6px">What employees say</div>';
     h += '<ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px">';

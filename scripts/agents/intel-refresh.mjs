@@ -48,7 +48,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..', '..');
 
 const TTL_MS = 3 * 24 * 60 * 60 * 1000;
-const VALID_SLOTS = ['hm-intel', 'toxicity', 'strategy-ceiling', 'positioning', 'liveness', 'ats-detection', 'role-enrichment', 'hm-chance', 'interview-likelihood'];
+const VALID_SLOTS = ['hm-intel', 'toxicity', 'strategy-ceiling', 'positioning', 'liveness', 'ats-detection', 'role-enrichment', 'hm-chance', 'interview-likelihood', 'team-health'];
 const SLOT_METRICS = ['alignment', 'interview-likelihood', 'hm-noticing'];
 const STATE_PATH = join(ROOT, 'data', 'intel-refresh-state.json');
 const LIVENESS_CACHE_PATH = join(ROOT, 'data', 'liveness-cache.json');
@@ -553,12 +553,53 @@ async function refreshInterviewLikelihood(row, opts = {}) {
   return { ok, exit_code: result.status, path: target };
 }
 
+/* -------- SLOT 10: team-health — corpus-grounded synthesis (PR-04, 2026-05-25) -------- */
+async function refreshTeamHealth(row, opts = {}) {
+  // company-slug (NOT role-slug) — team-health is shared across roles at the
+  // same company, cached at data/team-health/<company-slug>.json.
+  const companySlug = slugify(row.company);
+  const target = join(ROOT, 'data', 'team-health', `${companySlug}.json`);
+  if (!opts.force && isCacheFresh(target)) {
+    emit({ slot: 'team-health', row: row.num, cache: 'hit', path: target });
+    return { ok: true, cache: 'hit', path: target };
+  }
+  emit({ slot: 'team-health', row: row.num, step: 'starting-synthesis', company: row.company });
+  try {
+    const { synthesizeTeamHealth } = await import('../../lib/team-health-synthesis.mjs');
+    const result = await synthesizeTeamHealth({
+      slug: companySlug,
+      opts: {
+        companyName: row.company,
+        roleName: row.role,
+        rowId: String(row.num),
+        force: opts.force,
+      },
+    });
+    const ok = result.status === 'SYNTHESIZED' || result.status === 'CACHED';
+    emit({
+      slot: 'team-health',
+      row: row.num,
+      step: 'synthesis-done',
+      status: result.status,
+      confidence: result.confidence,
+      cost_usd: result.cost_usd,
+      path: target,
+    });
+    return { ok, status: result.status, confidence: result.confidence, cost_usd: result.cost_usd, path: target };
+  } catch (err) {
+    emit({ slot: 'team-health', row: row.num, step: 'synthesis-failed', error: err.message });
+    return { ok: false, error: err.message, path: target };
+  }
+}
+
 /* -------- Main orchestrator -------- */
 async function refreshRow(row, slots, opts = {}) {
   const out = {};
   // 'all' = the 7 standard slots. The 2 companion-agent slots (hm-chance,
   // interview-likelihood) cost ~$3-5/row extra and only fire when explicit-listed
   // OR when opts.deep (the dashboard's "Deep refresh" modal sets mode='deep-council-7').
+  // team-health (PR-04) routes to corpus-grounded synth — fires when explicit
+  // OR on --all sweeps. ~$0.30/row average.
   const isDeep = opts.deep === true || opts.mode === 'deep-council-7';
   const allIncludesDeep = slots.includes('all') && isDeep;
   if (slots.includes('hm-intel') || slots.includes('all')) out['hm-intel'] = await refreshHmIntel(row, opts);
@@ -570,6 +611,7 @@ async function refreshRow(row, slots, opts = {}) {
   if (slots.includes('role-enrichment') || slots.includes('role') || slots.includes('all')) out['role-enrichment'] = await refreshRoleEnrichment(row, opts);
   if (slots.includes('hm-chance') || allIncludesDeep) out['hm-chance'] = await refreshHmChance(row, opts);
   if (slots.includes('interview-likelihood') || allIncludesDeep) out['interview-likelihood'] = await refreshInterviewLikelihood(row, opts);
+  if (slots.includes('team-health') || slots.includes('all')) out['team-health'] = await refreshTeamHealth(row, opts);
   return out;
 }
 

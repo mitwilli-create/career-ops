@@ -9227,15 +9227,18 @@ async function generatePack(){
           ok: false,
           error: 'not-found',
           slug,
-          reason: 'Team-health synthesis queued behind PR-04 ship',
+          reason: 'No team-health synthesis cached yet. Click Generate to run corpus-grounded synthesis (~$0.30, uses existing hm-intel + Mitchell\'s personality + profile corpus — no scrapers).',
+          // PR-04 (2026-05-25): synthesis is now live via
+          // lib/team-health-synthesis.mjs. Auto-enrich routes through the
+          // generic /api/drawer/auto-enrich endpoint (PR-03 dispatcher).
+          // No deferred flag — synthesis fires immediately on Generate click.
           auto_enrich_available: {
             slot: 'team-health',
             est_cost_usd: 0.30,
             eta_seconds: 60,
-            cta_label: 'Team-health synthesis queued behind PR-04 ship',
+            cta_label: 'Generate Team Health synthesis (~$0.30)',
             requires_confirmation: false,
-            deferred: true,
-            deferred_reason: 'lib/team-health-synthesis.mjs ships in PR-04',
+            synthesis_mode: 'corpus-grounded',
           },
         }, 404);
         const j = JSON.parse(readFileSync(p, 'utf-8'));

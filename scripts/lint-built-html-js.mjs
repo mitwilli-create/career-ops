@@ -110,4 +110,83 @@ if (totalFailed > 0) {
 }
 
 console.log(`✓ ${totalBlocks} inline <script> block(s) parsed cleanly across ${targetFiles.length} file(s).`);
+
+// ── 4.11 (2026-05-24) — Double-line-break + empty-p content lint ──────────────
+// Catches the comp-section / outreach-section content rendering bug class where
+// the prose generator emits `<br><br>`, `<br/><br/>`, or `<p></p>` separators.
+// Both create unwanted "wall of text" gaps that the dashboard CSS doesn't
+// neutralize. WARNING-only by default — flip to fail via LINT_HTML_CONTENT=fail.
+// Spec: data/closure-prompt-06-gap-audit-2026-05-21.md § 4.11.
+//
+// Bypass: set LINT_HTML_CONTENT=off to skip entirely (emergency only).
+const contentMode = String(process.env.LINT_HTML_CONTENT || 'warn').toLowerCase();
+if (contentMode === 'off') {
+  process.exit(0);
+}
+
+let contentIssues = 0;
+const contentFindings = [];
+
+for (const file of targetFiles) {
+  if (!existsSync(file)) continue;
+  const html = readFileSync(file, 'utf-8');
+  // Pattern 1: double <br> (with or without self-close, with intervening whitespace)
+  const brBrRe = /<br\s*\/?>\s*<br\s*\/?>/gi;
+  let m;
+  while ((m = brBrRe.exec(html)) !== null) {
+    const ln = html.slice(0, m.index).split('\n').length;
+    contentIssues++;
+    contentFindings.push({ file, line: ln, pattern: 'double <br>', match: m[0].slice(0, 60) });
+  }
+  // Pattern 2: empty <p></p> (with optional whitespace inside).
+  // Skip elements with `id=` — those are JS injection targets (e.g.,
+  // `<p id="be-stat-modal-subhead"></p>` gets populated at runtime).
+  const emptyPRe = /<p([^>]*)>\s*<\/p>/gi;
+  while ((m = emptyPRe.exec(html)) !== null) {
+    const attrs = m[1] || '';
+    if (/\bid\s*=/.test(attrs)) continue;  // injection-target placeholder; intentional
+    const ln = html.slice(0, m.index).split('\n').length;
+    contentIssues++;
+    contentFindings.push({ file, line: ln, pattern: 'empty <p></p>', match: m[0].slice(0, 60) });
+  }
+  // Pattern 3: <br> directly followed by empty <p></p> (combined separator abuse).
+  // Same id-skip rule applies.
+  const brEmptyPRe = /<br\s*\/?>\s*<p([^>]*)>\s*<\/p>/gi;
+  while ((m = brEmptyPRe.exec(html)) !== null) {
+    const attrs = m[1] || '';
+    if (/\bid\s*=/.test(attrs)) continue;
+    const ln = html.slice(0, m.index).split('\n').length;
+    contentIssues++;
+    contentFindings.push({ file, line: ln, pattern: '<br> + empty <p>', match: m[0].slice(0, 60) });
+  }
+}
+
+if (contentIssues > 0) {
+  const tag = contentMode === 'fail' ? '✗' : '⚠';
+  console.error(`${tag} ${contentIssues} HTML content lint finding(s) (4.11 — double-br / empty-p):`);
+  // Group by file
+  const byFile = {};
+  for (const f of contentFindings) {
+    if (!byFile[f.file]) byFile[f.file] = [];
+    byFile[f.file].push(f);
+  }
+  for (const [file, items] of Object.entries(byFile)) {
+    console.error(`  ${file} — ${items.length} finding(s)`);
+    const sample = items.slice(0, 6);
+    for (const it of sample) {
+      console.error(`    line ${it.line}: ${it.pattern} — ${JSON.stringify(it.match)}`);
+    }
+    if (items.length > sample.length) {
+      console.error(`    ... and ${items.length - sample.length} more`);
+    }
+  }
+  console.error('');
+  console.error('Hint: prose generators (drawer outreach, comp intel) should emit semantic block');
+  console.error('      elements, not <br><br> or <p></p>. Strip in render or in the generator.');
+  console.error(`      Run with LINT_HTML_CONTENT=off to skip. Default mode: warn.`);
+  if (contentMode === 'fail') {
+    process.exit(1);
+  }
+}
+
 process.exit(0);

@@ -45,6 +45,18 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /Users/mitchellwilliams/Documents/career-ops/.claude/hooks/ledger-summary-inject.mjs",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

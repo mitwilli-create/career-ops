@@ -14,6 +14,7 @@ import yaml from 'js-yaml';
 import { marked } from 'marked';
 import { tierCostEstimates as _tierCostEstimates } from './lib/process-all-tiers.mjs';
 import { parseApplicationsFile } from './lib/parse-applications.mjs';
+import { resolveRowToPackInput } from './lib/build-pack-stage-input.mjs';
 import { statusKey, statusBadgeClass } from './lib/status-key.mjs';
 import { getCachedUrl } from './lib/resolve-ats-url.mjs';
 import {
@@ -7598,6 +7599,13 @@ const server = createServer((req, res) => {
   // ── 1. POST /api/build-pack-stage ─────────────────────────────────────────
   // body: { rowId, stage: 'cv-tailor'|'cover-letter'|'why-statement'|'linkedin-dm'|'form-fields', config? }
   // Invokes scripts/agents/{stage}.mjs and returns SubAgentOutput JSON.
+  //
+  // Slug-resolution fix (2026-05-25 Worker C): resolveRowToPackInput()
+  // resolves rowId → full SubAgentInput shape with pack.jd.{company,role} +
+  // pack.meta.{row_id,company,role} populated from apply-now-queue.json
+  // (preferred) or applications.md (fallback). Without this resolution,
+  // cv-tailor's defaults ('Unknown', 0) write to
+  // data/apply-packs/000-unknown-unknown/ — the bug being fixed here.
   if (url === '/api/build-pack-stage' && req.method === 'POST') {
     (async () => {
       try {
@@ -7607,6 +7615,14 @@ const server = createServer((req, res) => {
         if (!rowId) return json({ ok: false, error: 'rowId is required' }, 400);
         if (!stage || !VALID_STAGES.has(stage)) {
           return json({ ok: false, error: `stage must be one of: ${[...VALID_STAGES].join(', ')}` }, 400);
+        }
+        // Resolve rowId → SubAgentInput shape. Returns 400 if rowId is not
+        // numeric or 404 if not found in queue/applications.
+        const resolved = resolveRowToPackInput(rowId, { root: ROOT });
+        if (!resolved.ok) {
+          const code = /not found/i.test(resolved.error) ? 404 : 400;
+          _d25Log(`[build-pack-stage] slug-resolution-failed rowId=${rowId}: ${resolved.error}`);
+          return json({ ok: false, error: resolved.error, rowId, stage }, code);
         }
         const stagePath = join(ROOT, 'scripts/agents', stage + '.mjs');
         if (!existsSync(stagePath)) {
@@ -7627,7 +7643,7 @@ const server = createServer((req, res) => {
           return json({ ok: false, error: `agent module missing export ${fnName}` }, 500);
         }
         const result = await fn({
-          pack: { rowId, num: rowId },
+          pack: resolved.packInput.pack,
           context: {},
           config: { dryRun: true, ...(config || {}) },
         });

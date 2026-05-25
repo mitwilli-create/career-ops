@@ -32,11 +32,17 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, copyFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { config as dotenvConfig } from 'dotenv';
 import { callCouncil } from '../lib/council.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const ROOT = dirname(dirname(__filename));
 const HM_INTEL_DIR = join(ROOT, 'data', 'hm-intel');
+
+// Fix bug-class env-shadow-on-lazy-dotenv per AGENTS.md. Mitchell's shell
+// pre-sets ANTHROPIC_API_KEY="" (empty), which shadows .env via dotenv's
+// default override:false. Explicit override loads the real key.
+dotenvConfig({ path: join(ROOT, '.env'), override: true });
 
 const args = process.argv.slice(2);
 const DRY_RUN = !args.includes('--apply');
@@ -252,18 +258,8 @@ export async function generateSignals(intel, slug) {
 export function buildSignalsPrompt(intel, slug) {
   const summary = String(intel.role_summary || '').trim();
   const alignment = String(intel.alignment_with_goals || '').trim();
-  const fit = intel.fit_evidence
-    ? Object.entries(intel.fit_evidence)
-        .filter(([_, v]) => typeof v === 'string' && v.trim())
-        .map(([k, v]) => `- ${k}: ${v}`)
-        .join('\n')
-    : '';
-  const outreach = intel.outreach_strategy
-    ? Object.entries(intel.outreach_strategy)
-        .filter(([_, v]) => typeof v === 'string' && v.trim())
-        .map(([k, v]) => `- ${k}: ${v}`)
-        .join('\n')
-    : '';
+  const fit = _stringifyForPrompt(intel.fit_evidence);
+  const outreach = _stringifyForPrompt(intel.outreach_strategy);
 
   return [
     `# Task: extract capability-shaped HM signals for slug=${slug}`,
@@ -309,6 +305,22 @@ export function buildSignalsPrompt(intel, slug) {
     '',
     'Return the array now.',
   ].join('\n');
+}
+
+// HM-intel fields like outreach_strategy + fit_evidence ship in both
+// string AND object shapes across the corpus. Object.entries(string) yields
+// per-character entries — silent garbage into the prompt. This helper
+// normalizes both shapes safely.
+function _stringifyForPrompt(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'object') {
+    return Object.entries(value)
+      .filter(([_, v]) => typeof v === 'string' && v.trim())
+      .map(([k, v]) => `- ${k}: ${v}`)
+      .join('\n');
+  }
+  return String(value).trim();
 }
 
 export function parseSignalsResponse(raw) {

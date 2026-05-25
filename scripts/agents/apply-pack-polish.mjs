@@ -65,6 +65,7 @@ import { polishArtifact } from '../../lib/polish-loop.mjs';
 import { checkPackCoherence } from '../../lib/polish-coherence.mjs';
 import { initCostTrace } from '../../lib/council.mjs';
 import { recordRun } from '../../lib/run-metrics.mjs';
+import { detectPolishSource, buildSkippedArtifactRecord } from '../../lib/polish-source-detection.mjs';
 import { runImpactDoc } from './impact-doc.mjs';
 import { runReferences } from './references.mjs';
 import { runReferrals } from './referrals.mjs';
@@ -434,21 +435,76 @@ export async function runPolishPack(opts = {}) {
       }
 
       let srcText = readArtifactSrc(packInfo.slug, conf);
-      if (!srcText && ['impact-doc', 'references', 'referrals'].includes(conf.kind)) {
-        emitProgress({ phase: 'phase-2', artifact: conf.kind, step: 'generating-from-scratch' });
-        srcText = await generateIfMissing({ kind: conf.kind, packSlug: packInfo.slug, dataDir, packInfo, hmIntel, jdText });
-        if (srcText) {
-          try {
-            const dest = join(ROOT, 'apply-pack', packInfo.slug, conf.srcFile);
-            mkdirSync(dirname(dest), { recursive: true });
-            writeFileSync(dest, srcText, 'utf-8');
-          } catch (e) {
-            emitProgress({ phase: 'phase-2', artifact: conf.kind, warning: `failed to mirror to apply-pack: ${String(e.message || e)}` });
+
+      // Source-detection fix (2026-05-25 Worker C): detectPolishSource()
+      // classifies the artifact's on-disk state. The 'pdf-only' case
+      // previously surfaced as a hard error (`no-source-and-no-generator`)
+      // even when other artifacts in the pack could polish — now it
+      // emits a structured `skipped: 'pdf-only-no-md-source'` warning
+      // and continues with the rest of the pack.
+      if (!srcText) {
+        const sourceState = detectPolishSource({
+          root: ROOT,
+          packSlug: packInfo.slug,
+          kind: conf.kind,
+          srcFile: conf.srcFile,
+        });
+
+        if (sourceState.state === 'has-generator') {
+          // Existing path: regenerator agents (impact-doc/references/referrals)
+          emitProgress({ phase: 'phase-2', artifact: conf.kind, step: 'generating-from-scratch' });
+          srcText = await generateIfMissing({ kind: conf.kind, packSlug: packInfo.slug, dataDir, packInfo, hmIntel, jdText });
+          if (srcText) {
+            try {
+              const dest = join(ROOT, 'apply-pack', packInfo.slug, conf.srcFile);
+              mkdirSync(dirname(dest), { recursive: true });
+              writeFileSync(dest, srcText, 'utf-8');
+            } catch (e) {
+              emitProgress({ phase: 'phase-2', artifact: conf.kind, warning: `failed to mirror to apply-pack: ${String(e.message || e)}` });
+            }
           }
+        } else if (sourceState.state === 'pdf-only') {
+          // Cleanest fix per worker brief option (a): skip cv-tailored phase,
+          // log warning, continue with other artifacts.
+          emitProgress({
+            phase: 'phase-2',
+            artifact: conf.kind,
+            skipped: 'pdf-only-no-md-source',
+            companion_files: sourceState.files_present.companion,
+            actionable_suggestion: sourceState.actionable_suggestion,
+          });
+          perArtifact[conf.kind] = buildSkippedArtifactRecord(
+            conf.kind,
+            'pdf-only-no-md-source',
+            sourceState.actionable_suggestion,
+          );
+          writeSummaryToDisk();
+          continue;
+        } else if (sourceState.state === 'missing-actionable') {
+          // Nothing present, no generator — surface actionable suggestion
+          // (instead of the opaque `no-source-and-no-generator` error).
+          emitProgress({
+            phase: 'phase-2',
+            artifact: conf.kind,
+            error: 'no-source-and-no-generator',
+            actionable_suggestion: sourceState.actionable_suggestion,
+          });
+          perArtifact[conf.kind] = buildSkippedArtifactRecord(
+            conf.kind,
+            'no-source-and-no-generator',
+            sourceState.actionable_suggestion,
+          );
+          // Keep the legacy error field for backward compat with consumers
+          // that grep for the old shape.
+          perArtifact[conf.kind].error = 'no-source-text';
+          writeSummaryToDisk();
+          continue;
         }
       }
       if (!srcText) {
-        emitProgress({ phase: 'phase-2', artifact: conf.kind, error: 'no-source-and-no-generator' });
+        // generateIfMissing failed even though we expected a generator.
+        // Surface as the legacy error shape for consistency.
+        emitProgress({ phase: 'phase-2', artifact: conf.kind, error: 'generator-returned-empty' });
         perArtifact[conf.kind] = { confidence: 0, rounds_used: 0, error: 'no-source-text' };
         writeSummaryToDisk();
         continue;

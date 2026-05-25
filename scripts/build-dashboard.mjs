@@ -6951,6 +6951,39 @@ async function build() {
   .mc-health[data-status="fail"] { border-color: rgba(220,38,38,.4); color: var(--text-2); }
   body.dark .mc-health[data-status="warn"] .mc-health-dot { background: #fbbf24; }
 
+  /* Pre-apply daily spend chip — Worker A deferred-UI ship 2026-05-25.
+     Reads GET /api/pre-apply-spend on a 30s timer; three threshold states
+     drive the data-state attribute. */
+  .mc-spend {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 3px 11px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    font-size: 12px; color: var(--text-2); font-weight: 500;
+    white-space: nowrap;
+    cursor: help; transition: border-color .12s, color .12s, background .12s;
+    font-variant-numeric: tabular-nums;
+  }
+  .mc-spend:hover { border-color: var(--border-strong); color: var(--fg); }
+  .mc-spend-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--text-4); flex-shrink: 0;
+  }
+  .mc-spend[data-state="neutral"] .mc-spend-dot { background: var(--text-4); }
+  .mc-spend[data-state="soft-warn"] .mc-spend-dot { background: #d97706; }
+  .mc-spend[data-state="soft-warn"] { border-color: rgba(217,119,6,.4); }
+  .mc-spend[data-state="amber"] .mc-spend-dot { background: #f59e0b; }
+  .mc-spend[data-state="amber"] {
+    border-color: rgba(245,158,11,.5);
+    background: rgba(245,158,11,.10);
+    color: var(--fg);
+    font-weight: 600;
+  }
+  body.dark .mc-spend[data-state="amber"] { background: rgba(245,158,11,.18); }
+  body.dark .mc-spend[data-state="soft-warn"] .mc-spend-dot { background: #fbbf24; }
+  body.dark .mc-spend[data-state="amber"] .mc-spend-dot { background: #fbbf24; }
+
   @keyframes mc-pulse {
     0%   { box-shadow: 0 0 0 0 currentColor; }
     70%  { box-shadow: 0 0 0 5px rgba(0,0,0,0); }
@@ -6988,6 +7021,8 @@ async function build() {
     .mc-batch-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
     .mc-health { padding: 2px 8px; font-size: 10.5px; }
     .mc-health .mc-health-text { display: none; }
+    .mc-spend { padding: 2px 8px; font-size: 10.5px; }
+    .mc-spend .mc-spend-text { display: none; }
     .mc-strip .live-text { font-size: 11px; }
   }
   @media (max-width: 480px) {
@@ -10370,6 +10405,14 @@ async function build() {
   }
   .gap-interview-details summary:hover { color: var(--text-1); }
   .gap-interview-details[open] summary { border-bottom: 1px solid var(--border); }
+
+  /* Pre-apply sub-check drawers — Worker A deferred-UI ship 2026-05-25.
+     Native <details> for keyboard + a11y semantics; chevron rotates on open. */
+  .pre-apply-sub-drawer summary::-webkit-details-marker { display: none; }
+  .pre-apply-sub-drawer summary::marker { content: ''; }
+  .pre-apply-sub-drawer summary:hover { background: var(--surface, #11131c); }
+  .pre-apply-sub-drawer[open] .pre-apply-sub-drawer-chev { transform: rotate(180deg); }
+  .pre-apply-sub-drawer[open] summary { border-bottom: 1px solid var(--border, #232737); }
   .gap-interview-prompt {
     margin: 0;
     padding: 14px;
@@ -13207,6 +13250,13 @@ async function build() {
       <div class="mc-health" id="mc-health" data-status="healthy" aria-label="System health — click for full detail" title="Click for launchd jobs · tunnel · server · errors" role="button" tabindex="0" onclick="openSystemHealthModal()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSystemHealthModal()}">
         <span class="mc-health-dot" aria-hidden="true"></span>
         <span class="mc-health-text" id="mc-health-text">all healthy</span>
+      </div>
+      <!-- Pre-apply daily spend chip — Worker A deferred-UI ship 2026-05-25.
+           Reads /api/pre-apply-spend on dashboard load + 30s timer.
+           data-state drives styling (neutral / soft-warn / amber). -->
+      <div class="mc-spend" id="mc-spend" role="status" aria-live="polite" data-state="neutral" aria-label="Pre-apply spend today" title="Loading pre-apply spend">
+        <span class="mc-spend-dot" aria-hidden="true"></span>
+        <span class="mc-spend-text" id="mc-spend-text">Pre-apply: —</span>
       </div>
       <span class="mc-strip-group-sep" aria-hidden="true"></span>
       ${funnelGap && funnelGap.has_gap ? `<button type="button" class="mc-funnel-chip" id="mc-funnel-chip" onclick="document.getElementById('apply-now-section')?.scrollIntoView({behavior:'smooth',block:'start'})" title="${htmlEscape(funnelGap.gap_explanation || '')} ${htmlEscape(funnelGap.recommendation || '')}" aria-label="${htmlEscape(funnelGap.gap_explanation || '')}">
@@ -23244,6 +23294,151 @@ async function _openPreApplyCheckModal(num) {
     if (score >= 0.5) return '<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:var(--amber-fg,#f59e0b);color:#fff;font-size:9px;line-height:14px;text-align:center;font-weight:700">~</span>';
     return '<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:var(--text-3,#6b7280);color:#fff;font-size:10px;line-height:14px;text-align:center;font-weight:700">' + String.fromCharCode(0x2715) + '</span>';
   }
+  // Worker A deferred-UI ship 2026-05-25 — per-sub-check popout drawers.
+  // Renders a collapsible <details> element with the count in the summary.
+  // Plain string concat (no template literals); HTML-escapes user-derived
+  // values to defend against any future content injection from hm-intel JSON
+  // or voice rule-failure text.
+  function _paesc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+  function _paemptyState(label) {
+    return '<div style="font-size:12px;color:var(--text-3,#b8b8c0);font-style:italic;padding:8px 4px">' +
+      _paesc(label) + '</div>';
+  }
+  function subCheckDrawer(opts) {
+    var title = opts.title || '';
+    var bodyHtml = opts.bodyHtml || '';
+    var count = typeof opts.count === 'number' ? opts.count : 0;
+    var countLabel = count + '';
+    var summaryCount = '<span style="font-size:11px;color:var(--text-3,#b8b8c0);font-variant-numeric:tabular-nums;background:var(--surface-2);padding:2px 8px;border-radius:999px;margin-left:8px">' + countLabel + '</span>';
+    return '<details class="pre-apply-sub-drawer" style="margin:8px 0;border:1px solid var(--border,#232737);border-radius:6px;background:var(--surface-2,#1a1d28);overflow:hidden">' +
+      '<summary style="cursor:pointer;padding:10px 12px;font-size:12px;font-weight:600;color:var(--text,#fafafa);display:flex;align-items:center;justify-content:space-between;list-style:none;user-select:none">' +
+      '<span>' + _paesc(title) + summaryCount + '</span>' +
+      '<span class="pre-apply-sub-drawer-chev" aria-hidden="true" style="font-size:10px;color:var(--text-3,#b8b8c0);transition:transform .15s">' + String.fromCharCode(0x25BE) + '</span>' +
+      '</summary>' +
+      '<div class="pre-apply-sub-drawer-body" style="padding:8px 12px 12px;border-top:1px solid var(--border,#232737);font-size:12px;color:var(--text-2,#e4e4e7);line-height:1.45">' + bodyHtml + '</div>' +
+      '</details>';
+  }
+  function _paHmSignalsHtml(checks) {
+    var hm = (checks && checks.hm) || {};
+    var signals = Array.isArray(hm.signals) ? hm.signals : [];
+    var gaps = Array.isArray(hm.gaps) ? hm.gaps : [];
+    if (signals.length === 0 && gaps.length === 0) {
+      return _paemptyState('No HM signals reported (check unavailable or hm-intel missing signals[]).');
+    }
+    var parts = [];
+    if (signals.length > 0) {
+      parts.push('<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-3,#b8b8c0);margin-bottom:4px">Matched (' + signals.length + ')</div>');
+      parts.push('<ul style="margin:0 0 8px;padding:0;list-style:none">');
+      for (var i = 0; i < signals.length; i++) {
+        parts.push('<li style="padding:4px 0;display:flex;gap:8px;align-items:flex-start">' +
+          '<span style="color:var(--green-fg,#16a34a);font-weight:700;flex-shrink:0">' + String.fromCharCode(0x2713) + '</span>' +
+          '<span>' + _paesc(signals[i]) + '</span></li>');
+      }
+      parts.push('</ul>');
+    }
+    if (gaps.length > 0) {
+      parts.push('<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-3,#b8b8c0);margin-bottom:4px">Gaps (' + gaps.length + ')</div>');
+      parts.push('<ul style="margin:0;padding:0;list-style:none">');
+      for (var j = 0; j < gaps.length; j++) {
+        parts.push('<li style="padding:4px 0;display:flex;gap:8px;align-items:flex-start">' +
+          '<span style="color:var(--text-3,#6b7280);font-weight:700;flex-shrink:0">' + String.fromCharCode(0x25CB) + '</span>' +
+          '<span>' + _paesc(gaps[j]) + '</span></li>');
+      }
+      parts.push('</ul>');
+    }
+    return parts.join('');
+  }
+  function _paAtsSynonymsHtml(checks) {
+    var ats = (checks && checks.ats) || {};
+    var syns = Array.isArray(ats.synonyms_detected) ? ats.synonyms_detected : [];
+    if (syns.length === 0) {
+      return _paemptyState('No synonym matches detected. (Synonyms surface keywords like "AWS" detected via "Amazon Web Services" in artifacts; exact-match is still required for the headline score.)');
+    }
+    var parts = ['<div style="display:flex;flex-wrap:wrap;gap:6px">'];
+    for (var i = 0; i < syns.length; i++) {
+      var s = syns[i] || {};
+      var keyword = _paesc(s.keyword || '');
+      var synonym = _paesc(s.synonym || '');
+      parts.push('<span style="display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;border:1px solid var(--border,#232737);background:var(--surface,#11131c);font-size:11px;color:var(--text-2,#e4e4e7);font-variant-numeric:tabular-nums">' +
+        '<strong style="color:var(--text,#fafafa)">' + keyword + '</strong>' +
+        '<span style="color:var(--text-3,#b8b8c0)">' + String.fromCharCode(0x2194) + '</span>' +
+        '<span>' + synonym + '</span></span>');
+    }
+    parts.push('</div>');
+    return parts.join('');
+  }
+  function _paVoiceRuleFailuresHtml(checks) {
+    var voice = (checks && checks.voice) || {};
+    var failures = Array.isArray(voice.rule_failures) ? voice.rule_failures : [];
+    if (failures.length === 0) {
+      return _paemptyState('No voice rule failures detected. (12 rules: lead architecture, em-dash density, banned vocab, hedge words, therapy-speak, etc.)');
+    }
+    var parts = ['<ul style="margin:0;padding:0;list-style:none">'];
+    for (var i = 0; i < failures.length; i++) {
+      var f = failures[i] || {};
+      var ruleText;
+      var severity;
+      var artifact;
+      if (typeof f === 'string') {
+        ruleText = f;
+        severity = '';
+        artifact = '';
+      } else {
+        ruleText = String(f.rule || f.name || JSON.stringify(f));
+        severity = String(f.severity || '');
+        artifact = String(f.artifact || '');
+      }
+      var sevColor = severity === 'critical' ? 'var(--red-fg,#fca5a5)' : 'var(--amber-fg,#f59e0b)';
+      var sevBg = severity === 'critical' ? 'rgba(252,165,165,0.12)' : 'rgba(245,158,11,0.10)';
+      var sevPill = severity
+        ? '<span style="display:inline-block;font-size:9px;padding:1px 6px;border-radius:999px;background:' + sevBg + ';color:' + sevColor + ';text-transform:uppercase;letter-spacing:0.04em;font-weight:600;margin-right:6px;flex-shrink:0">' + _paesc(severity) + '</span>'
+        : '';
+      var artifactPill = artifact
+        ? '<span style="display:inline-block;font-size:10px;color:var(--text-3,#b8b8c0);margin-left:6px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace">[' + _paesc(artifact) + ']</span>'
+        : '';
+      parts.push('<li style="padding:6px 0;border-bottom:1px solid var(--border,#232737);display:flex;align-items:flex-start;gap:6px">' +
+        sevPill +
+        '<span style="flex:1;min-width:0">' + _paesc(ruleText) + artifactPill + '</span></li>');
+    }
+    parts.push('</ul>');
+    return parts.join('');
+  }
+  function _paBuildSubCheckDrawersHtml(checks) {
+    if (!checks || typeof checks !== 'object') return '';
+    var hm = checks.hm || {};
+    var ats = checks.ats || {};
+    var voice = checks.voice || {};
+    var hmCount = (Array.isArray(hm.signals) ? hm.signals.length : 0) +
+                  (Array.isArray(hm.gaps) ? hm.gaps.length : 0);
+    var atsCount = Array.isArray(ats.synonyms_detected) ? ats.synonyms_detected.length : 0;
+    var voiceCount = Array.isArray(voice.rule_failures) ? voice.rule_failures.length : 0;
+    return '<div class="pre-apply-sub-drawers" style="margin-top:14px">' +
+      '<div style="font-size:11px;color:var(--text-3,#b8b8c0);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">Sub-check details</div>' +
+      subCheckDrawer({
+        title: 'HM-match signals',
+        count: hmCount,
+        bodyHtml: _paHmSignalsHtml(checks),
+      }) +
+      subCheckDrawer({
+        title: 'ATS synonyms detected',
+        count: atsCount,
+        bodyHtml: _paAtsSynonymsHtml(checks),
+      }) +
+      subCheckDrawer({
+        title: 'Voice rule failures',
+        count: voiceCount,
+        bodyHtml: _paVoiceRuleFailuresHtml(checks),
+      }) +
+      '</div>';
+  }
+  // Expose for tests + future re-renders.
+  window._paBuildSubCheckDrawersHtml = _paBuildSubCheckDrawersHtml;
   try {
     const r = await fetch('/api/pre-apply-check?num=' + encodeURIComponent(String(num)));
     if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -23287,6 +23482,7 @@ async function _openPreApplyCheckModal(num) {
       whyBlock +
       '<div style="font-size:11px;color:var(--text-3,#b8b8c0);text-transform:uppercase;letter-spacing:0.06em;margin:14px 0 4px">7-dimension rubric</div>' +
       dimRows +
+      _paBuildSubCheckDrawersHtml(data.checks) +
       '<div style="display:flex;gap:10px;margin-top:18px;justify-content:flex-end">' + polishBtn + closeBtn + '</div>';
     // P15 (2026-05-22) — soft-gate the drawer Polish Materials button with the
     // readiness %. Stores the readiness in localStorage so subsequent lifecycle
@@ -28040,6 +28236,79 @@ async function refreshHealthChip() {
 setInterval(() => {
   if (document.visibilityState === 'visible') refreshHealthChip();
 }, 60000);
+
+// Pre-apply daily spend chip — Worker A deferred-UI ship 2026-05-25.
+// Reads GET /api/pre-apply-spend (data/pre-apply-spend-<YYYY-MM-DD>.json) on
+// load + 30s polling. Three threshold states drive the data-state attribute:
+//   neutral    — < $1 / day cumulative
+//   soft-warn  — $1 to $2 (informational, no styling change beyond border tint)
+//   amber      — >= $2 (matches PRE_APPLY_DAILY_WARN_USD=2 server threshold)
+// Tooltip surfaces total, call count, average per call, and threshold notice.
+// Pure string concat (no template literals); no regex; safe inside the outer
+// build-dashboard.mjs template literal.
+function _preApplyClassify(totalUsd) {
+  if (totalUsd >= 2) return 'amber';
+  if (totalUsd >= 1) return 'soft-warn';
+  return 'neutral';
+}
+window._preApplyClassify = _preApplyClassify;
+
+async function refreshPreApplySpendChip() {
+  var chip = document.getElementById('mc-spend');
+  if (!chip) return;
+  var txt = document.getElementById('mc-spend-text');
+  try {
+    var res = await fetch('/api/pre-apply-spend', { cache: 'no-store' });
+    if (!res.ok) {
+      chip.setAttribute('data-state', 'neutral');
+      chip.setAttribute('title', 'Pre-apply spend unavailable (HTTP ' + res.status + ')');
+      if (txt) txt.textContent = 'Pre-apply: ?';
+      return;
+    }
+    var data = await res.json();
+    if (!data || !data.ok) {
+      chip.setAttribute('data-state', 'neutral');
+      chip.setAttribute('title', 'Pre-apply spend unavailable: ' + (data && data.error ? String(data.error) : 'no data'));
+      if (txt) txt.textContent = 'Pre-apply: ?';
+      return;
+    }
+    var totalUsd = Number(data.total_usd) || 0;
+    var callCount = Number(data.call_count) || 0;
+    var threshold = Number(data.threshold) || 2;
+    var state = _preApplyClassify(totalUsd);
+    chip.setAttribute('data-state', state);
+    if (txt) txt.textContent = 'Pre-apply: $' + totalUsd.toFixed(2);
+    var avg = callCount > 0 ? (totalUsd / callCount) : 0;
+    var tooltipParts = [
+      'Pre-apply spend today: $' + totalUsd.toFixed(2),
+      'Calls: ' + callCount,
+      callCount > 0 ? 'Average per call: $' + avg.toFixed(4) : 'No pre-apply calls yet',
+      'Warn threshold: $' + threshold.toFixed(2) + '/day',
+    ];
+    if (state === 'amber') {
+      tooltipParts.push('Status: AMBER — spend at or above warn threshold');
+    } else if (state === 'soft-warn') {
+      tooltipParts.push('Status: soft-warn — approaching threshold');
+    } else {
+      tooltipParts.push('Status: neutral');
+    }
+    chip.setAttribute('title', tooltipParts.join(' · '));
+    chip.setAttribute('aria-label',
+      'Pre-apply spend today $' + totalUsd.toFixed(2) + ', ' + callCount + ' calls, threshold $' + threshold.toFixed(2));
+  } catch (err) {
+    chip.setAttribute('data-state', 'neutral');
+    chip.setAttribute('title', 'Pre-apply spend unavailable: ' + String((err && err.message) || err));
+    if (txt) txt.textContent = 'Pre-apply: ?';
+  }
+}
+window.refreshPreApplySpendChip = refreshPreApplySpendChip;
+
+// Initial fetch + 30s polling. Hidden-tab guard prevents background polling
+// burn when the dashboard isn't visible (matches refreshHealthChip pattern).
+refreshPreApplySpendChip();
+setInterval(function () {
+  if (document.visibilityState === 'visible') refreshPreApplySpendChip();
+}, 30000);
 
 // Pipeline-health modal — opened by the chip click. Renders /api/pipeline/health-status
 // as a small overlay (not a raw JSON tab). Esc to close, click outside to close.

@@ -421,3 +421,21 @@ scripts/one-off/
 
 # Interview pitch deck (personal — talking-points script for interviews)
 data/pitch-deck/
+
+# Audit-v3 verification artifacts (2026-05-24) — local forensics, not for upstream
+# Playwright/screenshot utility scripts: hardcode dead localhost URLs, single-use,
+# preserved on disk for next-audit recipe reference. Pattern R workaround for
+# Chrome MCP file:// mangling lives in these scripts.
+scripts/screenshot-*.mjs
+scripts/staging-shot*.mjs
+
+# Audit-v3 screenshot dirs (2026-05-24) — narrow scope intentionally; the
+# tracked .claude/audit/email-review/ PNGs are NOT affected.
+.claude/audit/2026-05-23-evening/
+.claude/audit/gap-res-03-2026-05-24/
+.claude/audit/gap-res-06-2026-05-24/
+.claude/audit/gap-res-23-screenshots-2026-05-24/
+.claude/audit/gap-res-24-screenshots-2026-05-24/
+.claude/audit/gemini-audit-prep-2026-05-24/
+.claude/audit/retro-screenshots-2026-05-19/
+.claude/audit/f1b-padding-2026-05-21/screenshot-*-2026-05-24*.png

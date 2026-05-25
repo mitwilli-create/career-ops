@@ -1,0 +1,80 @@
+name: PR file overlap check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  check-overlap:
+    name: Check for critical-file overlap with other open PRs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check for overlapping open PRs on critical files
+        id: overlap
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node scripts/check-pr-file-overlap.mjs ${{ github.event.pull_request.number }} > /tmp/overlap-report.txt 2>/tmp/overlap-stderr.txt
+          EXIT_CODE=$?
+          cat /tmp/overlap-stderr.txt >&2
+          cat /tmp/overlap-report.txt
+          echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
+          exit 0  # Never hard-fail CI — this is a warning annotation only
+
+      - name: Comment overlap warning on PR
+        if: steps.overlap.outputs.exit_code == '2'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('/tmp/overlap-report.txt', 'utf8');
+            const body = [
+              '## ⚠️ Critical file overlap detected',
+              '',
+              'This PR modifies files that are also modified by one or more other open PRs.',
+              'Merging in the wrong order can produce structural merge conflicts.',
+              '',
+              '```',
+              report,
+              '```',
+              '',
+              '**This is a warning, not a block.** CI still passes. Merge order matters — coordinate before merging.',
+              '',
+              'See `AGENTS.md § Bug class: pr-conflict-mirage-from-parallel-shipping` for the triage + recovery playbook.',
+            ].join('\n');
+
+            // Only post a new comment if no existing overlap-warning comment exists
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c =>
+              c.user.login === 'github-actions[bot]' &&
+              c.body.includes('Critical file overlap detected')
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

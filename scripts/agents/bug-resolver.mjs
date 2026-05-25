@@ -370,12 +370,16 @@ async function main() {
 
     if (result.status === 'DRAFT_PR_READY') {
       // Create the PR (dryRun path skips actual git ops + returns {dryRun:true})
+      // v2 (2026-05-25): enableAutoMerge=true per interview Q3 — every
+      // bug-resolver PR auto-merges on CI green except those touching
+      // sensitive paths (gated inside createDraftPr via findSensitiveTouches).
       try {
         prResult = await createDraftPr({
           bugId: bug.id,
           patch: result.patch,
           prMetadata: result.pr_metadata,
           isDryRun: opts.dryRun,
+          enableAutoMerge: true,
         });
         if (!opts.dryRun) {
           updateUnifiedEntry(bug.id, {
@@ -384,6 +388,8 @@ async function main() {
             resolution_commit: prResult.commitSha,
             vendor_log: result.vendor_log,
             total_cost_usd: result.total_cost_usd,
+            auto_merge_safe: prResult.autoMergeSafe || false,
+            sensitive_touches: prResult.sensitiveTouches || [],
           });
         }
         result.status = 'DRAFT_PR'; // for the summary

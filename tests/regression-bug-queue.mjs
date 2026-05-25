@@ -38,6 +38,7 @@ import {
   nextRegressionId,
   regressionFindingHash,
   isEligibleFinding,
+  isImmediateInvocationFinding,
   mapFindingToLedgerShape,
   assertNoSensitiveInlineContent,
   appendRegressionFinding,
@@ -142,9 +143,11 @@ async function main() {
   const snap = snapshot();
   console.log(`[regression-bug-queue tests] snapshotted ${QUEUE_PATH} ` +
               `(${snap === null ? 'absent' : snap.length + ' bytes'}); ` +
-              `running 10 test groups...\n`);
+              `running 11 test groups...\n`);
   try {
     // ─── Test 1: append eligibility filter ─────────────────────────────────
+    // v2 2026-05-25 update: LOW is now eligible (interview Q11). Type filter
+    // unchanged — closures/memory/perf still rejected.
     console.log('Test 1: appendRegressionFinding eligibility');
     clearQueue();
 
@@ -153,12 +156,12 @@ async function main() {
       '1a: CRIT type-1 finding writes successfully + id has rg- prefix');
 
     const r2 = appendRegressionFinding(FINDING_LOW_CODE);
-    assert(r2.wrote === false && r2.reason === 'not-eligible',
-      '1b: LOW severity finding correctly rejected as not-eligible');
+    assert(r2.wrote === true && r2.id.startsWith('rg-'),
+      '1b: LOW severity finding now ACCEPTED (Q11 expanded scope, was previously rejected)');
 
     const r3 = appendRegressionFinding(FINDING_HIGH_CLOSURE);
     assert(r3.wrote === false && r3.reason === 'not-eligible',
-      '1c: type-6 closure finding correctly rejected (Q3 day-1 scope = types 1-4 only)');
+      '1c: type-6 closure finding still correctly rejected (type filter unchanged: types 1-4 only)');
 
     // ─── Test 2: dedup ─────────────────────────────────────────────────────
     console.log('\nTest 2: dedup on regression_citation_hash');
@@ -172,20 +175,21 @@ async function main() {
       '2b: queue contains exactly one entry after two writes of same finding');
 
     // ─── Test 3: bulk append ───────────────────────────────────────────────
+    // v2 2026-05-25 update: LOW is now eligible. Closure (type 6) still not.
     console.log('\nTest 3: appendRegressionFindings (bulk)');
     clearQueue();
     const counts = appendRegressionFindings([
       FINDING_CRIT_CODE,
       FINDING_HIGH_UI,
       FINDING_MED_DATA,
-      FINDING_LOW_CODE,           // not-eligible
-      FINDING_HIGH_CLOSURE,       // not-eligible
+      FINDING_LOW_CODE,           // now eligible (Q11)
+      FINDING_HIGH_CLOSURE,       // still not-eligible (type 6)
       FINDING_CRIT_CODE,          // duplicate of first
     ]);
-    assert(counts.written === 3,
-      `3a: 3 eligible findings written (got ${counts.written})`);
-    assert(counts.skipped_not_eligible === 2,
-      `3b: 2 ineligible findings skipped (got ${counts.skipped_not_eligible})`);
+    assert(counts.written === 4,
+      `3a: 4 eligible findings written including LOW (got ${counts.written})`);
+    assert(counts.skipped_not_eligible === 1,
+      `3b: 1 ineligible finding skipped (closure, got ${counts.skipped_not_eligible})`);
     assert(counts.skipped_duplicate === 1,
       `3c: 1 duplicate finding skipped (got ${counts.skipped_duplicate})`);
 
@@ -360,6 +364,23 @@ async function main() {
     const merged = loadRegressionQueue().find(e => e.id === rgId);
     assert(merged.v2_pipeline_state === 'MERGED',
       '10g: explicit v2_pipeline_state override takes effect');
+
+    // ─── Test 11: immediate-invocation predicate (v2 2026-05-25 Q10) ───────
+    console.log('\nTest 11: isImmediateInvocationFinding by severity');
+    assert(isImmediateInvocationFinding(FINDING_CRIT_CODE) === true,
+      '11a: CRIT triggers immediate invocation');
+    assert(isImmediateInvocationFinding(FINDING_HIGH_UI) === true,
+      '11b: HIGH triggers immediate invocation');
+    assert(isImmediateInvocationFinding(FINDING_MED_DATA) === true,
+      '11c: MED triggers immediate invocation');
+    assert(isImmediateInvocationFinding(FINDING_LOW_CODE) === false,
+      '11d: LOW does NOT trigger immediate invocation (Q10 — queued for scheduled)');
+    assert(isImmediateInvocationFinding(FINDING_HIGH_CLOSURE) === false,
+      '11e: type-6 closure NEVER immediate (not bridge-eligible even at HIGH)');
+    assert(isImmediateInvocationFinding(null) === false,
+      '11f: null finding handled safely (returns false)');
+    assert(isImmediateInvocationFinding(undefined) === false,
+      '11g: undefined finding handled safely (returns false)');
   } finally {
     restore(snap);
     console.log(`\n[regression-bug-queue tests] restored ${QUEUE_PATH}`);

@@ -128,9 +128,12 @@ import { detectType6Closure } from './regression-guard/detectors/type-06-closure
 import { detectType7Memory } from './regression-guard/detectors/type-07-memory.mjs';
 import { detectType8Performance } from './regression-guard/detectors/type-08-performance.mjs';
 
-// v2 (2026-05-25) — bridge CRIT/HIGH/MED type-1-4 findings to bug-resolver.
-// Per data/decisions-pending-regression-auto-action-2026-05-25.md (gitignored).
-import { appendRegressionFindings } from '../../lib/bug-resolver/regression-queue.mjs';
+// v2 (2026-05-25) — bridge CRIT/HIGH/MED/LOW type-1-4 findings to bug-resolver.
+// Per data/decisions-pending-regression-auto-action-2026-05-25.md (gitignored)
+// + 2026-05-25 follow-up interview Q10 (CRIT/HIGH/MED immediate, LOW scheduled)
+// + Q11 (LOW now bridged too).
+import { appendRegressionFindings, isImmediateInvocationFinding } from '../../lib/bug-resolver/regression-queue.mjs';
+import { spawn as spawnChild } from 'node:child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 
@@ -349,11 +352,14 @@ async function runScheduled({ dryRun = false } = {}) {
 
   // v2 bridge (2026-05-25): write eligible findings to bug-resolver's
   // regression-bug-queue.jsonl. Filter is enforced inside
-  // appendRegressionFindings (types 1-4, severity CRIT/HIGH/MED, dedup on
-  // citation hash). Cross-fork-leak guard throws on inline sensitive content;
-  // we catch and surface as a CRIT finding so the daily report still ships.
+  // appendRegressionFindings (types 1-4, severity CRIT/HIGH/MED/LOW, dedup
+  // on citation hash). Cross-fork-leak guard throws on inline sensitive
+  // content; we catch and surface as a CRIT finding so the daily report
+  // still ships.
+  let bridgeWroteCount = 0;
   try {
     const queueResult = appendRegressionFindings(findings);
+    bridgeWroteCount = queueResult.written;
     log(`v2-bridge: ${queueResult.written} written / ` +
         `${queueResult.skipped_not_eligible} not-eligible / ` +
         `${queueResult.skipped_duplicate} duplicate`);
@@ -366,6 +372,37 @@ async function runScheduled({ dryRun = false } = {}) {
       summary: `v2 bridge write failed: ${err.message}`,
       citation: { path: 'lib/bug-resolver/regression-queue.mjs', mode: 'hash_only', hash: hashCite('v2-bridge-fail-' + err.message) },
     });
+  }
+
+  // v2 immediate-invocation (2026-05-25, Q10): if any CRIT/HIGH/MED findings
+  // were written to the queue this run, spawn bug-resolver as a detached child
+  // process so it picks them up immediately rather than waiting for the next
+  // Mon/Thu 02:00 PT scheduled cycle. LOW findings stay in the queue for the
+  // scheduled run.
+  //
+  // The child is detached + stdio:ignored so regression-guard can finish its
+  // own report writing without blocking. The Tahoe-launchd KeepAlive bug
+  // doesn't apply here — we're spawning a one-shot child, not a long-running
+  // service.
+  if (bridgeWroteCount > 0) {
+    const immediate = findings.filter(isImmediateInvocationFinding);
+    if (immediate.length > 0) {
+      try {
+        log(`v2-bridge: spawning bug-resolver for ${immediate.length} CRIT/HIGH/MED finding(s) (immediate-invocation)...`);
+        const child = spawnChild('node', ['scripts/agents/bug-resolver.mjs'], {
+          cwd: REPO_ROOT,
+          stdio: 'ignore',
+          detached: true,
+          env: { ...process.env },
+        });
+        child.unref();
+        log(`v2-bridge: bug-resolver spawned (PID ${child.pid}), detached`);
+      } catch (err) {
+        log(`v2-bridge: ERROR spawning bug-resolver: ${err.message}`, 'error');
+      }
+    } else {
+      log(`v2-bridge: ${bridgeWroteCount} LOW finding(s) written; queued for next scheduled bug-resolver run`);
+    }
   }
 
   // Persist state + write report

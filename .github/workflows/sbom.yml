@@ -14,7 +14,10 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Generate SBOM (SPDX)
-        uses: anchore/sbom-action@v0
+        # Pinned to v0.24.0 (Node 24, verified via raw action.yml runs.using).
+        # Avoids the @v0 floating-tag regression risk — upstream could push a
+        # Node-downgrade in a future v0.x without us noticing.
+        uses: anchore/sbom-action@v0.24.0
         with:
           artifact-name: career-ops-sbom.spdx.json
           format: spdx-json

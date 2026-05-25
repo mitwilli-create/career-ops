@@ -45,12 +45,12 @@ jobs:
 
     steps:
       - name: Checkout career-ops
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '24.x'
           cache: 'npm'
@@ -64,7 +64,7 @@ jobs:
         # Actions cache so dedup history survives run-to-run.
         # CAVEAT: 7-day idle eviction. If scans stop firing for 8+ days, the
         # dedup history is lost (re-scan duplicates show up once).
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             data/scan-history.tsv
@@ -105,7 +105,7 @@ jobs:
         # Always run, even on partial failure — a partial scan-history.tsv
         # update is still better than re-scanning the same URLs tomorrow.
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: |
             data/scan-history.tsv
@@ -116,7 +116,7 @@ jobs:
 
       - name: Upload scan log artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: scan-log-${{ github.run_id }}
           path: data/logs/scan-*.log

@@ -37,6 +37,9 @@ import {
   mapFilesToDaemons,
   restartDaemons,
 } from '../lib/file-to-daemon-map.mjs';
+// v2 PR #8: fix-log writes on PASS/FAIL + auto-revert trigger on FAIL.
+import { appendV2FixLogEntry } from '../../lib/v2-fix-log.mjs';
+import { recordRollback } from '../../lib/v2-thrash-counter.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(__filename), '..', '..');
@@ -282,6 +285,54 @@ export async function verifyV2Fix({ fixSha, changedFiles, dryRun = false }) {
   result.elapsedMs = Date.now() - startMs;
   // eslint-disable-next-line no-console
   console.log(`[${new Date().toISOString()}] [v2-verify] done — overall=${result.overall} elapsed=${(result.elapsedMs / 1000).toFixed(1)}s`);
+
+  // v2 PR #8: write fix-log entry and, on FAIL, trigger auto-revert.
+  // Only when fixSha is known (CLI invocation always passes it; guard for API callers).
+  if (fixSha && !dryRun) {
+    const logEntry = {
+      fix_sha: fixSha,
+      detector: 'bug-resolver',
+      detector_severity: 'MED',   // severity not available in verify scope; MED is conservative
+      finding_hash: 'sha256:' + fixSha.slice(0, 12),
+      pr_url: null,                // PR URL not passed to verifyV2Fix; heartbeat reads from DRAFT entry
+      pr_state: result.overall === 'PASS' ? 'VERIFIED' : 'REVERTED',
+      verification: {
+        overall: result.overall,
+        ...(result.failReason ? { fail_reason: result.failReason } : {}),
+      },
+      cost_usd: null,             // verify itself has negligible LLM cost
+      files_changed: (changedFiles || []).map(f => String(f).slice(0, 300)),
+      time_to_resolution_ms: result.elapsedMs,
+    };
+
+    try {
+      appendV2FixLogEntry(logEntry);
+    } catch (logErr) {
+      // Non-fatal — fix-log is observability infrastructure, not load-bearing.
+      console.warn(`[v2-verify] WARN: fix-log write failed: ${logErr.message}`);
+    }
+
+    if (result.overall === 'FAIL') {
+      // Auto-revert: directly call recordRollback with trigger='auto' so it
+      // counts toward the 3/24h freeze threshold. This is the auto-revert code
+      // path — distinct from the CLI path which always records trigger='manual'.
+      // Per Q6 (locked): manual rollbacks do NOT count toward the freeze; only
+      // auto-reverts do. The CLI v2-rollback.mjs records 'manual'; we record 'auto'.
+      try {
+        const rollbackEntry = recordRollback({
+          fix_sha: fixSha,
+          reason: 'verification-subset-fail',
+          trigger: 'auto',
+        });
+        console.warn(`[v2-verify] auto-revert recorded (trigger=auto): fix_sha=${fixSha}` +
+          (rollbackEntry.frozen_until ? ` FREEZE until ${rollbackEntry.frozen_until}` : ''));
+      } catch (rbErr) {
+        console.error(`[v2-verify] CRITICAL: auto-revert recordRollback failed: ${rbErr.message}`);
+        // Don't rethrow — returning result with overall=FAIL is the authoritative signal.
+      }
+    }
+  }
+
   return result;
 }
 

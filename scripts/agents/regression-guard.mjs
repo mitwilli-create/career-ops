@@ -134,6 +134,8 @@ import { detectType8Performance } from './regression-guard/detectors/type-08-per
 // + Q11 (LOW now bridged too).
 import { appendRegressionFindings, isImmediateInvocationFinding } from '../../lib/bug-resolver/regression-queue.mjs';
 import { spawn as spawnChild } from 'node:child_process';
+// v2 PR #8: freeze enforcement — isV2Frozen() checked before any bug-resolver spawn.
+import { isV2Frozen, getActiveFreeze } from '../../lib/v2-thrash-counter.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 
@@ -384,24 +386,41 @@ async function runScheduled({ dryRun = false } = {}) {
   // own report writing without blocking. The Tahoe-launchd KeepAlive bug
   // doesn't apply here — we're spawning a one-shot child, not a long-running
   // service.
+  // v2 PR #8: freeze enforcement before any bug-resolver spawn.
+  // isV2Frozen() returns true if 3+ auto-reverts occurred in the last 24h.
+  // When frozen: skip the spawn, emit a CRIT finding for the evening heartbeat,
+  // and log the freeze expiry time. Findings are still written to the queue
+  // so they survive the freeze and can be processed after it lifts.
   if (bridgeWroteCount > 0) {
-    const immediate = findings.filter(isImmediateInvocationFinding);
-    if (immediate.length > 0) {
-      try {
-        log(`v2-bridge: spawning bug-resolver for ${immediate.length} CRIT/HIGH/MED finding(s) (immediate-invocation)...`);
-        const child = spawnChild('node', ['scripts/agents/bug-resolver.mjs'], {
-          cwd: REPO_ROOT,
-          stdio: 'ignore',
-          detached: true,
-          env: { ...process.env },
-        });
-        child.unref();
-        log(`v2-bridge: bug-resolver spawned (PID ${child.pid}), detached`);
-      } catch (err) {
-        log(`v2-bridge: ERROR spawning bug-resolver: ${err.message}`, 'error');
-      }
+    if (isV2Frozen()) {
+      const freeze = getActiveFreeze();
+      log(`v2-bridge: FROZEN until ${freeze ? freeze.frozen_until : 'unknown'} — skipping immediate-invocation spawn`);
+      findings.push({
+        type: 0, severity: 'CRIT', confidence: 'HIGH',
+        subtype: 'v2-frozen',
+        file: 'lib/v2-thrash-counter.mjs',
+        summary: `v2 is frozen until ${freeze ? freeze.frozen_until : 'unknown'} (3+ auto-reverts in 24h)`,
+        citation: { path: 'lib/v2-thrash-counter.mjs', mode: 'hash_only', hash: hashCite('v2-frozen-' + (freeze ? freeze.frozen_until : '')) },
+      });
     } else {
-      log(`v2-bridge: ${bridgeWroteCount} LOW finding(s) written; queued for next scheduled bug-resolver run`);
+      const immediate = findings.filter(isImmediateInvocationFinding);
+      if (immediate.length > 0) {
+        try {
+          log(`v2-bridge: spawning bug-resolver for ${immediate.length} CRIT/HIGH/MED finding(s) (immediate-invocation)...`);
+          const child = spawnChild('node', ['scripts/agents/bug-resolver.mjs'], {
+            cwd: REPO_ROOT,
+            stdio: 'ignore',
+            detached: true,
+            env: { ...process.env },
+          });
+          child.unref();
+          log(`v2-bridge: bug-resolver spawned (PID ${child.pid}), detached`);
+        } catch (err) {
+          log(`v2-bridge: ERROR spawning bug-resolver: ${err.message}`, 'error');
+        }
+      } else {
+        log(`v2-bridge: ${bridgeWroteCount} LOW finding(s) written; queued for next scheduled bug-resolver run`);
+      }
     }
   }
 

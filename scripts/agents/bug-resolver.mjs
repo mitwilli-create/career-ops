@@ -39,6 +39,9 @@ import { appendHardeningSuggestion } from '../../lib/bug-resolver/hardening-writ
 // rg-... → regression-bug-queue.jsonl). Per
 // data/decisions-pending-regression-auto-action-2026-05-25.md (gitignored).
 import { loadUnifiedQueue, updateUnifiedEntry, entrySource } from '../../lib/bug-resolver/unified-queue.mjs';
+// v2 PR #8: freeze enforcement + fix-log writes.
+import { isV2Frozen, getActiveFreeze } from '../../lib/v2-thrash-counter.mjs';
+import { appendV2FixLogEntry } from '../../lib/v2-fix-log.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(__filename), '..', '..');
@@ -335,6 +338,17 @@ async function main() {
       break;
     }
 
+    // v2 PR #8: freeze enforcement. rg-* entries (regression-guard findings)
+    // respect the v2 freeze; bug-* entries (hand-curated) bypass it since they
+    // were not produced by the auto-fix loop. Freeze fires when 3+ auto-reverts
+    // occurred in the last 24h — prevents a thrash spiral.
+    if (entrySource(bug.id) === 'regression-bug-queue' && isV2Frozen()) {
+      const freeze = getActiveFreeze();
+      console.warn(`[bug-resolver] v2 FROZEN until ${freeze ? freeze.frozen_until : 'unknown'} — skipping rg-* entry ${bug.id}`);
+      summary.push({ id: bug.id, status: 'SKIPPED_FROZEN', cost: 0 });
+      continue;
+    }
+
     console.log(`\n[bug-resolver] processing ${bug.id} (${bug.severity}) [${entrySource(bug.id)}]...`);
     if (!opts.dryRun) updateUnifiedEntry(bug.id, { status: 'IN_PROGRESS' });
 
@@ -391,6 +405,28 @@ async function main() {
             auto_merge_safe: prResult.autoMergeSafe || false,
             sensitive_touches: prResult.sensitiveTouches || [],
           });
+          // v2 PR #8: write v2-fix-log entry on DRAFT_PR creation.
+          // Only for rg-* entries (regression-guard findings). bug-* entries
+          // are hand-curated and don't go through the auto-fix accountability loop.
+          if (entrySource(bug.id) === 'regression-bug-queue') {
+            try {
+              appendV2FixLogEntry({
+                fix_sha: prResult.commitSha || 'unknown',
+                detector: 'bug-resolver',
+                detector_severity: bug.severity || 'MED',
+                finding_hash: bug.citation_hash || ('sha256:' + bug.id),
+                pr_url: prResult.prUrl || null,
+                pr_state: 'DRAFT',
+                verification: null,
+                cost_usd: result.total_cost_usd || null,
+                files_changed: (result.patch?.changedFiles || []).map(f => String(f).slice(0, 300)),
+                time_to_resolution_ms: null, // will be updated by v2-verify-subset on PASS/FAIL
+              });
+            } catch (logErr) {
+              // Non-fatal — fix-log is observability, not load-bearing for the PR flow.
+              console.warn(`  WARN [v2-fix-log] write failed: ${logErr.message}`);
+            }
+          }
         }
         result.status = 'DRAFT_PR'; // for the summary
       } catch (err) {

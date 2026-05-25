@@ -20,6 +20,19 @@
 # bug and a clean `launchctl bootstrap` on the canonical dashboard-server plist
 # (com.mitchell.career-ops.dashboard-server.plist) works again. Document the
 # patched macOS version when that happens.
+#
+# Spec vs. runtime — IMPORTANT:
+#   This file (in the repo) is the SPEC / source of truth.
+#   The live runtime copy lives at ~/.local/career-ops-wrappers/dashboard-server-nohup.sh
+#   and is what the launchd plist actually exec's. Required because macOS Tahoe
+#   TCC blocks /bin/bash spawned by launchd from exec'ing scripts under ~/Documents/.
+#   Empirically verified 2026-05-25: plist path = repo → exit 126 "Operation not
+#   permitted"; plist path = .local/ → exit 0, listener spawned normally.
+#
+#   After editing this file, sync to the runtime location:
+#     bash scripts/sync-launchd-wrappers.sh           # copy repo → .local/
+#     bash scripts/sync-launchd-wrappers.sh --reload  # also bootout/bootstrap the wrapper plist
+#     bash scripts/sync-launchd-wrappers.sh --check   # diff repo vs .local/, exit 1 on drift
 
 set -u
 
@@ -36,15 +49,12 @@ LOG_ERR="${LOG_DIR}/dashboard-server-nohup.err"
 
 mkdir -p "$LOG_DIR"
 
-# Idempotency check #1: is anything listening on :3097?
+# Idempotency check: is anything listening on :3097? lsof on the actual TCP
+# listener is the canonical signal — a stale pgrep-able process that's not
+# binding the port is not "already running" for our purposes (closes
+# bug-2026-05-25-100).
 if /usr/sbin/lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   echo "$(date -Iseconds) dashboard-server :${PORT} listener already present, no-op" >> "$LOG_OUT"
-  exit 0
-fi
-
-# Idempotency check #2 (belt + suspenders): is the script already pgrep-able?
-if /usr/bin/pgrep -f "dashboard-server.mjs --port=${PORT}" >/dev/null 2>&1; then
-  echo "$(date -Iseconds) dashboard-server pgrep match, no-op" >> "$LOG_OUT"
   exit 0
 fi
 

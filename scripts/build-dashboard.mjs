@@ -20138,8 +20138,8 @@ window.tonightPickCreateMaterials = tonightPickCreateMaterials;
 
 // 2026-05-20 — Polish CTA. Surfaces only when the apply-pack exists but
 // polishState ∈ {never_polished, stale, failed}. Fires the apply-pack-polish
-// skill via the existing /api/polish/start endpoint. Falls back to a toast
-// with the manual CLI command if the API isn't available.
+// skill via POST /api/apply-pack-polish (dashboard-server.mjs:8533). Falls
+// back to a toast with the manual CLI command if the API isn't available.
 async function tonightPickPolish() {
   var pick = window._tonightPickData;
   if (!pick) { try { pick = JSON.parse(document.getElementById('tonight-pick-data').textContent); } catch (_) {} }
@@ -20147,7 +20147,7 @@ async function tonightPickPolish() {
   var btn = document.getElementById('tonight-pick-polish-btn');
   if (btn) { btn.disabled = true; btn.textContent = '✨ Polishing…'; }
   try {
-    var res = await fetch('/api/polish/start', {
+    var res = await fetch('/api/apply-pack-polish', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ row: pick.num })
@@ -20155,7 +20155,7 @@ async function tonightPickPolish() {
     var data = await res.json().catch(function(){ return null; });
     if (data && data.ok) {
       if (typeof showToast === 'function') {
-        showToast('Polish started — see Batch Runs for live progress', 'success');
+        showToast('Polish started (job ' + (data.jobId || 'unknown') + ') — see Batch Runs for live progress', 'success');
       }
       if (btn) { btn.textContent = '✨ Polishing in progress…'; }
     } else {

@@ -58,6 +58,22 @@ if /usr/sbin/lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   exit 0
 fi
 
+# Zombie-reap guard (2026-05-25 — closes bug-2026-05-25-041): if we got past
+# the lsof check, NO process is listening on $PORT. BUT a stale dashboard-
+# server.mjs process may still match pgrep (e.g., OOM-killed mid-listener,
+# port-binding-failed startup, segfault during accept loop). Without this
+# guard, the new nohup spawn would coexist with the zombie — duplicate
+# process accumulation across the 5-minute wrapper plist interval.
+# Strategy: SIGTERM any matching pgrep'd process, wait 1s for OS cleanup,
+# then proceed to spawn. SIGKILL escalation is intentionally absent — if
+# SIGTERM doesn't take effect in 1s, the new spawn may collide with the
+# stale process, which is no worse than the pre-guard behavior.
+if /usr/bin/pgrep -f "dashboard-server.mjs --port=${PORT}" >/dev/null 2>&1; then
+  echo "$(date -Iseconds) zombie dashboard-server.mjs detected (pgrep matched, lsof did not) — sending SIGTERM" >> "$LOG_OUT"
+  /usr/bin/pkill -TERM -f "dashboard-server.mjs --port=${PORT}" 2>/dev/null || true
+  sleep 1
+fi
+
 cd "$REPO" || exit 1
 
 # Spawn detached via nohup. The `</dev/null` keeps stdin from holding the wrapper.

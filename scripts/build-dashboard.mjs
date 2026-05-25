@@ -10924,6 +10924,114 @@ async function build() {
     color: #fff;
     border-color: var(--green-fg, #16a34a);
   }
+  /* 2026-05-24 — Polish materials promoted from sub-section to always-visible
+     action-bar button. Amber accent (distinct from materials-blue + dispatch-
+     purple). Disabled until an apply pack exists; pack-existence is probed
+     async on drawer open via /api/artifact-manifest. */
+  .drawer-action-bar .drawer-btn-polish {
+    background: var(--surface-2);
+    border-color: var(--amber-fg, #d4ba84);
+    color: var(--amber-fg, #d4ba84);
+  }
+  .drawer-action-bar .drawer-btn-polish:hover {
+    background: var(--amber-fg, #d4ba84);
+    color: #1a1306;
+  }
+  .drawer-action-bar .drawer-btn-polish[disabled] { opacity: .4; cursor: not-allowed; }
+  /* 2026-05-24 — Skip button replaces Discard + Dismiss. Neutral styling
+     since the modal forces a deliberate choice (Today only / Permanently).
+     Red destructive cue lives INSIDE the modal on the Permanently confirm. */
+  .drawer-action-bar .drawer-btn-skip {
+    background: var(--surface);
+    border-color: var(--border);
+    color: var(--text-2, #b8b8c0);
+  }
+  .drawer-action-bar .drawer-btn-skip:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+  .drawer-action-bar .drawer-btn-skip[disabled] { opacity: .5; cursor: not-allowed; }
+  /* Polish-mount highlight flash — fired when the action-bar Polish button is
+     clicked. Brief amber pulse draws the eye to the polish sub-section in the
+     drawer body where the actual polish-mode pickers live. */
+  .drawer-polish-mount.drawer-polish-highlight {
+    animation: drawerPolishHighlight 1.4s ease-out;
+  }
+  @keyframes drawerPolishHighlight {
+    0%   { background: var(--amber-bg, rgba(168,123,72,0.14)); border-radius: 6px; }
+    100% { background: transparent; border-radius: 6px; }
+  }
+  /* Skip modal — structural template matches _openApplyClipboardModal. */
+  #skip-modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 99999; padding: 24px;
+  }
+  #skip-modal {
+    background: var(--surface, #11131c);
+    border: 1px solid var(--border, #232737);
+    border-radius: 8px;
+    max-width: 540px; width: 100%;
+    color: var(--text, #fafafa);
+    font-family: inherit;
+    box-shadow: 0 18px 48px rgba(0,0,0,0.5);
+    padding: 22px 24px;
+  }
+  #skip-modal h2 {
+    margin: 0 0 4px; font-size: 15px; font-weight: 600;
+  }
+  #skip-modal .skip-modal-sub {
+    margin: 0 0 18px; font-size: 12px; color: var(--text-3, #b8b8c0);
+  }
+  #skip-modal .skip-mode-row {
+    display: block; padding: 10px 12px; margin: 0 0 8px;
+    border: 1px solid var(--border); border-radius: 6px;
+    cursor: pointer; transition: border-color .12s, background .12s;
+  }
+  #skip-modal .skip-mode-row:hover { background: var(--surface-2); }
+  #skip-modal .skip-mode-row.is-selected {
+    border-color: var(--green-fg); background: var(--surface-2);
+  }
+  #skip-modal .skip-mode-row.is-selected.is-permanent {
+    border-color: var(--red-fg, #cf222e);
+  }
+  #skip-modal .skip-mode-row input[type="radio"] {
+    margin: 0 8px 0 0; vertical-align: middle;
+  }
+  #skip-modal .skip-mode-row strong { font-weight: 600; font-size: 13px; }
+  #skip-modal .skip-mode-row .skip-mode-hint {
+    display: block; margin-top: 2px; padding-left: 24px;
+    font-size: 12px; color: var(--text-3);
+  }
+  #skip-modal #skip-reason-wrap { margin: 14px 0 4px; padding-left: 24px; }
+  #skip-modal #skip-reason-wrap label {
+    display: block; font-size: 11px; color: var(--text-3); margin: 0 0 4px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  #skip-modal #skip-reason {
+    width: 100%; min-height: 64px; padding: 8px 10px;
+    background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    font-family: inherit; font-size: 12px; line-height: 1.5;
+    resize: vertical;
+  }
+  #skip-modal #skip-reason::placeholder { color: var(--text-4, #6c7079); }
+  #skip-modal .skip-modal-buttons {
+    display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px;
+  }
+  #skip-modal .skip-modal-buttons button {
+    padding: 7px 16px; border-radius: 6px;
+    font-family: inherit; font-size: 12px; font-weight: 600;
+    cursor: pointer;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+  }
+  #skip-modal .skip-modal-buttons button:hover { background: var(--surface-3, var(--surface)); }
+  #skip-modal .skip-modal-buttons .skip-confirm-today {
+    background: var(--green-fg); border-color: var(--green-fg); color: #062611;
+  }
+  #skip-modal .skip-modal-buttons .skip-confirm-permanent {
+    background: var(--red-fg, #cf222e); border-color: var(--red-fg, #cf222e); color: #fff;
+  }
   /* Selected-row indicator: 3px left accent + subtle bg highlight so the
      user always knows which row the drawer is showing. */
   tr.row.row-selected > td { background: var(--surface-2); }
@@ -15592,15 +15700,22 @@ function openRightRailForDetail(idx, detailRow) {
     const dispatchBtnHtml = num
       ? '<button type="button" class="drawer-btn-dispatch" data-drawer-action="dispatch" data-drill="drawer-action:dispatch:' + num + '" title="Copy a ready-to-paste Claude Code prompt for this row. Paste into a fresh Claude Code session at ~/Documents/career-ops/.">📋 Copy Claude Code prompt</button>'
       : '<button type="button" class="drawer-btn-dispatch" data-drill="drawer-action:dispatch:" disabled title="No row number — needs a tracker row">📋 Copy Claude Code prompt</button>';
-    // DISCARD (permanent, destructive — requires confirm + optional reason)
-    const discardBtnHtml = num
-      ? '<button type="button" class="drawer-btn-discard" data-drawer-action="discard" data-drill="drawer-action:discard:' + num + '" title="Permanently discard this row (Status → Discarded). Will prompt for a reason. Irreversible from the queue." style="color:var(--red-fg,#cf222e);border-color:var(--red-fg,#cf222e)">Discard this row</button>'
-      : '<button type="button" class="drawer-btn-discard" data-drill="drawer-action:discard:" disabled style="color:var(--text-3)">Discard this row</button>';
-    // DISMISS (day-only soft action — no confirm, reappears tomorrow)
-    const dismissBtnHtml = num
-      ? '<button type="button" class="drawer-btn-dismiss" data-drawer-action="dismiss" data-drill="drawer-action:dismiss:' + num + '" title="Hide from Apply-Now queue until midnight PT. Status unchanged — row reappears tomorrow.">Dismiss for today</button>'
-      : '<button type="button" class="drawer-btn-dismiss" data-drill="drawer-action:dismiss:" disabled>Dismiss for today</button>';
-    actionsEl.innerHTML = applyBtnHtml + materialsBtnHtml + dispatchBtnHtml + discardBtnHtml + dismissBtnHtml;
+    // 2026-05-24 — POLISH (promoted from drawer sub-section to action bar).
+    // Always rendered; disabled until pack-existence probe completes on
+    // drawer open via /api/artifact-manifest. Click scrolls + highlights the
+    // existing polish sub-section in the drawer body.
+    const polishBtnHtml = num
+      ? '<button type="button" class="drawer-btn-polish" data-drawer-action="polish" data-drill="drawer-action:polish:' + num + '" disabled title="Generate an apply pack first to polish it">✨ Polish materials</button>'
+      : '<button type="button" class="drawer-btn-polish" data-drill="drawer-action:polish:" disabled title="No row number — needs a tracker row">✨ Polish materials</button>';
+    // 2026-05-24 — SKIP (replaces Discard + Dismiss). Click opens a 2-radio
+    // modal: "Today only" (default) hides until midnight PT; "Permanently"
+    // reveals an optional inline reason textarea + writes Discarded status
+    // on Confirm. Confirm button color follows the chosen radio (green for
+    // today / red for permanent).
+    const skipBtnHtml = num
+      ? '<button type="button" class="drawer-btn-skip" data-drawer-action="skip" data-drill="drawer-action:skip:' + num + '" title="Skip this row — choose Today only or Permanently in the next dialog">Skip this row</button>'
+      : '<button type="button" class="drawer-btn-skip" data-drill="drawer-action:skip:" disabled title="No row number — needs a tracker row">Skip this row</button>';
+    actionsEl.innerHTML = applyBtnHtml + materialsBtnHtml + polishBtnHtml + dispatchBtnHtml + skipBtnHtml;
     // Wire actions after innerHTML — keeps the HTML-as-string clean of
     // nested-quote escaping and lets us close the rail in one place.
     const applyBtnEl = actionsEl.querySelector('button[data-drawer-action="apply"]');
@@ -15622,59 +15737,45 @@ function openRightRailForDetail(idx, detailRow) {
     if (dispatchBtnEl && num) {
       dispatchBtnEl.addEventListener('click', () => drawerDispatchHandoff(num, company, role, dispatchBtnEl));
     }
-    // DISCARD: destructive, permanent. Prompts for a reason then writes Discarded status.
-    const discardBtnEl = actionsEl.querySelector('button[data-drawer-action="discard"]');
-    if (discardBtnEl && num) {
-      discardBtnEl.addEventListener('click', async () => {
+    // 2026-05-24 — POLISH: action-bar entry point for the existing polish
+    // sub-section. Probes pack existence on drawer open + enables when found.
+    // Click scrolls the polish-mount into view + flashes the amber highlight.
+    const polishBtnEl = actionsEl.querySelector('button[data-drawer-action="polish"]');
+    if (polishBtnEl && num) {
+      fetch('/api/artifact-manifest?row=' + encodeURIComponent(String(num)), { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (data && data.ok && data.slug) {
+            polishBtnEl.disabled = false;
+            polishBtnEl.title = 'Polish apply-pack materials — opens the polish controls below';
+            polishBtnEl.dataset.slug = data.slug;
+          }
+        })
+        .catch(() => { /* leave disabled — silent */ });
+      polishBtnEl.addEventListener('click', () => {
+        const mount = document.querySelector('.drawer-polish-mount');
+        if (mount) {
+          mount.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          mount.classList.remove('drawer-polish-highlight');
+          void mount.offsetWidth; // force reflow to restart the animation
+          mount.classList.add('drawer-polish-highlight');
+          setTimeout(() => mount.classList.remove('drawer-polish-highlight'), 1500);
+        } else if (window.toast) {
+          window.toast('Polish controls not found — try reopening the drawer', 'warn');
+        }
+      });
+    }
+    // 2026-05-24 — SKIP: opens a 2-radio modal (Today only / Permanently).
+    // Routes Confirm to /api/dismiss-row OR /api/discard-with-reason based on
+    // selection. Replaces the prior DISCARD + DISMISS pair (both semantics
+    // preserved; only the visual affordance collapsed to one button).
+    const skipBtnEl = actionsEl.querySelector('button[data-drawer-action="skip"]');
+    if (skipBtnEl && num) {
+      skipBtnEl.addEventListener('click', () => {
         const row = document.querySelector('.status-pill[data-num="' + num + '"]')?.closest('tr');
         const rowCompany = row?.dataset?.company || row?.querySelector('[data-col="company"]')?.textContent?.trim() || company || '';
         const rowRole    = row?.dataset?.role    || row?.querySelector('[data-col="role"]')?.textContent?.trim()    || role || '';
-        const reason = window.prompt(
-          'Permanently discard: ' + (rowCompany ? rowCompany + (rowRole ? ' — ' + rowRole : '') : 'row #' + num) + '\\n\\n' +
-          'Enter a reason (optional — used to tune future evals):\\n' +
-          '(Tags auto-applied: comp, geography, culture, skill-gap, ethics, stage, velocity, role-shape, fit, other)\\n\\n' +
-          'Press Enter to discard without recording a reason. Click Cancel to abort.'
-        );
-        if (reason === null) return; // User canceled — don't discard
-        const trimmed = (reason || '').trim();
-        if (trimmed) {
-          try {
-            await fetch('/api/discard-with-reason', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ row_num: num, reason: trimmed.slice(0, 1000), company: rowCompany, role: rowRole }),
-            });
-          } catch (e) {
-            console.warn('discard-with-reason persist failed:', e);
-            // Don't block the status change on reason-persist failure
-          }
-        }
-        await drawerQuickStatus(num, 'Discarded');
-      });
-    }
-    // DISMISS: soft, day-only. Hides row from Apply-Now queue until midnight PT.
-    // Status remains Evaluated; row reappears tomorrow with no action needed.
-    const dismissBtnEl = actionsEl.querySelector('button[data-drawer-action="dismiss"]');
-    if (dismissBtnEl && num) {
-      dismissBtnEl.addEventListener('click', async () => {
-        try {
-          await fetch('/api/dismiss-row', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ num }),
-          });
-        } catch (e) {
-          console.warn('dismiss-row persist failed:', e);
-        }
-        // Optimistically remove from Apply-Now table without changing status badge
-        const rowEl = document.querySelector('tr.row[data-num="' + num + '"], #apply-now-tbody tr.row[data-row-id*="-' + num + '"]');
-        if (rowEl) {
-          rowEl.style.transition = 'opacity .25s';
-          rowEl.style.opacity = '0';
-          setTimeout(() => { rowEl.style.display = 'none'; }, 270);
-        }
-        closeRightRail();
-        if (window.toast) window.toast('Row #' + num + ' dismissed until midnight PT', 'info');
+        _openSkipModal(num, rowCompany, rowRole);
       });
     }
   }
@@ -21518,6 +21619,153 @@ async function _openApplyClipboardModal(num, applyHref) {
   }
 }
 window._openApplyClipboardModal = _openApplyClipboardModal;
+
+// 2026-05-24 — Skip modal: 2-radio dialog that replaces the prior separate
+// Discard + Dismiss buttons. "Today only" routes to /api/dismiss-row; the
+// row is optimistically faded out + drawer closes. "Permanently" reveals an
+// optional inline reason textarea + routes to /api/discard-with-reason (if
+// reason text provided) then drawerQuickStatus(num, 'Discarded'). Confirm
+// button color tracks the active radio (green / red) so the destructive
+// path is visually flagged before commit. Backdrop click + Escape close.
+async function _openSkipModal(num, company, role) {
+  if (!num) return;
+  const existing = document.getElementById('skip-modal-backdrop');
+  if (existing) existing.remove();
+  function _esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  const backdrop = document.createElement('div');
+  backdrop.id = 'skip-modal-backdrop';
+  backdrop.setAttribute('role', 'dialog');
+  backdrop.setAttribute('aria-modal', 'true');
+  backdrop.setAttribute('aria-label', 'Skip this row');
+  const subTitle = company
+    ? _esc(company) + (role ? ' — ' + _esc(role) : '') + '  ·  row #' + _esc(String(num))
+    : 'row #' + _esc(String(num));
+  const tagsHint = 'comp / geography / culture / skill-gap / ethics / stage / velocity / role-shape / fit / other';
+  const html =
+    '<div id="skip-modal">' +
+      '<h2>Skip this row</h2>' +
+      '<p class="skip-modal-sub">' + subTitle + '</p>' +
+      '<label class="skip-mode-row is-selected" data-mode="today">' +
+        '<input type="radio" name="skip-mode" value="today" checked>' +
+        '<strong>Today only</strong>' +
+        '<span class="skip-mode-hint">Hide from Apply-Now until midnight PT. Status unchanged — row reappears tomorrow.</span>' +
+      '</label>' +
+      '<label class="skip-mode-row" data-mode="permanent">' +
+        '<input type="radio" name="skip-mode" value="permanent">' +
+        '<strong>Permanently</strong>' +
+        '<span class="skip-mode-hint">Write Discarded status. Optional reason captured for future eval-tuning.</span>' +
+      '</label>' +
+      '<div id="skip-reason-wrap" style="display:none">' +
+        '<label for="skip-reason">Reason (optional)</label>' +
+        '<textarea id="skip-reason" placeholder="' + tagsHint + '"></textarea>' +
+      '</div>' +
+      '<div class="skip-modal-buttons">' +
+        '<button type="button" id="skip-cancel">Cancel</button>' +
+        '<button type="button" id="skip-confirm" class="skip-confirm-today">Confirm</button>' +
+      '</div>' +
+    '</div>';
+  backdrop.innerHTML = html;
+  document.body.appendChild(backdrop);
+
+  const modeRows   = backdrop.querySelectorAll('.skip-mode-row');
+  const reasonWrap = backdrop.querySelector('#skip-reason-wrap');
+  const reasonEl   = backdrop.querySelector('#skip-reason');
+  const confirmEl  = backdrop.querySelector('#skip-confirm');
+  const cancelEl   = backdrop.querySelector('#skip-cancel');
+
+  function setMode(mode) {
+    modeRows.forEach(r => {
+      const matches = r.dataset.mode === mode;
+      r.classList.toggle('is-selected', matches);
+      r.classList.toggle('is-permanent', matches && mode === 'permanent');
+      const radio = r.querySelector('input[type="radio"]');
+      if (radio) radio.checked = matches;
+    });
+    if (mode === 'permanent') {
+      reasonWrap.style.display = '';
+      confirmEl.classList.remove('skip-confirm-today');
+      confirmEl.classList.add('skip-confirm-permanent');
+      confirmEl.textContent = 'Discard permanently';
+      setTimeout(() => { try { reasonEl.focus(); } catch (_) {} }, 60);
+    } else {
+      reasonWrap.style.display = 'none';
+      confirmEl.classList.remove('skip-confirm-permanent');
+      confirmEl.classList.add('skip-confirm-today');
+      confirmEl.textContent = 'Confirm';
+    }
+  }
+  modeRows.forEach(r => {
+    r.addEventListener('click', e => {
+      // Avoid double-fire when the radio inside is clicked directly
+      if (e.target && e.target.tagName === 'INPUT') return;
+      setMode(r.dataset.mode);
+    });
+    const radio = r.querySelector('input[type="radio"]');
+    if (radio) radio.addEventListener('change', () => setMode(r.dataset.mode));
+  });
+
+  function _close() {
+    backdrop.remove();
+    document.removeEventListener('keydown', _escHandler);
+  }
+  function _escHandler(e) {
+    if (e.key === 'Escape') _close();
+  }
+  document.addEventListener('keydown', _escHandler);
+  backdrop.addEventListener('click', e => { if (e.target === backdrop) _close(); });
+  cancelEl.addEventListener('click', _close);
+
+  confirmEl.addEventListener('click', async () => {
+    const checked = backdrop.querySelector('input[name="skip-mode"]:checked');
+    const mode = checked ? checked.value : 'today';
+    confirmEl.disabled = true;
+    confirmEl.textContent = mode === 'permanent' ? 'Discarding' + String.fromCharCode(8230) : 'Dismissing' + String.fromCharCode(8230);
+    if (mode === 'today') {
+      try {
+        await fetch('/api/dismiss-row', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ num }),
+        });
+      } catch (e) {
+        console.warn('dismiss-row persist failed:', e);
+      }
+      const rowEl = document.querySelector('tr.row[data-num="' + num + '"], #apply-now-tbody tr.row[data-row-id*="-' + num + '"]');
+      if (rowEl) {
+        rowEl.style.transition = 'opacity .25s';
+        rowEl.style.opacity = '0';
+        setTimeout(() => { rowEl.style.display = 'none'; }, 270);
+      }
+      _close();
+      if (typeof closeRightRail === 'function') closeRightRail();
+      if (window.toast) window.toast('Row #' + num + ' dismissed until midnight PT', 'info');
+    } else {
+      const reason = (reasonEl && reasonEl.value ? reasonEl.value : '').trim();
+      if (reason) {
+        try {
+          await fetch('/api/discard-with-reason', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ row_num: num, reason: reason.slice(0, 1000), company: company || '', role: role || '' }),
+          });
+        } catch (e) {
+          console.warn('discard-with-reason persist failed:', e);
+          // Don't block the status change on reason-persist failure
+        }
+      }
+      _close();
+      try {
+        await drawerQuickStatus(num, 'Discarded');
+      } catch (e) {
+        console.warn('drawerQuickStatus failed:', e);
+      }
+    }
+  });
+}
+window._openSkipModal = _openSkipModal;
 
 function _renderApplyClipboardModal(modal, formFieldsText, slug, applyHref, backdrop) {
   function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }

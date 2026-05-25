@@ -9606,99 +9606,9 @@ async function build() {
     #sidebar-pipeline-actions { display: none !important; }
   }
 
-  /* ── Recruiter pipeline-density widget (Phase 6, calibration 2026-05-16) ──
-     Surfaces runway-health verdict in the sidebar: healthy / stretched / critical
-     based on active conversation count + touches in last 7d. Auto-refreshes
-     every 5 minutes; click expands to show full metric breakdown. Source data:
-     /api/recruiter-pipeline-density endpoint in dashboard-server.mjs. */
-  .sidebar-runway {
-    margin: 6px 10px 8px;
-    padding: 8px 10px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
-    background: var(--surface-2);
-    font-size: 11.5px;
-    cursor: pointer;
-    transition: border-color .12s, background .12s;
-  }
-  .sidebar-runway:hover { border-color: var(--blue-fg-dark); }
-  .sidebar-runway-row { display: flex; align-items: center; gap: 6px; }
-  .sidebar-runway-dot {
-    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
-  }
-  .sidebar-runway-dot.healthy   { background: #16a34a; box-shadow: 0 0 6px rgba(22,163,74,.45); }
-  .sidebar-runway-dot.stretched { background: #f59e0b; box-shadow: 0 0 6px rgba(245,158,11,.45); }
-  .sidebar-runway-dot.critical  { background: #dc2626; box-shadow: 0 0 6px rgba(220,38,38,.55); animation: runway-pulse 1.6s ease-in-out infinite; }
-  .sidebar-runway-dot.unknown   { background: var(--text-3); }
-  @keyframes runway-pulse {
-    0%, 100% { box-shadow: 0 0 6px rgba(220,38,38,.55); }
-    50%      { box-shadow: 0 0 12px rgba(220,38,38,.85); }
-  }
-  .sidebar-runway-label {
-    flex: 1;
-    font-weight: 600;
-    color: var(--text);
-    text-transform: uppercase;
-    letter-spacing: .04em;
-    font-size: 10.5px;
-  }
-  .sidebar-runway-caret {
-    color: var(--text-3); font-size: 10px; transition: transform .15s;
-  }
-  .sidebar-runway.expanded .sidebar-runway-caret { transform: rotate(180deg); }
-  .sidebar-runway-detail {
-    display: none;
-    margin-top: 8px;
-    padding-top: 8px;
-    border-top: 1px solid var(--border);
-    font-size: 11px;
-    color: var(--text-2);
-    line-height: 1.5;
-  }
-  .sidebar-runway.expanded .sidebar-runway-detail { display: block; }
-  .sidebar-runway-stat-row {
-    display: flex; justify-content: space-between; padding: 2px 0;
-  }
-  .sidebar-runway-stat-label { color: var(--text-3); }
-  .sidebar-runway-stat-val {
-    color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums;
-  }
-  .sidebar-runway-alert {
-    margin-top: 8px;
-    padding: 10px 12px;
-    border-radius: 6px;
-    /* 2026-05-17 accessibility fix per Mitchell — bumped from 10.5px/1.4 to
-       12.5px/1.5 + weight 500 for legibility; tightened contrast ratios to
-       WCAG AA on each variant; added subtle left-border accent. */
-    font-size: 12.5px;
-    line-height: 1.5;
-    font-weight: 500;
-    border-left: 3px solid currentColor;
-    word-break: normal;
-    overflow-wrap: break-word;
-  }
-  .sidebar-runway-alert.healthy   { background: rgba(22,163,74,.10);  color: #166534; border-left-color: #16a34a; }
-  .sidebar-runway-alert.stretched { background: rgba(245,158,11,.10); color: #92400e; border-left-color: #d97706; }
-  .sidebar-runway-alert.critical  { background: rgba(220,38,38,.12);  color: #b91c1c; border-left-color: #dc2626; }
-  /* 2026-05-20 — Mitchell can hide the Runway widget via Settings.
-     The hide is driven by a body.runway-widget-hidden class set on
-     page-load after reading /api/settings (data/dashboard-settings.json). */
-  body.runway-widget-hidden .sidebar-runway { display: none; }
-  @media (prefers-color-scheme: dark) {
-    .sidebar-runway-alert.healthy   { color: #4ade80; background: rgba(22,163,74,.15); }
-    .sidebar-runway-alert.stretched { color: #fbbf24; background: rgba(245,158,11,.18); }
-    .sidebar-runway-alert.critical  { color: #fca5a5; background: rgba(220,38,38,.18); }
-  }
-  body.sidebar-collapsed .sidebar-runway-label,
-  body.sidebar-collapsed .sidebar-runway-caret,
-  body.sidebar-collapsed .sidebar-runway-detail { display: none; }
-  body.sidebar-collapsed .sidebar-runway {
-    padding: 8px; justify-content: center;
-  }
-  body.sidebar-collapsed .sidebar-runway-row { justify-content: center; }
-  @media (max-width: 720px) {
-    #sidebar-runway { display: none !important; }
-  }
+  /* Recruiter pipeline-density widget retired 2026-05-25
+     (stale-coupling sweep — see AGENTS.md). Was tied to the runway-density
+     model that PR #222 began retiring from heartbeat emails. */
 
   /* ── Sidebar calibration card (Inventory B6 MVP 2026-05-18) ─── */
   /* Surfaces the weekly Gemini calibration prompt. Hides itself when the
@@ -13166,30 +13076,9 @@ async function build() {
       <span id="pipeline-dispatch-chip" class="${initialDispatchChip.cls}" title="${htmlEscape(initialDispatchChip.title)}" onclick="openBatchStatusModal()">${htmlEscape(initialDispatchChip.label)}</span>
       <span id="regression-guard-chip" class="${initialRegressionChip.cls}" title="${htmlEscape(initialRegressionChip.title)}" onclick="openPipelineHealthModal()">${htmlEscape(initialRegressionChip.label)}</span>
     </div>
-    <!-- Recruiter pipeline-density widget (Phase 6, calibration brief 2026-05-16)
-         Chevron toggles inline detail. Label click opens full runway modal
-         with active conversations + touches trend + who-to-contact-next.
-         Data from /api/recruiter-pipeline-density (inline) and
-         /api/runway-detail (modal). -->
-    <!-- BRAVO followup 2026-05-20 Item 9 / AA-10 — removed outer role=button +
-         tabindex=0 to fix nested-interactive (the tile contains buttons inside).
-         Mouse onclick still fires; keyboard users tab to the inner buttons. -->
-    <div id="sidebar-runway" class="sidebar-runway" title="Pipeline density vs 12-week runway — click for full detail">
-      <div class="sidebar-runway-row" onclick="openRunwayDetailModal()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openRunwayDetailModal();}">
-        <span class="sidebar-runway-dot unknown" id="runway-dot"></span>
-        <span class="sidebar-runway-label" id="runway-label">runway · loading…</span>
-        <button type="button" class="sidebar-runway-caret" aria-label="Toggle inline detail" onclick="event.stopPropagation();toggleRunwayWidget();" style="background:none;border:none;color:inherit;cursor:pointer;padding:0;font:inherit;">▾</button>
-      </div>
-      <button type="button" class="sidebar-runway-explain-btn" onclick="openRunwayDetailModal();event.stopPropagation()" aria-label="What does runway status mean?" title="Open full runway detail — definition + active conversations + 7-day touches">What does this mean? →</button>
-      <div class="sidebar-runway-detail" id="runway-detail">
-        <div class="sidebar-runway-stat-row"><span class="sidebar-runway-stat-label">active conversations</span><span class="sidebar-runway-stat-val" id="runway-active">—</span></div>
-        <div class="sidebar-runway-stat-row"><span class="sidebar-runway-stat-label">touches (7d)</span><span class="sidebar-runway-stat-val" id="runway-touches7d">—</span></div>
-        <div class="sidebar-runway-stat-row"><span class="sidebar-runway-stat-label">touches (30d)</span><span class="sidebar-runway-stat-val" id="runway-touches30d">—</span></div>
-        <div class="sidebar-runway-stat-row"><span class="sidebar-runway-stat-label">response rate</span><span class="sidebar-runway-stat-val" id="runway-response">—</span></div>
-        <div class="sidebar-runway-stat-row"><span class="sidebar-runway-stat-label">last touch</span><span class="sidebar-runway-stat-val" id="runway-lasttouch">—</span></div>
-        <div class="sidebar-runway-alert unknown" id="runway-alert">—</div>
-      </div>
-    </div>
+    <!-- Recruiter pipeline-density widget retired 2026-05-25
+         (stale-coupling sweep — see AGENTS.md). Was tied to the runway-density
+         model that PR #222 began retiring from heartbeat emails. -->
     <!-- Readiness chip (TPgM relocation 2026-05-17): compact sidebar card
          shows headline PM-credibility score + velocity arrow. "See full →"
          opens the full TPgM widget in a drill-in drawer so it stays fully
@@ -15504,7 +15393,6 @@ document.addEventListener('DOMContentLoaded', function() {
     ['#verify-backdrop',         'closeVerify',             '.verify-close'],
     ['#pipeline-modal',          'closePipelineModal',      '.pipeline-modal-btn-cancel'],
     ['#batch-status-modal',      'closeBatchStatusModal',   '.batch-status-close'],
-    ['#runway-detail-modal',     'closeRunwayDetailModal',  '.runway-detail-close'],
     ['#scan-activity-modal',     'closeScanActivityModal',  '.scan-activity-close'],
     ['#system-health-modal',     'closeSystemHealthModal',  '.system-health-close'],
     ['#item-list-modal',         'closeItemListModal',      '.item-list-modal-close'],
@@ -15555,7 +15443,6 @@ document.addEventListener('DOMContentLoaded', function() {
     ['openEquityLegend',       'closeEquityLegend',       '#equity-legend-backdrop'],
     ['openKbdHelp',            'closeKbdHelp',            '#kbd-help-backdrop'],
     ['openBatchStatusModal',   'closeBatchStatusModal',   '#batch-status-modal'],
-    ['openRunwayDetailModal',  'closeRunwayDetailModal',  '#runway-detail-modal'],
     ['openScanActivityModal',  'closeScanActivityModal',  '#scan-activity-modal'],
     ['openSystemHealthModal',  'closeSystemHealthModal',  '#system-health-modal'],
     ['openPipelineModal',      'closePipelineModal',      '#pipeline-modal'],
@@ -15806,7 +15693,8 @@ window.toggleDemoMode = toggleDemoMode;
 const _SETTINGS_LS_KEY = 'careerOps.settings';
 function _applySettingsToDOM(s) {
   if (!s) return;
-  document.body.classList.toggle('runway-widget-hidden', s.show_runway_widget === false);
+  // Intentionally empty: no settings currently project state into the DOM.
+  // Extension point — add new DOM-effecting settings here as they arrive.
 }
 async function _loadSettingsAndApply() {
   let settings = null;
@@ -16637,9 +16525,8 @@ async function loadSidebarRecentUpdates() {
 window.loadSidebarRecentUpdates = loadSidebarRecentUpdates;
 
 // Initial sidebar load + 60s refresh + Esc-to-close binding.
-// Sidebar widgets audit (2026-05-18 evening):
+// Sidebar widgets audit (2026-05-18 evening, runway entries removed 2026-05-25):
 //   loadSidebarRecentUpdates — fetches /api/career-update/recent; gets 60s poll below.
-//   sidebar-runway / sidebar-runway-detail — already polled (5min / 30s) in initRunway.
 //   sidebar-readiness — baked at build time (${tpgmChipScore}); staleness noted.
 //   sidebar-side-alloc — baked at build time from data/side-allocations.yml; staleness noted.
 //   sidebar-contacts — baked at build time; staleness noted.
@@ -16648,9 +16535,8 @@ window.loadSidebarRecentUpdates = loadSidebarRecentUpdates;
 //   apply-now table — full page reload only; no lightweight refresh endpoint yet.
 //   mc-strip live-ticker, mc-batch, mc-health — already have SSE / setInterval; OK.
 //
-// α ALPHA 2026-05-19 — full widget polling sweep covering the 17 baked/poll-eligible widgets.
+// α ALPHA 2026-05-19 — full widget polling sweep covering the baked/poll-eligible widgets.
 // Cadences (quality-first):
-//   - 30s  : sidebar-runway-detail (already)
 //   - 60s  : sidebar-recent-updates (already), KPI/outreach/mc-funnel-chip via _alphaPoll60s()
 //   - 120s : top-of-pipe-list, sidebar-contacts (live count via /api/stats fallback)
 //   - 300s : sidebar-readiness, sidebar-side-alloc, tonight-pick-callout, apply-now (full reload)
@@ -28916,112 +28802,18 @@ document.addEventListener('keydown', function (e) {
   if (bd) { e.stopPropagation(); bd.remove(); }
 }, true);
 
-// ── Recruiter pipeline-density widget (Phase 6, calibration brief 2026-05-16) ─
-// Fetches /api/recruiter-pipeline-density every 5 minutes (and on load), renders
-// the runway-health verdict + key metrics into the sidebar widget. Click toggles
-// expanded detail. Healthy = 5+ active conversations + 10+ touches/7d; stretched
-// = 3-4 active OR 5-9 touches/7d; critical = below both thresholds. Default
-// runway = 12 weeks (env-overridable via RUNWAY_WEEKS on the server).
-let _runwayRefreshTimer = null;
-async function refreshRunwayWidget() {
-  const dot      = document.getElementById('runway-dot');
-  const label    = document.getElementById('runway-label');
-  if (!dot || !label) return; // widget not rendered
-  try {
-    const res = await fetch('/api/recruiter-pipeline-density', { cache: 'no-store' });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const d = await res.json();
-    if (!d.ok) throw new Error(d.error || 'unknown');
-    const health = d.health || 'unknown';
-    dot.className = 'sidebar-runway-dot ' + health;
-    label.textContent = 'runway · ' + health;
-    const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
-    setText('runway-active',     d.contacts.active);
-    setText('runway-touches7d',  d.velocity.touches_last_7d);
-    setText('runway-touches30d', d.velocity.touches_last_30d);
-    setText('runway-response',   Math.round(d.contacts.response_rate * 100) + '%');
-    setText('runway-lasttouch',  d.velocity.days_since_last_touch != null ? d.velocity.days_since_last_touch + 'd ago' : 'n/a');
-    const alertEl = document.getElementById('runway-alert');
-    if (alertEl) {
-      alertEl.className = 'sidebar-runway-alert ' + health;
-      alertEl.textContent = d.runway_alert || '—';
-    }
-  } catch (err) {
-    // γ GAMMA fix 2026-05-19 (post-tunnel-resolution): on fetch error or
-    // 5xx, the dot + label + alert correctly switched to "unavailable" — but
-    // the numeric IDs (runway-active, runway-touches7d, etc.) were left
-    // populated with whatever stale values the LAST successful fetch wrote.
-    // Mitchell would see "5 active conversations" displayed under a dot that
-    // said "unavailable". Now we explicitly null those numbers too.
-    dot.className = 'sidebar-runway-dot unknown';
-    label.textContent = 'runway · unavailable';
-    const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
-    setText('runway-active',     '—');
-    setText('runway-touches7d',  '—');
-    setText('runway-touches30d', '—');
-    setText('runway-response',   '—');
-    setText('runway-lasttouch',  '—');
-    const alertEl = document.getElementById('runway-alert');
-    if (alertEl) { alertEl.className = 'sidebar-runway-alert unknown'; alertEl.textContent = 'Pipeline-density data unavailable: ' + (err.message || err); }
-  }
-}
-function toggleRunwayWidget() {
-  const widget = document.getElementById('sidebar-runway');
-  if (widget) widget.classList.toggle('expanded');
-}
-window.refreshRunwayWidget = refreshRunwayWidget;
-window.toggleRunwayWidget = toggleRunwayWidget;
-document.addEventListener('DOMContentLoaded', () => {
-  refreshRunwayWidget();
-  // Auto-refresh every 5 minutes — pipeline-density changes slowly
-  if (_runwayRefreshTimer) clearInterval(_runwayRefreshTimer);
-  _runwayRefreshTimer = setInterval(refreshRunwayWidget, 5 * 60 * 1000);
-});
-document.addEventListener('careerops:outreach-changed', refreshRunwayWidget);
-
-// 2026-05-18 — rdDraftDm: Runway "who to contact next" row → draft DM.
-// Reads the data-rd-draft JSON payload off the clicked button, synthesizes
-// a hidden anchor with the dataset openEmailPopover() expects, then invokes
-// the existing popover so the user picks a template and the LinkedIn DM /
-// email gets composed with context.
-function rdDraftDm(btnEl) {
-  if (!btnEl) return;
-  let payload = {};
-  try { payload = JSON.parse(btnEl.dataset.rdDraft || '{}'); } catch (_) {}
-  if (!payload.name || !payload.company) {
-    if (window.toast) window.toast('No contact/company on this row.', 'warning');
-    return;
-  }
-  let proxy = document.getElementById('rd-draft-dm-proxy');
-  if (!proxy) {
-    proxy = document.createElement('button');
-    proxy.id = 'rd-draft-dm-proxy';
-    proxy.type = 'button';
-    proxy.style.cssText = 'position:fixed;opacity:0;pointer-events:none;z-index:-1';
-    document.body.appendChild(proxy);
-  }
-  const r = btnEl.getBoundingClientRect();
-  proxy.style.left = r.left + 'px';
-  proxy.style.top = r.top + 'px';
-  proxy.dataset.company = payload.company;
-  proxy.dataset.role = '';
-  proxy.dataset.contactName = payload.name;
-  proxy.dataset.rationale = payload.rationale || '';
-  proxy.dataset.channel = payload.channel || 'linkedin_dm';
-  if (typeof window.openEmailPopover === 'function') {
-    window.openEmailPopover(proxy);
-  } else {
-    if (window.toast) window.toast('Email popover not loaded yet.', 'warning');
-  }
-}
-window.rdDraftDm = rdDraftDm;
-
-// Issue 7 (2026-05-18): scroll-to-section + contact-drilldown helpers for the
-// runway-detail modal. Summary cells use _rdScrollToSection; table rows use
-// _rdOpenContactRow which opens the contacts directory pre-filtered.
-// 2026-05-18 Wave B: scroll within the per-row drawer to a section. Used
-// by the comp chip to jump to the in-drawer comp-intelligence card
-// (single source of truth for comp data; the popout duplicate was removed).
+// Recruiter pipeline-density widget + runway-detail modal retired 2026-05-25
+// (stale-coupling sweep — see AGENTS.md § stale-coupling-after-primitive-removal).
+// Deleted: refreshRunwayWidget, toggleRunwayWidget, rdDraftDm, _rdScrollToSection,
+// _rdOpenContactRow, _rdExplainHealth, _rdEsc, _rdFmtChannel, _rdFmtRelTime,
+// _rdUpdateStamp, _rdRenderBody, _rdFetchAndRender, openRunwayDetailModal,
+// closeRunwayDetailModal, + the modal's Esc handler. PR #222 began retiring
+// the runway-density model from heartbeat emails; this completes the sweep
+// on the dashboard surface.
+//
+// _scrollDrawerTo is KEPT — still used by the drawer comp-chip at line ~3156
+// (clicking 💰 in a row scrolls to the in-drawer .rd-comp-intel card). The
+// rd-section-flash CSS keyframe + animation rule are likewise kept.
 function _scrollDrawerTo(className, triggerEl) {
   try {
     var detailBlock = triggerEl && triggerEl.closest ? triggerEl.closest('.detail-block') : null;
@@ -29034,129 +28826,6 @@ function _scrollDrawerTo(className, triggerEl) {
   } catch (_) { /* best-effort */ }
 }
 window._scrollDrawerTo = _scrollDrawerTo;
-
-function _rdScrollToSection(sectionId) {
-  var el = document.getElementById(sectionId);
-  if (!el) return;
-  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  el.classList.add('rd-section-flash');
-  setTimeout(function () { el.classList.remove('rd-section-flash'); }, 1200);
-}
-window._rdScrollToSection = _rdScrollToSection;
-
-// 2026-05-18 Wave B: explain the Health verdict on click. Shows the system
-// definition of the threshold + summarizes which roles/companies in the
-// apply-now queue are driving the pressure on runway, with JD posting
-// dates. Renders via the universal drillIn() popout so the styling +
-// non-dimming + drawer-aware positioning come for free.
-function _rdExplainHealth(health) {
-  var defs = {
-    healthy:   { title: 'Healthy', desc: '3+ active conversations across Tier A/B AND ≥3 outbound touches in the last 7 days. The pipeline is generating enough new density that a single rejection does not stall the search.' },
-    stretched: { title: 'Stretched', desc: '1–2 active conversations OR &lt;3 outbound touches in the last 7 days. The search still has momentum but the funnel is thin — one ghost from a Tier-A contact and the pipeline drops below replacement rate.' },
-    critical:  { title: 'Critical', desc: '0 active conversations OR 0 outbound touches in the last 7 days. The search has lost density — every day at this level erodes confidence the existing runway window (the RUNWAY_WEEKS env constant) is enough, because incoming offers must come from conversations already in flight.' },
-    unknown:   { title: 'Unknown', desc: 'Not enough touch data to compute a verdict. Log a couple of touches via /api/touches and re-open this modal.' },
-  };
-  var d = defs[health] || defs.unknown;
-  var cb = window._waveCB || {};
-  var applyNow = cb.applyNowJDs || [];
-  var jdList = '';
-  if (applyNow.length) {
-    jdList = '<div style="margin-top:14px"><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);margin-bottom:8px">Roles in the apply-now queue (' + applyNow.length + ')</div>'
-           + '<table style="width:100%;border-collapse:collapse;font-size:12px">'
-           + '<thead><tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border);color:var(--text-3)">Company</th><th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border);color:var(--text-3)">Role</th><th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border);color:var(--text-3)">JD posted</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid var(--border);color:var(--text-3)">Score</th></tr></thead>'
-           + '<tbody>'
-           + applyNow.slice(0, 20).map(function (r) {
-               return '<tr><td style="padding:5px 8px"><strong>' + (r.company || '—') + '</strong></td><td style="padding:5px 8px;color:var(--text-2)">' + (r.role || '—') + '</td><td style="padding:5px 8px;color:var(--text-3)">' + (r.date || '—') + '</td><td style="padding:5px 8px;text-align:right;color:var(--green)">' + (r.score ? r.score.toFixed(1) : '—') + '</td></tr>';
-             }).join('')
-           + '</tbody></table>'
-           + (applyNow.length > 20 ? '<div style="font-size:11px;color:var(--text-3);margin-top:6px">+' + (applyNow.length - 20) + ' more — see the Apply-Now queue for the full list.</div>' : '')
-           + '</div>';
-  }
-  var html =
-    '<div style="font-size:13px;line-height:1.55">'
-    + '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);margin-bottom:4px">Definition</div>'
-    + '<div style="margin-bottom:14px"><strong style="color:var(--text)">' + d.title + ':</strong> ' + d.desc + '</div>'
-    + jdList
-    + '</div>';
-  // Stash result + use the universal drill-in renderer.
-  if (window.drillIn && window.drillInRegistry) {
-    window.drillInRegistry['runway-health'] = function () {
-      return { title: 'Runway health · ' + d.title, html: html };
-    };
-    window.drillIn('runway-health', health);
-  }
-}
-window._rdExplainHealth = _rdExplainHealth;
-
-function _rdOpenContactRow(contactName) {
-  if (!contactName) return;
-  // Close the runway-detail modal first so the contact directory stacks
-  // cleanly on top instead of behind it.
-  if (typeof window.closeRunwayDetailModal === 'function') {
-    try { window.closeRunwayDetailModal(); } catch (_) {}
-  }
-  // Defer until after close transition so the new modal isn't ducked out
-  // by the closing one.
-  setTimeout(function () {
-    if (typeof window.openContactsDirectoryModal !== 'function') return;
-    window.openContactsDirectoryModal();
-    setTimeout(function () {
-      var input = document.getElementById('contacts-directory-search');
-      if (input) {
-        input.value = contactName;
-        var evt = new Event('input', { bubbles: true });
-        input.dispatchEvent(evt);
-      }
-    }, 80);
-  }, 100);
-}
-window._rdOpenContactRow = _rdOpenContactRow;
-
-// ── Runway detail modal (2026-05-17) ─────────────────────────────
-// Opens from the sidebar runway-label click. Polls /api/runway-detail
-// every 30s while open. Sections:
-//   1. Health summary (runway weeks · verdict · reason)
-//   2. Active conversations table (tier, contact, days_since, next_action)
-//   3. Recent touches (last 7 days)
-//   4. Response rate trend (this 7d vs last 30d, with delta arrow)
-//   5. Who to contact next (top 5, ranked by tier × silence × prior-engagement)
-// Tables in this modal automatically pick up invariant #8 via the
-// applyUniversalTableBaseline() pass run after each render.
-let _runwayDetailPollInterval = null;
-let _runwayDetailStampInterval = null;
-let _runwayDetailLastFetchMs = 0;
-
-function _rdEsc(s) {
-  return String(s == null ? '' : s)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-function _rdFmtChannel(ch) {
-  if (!ch) return '—';
-  if (ch === 'linkedin_dm') return 'LinkedIn DM';
-  if (ch === 'x_dm')        return 'X DM';
-  if (ch === 'x_reply')     return 'X reply';
-  if (ch === 'in_person')   return 'In person';
-  if (ch === 'internal_snooze') return 'Snooze';
-  return ch.charAt(0).toUpperCase() + ch.slice(1);
-}
-function _rdFmtRelTime(iso) {
-  if (!iso) return '—';
-  const t = Date.parse(iso);
-  if (!isFinite(t)) return '—';
-  const ms = Date.now() - t;
-  const s = Math.max(0, Math.round(ms / 1000));
-  if (s < 60)    return s + 's ago';
-  if (s < 3600)  return Math.round(s / 60) + 'm ago';
-  if (s < 86400) return Math.round(s / 3600) + 'h ago';
-  return Math.round(s / 86400) + 'd ago';
-}
-function _rdUpdateStamp() {
-  const el = document.getElementById('runway-detail-updated');
-  if (!el || !_runwayDetailLastFetchMs) return;
-  el.classList.add('live');
-  el.textContent = 'updated ' + _rdFmtRelTime(new Date(_runwayDetailLastFetchMs).toISOString());
-}
 
 function _rdRenderBody(d) {
   const body = document.getElementById('runway-detail-body');

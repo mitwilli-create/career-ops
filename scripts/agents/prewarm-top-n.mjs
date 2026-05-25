@@ -72,7 +72,7 @@ const IL_SCRIPT = join(ROOT, 'scripts', 'agents', 'interview-likelihood.mjs');
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function emit(obj) {
-  try { process.stderr.write(JSON.stringify({ t: new Date().toISOString(), ...obj }) + '\\n'); } catch (_) {}
+  try { process.stderr.write(JSON.stringify({ t: new Date().toISOString(), ...obj }) + '\n'); } catch (_) {}
 }
 
 function readJsonSafe(path) {
@@ -401,8 +401,8 @@ function runDryRun(targetRows, mode, cap, n) {
   const today = new Date().toISOString().slice(0, 10);
   const SLOTS = ['hm-chance', 'interview-likelihood', 'team-health'];
 
-  console.log(`\\n[prewarm] DRY RUN — ${mode} mode, top-${n} rows, cap $${cap}`);
-  console.log(`[prewarm] Today: ${today}\\n`);
+  console.log(`\n[prewarm] DRY RUN — ${mode} mode, top-${n} rows, cap $${cap}`);
+  console.log(`[prewarm] Today: ${today}\n`);
 
   let totalEstCost = 0;
   let nWouldEnrich = 0;

@@ -29,6 +29,23 @@ import { createReadonlyFS } from '../../lib/readonly-fs.mjs';
 import { z } from 'zod';
 import { callCouncil } from '../../lib/council.mjs';
 import { dryRunSkipped } from './types.mjs';
+import { buildLeanGroundingForAgent } from '../../lib/ground-prompt.mjs';
+import { runVoiceRulesGate } from '../../lib/voice-rules-gate.mjs';
+
+// PR-02 (2026-05-25): lean grounding helper — see scripts/agents/cv-tailor.mjs for canonical doc.
+function _groundedSystem(baseSystem, modelKey, ctx) {
+  try {
+    const r = buildLeanGroundingForAgent({
+      agentName: 'WHY_STATEMENT', vendor: modelKey, task: 'why-statement',
+      rowId: ctx?.rowId || '', role: ctx?.role || '', company: ctx?.company || '',
+    });
+    if (r.mode === 'disabled') return baseSystem;
+    return r.prepend + baseSystem;
+  } catch (e) {
+    process.stderr.write(JSON.stringify({ t: new Date().toISOString(), warn: 'why-statement-grounding-failed', err: e.message }) + '\n');
+    return baseSystem;
+  }
+}
 import { checkText } from '../../lib/ai-detection-gate.mjs';
 
 try {
@@ -289,7 +306,7 @@ export async function runWhyStatement(input) {
     const councilResult = await callCouncil({
       prompt: userPrompt,
       models: [modelKey],
-      opts: { timeoutMs: 180000, systemPrompt: SYSTEM_PROMPT, maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
+      opts: { timeoutMs: 180000, systemPrompt: _groundedSystem(SYSTEM_PROMPT, modelKey, { rowId, role, company }), maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
     });
     const result = councilResult.results?.[0];
     if (!result) throw new Error('callCouncil returned no results');
@@ -328,7 +345,7 @@ export async function runWhyStatement(input) {
           const retry = await callCouncil({
             prompt: strictPrompt,
             models: [modelKey],
-            opts: { timeoutMs: 180000, systemPrompt: SYSTEM_PROMPT, maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
+            opts: { timeoutMs: 180000, systemPrompt: _groundedSystem(SYSTEM_PROMPT, modelKey, { rowId, role, company }), maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
           });
           const rr = retry.results?.[0];
           if (rr && !rr.error) {
@@ -393,7 +410,7 @@ export async function runWhyStatement(input) {
         const gz   = apiDetection.gptzero_prob    != null ? `GPTZero ${Math.round(apiDetection.gptzero_prob    * 100)}%` : '';
         const orig = apiDetection.originality_prob != null ? `Originality ${Math.round(apiDetection.originality_prob * 100)}%` : '';
         const band = apiDetection.band || 'CRIT';
-        const stricterPrompt = SYSTEM_PROMPT + `\n\nCRITICAL — API detector override: ${gz} ${orig} (band: ${band}). ` +
+        const stricterPrompt = _groundedSystem(SYSTEM_PROMPT, modelKey, { rowId, role, company }) + `\n\nCRITICAL — API detector override: ${gz} ${orig} (band: ${band}). ` +
           `The statement triggered the CRIT-band block with at least one detector at GOOD signal quality. ` +
           `Rewrite with dramatically more burstiness, irregular sentence structure, and embedded ` +
           `specific personal details unique to Mitchell. Sound like real internal notes, not polished copy.`;
@@ -441,11 +458,21 @@ export async function runWhyStatement(input) {
   // ── 9. Return ────────────────────────────────────────────────────────────
 
   const finalMarkdown = buildMarkdownArtifact(parsed, company, role);
+
+  // PR-02: voice-rules-gate Layer 2 post-process.
+  let voiceGate = null;
+  try {
+    if (parsed.statement && parsed.statement.length >= 50) voiceGate = runVoiceRulesGate(parsed.statement);
+  } catch (vErr) {
+    process.stderr.write(JSON.stringify({ t: new Date().toISOString(), warn: 'why-statement-voice-gate-failed', err: vErr.message }) + '\n');
+  }
+
   const artifactOutput = {
     path: artifactPath.replace(ROOT + '/', ''),
     body_markdown: finalMarkdown,
     humanize_score: humanizeScore,
     api_detection: apiDetection,
+    voice_gate: voiceGate ? { verdict: voiceGate.rollup.verdict, score: voiceGate.rollup.score, signal_quality: voiceGate.rollup.signal_quality } : null,
   };
 
   const gz   = apiDetection?.gptzero_prob    != null ? `GPTZero ${Math.round(apiDetection.gptzero_prob    * 100)}%` : null;

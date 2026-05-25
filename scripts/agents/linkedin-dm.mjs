@@ -29,6 +29,23 @@ import { z } from 'zod';
 import { callCouncil } from '../../lib/council.mjs';
 import { dryRunSkipped } from './types.mjs';
 import { checkText } from '../../lib/ai-detection-gate.mjs';
+import { buildLeanGroundingForAgent } from '../../lib/ground-prompt.mjs';
+import { runVoiceRulesGate } from '../../lib/voice-rules-gate.mjs';
+
+// PR-02 (2026-05-25): lean grounding helper — see scripts/agents/cv-tailor.mjs for canonical doc.
+function _groundedSystem(baseSystem, modelKey, ctx) {
+  try {
+    const r = buildLeanGroundingForAgent({
+      agentName: 'LINKEDIN_DM', vendor: modelKey, task: 'linkedin-dm',
+      rowId: ctx?.rowId || '', role: ctx?.role || '', company: ctx?.company || '',
+    });
+    if (r.mode === 'disabled') return baseSystem;
+    return r.prepend + baseSystem;
+  } catch (e) {
+    process.stderr.write(JSON.stringify({ t: new Date().toISOString(), warn: 'linkedin-dm-grounding-failed', err: e.message }) + '\n');
+    return baseSystem;
+  }
+}
 
 try {
   const { config } = await import('dotenv');
@@ -286,7 +303,7 @@ export async function runLinkedinDm(input) {
     const councilResult = await callCouncil({
       prompt: userPrompt,
       models: [modelKey],
-      opts: { timeoutMs: 180000, systemPrompt: SYSTEM_PROMPT, maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
+      opts: { timeoutMs: 180000, systemPrompt: _groundedSystem(SYSTEM_PROMPT, modelKey, { rowId, role, company }), maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
     });
     const result = councilResult.results?.[0];
     if (!result) throw new Error('callCouncil returned no results');
@@ -325,7 +342,7 @@ export async function runLinkedinDm(input) {
           const retry = await callCouncil({
             prompt: strictPrompt,
             models: [modelKey],
-            opts: { timeoutMs: 180000, systemPrompt: SYSTEM_PROMPT, maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
+            opts: { timeoutMs: 180000, systemPrompt: _groundedSystem(SYSTEM_PROMPT, modelKey, { rowId, role, company }), maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
           });
           const rr = retry.results?.[0];
           if (rr && !rr.error) {
@@ -393,7 +410,7 @@ export async function runLinkedinDm(input) {
       const gz   = apiDetection.gptzero_prob    != null ? `GPTZero ${Math.round(apiDetection.gptzero_prob    * 100)}%` : '';
       const orig = apiDetection.originality_prob != null ? `Originality ${Math.round(apiDetection.originality_prob * 100)}%` : '';
       const band = apiDetection.band || 'CRIT';
-      const stricterPrompt = SYSTEM_PROMPT + `\n\nCRITICAL — API detector override: ${gz} ${orig} (band: ${band}). ` +
+      const stricterPrompt = _groundedSystem(SYSTEM_PROMPT, modelKey, { rowId, role, company }) + `\n\nCRITICAL — API detector override: ${gz} ${orig} (band: ${band}). ` +
         `The DM variants triggered the CRIT-band block with at least one detector at GOOD signal quality. ` +
         `Rewrite with dramatically more varied sentence rhythms, concrete personal details, and zero AI-detector tells. ` +
         `Make it sound genuinely human.`;
@@ -440,12 +457,23 @@ export async function runLinkedinDm(input) {
   // The orchestrator expects { body, channel } — we return the cold variant
   // as the primary body and include the full messages array in extra fields.
   const finalPrimary = parsed.messages.find(m => m.variant === 'cold') || parsed.messages[0];
+
+  // PR-02: voice-rules-gate Layer 2 post-process on all 3 variants combined.
+  let voiceGate = null;
+  try {
+    const allMsgs = parsed.messages.map(m => m.text).join('\n\n').trim();
+    if (allMsgs.length >= 50) voiceGate = runVoiceRulesGate(allMsgs);
+  } catch (vErr) {
+    process.stderr.write(JSON.stringify({ t: new Date().toISOString(), warn: 'linkedin-dm-voice-gate-failed', err: vErr.message }) + '\n');
+  }
+
   const artifactOutput = {
     body: finalPrimary.text,
     channel: 'linkedin-message',
     path: artifactPath.replace(ROOT + '/', ''),
     variants: parsed.messages.map(m => ({ variant: m.variant, char_count: m.char_count })),
     api_detection: apiDetection,
+    voice_gate: voiceGate ? { verdict: voiceGate.rollup.verdict, score: voiceGate.rollup.score, signal_quality: voiceGate.rollup.signal_quality } : null,
   };
 
   const gz   = apiDetection?.gptzero_prob    != null ? `GPTZero ${Math.round(apiDetection.gptzero_prob    * 100)}%` : null;

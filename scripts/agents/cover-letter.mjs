@@ -34,6 +34,23 @@ import { callCouncil } from '../../lib/council.mjs';
 import { dryRunSkipped } from './types.mjs';
 import { checkText } from '../../lib/ai-detection-gate.mjs';
 import { runDetectionRetryPipeline } from '../../lib/ai-detection-retry.mjs';
+import { buildLeanGroundingForAgent } from '../../lib/ground-prompt.mjs';
+import { runVoiceRulesGate } from '../../lib/voice-rules-gate.mjs';
+
+// PR-02 (2026-05-25): lean grounding helper — see scripts/agents/cv-tailor.mjs for canonical doc.
+function _groundedSystem(baseSystem, modelKey, ctx) {
+  try {
+    const r = buildLeanGroundingForAgent({
+      agentName: 'COVER_LETTER', vendor: modelKey, task: 'cover-letter',
+      rowId: ctx?.rowId || '', role: ctx?.role || '', company: ctx?.company || '',
+    });
+    if (r.mode === 'disabled') return baseSystem;
+    return r.prepend + baseSystem;
+  } catch (e) {
+    process.stderr.write(JSON.stringify({ t: new Date().toISOString(), warn: 'cover-letter-grounding-failed', err: e.message }) + '\n');
+    return baseSystem;
+  }
+}
 
 // Load .env from repo root so API keys are available when this agent is invoked
 // directly (not through a shell that already has the env exported).
@@ -387,7 +404,7 @@ export async function runCoverLetter(input) {
       prompt: userPrompt,
       models: [modelKey],
       opts: { timeoutMs: 180000,
-        systemPrompt: SYSTEM_PROMPT,
+        systemPrompt: _groundedSystem(SYSTEM_PROMPT, modelKey, { rowId, role, company }),
         maxTokens: MAX_COMPLETION_TOKENS,
         reasoningEffort,
       },
@@ -441,7 +458,7 @@ export async function runCoverLetter(input) {
           const retry = await callCouncil({
             prompt: strictPrompt,
             models: [modelKey],
-            opts: { timeoutMs: 180000, systemPrompt: SYSTEM_PROMPT, maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
+            opts: { timeoutMs: 180000, systemPrompt: _groundedSystem(SYSTEM_PROMPT, modelKey, { rowId, role, company }), maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
           });
           const retryResult = retry.results?.[0];
           if (retryResult && !retryResult.error) {
@@ -504,7 +521,7 @@ export async function runCoverLetter(input) {
     if (humanizeScore > 20) {
       humanizeRetried = true;
       const flaggedPhrases = humanize.checks?.phrases?.hits?.map(h => h.label || h).join(', ') || 'flagged phrases';
-      const stricterSystemPrompt = SYSTEM_PROMPT + `\n\nCRITICAL: The previous draft had a humanize-check score of ${humanizeScore} (>${20}). Specifically flagged: ${flaggedPhrases}. Rewrite with dramatically varied sentence lengths, concrete specifics, and zero AI-detector tells. Make it sound like something Mitchell wrote in 20 minutes, not something polished by a committee.`;
+      const stricterSystemPrompt = _groundedSystem(SYSTEM_PROMPT, modelKey, { rowId, role, company }) + `\n\nCRITICAL: The previous draft had a humanize-check score of ${humanizeScore} (>${20}). Specifically flagged: ${flaggedPhrases}. Rewrite with dramatically varied sentence lengths, concrete specifics, and zero AI-detector tells. Make it sound like something Mitchell wrote in 20 minutes, not something polished by a committee.`;
 
       try {
         const retryResult = await callCouncil({
@@ -561,7 +578,7 @@ export async function runCoverLetter(input) {
         const pipeline = await runDetectionRetryPipeline({
           initialProse: proseSections,
           initialDetection: apiDetection,
-          baseSystemPrompt: SYSTEM_PROMPT,
+          baseSystemPrompt: _groundedSystem(SYSTEM_PROMPT, modelKey, { rowId, role, company }),
           regenerate: async (systemPrompt) => {
             // Same model, stricter system prompt. Model-switching as evasion is banned.
             const retryCouncil = await callCouncil({
@@ -636,6 +653,15 @@ export async function runCoverLetter(input) {
     ? `AI detection gate failed after ${stagesAttempted + 1} attempt(s) (${retryFinalStatus || 'NO_RETRY'}): ${[gz, orig].filter(Boolean).join(' / ')}`
     : null;
 
+  // PR-02: voice-rules-gate Layer 2 post-process on the body markdown.
+  let voiceGate = null;
+  try {
+    const bodyMd = buildMarkdownArtifact(parsed, company, role);
+    if (bodyMd && bodyMd.length >= 50) voiceGate = runVoiceRulesGate(bodyMd);
+  } catch (vErr) {
+    process.stderr.write(JSON.stringify({ t: new Date().toISOString(), warn: 'cover-letter-voice-gate-failed', err: vErr.message }) + '\n');
+  }
+
   // Build output shape matching orchestrator's cover_letter artifact contract
   const artifactOutput = {
     path: artifactPath.replace(ROOT + '/', ''),
@@ -650,6 +676,7 @@ export async function runCoverLetter(input) {
       }))
     ),
     api_detection: apiDetection,
+    voice_gate: voiceGate ? { verdict: voiceGate.rollup.verdict, score: voiceGate.rollup.score, signal_quality: voiceGate.rollup.signal_quality } : null,
   };
 
   return {

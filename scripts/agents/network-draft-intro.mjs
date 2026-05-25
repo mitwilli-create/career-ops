@@ -56,6 +56,24 @@ try {
 
 import { personById as networkPersonById, loadDatabase } from '../../lib/network-database-search.mjs';
 import { recordTokens } from '../../lib/quota-tracker.mjs';
+import { buildLeanGroundingForAgent } from '../../lib/ground-prompt.mjs';
+import { runVoiceRulesGate } from '../../lib/voice-rules-gate.mjs';
+
+// PR-02 (2026-05-25): lean grounding helper — see scripts/agents/cv-tailor.mjs for canonical doc.
+// network-draft-intro uses Anthropic Sonnet exclusively; full corpus grounding is safe.
+function _groundedSystem(baseSystem, ctx) {
+  try {
+    const r = buildLeanGroundingForAgent({
+      agentName: 'NETWORK_DRAFT_INTRO', vendor: 'anthropic:claude-sonnet-4-6', task: 'network-draft-intro',
+      rowId: ctx?.rowId || '', role: ctx?.role || '', company: ctx?.company || '',
+    });
+    if (r.mode === 'disabled') return baseSystem;
+    return r.prepend + baseSystem;
+  } catch (e) {
+    process.stderr.write(JSON.stringify({ t: new Date().toISOString(), warn: 'network-draft-intro-grounding-failed', err: e.message }) + '\n');
+    return baseSystem;
+  }
+}
 
 const argv = process.argv.slice(2);
 function flag(name) {
@@ -172,15 +190,19 @@ It must feel like a genuine human DM, not a template. It should earn the read.`;
 
 // LLM call (single Anthropic Sonnet — draft-intro is a quick creative task,
 // not a research task, so council fan-out is overkill here)
-async function callSonnet(prompt) {
+async function callSonnet(prompt, groundingCtx = {}) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
+
+  // PR-02: grounded system prepend — Anthropic vendor path (full corpus).
+  const baseSystem = `You are a voice-matching assistant. You draft LinkedIn messages that sound exactly like Mitchell Williams — a specific human being with a calibrated written voice. You match his register: em-dash density, problem-statement openers, concrete metric anchoring, earned closers. You never write corporate PR language.`;
+  const systemPrompt = _groundedSystem(baseSystem, groundingCtx);
 
   const body = {
     model: 'claude-sonnet-4-6',
     max_tokens: 600,
     messages: [{ role: 'user', content: prompt }],
-    system: `You are a voice-matching assistant. You draft LinkedIn messages that sound exactly like Mitchell Williams — a specific human being with a calibrated written voice. You match his register: em-dash density, problem-statement openers, concrete metric anchoring, earned closers. You never write corporate PR language.`,
+    system: systemPrompt,
   };
 
   let resp;
@@ -246,7 +268,7 @@ if (DRY_RUN) {
   draft = buildDryRunDraft(person, TARGET_COMPANY, FORMAT);
 } else {
   try {
-    const result = await callSonnet(prompt);
+    const result = await callSonnet(prompt, { rowId: person.id || '', role: '', company: TARGET_COMPANY });
     draft        = result.content.trim();
     costUsd      = result.costUsd;
     inputTokens  = result.inputTokens;
@@ -258,6 +280,14 @@ if (DRY_RUN) {
 
 const noteCount = draft.length;
 const overLimit = FORMAT === 'connection' && noteCount > 300;
+
+// PR-02: voice-rules-gate Layer 2 post-process on the draft.
+let voiceGate = null;
+try {
+  if (draft && draft.length >= 50) voiceGate = runVoiceRulesGate(draft);
+} catch (vErr) {
+  process.stderr.write(JSON.stringify({ t: new Date().toISOString(), warn: 'network-draft-intro-voice-gate-failed', err: vErr.message }) + '\n');
+}
 
 console.log(JSON.stringify({
   ok: true,
@@ -271,5 +301,6 @@ console.log(JSON.stringify({
   cost_usd:       Math.round(costUsd * 10000) / 10000,
   tokens: { input: inputTokens, output: outputTokens },
   warm_path:      warmPath,
+  voice_gate:     voiceGate ? { verdict: voiceGate.rollup.verdict, score: voiceGate.rollup.score, signal_quality: voiceGate.rollup.signal_quality } : null,
   _dry_run:       DRY_RUN,
 }, null, 2));

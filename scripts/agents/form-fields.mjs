@@ -32,6 +32,27 @@ import { z } from 'zod';
 import { callCouncil } from '../../lib/council.mjs';
 import { dryRunSkipped } from './types.mjs';
 import { checkText } from '../../lib/ai-detection-gate.mjs';
+import { buildLeanGroundingForAgent } from '../../lib/ground-prompt.mjs';
+import { runVoiceRulesGate } from '../../lib/voice-rules-gate.mjs';
+
+// PR-02 (2026-05-25): lean grounding helper. form-fields routes Haiku PRIMARY → gpt-5 FALLBACK,
+// so we use 'openai' vendor to get summary-only grounding — keeps personality corpus out of
+// any non-Anthropic prompt log if the fallback fires (cross-fork-leak safety). Anthropic path
+// still gets the rules via the summary-style prepend; full corpus access would only marginally
+// improve Haiku output for form-field answers (mostly mechanical).
+function _groundedSystem(baseSystem, ctx) {
+  try {
+    const r = buildLeanGroundingForAgent({
+      agentName: 'FORM_FIELDS', vendor: 'openai:gpt-5', task: 'form-fields',
+      rowId: ctx?.rowId || '', role: ctx?.role || '', company: ctx?.company || '',
+    });
+    if (r.mode === 'disabled') return baseSystem;
+    return r.prepend + baseSystem;
+  } catch (e) {
+    process.stderr.write(JSON.stringify({ t: new Date().toISOString(), warn: 'form-fields-grounding-failed', err: e.message }) + '\n');
+    return baseSystem;
+  }
+}
 
 try {
   const { config } = await import('dotenv');
@@ -357,7 +378,7 @@ export async function runFormFields(input) {
   let tokensUsed = { input: 0, output: 0, cached: 0 };
 
   try {
-    const r = await callHaikuOrFallback(userPrompt, SYSTEM_PROMPT, MAX_COMPLETION_TOKENS);
+    const r = await callHaikuOrFallback(userPrompt, _groundedSystem(SYSTEM_PROMPT, { rowId, role, company }), MAX_COMPLETION_TOKENS);
     llmResult = { content: r.content, tokens: r.tokens };
     modelUsed = r.modelUsed;
     tokensUsed = { input: r.inputTokens || Math.round(r.tokens * 0.85), output: r.outputTokens || Math.round(r.tokens * 0.15), cached: 0 };
@@ -388,7 +409,7 @@ export async function runFormFields(input) {
       if (attempt === 1) {
         try {
           const strictPrompt = `Output ONLY JSON: {"answers":[{"question":"...","answer":"...","char_limit":null,"voice_check_passed":true}],"warnings":[]}.\nContext: ${userPrompt.slice(0, 2000)}`;
-          const r = await callHaikuOrFallback(strictPrompt, SYSTEM_PROMPT, MAX_COMPLETION_TOKENS);
+          const r = await callHaikuOrFallback(strictPrompt, _groundedSystem(SYSTEM_PROMPT, { rowId, role, company }), MAX_COMPLETION_TOKENS);
           llmResult = { content: r.content, tokens: r.tokens };
           tokensUsed.input += r.inputTokens || Math.round(r.tokens * 0.85);
           tokensUsed.output += r.outputTokens || Math.round(r.tokens * 0.15);
@@ -479,7 +500,7 @@ export async function runFormFields(input) {
         const gz   = apiDetection.gptzero_prob    != null ? `GPTZero ${Math.round(apiDetection.gptzero_prob    * 100)}%` : '';
         const orig = apiDetection.originality_prob != null ? `Originality ${Math.round(apiDetection.originality_prob * 100)}%` : '';
         const band = apiDetection.band || 'CRIT';
-        const stricterPrompt = SYSTEM_PROMPT + `\n\nCRITICAL — API detector override: ${gz} ${orig} (band: ${band}). ` +
+        const stricterPrompt = _groundedSystem(SYSTEM_PROMPT, { rowId, role, company }) + `\n\nCRITICAL — API detector override: ${gz} ${orig} (band: ${band}). ` +
           `The form answers triggered the CRIT-band block with at least one detector at GOOD signal quality. ` +
           `Rewrite answers with varied sentence rhythm, concrete specifics, and zero AI-detector tells. ` +
           `Each answer must sound like a human typed it from notes, not polished by a committee.`;
@@ -543,6 +564,15 @@ export async function runFormFields(input) {
     voice_check_passed: a.voice_check_passed,
   }));
 
+  // PR-02: voice-rules-gate Layer 2 post-process on concatenated answers.
+  let voiceGate = null;
+  try {
+    const concatAnswers = parsed.answers.map(a => a.answer || '').filter(Boolean).join('\n\n');
+    if (concatAnswers.length >= 50) voiceGate = runVoiceRulesGate(concatAnswers);
+  } catch (vErr) {
+    process.stderr.write(JSON.stringify({ t: new Date().toISOString(), warn: 'form-fields-voice-gate-failed', err: vErr.message }) + '\n');
+  }
+
   const gz   = apiDetection?.gptzero_prob    != null ? `GPTZero ${Math.round(apiDetection.gptzero_prob    * 100)}%` : null;
   const orig = apiDetection?.originality_prob != null ? `Originality ${Math.round(apiDetection.originality_prob * 100)}%` : null;
 
@@ -558,6 +588,7 @@ export async function runFormFields(input) {
       questions_answered: parsed.answers.length,
       api_detection: apiDetection,
       api_detection_retried: apiDetectionRetried,
+      voice_gate: voiceGate ? { verdict: voiceGate.rollup.verdict, score: voiceGate.rollup.score, signal_quality: voiceGate.rollup.signal_quality } : null,
     },
     error: apiDetectionFailed
       ? `AI detection gate failed after ${apiDetectionRetried ? '2 attempts' : '1 attempt'}: ${[gz, orig].filter(Boolean).join(' / ')}`

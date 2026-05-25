@@ -26,6 +26,23 @@ import { z } from 'zod';
 import { callCouncil } from '../../lib/council.mjs';
 import { createReadonlyFS } from '../../lib/readonly-fs.mjs';
 import { dryRunSkipped } from './types.mjs';
+import { buildLeanGroundingForAgent } from '../../lib/ground-prompt.mjs';
+import { runVoiceRulesGate } from '../../lib/voice-rules-gate.mjs';
+
+// PR-02 (2026-05-25): lean grounding helper — see scripts/agents/cv-tailor.mjs for canonical doc.
+function _groundedSystem(baseSystem, modelKey, ctx) {
+  try {
+    const r = buildLeanGroundingForAgent({
+      agentName: 'REFERENCES', vendor: modelKey, task: 'references',
+      rowId: ctx?.rowId || '', role: ctx?.role || '', company: ctx?.company || '',
+    });
+    if (r.mode === 'disabled') return baseSystem;
+    return r.prepend + baseSystem;
+  } catch (e) {
+    process.stderr.write(JSON.stringify({ t: new Date().toISOString(), warn: 'references-grounding-failed', err: e.message }) + '\n');
+    return baseSystem;
+  }
+}
 
 try {
   const { config } = await import('dotenv');
@@ -190,7 +207,7 @@ export async function runReferences(input) {
   let tokensUsed = 0;
   let modelUsed = modelKey;
   try {
-    const cr = await callCouncil({ prompt: userPrompt, models: [modelKey], opts: { systemPrompt: SYSTEM_PROMPT, maxTokens: 3000, timeoutMs: 300_000 } });
+    const cr = await callCouncil({ prompt: userPrompt, models: [modelKey], opts: { systemPrompt: _groundedSystem(SYSTEM_PROMPT, modelKey, { rowId, role, company }), maxTokens: 3000, timeoutMs: 300_000 } });
     const r = cr.results?.[0];
     if (!r || r.error) throw new Error(r?.error || 'no result');
     llm = r; tokensUsed = r.tokens || 0; modelUsed = r.modelUsed || modelKey;
@@ -210,7 +227,7 @@ export async function runReferences(input) {
       parseError = String(e.message || e);
       if (i === 0) {
         try {
-          const retry = await callCouncil({ prompt: userPrompt + '\n\nPREVIOUS RESPONSE FAILED SCHEMA. Re-emit STRICT JSON only, 3-5 references with all required fields.', models: [modelKey], opts: { systemPrompt: SYSTEM_PROMPT, maxTokens: 3000, timeoutMs: 300_000 } });
+          const retry = await callCouncil({ prompt: userPrompt + '\n\nPREVIOUS RESPONSE FAILED SCHEMA. Re-emit STRICT JSON only, 3-5 references with all required fields.', models: [modelKey], opts: { systemPrompt: _groundedSystem(SYSTEM_PROMPT, modelKey, { rowId, role, company }), maxTokens: 3000, timeoutMs: 300_000 } });
           const rr = retry.results?.[0];
           if (rr && !rr.error) { llm = rr; tokensUsed += rr.tokens || 0; }
         } catch { /* */ }
@@ -225,9 +242,18 @@ export async function runReferences(input) {
   const path = join(outDir, 'references.md');
   writeFileSync(path, buildMarkdown(parsed, company, role), 'utf-8');
 
+  // PR-02: voice-rules-gate Layer 2 post-process on the rendered markdown.
+  let voiceGate = null;
+  try {
+    const md = buildMarkdown(parsed, company, role);
+    if (md && md.length >= 50) voiceGate = runVoiceRulesGate(md);
+  } catch (vErr) {
+    process.stderr.write(JSON.stringify({ t: new Date().toISOString(), warn: 'references-voice-gate-failed', err: vErr.message }) + '\n');
+  }
+
   return {
     stage: STAGE, status: 'ok',
-    output: { path: path.replace(ROOT + '/', ''), references: parsed.references.length, warnings: parsed.warnings },
+    output: { path: path.replace(ROOT + '/', ''), references: parsed.references.length, warnings: parsed.warnings, voice_gate: voiceGate ? { verdict: voiceGate.rollup.verdict, score: voiceGate.rollup.score, signal_quality: voiceGate.rollup.signal_quality } : null },
     diagnostics: { duration_ms: Date.now() - t0, cost_estimate_usd: estimateCostUsd(tokensUsed), tokens_used: tokensUsed, model_used: modelUsed },
     error: null,
   };

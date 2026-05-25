@@ -26,6 +26,23 @@ import { z } from 'zod';
 import { callCouncil } from '../../lib/council.mjs';
 import { createReadonlyFS } from '../../lib/readonly-fs.mjs';
 import { dryRunSkipped } from './types.mjs';
+import { buildLeanGroundingForAgent } from '../../lib/ground-prompt.mjs';
+import { runVoiceRulesGate } from '../../lib/voice-rules-gate.mjs';
+
+// PR-02 (2026-05-25): lean grounding helper — see scripts/agents/cv-tailor.mjs for canonical doc.
+function _groundedSystem(baseSystem, modelKey, ctx) {
+  try {
+    const r = buildLeanGroundingForAgent({
+      agentName: 'IMPACT_DOC', vendor: modelKey, task: 'impact-doc',
+      rowId: ctx?.rowId || '', role: ctx?.role || '', company: ctx?.company || '',
+    });
+    if (r.mode === 'disabled') return baseSystem;
+    return r.prepend + baseSystem;
+  } catch (e) {
+    process.stderr.write(JSON.stringify({ t: new Date().toISOString(), warn: 'impact-doc-grounding-failed', err: e.message }) + '\n');
+    return baseSystem;
+  }
+}
 
 try {
   const { config } = await import('dotenv');
@@ -217,7 +234,7 @@ export async function runImpactDoc(input) {
     const cr = await callCouncil({
       prompt: userPrompt,
       models: [modelKey],
-      opts: { systemPrompt: SYSTEM_PROMPT, maxTokens: 3500, timeoutMs: 300_000 },
+      opts: { systemPrompt: _groundedSystem(SYSTEM_PROMPT, modelKey, { rowId, role, company }), maxTokens: 3500, timeoutMs: 300_000 },
     });
     const r = cr.results?.[0];
     if (!r || r.error) throw new Error(r?.error || 'no result');
@@ -243,7 +260,7 @@ export async function runImpactDoc(input) {
         // Retry with stricter prompt
         try {
           const strict = userPrompt + '\n\nPREVIOUS RESPONSE DID NOT MATCH SCHEMA. Re-emit STRICT JSON only — no fences, no prose. Exactly 3 wedges, 2 risks, 2-5 commitments per 30/60/90.';
-          const retry = await callCouncil({ prompt: strict, models: [modelKey], opts: { systemPrompt: SYSTEM_PROMPT, maxTokens: 3500, timeoutMs: 300_000 } });
+          const retry = await callCouncil({ prompt: strict, models: [modelKey], opts: { systemPrompt: _groundedSystem(SYSTEM_PROMPT, modelKey, { rowId, role, company }), maxTokens: 3500, timeoutMs: 300_000 } });
           const rr = retry.results?.[0];
           if (rr && !rr.error) { llm = rr; tokensUsed += rr.tokens || 0; }
         } catch { /* fall */ }
@@ -260,10 +277,19 @@ export async function runImpactDoc(input) {
   const path = join(outDir, 'impact-doc.md');
   writeFileSync(path, buildMarkdown(parsed), 'utf-8');
 
+  // PR-02: voice-rules-gate Layer 2 post-process on the rendered markdown.
+  let voiceGate = null;
+  try {
+    const md = buildMarkdown(parsed);
+    if (md && md.length >= 50) voiceGate = runVoiceRulesGate(md);
+  } catch (vErr) {
+    process.stderr.write(JSON.stringify({ t: new Date().toISOString(), warn: 'impact-doc-voice-gate-failed', err: vErr.message }) + '\n');
+  }
+
   return {
     stage: STAGE,
     status: 'ok',
-    output: { path: path.replace(ROOT + '/', ''), wedges: parsed.wedges.length, warnings: parsed.warnings || [] },
+    output: { path: path.replace(ROOT + '/', ''), wedges: parsed.wedges.length, warnings: parsed.warnings || [], voice_gate: voiceGate ? { verdict: voiceGate.rollup.verdict, score: voiceGate.rollup.score, signal_quality: voiceGate.rollup.signal_quality } : null },
     diagnostics: { duration_ms: Date.now() - t0, cost_estimate_usd: estimateCostUsd(tokensUsed), tokens_used: tokensUsed, model_used: modelUsed },
     error: null,
   };

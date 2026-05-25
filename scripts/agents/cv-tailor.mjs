@@ -60,6 +60,26 @@ import { scoreAndRankBullets, buildLlmPreamble } from '../../lib/hm-weighting.mj
 import { dryRunSkipped } from './types.mjs';
 import { checkText, buildDoNotSubmitBanner } from '../../lib/ai-detection-gate.mjs';
 import { runDetectionRetryPipeline } from '../../lib/ai-detection-retry.mjs';
+import { buildLeanGroundingForAgent } from '../../lib/ground-prompt.mjs';
+import { runVoiceRulesGate } from '../../lib/voice-rules-gate.mjs';
+
+// PR-02 (2026-05-25): lean grounding helper. Prepends personality + profile corpus
+// (Anthropic vendors) or summary-only references (non-Anthropic) to SYSTEM_PROMPT.
+// Returns baseSystem unchanged when env-gate is off (PERSONALITY_GROUNDING_ALL=false
+// or PERSONALITY_GROUNDING_CV_TAILOR=false). Crash-safe: any failure degrades to baseSystem.
+function _groundedSystem(baseSystem, modelKey, ctx) {
+  try {
+    const r = buildLeanGroundingForAgent({
+      agentName: 'CV_TAILOR', vendor: modelKey, task: 'cv-tailor',
+      rowId: ctx?.rowId || '', role: ctx?.role || '', company: ctx?.company || '',
+    });
+    if (r.mode === 'disabled') return baseSystem;
+    return r.prepend + baseSystem;
+  } catch (e) {
+    process.stderr.write(JSON.stringify({ t: new Date().toISOString(), warn: 'cv-tailor-grounding-failed', err: e.message }) + '\n');
+    return baseSystem;
+  }
+}
 
 // Load .env from repo root so API keys are available when cv-tailor is invoked
 // directly (not through a shell that already has the env exported). Uses
@@ -457,7 +477,7 @@ export async function runCvTailor(input) {
       prompt: userPrompt,
       models: [modelKey],
       opts: { timeoutMs: 180000,
-        systemPrompt: SYSTEM_PROMPT,
+        systemPrompt: _groundedSystem(SYSTEM_PROMPT, modelKey, { rowId, role, company }),
         maxTokens: MAX_COMPLETION_TOKENS,
         reasoningEffort,
       },
@@ -525,7 +545,7 @@ export async function runCvTailor(input) {
             prompt: strictPrompt,
             models: [modelKey],
             opts: { timeoutMs: 180000,
-              systemPrompt: SYSTEM_PROMPT,
+              systemPrompt: _groundedSystem(SYSTEM_PROMPT, modelKey, { rowId, role, company }),
               maxTokens: MAX_COMPLETION_TOKENS,
               reasoningEffort,
             },
@@ -633,7 +653,7 @@ export async function runCvTailor(input) {
       const retryCouncil = await callCouncil({
         prompt: userPrompt,
         models: [modelKey],
-        opts: { timeoutMs: 180000, systemPrompt: SYSTEM_PROMPT, maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
+        opts: { timeoutMs: 180000, systemPrompt: _groundedSystem(SYSTEM_PROMPT, modelKey, { rowId, role, company }), maxTokens: MAX_COMPLETION_TOKENS, reasoningEffort },
       });
       const retryLlm = retryCouncil.results?.[0];
       if (!retryLlm || retryLlm.error) {
@@ -736,9 +756,10 @@ export async function runCvTailor(input) {
       const pipeline = await runDetectionRetryPipeline({
         initialProse: bulletsOnlyText,
         initialDetection: apiDetection,
-        baseSystemPrompt: SYSTEM_PROMPT,
+        baseSystemPrompt: _groundedSystem(SYSTEM_PROMPT, modelKey, { rowId, role, company }),
         regenerate: async (systemPrompt) => {
           // Same model, stricter system prompt. Model-switching as evasion is banned.
+          // PR-02: systemPrompt arrives already-grounded (baseSystemPrompt above); pipeline appends stricter rules.
           const retryCouncil = await callCouncil({
             prompt: userPrompt,
             models: [modelKey],
@@ -824,6 +845,21 @@ export async function runCvTailor(input) {
 
   const costUsd = estimateCostUsd(tokensUsed);
 
+  // PR-02: voice-rules-gate Layer 2 post-process on the tailored bullets + highlights.
+  // Best-effort — never blocks the return on gate failure or throw.
+  let voiceGate = null;
+  try {
+    const voiceTextSample = [
+      (parsed.tailored_bullets || []).map(b => b.text).join('\n'),
+      (parsed.highlights || []).join('\n'),
+    ].join('\n').trim();
+    if (voiceTextSample.length >= 50) {
+      voiceGate = runVoiceRulesGate(voiceTextSample);
+    }
+  } catch (vErr) {
+    process.stderr.write(JSON.stringify({ t: new Date().toISOString(), warn: 'cv-tailor-voice-gate-failed', err: vErr.message }) + '\n');
+  }
+
   return {
     stage: STAGE,
     status: 'ok',
@@ -840,6 +876,7 @@ export async function runCvTailor(input) {
       distinct_cv_refs_count: distinctCvRefs.size,
       cv_ref_corrections: cvRefCorrectionCount,
       api_detection: apiDetection,
+      voice_gate: voiceGate ? { verdict: voiceGate.rollup.verdict, score: voiceGate.rollup.score, signal_quality: voiceGate.rollup.signal_quality } : null,
     },
     diagnostics: {
       duration_ms: Date.now() - t0,

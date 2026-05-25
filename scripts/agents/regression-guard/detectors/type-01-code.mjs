@@ -45,7 +45,16 @@ export function detectType1Code(state) {
     // Backtick-only delimiter; the OUTER-template-unescape bug class is
     // backtick-specific (single/double quotes don't have the unescape
     // pathology in the same way).
-    const STRICT_LINE_RE = /`[^`]*\/\\[dsw]\+/;
+    //
+    // 2026-05-25 tune (this session's PR-A): added negative lookbehind
+    // `(?<!\\)\\` so the detector REJECTS source where the backslash is
+    // already doubled (the safe pattern, e.g. `/\\s+/g` in source which
+    // becomes `/\s+/g` at runtime). Previously the detector flagged
+    // `r.company.replace(/\\s+/g,'-')` at scripts/build-dashboard.mjs:3772
+    // as HIGH suspect — a false positive observed twice in two prior
+    // sessions. The lookbehind anchors detection to TRULY single-
+    // backslash occurrences (the bug pattern) and skips already-safe code.
+    const STRICT_LINE_RE = /`[^`]*\/(?<!\\)\\[dsw]\+/;
     // Inline-JS markers signal we're inside a <script> block or JS function
     // context inside the outer template. Use a generous ~200-char window
     // (handover spec) but expand if needed.
@@ -81,7 +90,14 @@ export function detectType1Code(state) {
     // Kept for the calibration window so we can compare strict-vs-loose
     // counts across the 4-Monday window. LOW severity sorts to the bottom
     // of top-15 but doesn't block ranking.
-    const LOOSE_LINE_RE = /[`'"][^`'"]*\/\\[dsw]\+/;
+    //
+    // 2026-05-25 tune (this session's PR-A): same lookbehind fix as STRICT
+    // applied here so the LOOSE detector also skips already-safe doubled-
+    // backslash patterns. Without the fix the LOOSE detector fired on every
+    // safe `/\\s+/g` etc. site (saturated the LOW bucket). With the fix it
+    // only fires on truly single-backslash patterns — useful calibration
+    // signal vs. noise.
+    const LOOSE_LINE_RE = /[`'"][^`'"]*\/(?<!\\)\\[dsw]\+/;
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
       if (LOOSE_LINE_RE.test(l)) {

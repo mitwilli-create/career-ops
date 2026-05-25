@@ -17,6 +17,23 @@ import { REPO_ROOT } from '../lib/config.mjs';
 import { hashCite } from '../lib/citation-policy.mjs';
 import { log } from '../lib/log-spend.mjs';
 
+// 2026-05-25 tune (this session's PR-A): exclude intentional archive
+// sweep directories that store "after" snapshots of the collision-cleanup
+// process. The path pattern `.claude/audit/finder-duplicates-YYYY-MM-DD/`
+// matches a cleanup session's own snapshot of the duplicates it removed
+// — those files are KEPT as archives + carry " 2.<ext>" by definition.
+// Flagging them every run is a permanent false-positive that saturated
+// the MED bucket (28 of 36 findings in the 2026-05-25 run). Excluding
+// these paths recovers signal: a real collision OUTSIDE the archive dir
+// is what we actually want to surface.
+const ARCHIVE_PATH_EXCLUSIONS = [
+  /\/finder-duplicates-\d{4}-\d{2}-\d{2}\//,
+];
+
+function isArchivedCollision(filePath) {
+  return ARCHIVE_PATH_EXCLUSIONS.some(rx => rx.test(filePath));
+}
+
 export function detectType6Closure(state) {
   const findings = [];
   // Pattern B — Finder ` 2.md` parallel-agent collisions
@@ -25,6 +42,7 @@ export function detectType6Closure(state) {
     if (existsSync(auditDir)) {
       const collisions = findCollisionFiles(auditDir);
       for (const c of collisions) {
+        if (isArchivedCollision(c)) continue;
         findings.push({
           type: 6, severity: 'MED', confidence: 'HIGH',
           subtype: 'parallel-agent-collision',

@@ -15583,10 +15583,15 @@ function openRightRailForDetail(idx, detailRow) {
       ? '<button type="button" class="drawer-btn-materials" data-drawer-action="materials" data-drill="drawer-action:materials:' + num + '" title="Build apply pack (CV + cover letter + outreach + intel)">Generate apply pack</button>'
       : '<button type="button" class="drawer-btn-materials" data-drill="drawer-action:materials:" disabled title="No row number — apply pack needs a tracker row">Generate apply pack</button>';
     // GAP-RES-14 (2026-05-24) — DISPATCH (copies row-context Claude Code prompt
-    // to clipboard for paste-into-fresh-session workflow).
+    // to clipboard for paste-into-fresh-session workflow). Label renamed
+    // 2026-05-24 from "Dispatch handoff" → "📋 Copy Claude Code prompt" so a
+    // fresh observer can tell what the button does without opening the tooltip.
+    // NOTE: tooltips avoid apostrophes — single-backslash escapes inside the
+    // outer template literal get unescaped on emit (see outer-template-unescape
+    // bug class in AGENTS.md).
     const dispatchBtnHtml = num
-      ? '<button type="button" class="drawer-btn-dispatch" data-drawer-action="dispatch" data-drill="drawer-action:dispatch:' + num + '" title="Copy a ready-to-paste Claude Code prompt for this row to clipboard">Dispatch handoff</button>'
-      : '<button type="button" class="drawer-btn-dispatch" data-drill="drawer-action:dispatch:" disabled title="No row number — dispatch needs a tracker row">Dispatch handoff</button>';
+      ? '<button type="button" class="drawer-btn-dispatch" data-drawer-action="dispatch" data-drill="drawer-action:dispatch:' + num + '" title="Copy a ready-to-paste Claude Code prompt for this row. Paste into a fresh Claude Code session at ~/Documents/career-ops/.">📋 Copy Claude Code prompt</button>'
+      : '<button type="button" class="drawer-btn-dispatch" data-drill="drawer-action:dispatch:" disabled title="No row number — needs a tracker row">📋 Copy Claude Code prompt</button>';
     // DISCARD (permanent, destructive — requires confirm + optional reason)
     const discardBtnHtml = num
       ? '<button type="button" class="drawer-btn-discard" data-drawer-action="discard" data-drill="drawer-action:discard:' + num + '" title="Permanently discard this row (Status → Discarded). Will prompt for a reason. Irreversible from the queue." style="color:var(--red-fg,#cf222e);border-color:var(--red-fg,#cf222e)">Discard this row</button>'
@@ -16215,7 +16220,7 @@ async function drawerDispatchHandoff(num, company, role, btnEl) {
       btnEl.disabled = false;
     }, 2500);
     if (typeof window.toast === 'function') {
-      window.toast('Handoff prompt copied. Paste into a fresh Claude Code session at ~/Documents/career-ops/', 'success');
+      window.toast('Claude Code prompt copied — paste into a fresh session at ~/Documents/career-ops/', 'success');
     }
   } catch (err) {
     btnEl.textContent = origLabel;

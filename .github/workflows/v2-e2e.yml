@@ -1,0 +1,92 @@
+# .github/workflows/v2-e2e.yml
+#
+# v2 autonomous-remediation pipeline — end-to-end smoke test.
+# PR #10 of 10 (v2 autonomous-remediation pipeline, 2026-05-25).
+#
+# Triggers:
+#   - Manual dispatch (workflow_dispatch) — for on-demand verification
+#   - Nightly at 03:30 UTC (~08:30 PT) Mon–Fri — continuous health signal
+#
+# Two modes (controlled by `mock` input in manual dispatch):
+#   - mock (default, $0): orchestration + module contract verification
+#   - real (requires API secrets, ~$20-50): full live-LLM E2E (v2.1 deferred)
+#
+# Locked decisions:
+#   Q7 — real LLM run on every CI push; mock on every commit
+#   (see data/decisions-pending-regression-auto-action-2026-05-25.md)
+#
+# Required GitHub Actions secrets (for real mode):
+#   ANTHROPIC_API_KEY   — Sonnet 4.6 (regression-guard synthesis)
+#   GOOGLE_API_KEY      — Gemini 2.5 Pro (regression-guard audit/research)
+#   XAI_API_KEY         — Grok-4 (bug-resolver adjudicate/action_plan)
+#   OPENAI_API_KEY      — GPT-5.5 Pro (bug-resolver implement)
+
+name: v2 E2E smoke
+
+on:
+  # Manual trigger with optional mode override
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Test mode: 'mock' ($0 orchestration) or 'real' (live LLMs ~$20-50)"
+        required: false
+        default: "mock"
+        type: choice
+        options:
+          - mock
+          - real
+
+  # Nightly Mon-Fri at 03:30 UTC (~20:30 PT previous evening, avoids peak hours)
+  schedule:
+    - cron: "30 3 * * 1-5"
+
+jobs:
+  v2-e2e:
+    name: v2 E2E smoke (${{ github.event.inputs.mode || 'mock' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Syntax check (v2 test suite)
+        run: |
+          node --check tests/v2-pipeline.mjs
+          node --check lib/v2-fix-log.mjs
+          node --check lib/v2-budget.mjs
+
+      - name: v2-pipeline mock smoke test
+        if: ${{ github.event.inputs.mode != 'real' || github.event_name == 'schedule' }}
+        run: node tests/v2-pipeline.mjs --mock
+        env:
+          # No API keys needed for mock mode
+          NODE_ENV: test
+
+      - name: v2-pipeline real E2E test
+        if: ${{ github.event.inputs.mode == 'real' && github.event_name == 'workflow_dispatch' }}
+        run: node tests/v2-pipeline.mjs
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_ENV: test
+
+      - name: v2 unit test suites (confirm no regressions)
+        run: |
+          node tests/v2-fix-log.mjs
+          node tests/v2-budget.mjs
+          node tests/v2-thrash-enforcement.mjs
+        env:
+          NODE_ENV: test

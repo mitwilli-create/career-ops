@@ -26250,11 +26250,19 @@ function _pcpUpdateScopedCost() {
   // drains to 0. Partial scope = some unchecked → script gets --companies=...
   // → some pipeline.md items stay queued.
   const isFullDrain = selected.length === availableRows.length && availableRows.length > 0;
-  const fullDrainCost = (_pipelinePreview && _pipelinePreview.process_all && _pipelinePreview.process_all.total_cost_usd) || 0;
+  const tEst = (_pipelinePreview && _pipelinePreview.process_all && _pipelinePreview.process_all.tier_estimates) || null;
+  const legacyFullDrainCost = (_pipelinePreview && _pipelinePreview.process_all && _pipelinePreview.process_all.total_cost_usd) || 0;
+  // GAP-RES-10 4.12 (2026-05-24): on full drain, use the SELECTED-tier cost
+  // when tier estimates exist — otherwise the headline would show the legacy
+  // Tier-1 fullDrainCost even after the user clicked Tier 2 or 3 radio.
+  // Cost: full drain → selected tier total (or legacy fallback);
+  //       partial scope → per-row sum (conservative — under-estimates shared
+  //       triage/batch costs the script still incurs).
+  const tierIdx = parseInt(_pcpSelectedTier || '1', 10);
+  const fullDrainCost = (tEst && tEst[tierIdx] && typeof tEst[tierIdx].total_cost_usd === 'number')
+    ? tEst[tierIdx].total_cost_usd
+    : legacyFullDrainCost;
   const triageCount = (_pipelinePreview && _pipelinePreview.process_all && _pipelinePreview.process_all.triage_count) || 0;
-  // Cost: full drain shows the realistic_full_drain total; partial scope shows
-  // the per-row sum (a conservative proxy — under-estimates by the shared
-  // triage/batch costs the script will still incur).
   const perRowSum = selected.reduce((s, c) => s + (c.cost_estimate_usd || 0), 0);
   const cost = isFullDrain ? fullDrainCost : perRowSum;
   // OMEGA-proposal-2: scoped detection sum from the per-row potential field.
@@ -26884,14 +26892,12 @@ window._pcpUpdateTier = function (tier) {
   if (!_pipelinePreview) return;
   const tEst = _pipelinePreview.process_all && _pipelinePreview.process_all.tier_estimates;
   if (!tEst || !tEst[tier]) return;
-  // Closure H (2026-05-22): use _fmtTierPrice to avoid "undefined"/"NaN"
-  // leakage if total_cost_usd is missing from a freshly-rolled tier estimate.
-  function _safeFmt(v) {
-    if (typeof v !== 'number' || !Number.isFinite(v)) return '—';
-    return '$' + v.toFixed(2);
-  }
-  const costEl = document.getElementById('pcp-headline-cost');
-  if (costEl) costEl.textContent = _safeFmt(tEst[tier].total_cost_usd);
+  // GAP-RES-10 4.12 (2026-05-24): defer to _pcpUpdateScopedCost so the
+  // headline reflects BOTH tier selection AND current checkbox scope. Prior
+  // implementation wrote pcp-headline-cost directly, which a subsequent
+  // checkbox toggle would overwrite with the legacy Tier-1 fullDrainCost —
+  // visible mismatch between selected radio and displayed price.
+  _pcpUpdateScopedCost();
 };
 // Closure D (2026-05-22): seed _pcpSelectedTier from the recommended tier
 // when the preview modal opens. Mutation observer is the simplest way to

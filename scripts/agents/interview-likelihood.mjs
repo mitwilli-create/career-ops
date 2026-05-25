@@ -511,13 +511,27 @@ if (ARGS.all === true || ARGS.all === 'true') {
 } else if (ARGS.slug) {
   const match = PASS_ROWS.find(r => r.slug === ARGS.slug);
   if (match) targets.push(match);
-  else targets.push({ num: '?', company: '', role: '', slug: String(ARGS.slug) });
+  else {
+    // 2026-05-25: fall back to apply-now-queue / applications.md lookup so
+    // the deep-refresh button can populate chips for any row, not just PASS_ROWS.
+    const { resolveRow } = await import('../lib/row-resolver.mjs');
+    const resolved = resolveRow(String(ARGS.slug));
+    if (resolved) targets.push(resolved);
+    else targets.push({ num: '?', company: '', role: '', slug: String(ARGS.slug) });
+  }
 } else if (ARGS.row) {
   const match = PASS_ROWS.find(r => String(r.num) === String(ARGS.row));
   if (match) targets.push(match);
   else {
-    console.error(`Row #${ARGS.row} not in the 4 PASS-row list. Add it to PASS_ROWS or pass --slug.`);
-    process.exit(2);
+    // 2026-05-25: fall back to apply-now-queue / applications.md lookup so
+    // the deep-refresh button can populate chips for any row, not just PASS_ROWS.
+    const { resolveRow } = await import('../lib/row-resolver.mjs');
+    const resolved = resolveRow(String(ARGS.row));
+    if (resolved) targets.push(resolved);
+    else {
+      console.error(`Row #${ARGS.row} not found in PASS_ROWS, apply-now-queue.json, or applications.md.`);
+      process.exit(2);
+    }
   }
 } else {
   console.error('Usage:');

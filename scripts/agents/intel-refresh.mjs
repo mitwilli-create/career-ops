@@ -48,7 +48,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..', '..');
 
 const TTL_MS = 3 * 24 * 60 * 60 * 1000;
-const VALID_SLOTS = ['hm-intel', 'toxicity', 'strategy-ceiling', 'positioning', 'liveness', 'ats-detection', 'role-enrichment'];
+const VALID_SLOTS = ['hm-intel', 'toxicity', 'strategy-ceiling', 'positioning', 'liveness', 'ats-detection', 'role-enrichment', 'hm-chance', 'interview-likelihood'];
 const SLOT_METRICS = ['alignment', 'interview-likelihood', 'hm-noticing'];
 const STATE_PATH = join(ROOT, 'data', 'intel-refresh-state.json');
 const LIVENESS_CACHE_PATH = join(ROOT, 'data', 'liveness-cache.json');
@@ -507,9 +507,60 @@ async function refreshRoleEnrichment(row, opts = {}) {
   return { ok, exit_code: result.status, path: bfTarget };
 }
 
+/* -------- SLOT 8: hm-chance — companion-agent chip popout (--deep only by default) -------- */
+async function refreshHmChance(row, opts = {}) {
+  const slug = `${String(row.num).padStart(3, '0')}-${slugify(row.company)}-${slugify(row.role)}`;
+  const target = join(ROOT, 'data', 'hm-chance', `${slug}.json`);
+  if (!opts.force && isCacheFresh(target)) {
+    emit({ slot: 'hm-chance', row: row.num, cache: 'hit', path: target });
+    return { ok: true, cache: 'hit', path: target };
+  }
+  const scriptPath = join(ROOT, 'scripts', 'agents', 'hm-chance.mjs');
+  if (!existsSync(scriptPath)) {
+    emit({ slot: 'hm-chance', row: row.num, step: 'skipped-missing-script', script: scriptPath });
+    return { ok: false, cache: 'no_script', missing_script: true };
+  }
+  emit({ slot: 'hm-chance', row: row.num, step: 'starting-research', script: scriptPath });
+  const { spawnSync } = await import('child_process');
+  const args = [scriptPath, '--row', String(row.num), '--max-cost-usd', '30'];
+  if (opts.force) args.push('--force');
+  const result = spawnSync('node', args, { cwd: ROOT, stdio: 'inherit', env: process.env, timeout: 600_000 });
+  const ok = result.status === 0;
+  emit({ slot: 'hm-chance', row: row.num, step: 'research-done', exit_code: result.status, path: target });
+  return { ok, exit_code: result.status, path: target };
+}
+
+/* -------- SLOT 9: interview-likelihood — companion-agent chip popout (--deep only by default) -------- */
+async function refreshInterviewLikelihood(row, opts = {}) {
+  const slug = `${String(row.num).padStart(3, '0')}-${slugify(row.company)}-${slugify(row.role)}`;
+  const target = join(ROOT, 'data', 'interview-likelihood', `${slug}.json`);
+  if (!opts.force && isCacheFresh(target)) {
+    emit({ slot: 'interview-likelihood', row: row.num, cache: 'hit', path: target });
+    return { ok: true, cache: 'hit', path: target };
+  }
+  const scriptPath = join(ROOT, 'scripts', 'agents', 'interview-likelihood.mjs');
+  if (!existsSync(scriptPath)) {
+    emit({ slot: 'interview-likelihood', row: row.num, step: 'skipped-missing-script', script: scriptPath });
+    return { ok: false, cache: 'no_script', missing_script: true };
+  }
+  emit({ slot: 'interview-likelihood', row: row.num, step: 'starting-research', script: scriptPath });
+  const { spawnSync } = await import('child_process');
+  const args = [scriptPath, '--row', String(row.num), '--max-cost-usd', '25'];
+  if (opts.force) args.push('--force');
+  const result = spawnSync('node', args, { cwd: ROOT, stdio: 'inherit', env: process.env, timeout: 600_000 });
+  const ok = result.status === 0;
+  emit({ slot: 'interview-likelihood', row: row.num, step: 'research-done', exit_code: result.status, path: target });
+  return { ok, exit_code: result.status, path: target };
+}
+
 /* -------- Main orchestrator -------- */
 async function refreshRow(row, slots, opts = {}) {
   const out = {};
+  // 'all' = the 7 standard slots. The 2 companion-agent slots (hm-chance,
+  // interview-likelihood) cost ~$3-5/row extra and only fire when explicit-listed
+  // OR when opts.deep (the dashboard's "Deep refresh" modal sets mode='deep-council-7').
+  const isDeep = opts.deep === true || opts.mode === 'deep-council-7';
+  const allIncludesDeep = slots.includes('all') && isDeep;
   if (slots.includes('hm-intel') || slots.includes('all')) out['hm-intel'] = await refreshHmIntel(row, opts);
   if (slots.includes('toxicity') || slots.includes('all')) out.toxicity = await refreshToxicity(row, opts);
   if (slots.includes('strategy-ceiling') || slots.includes('strategy') || slots.includes('all')) out['strategy-ceiling'] = await refreshStrategyCeiling(row, opts);
@@ -517,6 +568,8 @@ async function refreshRow(row, slots, opts = {}) {
   if (slots.includes('liveness') || slots.includes('all')) out.liveness = await refreshLiveness(row, opts);
   if (slots.includes('ats-detection') || slots.includes('ats') || slots.includes('all')) out['ats-detection'] = await refreshAtsDetection(row, opts);
   if (slots.includes('role-enrichment') || slots.includes('role') || slots.includes('all')) out['role-enrichment'] = await refreshRoleEnrichment(row, opts);
+  if (slots.includes('hm-chance') || allIncludesDeep) out['hm-chance'] = await refreshHmChance(row, opts);
+  if (slots.includes('interview-likelihood') || allIncludesDeep) out['interview-likelihood'] = await refreshInterviewLikelihood(row, opts);
   return out;
 }
 

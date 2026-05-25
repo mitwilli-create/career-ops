@@ -8116,6 +8116,40 @@ async function build() {
   .drm-btn-primary:hover { background: #b45309; border-color: #b45309; }
   .drm-btn[disabled] { opacity: .5; cursor: not-allowed; }
 
+  /* drm-slot-spinner: icon in the per-slot progress rows inside the modal */
+  .drm-slot-spinner { flex-shrink: 0; font-size: 13px; width: 18px; text-align: center; }
+
+  /* ── Jobs-in-flight sidebar panel (2026-05-25) ─────────────── */
+  #sidebar-jobs-panel {
+    margin: 8px 8px 0; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px; font-size: 12px;
+  }
+  body.dark #sidebar-jobs-panel { background: var(--surface-2); }
+  .sjp-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .sjp-title { font-weight: 700; color: var(--text); font-size: 12px; }
+  .sjp-count {
+    font-size: 10px; font-weight: 600; padding: 1px 5px;
+    border-radius: 999px; background: var(--accent-subtle, rgba(9,105,218,.12));
+    color: var(--accent, #0969da);
+  }
+  .sjp-empty { color: var(--text-3); font-size: 11px; padding: 4px 0; }
+  .sjp-job {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 0; border-top: 1px solid var(--border);
+    cursor: pointer; border-radius: 4px;
+  }
+  .sjp-job:hover { background: var(--surface-2); }
+  .sjp-job-icon { font-size: 13px; flex-shrink: 0; }
+  .sjp-job-info { flex: 1; min-width: 0; }
+  .sjp-job-kind { font-weight: 600; font-size: 11px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sjp-job-meta { font-size: 10px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sjp-job-open { flex-shrink: 0; font-size: 11px; color: var(--accent, #0969da); opacity: 0; transition: opacity .12s; }
+  .sjp-job:hover .sjp-job-open { opacity: 1; }
+  .sjp-job-running .sjp-job-icon::before { content: '⏳'; }
+  .sjp-job-done .sjp-job-icon::before { content: '✓'; color: var(--green-fg); }
+  .sjp-job-failed .sjp-job-icon::before { content: '✗'; color: #b91c1c; }
+  body.sidebar-collapsed #sidebar-jobs-panel { display: none; }
 
   /* Drag handle: hidden by default, fades in on row hover. On touch
      devices (no hover), it stays visible at low opacity so the affordance
@@ -13125,6 +13159,18 @@ async function build() {
       <button type="button" class="sidebar-readiness-link"
               onclick="openContactsDirectoryModal();event.stopPropagation();"
               aria-label="Open contacts directory">Open →</button>
+    </div>
+    <!-- Jobs-in-flight panel (2026-05-25). Polls GET /api/alpha-jobs every 5s.
+         Each chip opens drillIn(alpha-job, jobId) to re-attach the SSE stream.
+         Empty state: dim "No jobs running" text. Disposed when offscreen. -->
+    <div id="sidebar-jobs-panel" aria-label="Jobs in flight">
+      <div class="sjp-header">
+        <span class="sjp-title">Jobs in flight</span>
+        <span class="sjp-count" id="sjp-running-count" style="display:none">0</span>
+      </div>
+      <div id="sjp-job-list">
+        <div class="sjp-empty">No jobs running</div>
+      </div>
     </div>
     <!-- Weekly Calibration Prompt card (Inventory B6 MVP, 2026-05-18).
          Hides automatically when no fresh prompt exists OR when the latest
@@ -31746,7 +31792,15 @@ window.closeDeepRefreshModal = closeDeepRefreshModal;
 // with live phase / step / fraction-complete from the alpha-job NDJSON stream.
 // Resolves when the stream emits its terminal event (status === 'done' OR
 // 'failed' OR the EventSource closes). Returns { ok, jobId, finalEvent? }.
-async function _drmStreamJob(jobId, streamUrl, rowEl) {
+//
+// opts.onProgress(ev) — optional callback fired on every parsed NDJSON line
+//   before the default status-cell update. Use to drive modal UI directly
+//   without relying on the fake-rowEl pattern.
+//
+// Server sends named SSE: event=progress, data=NDJSON.
+// (NOT the default 'message' name -- so we must listen to BOTH.)
+async function _drmStreamJob(jobId, streamUrl, rowEl, opts) {
+  opts = opts || {};
   return new Promise((resolve) => {
     const statusCell = rowEl ? rowEl.querySelector('td.drm-status-cell') : null;
     const setStatus = (text, color) => {
@@ -31762,12 +31816,17 @@ async function _drmStreamJob(jobId, streamUrl, rowEl) {
       resolve(result);
     };
     const es = new EventSource(streamUrl);
-    es.addEventListener('message', (e) => {
+
+    // Shared handler for both 'progress' and 'message' event names.
+    // The server sends named events (event: progress); some proxies strip
+    // the name and re-emit as 'message', so we listen to both.
+    function _handleData(rawData) {
       let ev;
-      try { ev = JSON.parse(e.data); } catch { return; }
-      // Common NDJSON event shape from alpha-job stream:
-      //   { t, phase, step, fraction?, status? }
-      const phase = ev.phase || ev.step || ev.stage || '';
+      try { ev = JSON.parse(rawData); } catch { return; }
+      if (typeof opts.onProgress === 'function') {
+        try { opts.onProgress(ev); } catch (_) {}
+      }
+      const phase = ev.phase || ev.slot || ev.step || ev.stage || '';
       const frac = (typeof ev.fraction === 'number') ? Math.round(ev.fraction * 100) : null;
       if (ev.status === 'done' || ev.exitCode === 0) {
         setStatus('done', 'var(--green-fg)');
@@ -31780,12 +31839,15 @@ async function _drmStreamJob(jobId, streamUrl, rowEl) {
         finish({ ok: false, jobId, error: ev.error || 'failed', finalEvent: ev });
         return;
       }
-      // Progress event — update status cell with phase + percent.
       if (phase) {
-        const label = frac !== null ? phase + ' · ' + frac + '%' : phase;
+        const label = frac !== null ? phase + ' \xb7 ' + frac + '%' : phase;
         setStatus(label.slice(0, 60), '');
       }
-    });
+    }
+
+    es.addEventListener('progress', (e) => _handleData(e.data));
+    es.addEventListener('message', (e) => _handleData(e.data));
+
     es.addEventListener('error', () => {
       // EventSource closed (stream ended) — if we didn't already resolve, treat as done.
       // (The stream closes when the spawned process exits 0 + the SSE writer flushes.)
@@ -31870,29 +31932,158 @@ async function confirmDeepRefresh() {
   state.firing = true;
 
   if (state.mode === 'single') {
-    // Single-row mode: auto-rebuild + reload after completion (v2 2026-05-24)
+    // Single-row mode (v3 2026-05-25): stream live NDJSON progress directly
+    // into the modal's #deep-refresh-status-msg via onProgress callback.
+    // Previous v2 used a fakeRowEl that was never in the DOM — progress was
+    // silently discarded and the button stayed stuck on 'Firing deep refresh…'.
     const row = state.rows[0];
     if (!row) { closeDeepRefreshModal(); return; }
-    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Firing deep refresh...'; }
+    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Firing deep refresh…'; }
     if (statusRegion) statusRegion.hidden = false;
-    if (statusMsg) statusMsg.innerHTML = 'POST /api/refresh-deep { rowId: ' + row.num + ' } — then streaming live...';
-    // For single-row mode we still open the alpha-job popout so the user has
-    // a detailed view of the council research, AND we stream into a fake
-    // status target so the modal shows progress until the job ends.
-    const fakeRowEl = document.createElement('tr');
-    const fakeCell = document.createElement('td');
-    fakeCell.className = 'drm-status-cell';
-    fakeRowEl.appendChild(fakeCell);
-    // Also POST + open the popout in parallel. _drmPostOneRow will POST + stream.
-    const res = await _drmPostOneRow(row.num, fakeRowEl);
-    if (res.ok) {
-      if (typeof window.drillIn === 'function') window.drillIn('alpha-job', res.jobId, null);
-      if (statusMsg) statusMsg.innerHTML = 'Council research complete. Job <code>' + _drmEsc(res.jobId) + '</code> finished. Rebuilding dashboard + reloading...';
-      // Auto-rebuild + reload so the fresh intel surfaces inline.
+
+    // POST to get jobId + stream_url
+    let postRes, postData;
+    try {
+      postRes = await fetch('/api/refresh-deep', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rowId: String(row.num) }),
+      });
+      postData = await postRes.json().catch(() => ({}));
+      if (!postRes.ok || !postData.ok) throw new Error(postData.error || ('HTTP ' + postRes.status));
+    } catch (err) {
+      if (statusMsg) {
+        statusMsg.textContent = '';
+        const strong = document.createElement('strong');
+        strong.style.color = '#b91c1c';
+        strong.textContent = 'Launch failed: ';
+        statusMsg.appendChild(strong);
+        statusMsg.appendChild(document.createTextNode(_drmEsc(err.message || String(err))));
+      }
+      if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'Retry'; }
+      state.firing = false;
+      return;
+    }
+
+    const jobId = postData.jobId;
+    const streamUrl = postData.stream_url || ('/api/refresh-deep-stream/' + jobId);
+
+    // Wire Stop-job button while firing (the existing Cancel button in the footer)
+    const cancelBtn = document.querySelector('#deep-refresh-modal .drm-footer .drm-btn:not(.drm-btn-primary)');
+    let cancelled = false;
+    if (cancelBtn) {
+      cancelBtn.textContent = 'Stop job';
+      cancelBtn.onclick = function() {
+        cancelled = true;
+        fetch('/api/alpha-job/' + jobId + '/cancel', { method: 'POST' }).catch(function() {});
+        cancelBtn.textContent = 'Stopping…';
+        cancelBtn.disabled = true;
+        if (statusMsg) statusMsg.appendChild(_drmMakeNode('div', 'Stop signal sent to job ' + jobId + '. Job may finish its current slot before exiting.'));
+      };
+    }
+
+    // Build progress log using DOM (outer-template-unescape safe — no innerHTML)
+    if (statusMsg) {
+      statusMsg.textContent = '';
+      var progressLog = document.createElement('div');
+      progressLog.id = 'drm-progress-log';
+      progressLog.style.cssText = 'font-family:monospace;font-size:11px;max-height:160px;overflow-y:auto;'
+        + 'background:var(--surface-2,#f6f8fa);border:1px solid var(--border,#d0d7de);border-radius:4px;'
+        + 'padding:6px 8px;margin-bottom:6px;color:var(--text,#24292f)';
+      var initNote = document.createElement('div');
+      initNote.id = 'drm-progress-init';
+      initNote.style.color = 'var(--text-3,#656d76)';
+      initNote.textContent = 'Connecting to progress stream…';
+      progressLog.appendChild(initNote);
+      statusMsg.appendChild(progressLog);
+      var costLine = document.createElement('div');
+      costLine.id = 'drm-cost-line';
+      costLine.style.cssText = 'font-size:11px;color:var(--text-3,#656d76)';
+      costLine.textContent = 'Cost so far: $0.00';
+      statusMsg.appendChild(costLine);
+    }
+
+    var _drmCostAcc = 0;
+    var _drmSlotDivs = {};
+
+    function _drmAppendProgress(ev) {
+      var log = document.getElementById('drm-progress-log');
+      if (!log) return;
+      var init = document.getElementById('drm-progress-init');
+      if (init) init.remove();
+      var slot = ev.slot || ev.phase || ev.stage || ev.step || '';
+      var step = ev.step || ev.phase || '';
+      var costUsd = typeof ev.cost_usd === 'number' ? ev.cost_usd : 0;
+      _drmCostAcc += costUsd;
+      var cLine = document.getElementById('drm-cost-line');
+      if (cLine && _drmCostAcc > 0) cLine.textContent = 'Cost so far: $' + _drmCostAcc.toFixed(4);
+      if (!slot) return;
+      var existing = _drmSlotDivs[slot];
+      if (!existing) {
+        var row2 = document.createElement('div');
+        row2.style.cssText = 'display:flex;align-items:center;gap:6px;padding:2px 0;border-bottom:1px solid var(--border,#d0d7de)';
+        var spinner = document.createElement('span');
+        spinner.className = 'drm-slot-spinner';
+        spinner.setAttribute('aria-hidden', 'true');
+        spinner.textContent = '⏳'; // hourglass
+        row2.appendChild(spinner);
+        var lbl = document.createElement('span');
+        lbl.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+        lbl.textContent = slot;
+        row2.appendChild(lbl);
+        var stepEl = document.createElement('span');
+        stepEl.style.cssText = 'color:var(--text-3,#656d76);font-size:10px;flex-shrink:0';
+        stepEl.textContent = step;
+        row2.appendChild(stepEl);
+        log.appendChild(row2);
+        _drmSlotDivs[slot] = row2;
+      } else if (step) {
+        var lastEl = existing.querySelector('span:last-child');
+        if (lastEl) lastEl.textContent = step;
+      }
+      if (step === 'done') {
+        var sp2 = _drmSlotDivs[slot] && _drmSlotDivs[slot].querySelector('.drm-slot-spinner');
+        if (sp2) sp2.textContent = '✓'; // check
+      } else if (step === 'skipped-missing-script' || step === 'skipped') {
+        var sp3 = _drmSlotDivs[slot] && _drmSlotDivs[slot].querySelector('.drm-slot-spinner');
+        if (sp3) sp3.textContent = '—'; // em dash
+      }
+      log.scrollTop = log.scrollHeight;
+    }
+
+    // Stream — pass null rowEl (modal drives itself via onProgress)
+    const res = await _drmStreamJob(jobId, streamUrl, null, { onProgress: _drmAppendProgress });
+
+    // Restore Cancel button
+    if (cancelBtn && !cancelled) {
+      cancelBtn.textContent = 'Cancel';
+      cancelBtn.disabled = false;
+      cancelBtn.onclick = closeDeepRefreshModal;
+    }
+
+    if (res.ok && !cancelled) {
+      var cText = (document.getElementById('drm-cost-line') || {}).textContent || '';
+      if (statusMsg) {
+        var done = document.createElement('div');
+        done.style.cssText = 'margin-top:8px;color:var(--green-fg,#1a7f37);font-weight:600';
+        done.textContent = '✓ Council research complete — job ' + jobId + ' finished.'
+          + (cText ? ' ' + cText + '.' : '') + ' Rebuilding dashboard…';
+        statusMsg.appendChild(done);
+      }
+      if (confirmBtn) { confirmBtn.textContent = 'Done — reloading…'; confirmBtn.disabled = true; }
       _drmRebuildAndReload();
       setTimeout(closeDeepRefreshModal, 800);
-    } else {
-      if (statusMsg) statusMsg.innerHTML = '<strong style="color:#b91c1c">Failed:</strong> ' + _drmEsc(res.error);
+    } else if (!cancelled) {
+      if (statusMsg) {
+        var errDiv = document.createElement('div');
+        errDiv.style.marginTop = '8px';
+        var errStrong = document.createElement('strong');
+        errStrong.style.color = '#b91c1c';
+        errStrong.textContent = 'Failed: ';
+        errDiv.appendChild(errStrong);
+        errDiv.appendChild(document.createTextNode(res.error || 'stream ended unexpectedly'));
+        statusMsg.appendChild(errDiv);
+      }
       if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'Retry'; }
     }
     state.firing = false;
@@ -31904,9 +32095,9 @@ async function confirmDeepRefresh() {
     // Per-row SSE streaming updates the modal table inline — no per-row popout.
     const checks = Array.from(document.querySelectorAll('.drm-row-check')).filter(c => c.checked);
     if (checks.length === 0) { state.firing = false; return; }
-    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Firing ' + checks.length + ' deep refreshes...'; }
+    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Firing ' + checks.length + ' deep refresh' + (checks.length === 1 ? '' : 'es') + '…'; }
     if (statusRegion) statusRegion.hidden = false;
-    if (statusMsg) statusMsg.textContent = 'Firing sequentially with a 2s stagger between each row...';
+    if (statusMsg) statusMsg.textContent = 'Firing sequentially with a 2s stagger between each row…';
 
     let okCount = 0;
     let errCount = 0;
@@ -31914,9 +32105,7 @@ async function confirmDeepRefresh() {
       const c = checks[i];
       const rowNum = c.getAttribute('data-row-num');
       const rowEl = document.getElementById('drm-row-' + rowNum);
-      if (statusMsg) statusMsg.textContent = 'Row ' + (i + 1) + ' of ' + checks.length + ' · streaming /api/refresh-deep-stream for #' + rowNum + '...';
-      // _drmPostOneRow now POSTs + streams + resolves on completion (or failure).
-      // Each row's status cell is updated live by the streamer.
+      if (statusMsg) statusMsg.textContent = 'Row ' + (i + 1) + ' of ' + checks.length + ' \xb7 streaming for #' + rowNum + '…';
       const res = await _drmPostOneRow(rowNum, rowEl);
       if (res.ok) okCount += 1;
       else errCount += 1;
@@ -31924,8 +32113,7 @@ async function confirmDeepRefresh() {
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
-    if (statusMsg) statusMsg.innerHTML = 'All ' + checks.length + ' jobs complete: ' + okCount + ' succeeded, ' + errCount + ' failed. Rebuilding dashboard + reloading...';
-    // Single rebuild + reload after ALL N complete (per Mitchell's bulk-reload decision).
+    if (statusMsg) statusMsg.textContent = 'All ' + checks.length + ' jobs complete: ' + okCount + ' succeeded, ' + errCount + ' failed. Rebuilding…';
     if (okCount > 0) {
       _drmRebuildAndReload();
     }
@@ -31933,6 +32121,14 @@ async function confirmDeepRefresh() {
     state.firing = false;
     return;
   }
+}
+
+// DOM-building helper: creates a text node wrapper — used by confirmDeepRefresh
+// to avoid innerHTML string-building inside the outer template literal.
+function _drmMakeNode(tag, text) {
+  var el = document.createElement(tag);
+  el.textContent = text;
+  return el;
 }
 window.confirmDeepRefresh = confirmDeepRefresh;
 
@@ -31942,6 +32138,125 @@ async function invokeDeepRefresh(rowId, btn) {
   openDeepRefreshModal(rowId, btn);
 }
 window.invokeDeepRefresh = invokeDeepRefresh;
+
+// ── Jobs-in-flight sidebar panel (2026-05-25) ──────────────────────────────
+// Polls GET /api/alpha-jobs every 5s. Uses DOM createElement throughout —
+// outer-template-unescape safe (no innerHTML string-building with HTML tags).
+(function _initJobsPanel() {
+  var panel = document.getElementById('sidebar-jobs-panel');
+  var listEl = document.getElementById('sjp-job-list');
+  var countEl = document.getElementById('sjp-running-count');
+  if (!panel || !listEl) return;
+
+  var _pollTimer = null;
+  var _disposed = false;
+
+  function _fmtElapsed(sec) {
+    if (sec == null || sec < 0) return '';
+    if (sec < 60) return sec + 's';
+    var m = Math.floor(sec / 60), s = sec % 60;
+    return m + 'm' + (s > 0 ? ' ' + s + 's' : '');
+  }
+
+  function _renderJobs(jobs) {
+    var running = jobs.filter(function(j) { return j.exit_code == null && !j.error && !j.cancelled_at; });
+    if (countEl) {
+      countEl.textContent = String(running.length);
+      countEl.style.display = running.length > 0 ? '' : 'none';
+    }
+    while (listEl.firstChild) listEl.removeChild(listEl.firstChild);
+    if (jobs.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'sjp-empty';
+      empty.textContent = 'No jobs running';
+      listEl.appendChild(empty);
+      return;
+    }
+    jobs.forEach(function(j) {
+      var isRunning = j.exit_code == null && !j.error;
+      var isFailed = (j.exit_code != null && j.exit_code !== 0) || !!j.error;
+      var stateClass = isRunning ? 'sjp-job-running' : (isFailed ? 'sjp-job-failed' : 'sjp-job-done');
+      var elapsed = _fmtElapsed(j.elapsed_s);
+      var lastPhase = '';
+      if (j.lastLine && typeof j.lastLine === 'object') {
+        lastPhase = j.lastLine.slot || j.lastLine.phase || j.lastLine.step || '';
+      }
+      var metaParts = [isRunning ? 'running' : (isFailed ? 'failed' : 'done')];
+      if (elapsed) metaParts.push(elapsed);
+      if (lastPhase) metaParts.push(lastPhase.slice(0, 20));
+      var meta = metaParts.join(' \xb7 ');
+      var capturedId = j.jobId;
+
+      var row = document.createElement('div');
+      row.className = 'sjp-job ' + stateClass;
+      row.setAttribute('title', j.jobId);
+      row.setAttribute('role', 'button');
+      row.setAttribute('tabindex', '0');
+      row.addEventListener('click', function() { window._sjpOpenJob(capturedId); });
+      row.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window._sjpOpenJob(capturedId); }
+      });
+
+      var icon = document.createElement('span');
+      icon.className = 'sjp-job-icon';
+      icon.setAttribute('aria-hidden', 'true');
+      row.appendChild(icon);
+
+      var info = document.createElement('div');
+      info.className = 'sjp-job-info';
+      var kindEl = document.createElement('div');
+      kindEl.className = 'sjp-job-kind';
+      kindEl.textContent = j.kind || j.jobId.slice(0, 16);
+      info.appendChild(kindEl);
+      var metaEl = document.createElement('div');
+      metaEl.className = 'sjp-job-meta';
+      metaEl.textContent = meta;
+      info.appendChild(metaEl);
+      row.appendChild(info);
+
+      var openEl = document.createElement('span');
+      openEl.className = 'sjp-job-open';
+      openEl.setAttribute('aria-hidden', 'true');
+      openEl.textContent = '►'; // right-pointing solid triangle
+      row.appendChild(openEl);
+
+      listEl.appendChild(row);
+    });
+  }
+
+  async function _sjpPoll() {
+    if (_disposed) return;
+    try {
+      var r = await fetch('/api/alpha-jobs', { cache: 'no-store' });
+      if (r.ok) {
+        var data = await r.json();
+        if (data.ok && Array.isArray(data.jobs)) _renderJobs(data.jobs);
+      }
+    } catch (_e) { /* network error — retry next tick */ }
+    if (!_disposed) _pollTimer = setTimeout(_sjpPoll, 5000);
+  }
+
+  _sjpPoll();
+
+  if (typeof IntersectionObserver !== 'undefined') {
+    var io = new IntersectionObserver(function(entries) {
+      var visible = entries[0] && entries[0].isIntersecting;
+      if (!visible && _pollTimer) {
+        clearTimeout(_pollTimer);
+        _pollTimer = null;
+        _disposed = true;
+      } else if (visible && _disposed) {
+        _disposed = false;
+        _sjpPoll();
+      }
+    }, { threshold: 0 });
+    io.observe(panel);
+  }
+
+  window._sjpOpenJob = function(jobId) {
+    if (typeof window.drillIn === 'function') window.drillIn('alpha-job', jobId, null);
+  };
+})();
 
 // ── α ALPHA 2026-05-19: apply-pack-polish + intel-refresh dashboard wiring ──
 // Both buttons POST to a kick-off endpoint, get back a jobId, then open an

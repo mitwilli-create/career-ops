@@ -9257,6 +9257,65 @@ async function generatePack(){
     return json({ ok: true, job });
   }
 
+  // ── GET /api/alpha-jobs — list all tracked jobs for the Jobs-in-flight panel ──
+  //   Query params:
+  //     ?include_completed=true  — include all jobs incl. those completed >1h ago
+  //   Returns: { ok, jobs: [{ jobId, kind, pid, started_at, completed_at,
+  //                           exit_code, logPath, lastLine, elapsed_s }] }
+  if (url === '/api/alpha-jobs' && req.method === 'GET') {
+    const includeCompleted = query.include_completed === 'true';
+    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    const jobs = Object.values(alphaJobs).filter(j => {
+      if (!j.completed_at) return true; // running — always include
+      if (includeCompleted) return true;
+      return new Date(j.completed_at).getTime() > oneHourAgo;
+    }).map(j => {
+      let lastLine = null;
+      try {
+        if (j.logPath && existsSync(j.logPath)) {
+          const content = readFileSync(j.logPath, 'utf-8');
+          const lines = content.split('\n').filter(l => l.trim());
+          if (lines.length > 0) {
+            const raw = lines[lines.length - 1];
+            try { lastLine = JSON.parse(raw); } catch (_) { lastLine = raw; }
+          }
+        }
+      } catch (_) { /* file may be mid-write */ }
+      const startMs = j.started_at ? new Date(j.started_at).getTime() : 0;
+      const endMs = j.completed_at ? new Date(j.completed_at).getTime() : Date.now();
+      const elapsed_s = startMs > 0 ? Math.round((endMs - startMs) / 1000) : null;
+      return { ...j, lastLine, elapsed_s };
+    }).sort((a, b) => {
+      const aRunning = a.exit_code == null && !a.error ? 1 : 0;
+      const bRunning = b.exit_code == null && !b.error ? 1 : 0;
+      if (aRunning !== bRunning) return bRunning - aRunning;
+      return (b.started_at || '').localeCompare(a.started_at || '');
+    });
+    return json({ ok: true, jobs });
+  }
+
+  // ── POST /api/alpha-job/{jobId}/cancel — SIGTERM the job's process ──
+  const cancelJobMatch = url.match(/^\/api\/alpha-job\/([\w-]+)\/cancel$/);
+  if (cancelJobMatch && req.method === 'POST') {
+    const jobId = cancelJobMatch[1];
+    const job = alphaJobs[jobId];
+    if (!job) return json({ ok: false, signaled: false, reason: 'unknown job' }, 404);
+    if (job.completed_at || job.exit_code != null) {
+      return json({ ok: true, signaled: false, reason: 'job already completed' });
+    }
+    if (!job.pid) return json({ ok: false, signaled: false, reason: 'job has no pid' }, 400);
+    try {
+      process.kill(job.pid, 'SIGTERM');
+      job.cancelled_at = new Date().toISOString();
+      return json({ ok: true, signaled: true, reason: 'SIGTERM sent to pid ' + job.pid });
+    } catch (err) {
+      const reason = (err.code === 'ESRCH')
+        ? 'process not found (may have already exited)'
+        : String(err.message || err);
+      return json({ ok: true, signaled: false, reason });
+    }
+  }
+
   // Share-token middleware: when ?share=<token> is on the dashboard request,
   // validate before serving the HTML. Expired → 410 Gone. Invalid → 401.
   if (url === '/' && query.share) {

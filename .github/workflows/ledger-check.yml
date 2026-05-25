@@ -1,0 +1,91 @@
+name: Ledger enforcer
+
+# BLOCK-mode CI check — pairs with the WARN-mode local pre-commit hook (see
+# scripts/git-hooks/pre-commit). Per dealbreaker-final-pre-apply-2026-05-24.md
+# § "Option C anti-fatigue design": no bypass reflex locally, hard backstop
+# server-side where --no-verify doesn't exist.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ledger-check:
+    name: Ledger metadata enforcement
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR with full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Fetch base ref
+        run: git fetch origin "${{ github.base_ref }}":"refs/remotes/origin/${{ github.base_ref }}" || true
+
+      - name: Run ledger-enforcer (BLOCK mode)
+        id: enforce
+        env:
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: |
+          set +e
+          node scripts/ledger-enforcer.mjs --check-modified-vs-base --base "origin/${GITHUB_BASE_REF}" --json > /tmp/ledger-enforcer-output.json
+          status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          cat /tmp/ledger-enforcer-output.json
+          # Human-readable rerun for the log:
+          if [ "$status" -eq 2 ]; then
+            echo ""
+            echo "=== Human-readable violations ==="
+            node scripts/ledger-enforcer.mjs --check-modified-vs-base --base "origin/${GITHUB_BASE_REF}" || true
+          fi
+          exit "$status"
+
+      - name: Post fix command on violation
+        if: failure() && steps.enforce.outputs.status == '2'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -e
+          if [ ! -f /tmp/ledger-enforcer-output.json ]; then
+            echo "no output to post" >&2
+            exit 0
+          fi
+          # Build the comment body. Keep it terse — one line per violation +
+          # the canonical fix command.
+          {
+            echo "**Ledger enforcer — violations detected**"
+            echo ""
+            echo "This PR modifies files tracked by an OPEN/NEEDS_CLOSURE entry in \`data/persistent-task-ledger.md\` without a corresponding ledger update."
+            echo ""
+            echo "Violations:"
+            node -e "const r=require('/tmp/ledger-enforcer-output.json'); for (const v of r.violations) console.log('- ' + v.message);"
+            echo ""
+            echo "Fix:"
+            echo ""
+            echo "\`\`\`"
+            echo "# 1. Inspect what's open and what each entry tracks:"
+            echo "node scripts/ledger-enforcer.mjs --explain"
+            echo ""
+            echo "# 2. Update data/persistent-task-ledger.md — either:"
+            echo "#    (a) append a -DONE row with closure evidence, OR"
+            echo "#    (b) append a status update + add the new code_path / closure_artifact"
+            echo ""
+            echo "# 3. Re-verify locally:"
+            echo "node scripts/ledger-enforcer.mjs --check-modified-vs-base --base origin/main"
+            echo "\`\`\`"
+            echo ""
+            echo "See \`docs/ledger-metadata-spec.md\` for the metadata block format."
+            echo ""
+            echo "_Design: \`.claude/agents/runs/dealbreaker-final-pre-apply-2026-05-24.md\` § Step 6 (WARN local + BLOCK CI anti-fatigue pattern)._"
+          } > /tmp/ledger-comment.md
+          gh pr comment "$PR_NUMBER" --body-file /tmp/ledger-comment.md

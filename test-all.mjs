@@ -306,8 +306,14 @@ console.log('\n7. Absolute path check');
 // AGENTS.md exclusion (added 2026-05-23): AGENTS.md sometimes contains
 // absolute paths for downstream-agent context (e.g., regression-guard spec
 // file reference). Same documentation-not-code rationale as CLAUDE.md.
+// CHANGELOG.md exclusion (added 2026-05-25): CHANGELOG.md is auto-generated
+// by release-please from commit messages. Past commits about FIXING the
+// absolute-path linter mention "/Users/mitchellwilliams" in their titles,
+// so CHANGELOG.md perpetually surfaces them. The doc-not-code rationale
+// applies — commit-message history is documentation of past fixes, not
+// active source code.
 const absPathResult = run(
-  `git grep -n "/Users/" -- '*.mjs' '*.sh' '*.md' '*.go' '*.yml' 2>/dev/null | grep -v README.md | grep -v LICENSE | grep -v CLAUDE.md | grep -v AGENTS.md | grep -v DASHBOARD_INVARIANTS.md | grep -v test-all.mjs | grep -v lib/preflight-gates.mjs | grep -vE '^data/' | grep -vE '^\\.claude/audit/' | grep -vE '^scripts/(.*-unattended\\.(mjs|sh)|dashboard-phase3-worker\\.sh|weekly-light\\.mjs|openai-terminal-agent\\.mjs|career-library-builder\\.mjs|test-anthropic-slots\\.mjs|test-pipeline-e2e\\.mjs|overpay-signals\\.mjs|launchd/.*-nohup\\.sh|hooks/.*\\.sh|council-048-runner\\.mjs|dispatch-phase-f1-research\\.mjs|agents/regression-guard/lib/path-encoder\\.mjs):'`
+  `git grep -n "/Users/" -- '*.mjs' '*.sh' '*.md' '*.go' '*.yml' 2>/dev/null | grep -v README.md | grep -v LICENSE | grep -v CLAUDE.md | grep -v AGENTS.md | grep -v CHANGELOG.md | grep -v DASHBOARD_INVARIANTS.md | grep -v test-all.mjs | grep -v lib/preflight-gates.mjs | grep -vE '^data/' | grep -vE '^\\.claude/audit/' | grep -vE '^scripts/(.*-unattended\\.(mjs|sh)|dashboard-phase3-worker\\.sh|weekly-light\\.mjs|openai-terminal-agent\\.mjs|career-library-builder\\.mjs|test-anthropic-slots\\.mjs|test-pipeline-e2e\\.mjs|overpay-signals\\.mjs|launchd/.*-nohup\\.sh|hooks/.*\\.sh|council-048-runner\\.mjs|dispatch-phase-f1-research\\.mjs|agents/regression-guard/lib/path-encoder\\.mjs):'`
 );
 if (!absPathResult) {
   pass('No absolute paths in code files');

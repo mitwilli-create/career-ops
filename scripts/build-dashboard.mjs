@@ -23141,11 +23141,77 @@ async function _openPipelineFlowModal() {
 }
 window._openPipelineFlowModal = _openPipelineFlowModal;
 
+// Step 5 (2026-05-25) — Pre-apply-check polish-CTA UX surgery per dealbreaker
+// Impasse #3. Prevents the "ready" → click Polish → pay $10 → trust-failure
+// pattern: high-readiness packs demote the Polish CTA to a secondary link
+// and route through a cost-disclosure modal with default focus on Skip.
+function _polishCtaForReadiness(num, pct) {
+  const numStr = String(num).replace(/[^0-9]/g, '');
+  const modePillWhite = '<span style="font-size:10px;background:rgba(255,255,255,0.18);color:#fff;padding:2px 6px;border-radius:3px;margin-right:6px;font-weight:500;letter-spacing:0.02em">Full polish loop</span>';
+  const modePillNeutral = '<span style="font-size:10px;background:rgba(150,150,150,0.18);color:var(--text-3,#b8b8c0);padding:2px 6px;border-radius:3px;margin-right:6px;font-weight:500;letter-spacing:0.02em">Full polish loop</span>';
+  if (pct < 50) {
+    return '<button type="button" onclick="document.getElementById(\\u0027pre-apply-check-backdrop\\u0027).remove();if(typeof window.alphaPolishPack===\\u0027function\\u0027){window.alphaPolishPack(\\u0027' + numStr + '\\u0027);}" style="padding:8px 16px;background:var(--green-fg,#16a34a);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px">' + modePillWhite + 'Run Polish ($5-15)</button>';
+  }
+  if (pct < 75) {
+    return '<button type="button" onclick="document.getElementById(\\u0027pre-apply-check-backdrop\\u0027).remove();if(typeof window.alphaPolishPack===\\u0027function\\u0027){window.alphaPolishPack(\\u0027' + numStr + '\\u0027);}" title="Polish ($5-15) will rewrite this artifact using Opus 4.7. Pre-apply checks passed at ' + pct + '%; manual edit may be cheaper." style="padding:8px 16px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-weight:500;font-size:13px">' + modePillNeutral + 'Run Polish ($5-15)</button>';
+  }
+  // pct >= 75: demote to secondary link + cost-disclosure modal on click.
+  return '<a href="#" onclick="event.preventDefault();if(typeof window._renderPolishConfirmModal===\\u0027function\\u0027){window._renderPolishConfirmModal(\\u0027' + numStr + '\\u0027,' + pct + ');}" title="Polish-loop runs 6 rounds (Sonnet author + Opus adjudicator + Sonar Deep adversarial). Typical cost $5-15. Pre-apply readiness is ' + pct + '% — improvements may be marginal." style="color:var(--text-3,#b8b8c0);text-decoration:underline;font-size:12px;cursor:pointer;align-self:center;margin-right:8px;padding:8px 4px">Polish anyway ($5-15) ' + String.fromCharCode(8594) + '</a>';
+}
+
+function _readinessLabel(pct, ready) {
+  if (ready) return 'Passes fast readiness checks (Sonnet 4.6)';
+  if (pct >= 60) return 'Polish then apply';
+  if (pct >= 40) return 'Polish + fill gaps';
+  return 'Significant gaps';
+}
+
+function _renderPolishConfirmModal(num, pct) {
+  const preApply = document.getElementById('pre-apply-check-backdrop');
+  if (preApply) preApply.remove();
+  const existing = document.getElementById('polish-confirm-backdrop');
+  if (existing) existing.remove();
+  const backdrop = document.createElement('div');
+  backdrop.id = 'polish-confirm-backdrop';
+  backdrop.setAttribute('role', 'dialog');
+  backdrop.setAttribute('aria-modal', 'true');
+  backdrop.setAttribute('aria-label', 'Polish confirmation');
+  backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:99999;padding:24px';
+  backdrop.addEventListener('click', function(e) { if (e.target === backdrop) backdrop.remove(); });
+  const modal = document.createElement('div');
+  modal.style.cssText = 'background:var(--surface,#11131c);border:1px solid var(--border,#232737);border-radius:8px;max-width:540px;width:100%;padding:24px;color:var(--text,#fafafa);font-family:inherit';
+  const numStr = String(num).replace(/[^0-9]/g, '');
+  modal.innerHTML = '<h2 style="margin:0 0 12px;font-size:18px">Polish this pack? Estimated $5-15.</h2>' +
+    '<p style="font-size:13px;line-height:1.6;color:var(--text-2,#e4e4e7);margin:0 0 16px">' +
+    'Pre-apply checks rate this <strong>' + pct + '%</strong> ready. Polish will rewrite via Opus 4.7 ' +
+    '(the polish-loop adjudicator). Pre-apply uses Sonnet 4.6, which may not catch nuances ' +
+    'Opus would flag, but the cost difference is 100-1000x. Estimated this polish: $5-15.' +
+    '</p>' +
+    '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">' +
+      '<button type="button" id="polish-confirm-skip" onclick="document.getElementById(\\u0027polish-confirm-backdrop\\u0027).remove()" style="padding:8px 16px;background:var(--green-fg,#16a34a);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px">Skip ' + String.fromCharCode(8212) + ' I' + String.fromCharCode(0x2019) + 'll edit manually</button>' +
+      '<button type="button" onclick="document.getElementById(\\u0027polish-confirm-backdrop\\u0027).remove();if(typeof window.alphaPolishPack===\\u0027function\\u0027){window.alphaPolishPack(\\u0027' + numStr + '\\u0027);}" style="padding:8px 16px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:13px">Polish anyway</button>' +
+    '</div>';
+  backdrop.appendChild(modal);
+  document.body.appendChild(backdrop);
+  // Default focus on Skip — the cheap/safe option. Critical for the trust contract.
+  setTimeout(function() {
+    const skip = document.getElementById('polish-confirm-skip');
+    if (skip) skip.focus();
+  }, 0);
+  function escCloseHandler(e) {
+    if (e.key === 'Escape') { backdrop.remove(); document.removeEventListener('keydown', escCloseHandler); }
+  }
+  document.addEventListener('keydown', escCloseHandler);
+}
+
 /* Phase 4.5a (2026-05-22) — Pre-Apply Check modal.
  * Fetches /api/pre-apply-check?num=N, renders readiness score + 7-dimension
  * rubric + gap list + Gemini-generated "why" narrative + Run Polish CTA when
  * can_polish=true. Pattern A safe: pure string concat, no template literals,
- * no backticks, no single-backslash escapes. */
+ * no backticks, no single-backslash escapes.
+ * Step 5 (2026-05-25): polish CTA now readiness-conditional via
+ * _polishCtaForReadiness; label via _readinessLabel; header includes
+ * "Fast readiness check" Mode pill. */
 async function _openPreApplyCheckModal(num) {
   const existing = document.getElementById('pre-apply-check-backdrop');
   if (existing) { existing.remove(); }
@@ -23207,17 +23273,17 @@ async function _openPreApplyCheckModal(num) {
     const whyBlock = data.why
       ? '<div style="background:rgba(99,102,241,0.08);border-left:3px solid var(--blue-fg,#58a6ff);padding:10px 14px;margin:12px 0;border-radius:0 6px 6px 0"><div style="font-size:11px;color:var(--text-3,#b8b8c0);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px">Why this matters</div><div style="font-size:13px;color:var(--text,#fafafa);line-height:1.5">' + String(data.why).replace(/</g, '&lt;').replace(/\\n/g, '<br>') + '</div></div>'
       : '';
-    const polishBtn = data.can_polish
-      ? '<button type="button" onclick="document.getElementById(\\u0027pre-apply-check-backdrop\\u0027).remove(); if(typeof window.alphaPolishPack===\\u0027function\\u0027){window.alphaPolishPack(\\u0027' + String(num).replace(/[^0-9]/g, '') + '\\u0027);}" style="padding:8px 16px;background:var(--green-fg,#16a34a);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px">Run Polish</button>'
-      : '';
+    const polishBtn = data.can_polish ? _polishCtaForReadiness(num, pct) : '';
     const closeBtn = '<button type="button" onclick="document.getElementById(\\u0027pre-apply-check-backdrop\\u0027).remove()" style="padding:8px 16px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:13px">Close</button>';
     const cacheBadge = data._from_cache ? '<span style="font-size:10px;padding:2px 7px;border-radius:999px;background:rgba(99,102,241,0.10);color:var(--text-3,#b8b8c0);margin-left:6px">cached</span>' : '';
-    modal.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">' +
-      '<h2 style="margin:0;font-size:18px">Pre-Apply Check &middot; row ' + Number(num) + cacheBadge + '</h2>' +
+    const fastCheckPill = '<span style="font-size:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--surface-2);color:var(--text-3,#b8b8c0);padding:3px 8px;border-radius:999px;border:1px solid var(--border);font-weight:500;letter-spacing:0.02em">Fast readiness check</span>';
+    modal.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;gap:10px;flex-wrap:wrap">' +
+      '<h2 style="margin:0;font-size:18px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span>Pre-Apply Check &middot; row ' + Number(num) + '</span>' + fastCheckPill + cacheBadge + '</h2>' +
       '<button type="button" onclick="document.getElementById(\\u0027pre-apply-check-backdrop\\u0027).remove()" aria-label="Close" style="background:transparent;border:none;color:var(--text-3);font-size:18px;cursor:pointer;padding:4px 8px;line-height:1">' + String.fromCharCode(0x2715) + '</button>' +
       '</div>' +
       '<div style="font-size:11px;color:var(--text-3,#b8b8c0);margin-bottom:14px">' + String(data.slug || '').replace(/</g, '&lt;') + ' &middot; ' + driveLine + '</div>' +
-      '<div style="display:flex;align-items:baseline;gap:14px;margin-bottom:12px"><div style="font-size:48px;font-weight:700;color:' + pctCol + ';font-variant-numeric:tabular-nums">' + pct + '%</div><div style="font-size:13px;color:var(--text-2,#e4e4e7)">' + (data.ready ? 'Ready to apply' : (pct >= 60 ? 'Polish then apply' : (pct >= 40 ? 'Polish + fill gaps' : 'Significant gaps'))) + '</div></div>' +
+      '<div style="display:flex;align-items:baseline;gap:14px;margin-bottom:2px"><div style="font-size:48px;font-weight:700;color:' + pctCol + ';font-variant-numeric:tabular-nums">' + pct + '%</div><div style="font-size:13px;color:var(--text-2,#e4e4e7);font-weight:500">' + _readinessLabel(pct, data.ready) + '</div></div>' +
+      '<div style="font-size:11px;color:var(--text-3,#b8b8c0);margin-bottom:14px;line-height:1.4">ATS, HM-persona, voice retention checked. Polish is separate.</div>' +
       whyBlock +
       '<div style="font-size:11px;color:var(--text-3,#b8b8c0);text-transform:uppercase;letter-spacing:0.06em;margin:14px 0 4px">7-dimension rubric</div>' +
       dimRows +
@@ -23258,6 +23324,9 @@ async function _openPreApplyCheckModal(num) {
   }
 }
 window._openPreApplyCheckModal = _openPreApplyCheckModal;
+window._renderPolishConfirmModal = _renderPolishConfirmModal;
+window._polishCtaForReadiness = _polishCtaForReadiness;
+window._readinessLabel = _readinessLabel;
 
 function _renderLifecycleRow(s, driveEnabled, num) {
   // 5 button states: 'active' (green solid), 'done' (outlined), 'disabled'

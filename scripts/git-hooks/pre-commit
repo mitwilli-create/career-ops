@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Pre-commit hook: WARN if modified paths match a NEEDS_CLOSURE ledger entry.
+#
+# WARN-mode (not BLOCK) by design — per dealbreaker-final-pre-apply-2026-05-24.md
+# § "Option C anti-fatigue design": a hard local block creates the `--no-verify`
+# bypass reflex. WARN here, BLOCK in CI. Nothing to bypass locally.
+#
+# Installation:
+#   scripts/install-git-hooks.sh
+#
+# This file is the TEMPLATE; .git/hooks/pre-commit is the active copy.
+# `.git/hooks/` is not git-tracked, so we ship the template here and copy on
+# install.
+
+set +e
+
+# Resolve the repo root via git rather than relative paths so the hook works
+# from worktrees (where .git is a file, not a directory).
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+if [ -z "$REPO_ROOT" ]; then
+  # Fallback: walk up from the hook itself.
+  HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+  REPO_ROOT="$(cd "$HOOK_DIR/../.." && pwd)"
+fi
+
+# Bail out gracefully if node isn't on PATH (don't break the commit).
+if ! command -v node >/dev/null 2>&1; then
+  echo "ledger-enforcer pre-commit: node not on PATH; skipping check" >&2
+  exit 0
+fi
+
+# Bail out if the enforcer script doesn't exist (e.g., on an old branch).
+ENFORCER="$REPO_ROOT/scripts/ledger-enforcer.mjs"
+if [ ! -f "$ENFORCER" ]; then
+  exit 0
+fi
+
+# Run the enforcer. Exit 2 = violations found.
+node "$ENFORCER" --check-modified --repo-root="$REPO_ROOT"
+status=$?
+
+if [ "$status" -eq 2 ]; then
+  echo "" >&2
+  echo "⚠️  ledger-enforcer flagged the above paths." >&2
+  echo "    Update data/persistent-task-ledger.md (or note in the commit message" >&2
+  echo "    why this commit is intentionally outside the closure scope)." >&2
+  echo "    Continuing the commit anyway — CI will block on push if unresolved." >&2
+fi
+
+# WARN-mode: always exit 0 regardless of enforcer outcome. Nothing to bypass.
+exit 0

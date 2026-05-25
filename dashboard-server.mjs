@@ -9493,6 +9493,24 @@ async function generatePack(){
   // below the polish threshold. Cached 30 min keyed by pack mtime.
   // Top-level handler is non-async; the Gemini fetch lives inside an async
   // IIFE so we can await it without making the handler async.
+  // Step 7 (2026-05-25): pre-apply daily spend display. Returns today's
+  // bucket: { day, total_usd, call_count, warn, threshold }. Used by the
+  // dashboard header to surface running spend + amber-warn at $2/day.
+  // Spend bucket separate from polish-loop's own cost-confirmation modal.
+  if (url === '/api/pre-apply-spend' && req.method === 'GET') {
+    (async () => {
+      try {
+        const tracker = await import('./lib/pre-apply-spend-tracker.mjs');
+        const dayOverride = query.day && /^\d{4}-\d{2}-\d{2}$/.test(query.day) ? query.day : null;
+        const result = tracker.getDailySpend(ROOT, dayOverride);
+        return json({ ok: true, ...result });
+      } catch (err) {
+        return json({ ok: false, error: String(err && err.message || err) }, 500);
+      }
+    })();
+    return;
+  }
+
   if (url === '/api/pre-apply-check' && req.method === 'GET') {
     (async () => {
     try {
@@ -9540,61 +9558,113 @@ async function generatePack(){
           }
         } catch { /* malformed — recompute */ }
       }
-      // Rubric — 7 dimensions, each 0/0.5/1.
-      const dimensions = [];
-      function check(label, requirement, score, gapMsg) {
-        dimensions.push({ label, score, gap: score < 1 ? (gapMsg || requirement) : null });
+      // Step 4 (2026-05-25): replace the 7-dim file-existence rubric with
+      // the orchestrator-based 3-sub-check content evaluation per dealbreaker
+      // spec. The orchestrator composes hm-match-check + ats-check +
+      // voice-retention-check via Promise.allSettled with HM-required-for-ready
+      // hard rule. The endpoint still surfaces dimensions[] + gap_list for
+      // backwards compat with the existing modal renderer, mapped from the
+      // 3 sub-check results. New fields (overall_status, readiness_score,
+      // checks, suggestions) added at top level for new consumers.
+      let artifacts = {};
+      try {
+        const cvCandidate = ['tailored-cv.md', 'cv-tailored.md']
+          .map(f => join(packDir, f))
+          .find(p => existsSync(p));
+        if (cvCandidate) artifacts.cv = readFileSync(cvCandidate, 'utf-8');
+        const clPath = join(packDir, 'cover-letter.md');
+        if (existsSync(clPath)) artifacts.cover_letter = readFileSync(clPath, 'utf-8');
+      } catch { /* artifacts may be partial; orchestrator handles missing */ }
+
+      let jdText = '';
+      try {
+        const jdPath = join(packDir, 'jd.md');
+        if (existsSync(jdPath)) {
+          jdText = readFileSync(jdPath, 'utf-8');
+        } else {
+          const metaPath2 = join(packDir, '_meta.json');
+          if (existsSync(metaPath2)) {
+            const meta = JSON.parse(readFileSync(metaPath2, 'utf-8'));
+            jdText = meta.jd_text || meta.jd || meta.job_description || '';
+          }
+        }
+      } catch { /* jdText empty; orchestrator marks ATS unavailable */ }
+
+      const { composePreApplyCheck } = await import('./lib/pre-apply-orchestrator.mjs');
+      const orchestratorResult = await composePreApplyCheck({
+        slug: resolvedSlug,
+        jdText,
+        artifacts,
+        opts: { deep: query.deep === 'true' },
+      });
+
+      // Step 7 (2026-05-25): record per-call spend estimate into the daily
+      // bucket. Pre-apply has its own spend bucket separate from polish-loop.
+      // Non-fatal — spend tracking failure should never break the endpoint.
+      try {
+        const tracker = await import('./lib/pre-apply-spend-tracker.mjs');
+        const callCost = tracker.estimatePreApplyCost(orchestratorResult);
+        if (callCost > 0) {
+          tracker.recordSpend(ROOT, callCost, {
+            slug: resolvedSlug,
+            deep: query.deep === 'true',
+            overall_status: orchestratorResult.overall_status,
+          });
+        }
+      } catch (_) { /* spend tracking is informational only */ }
+
+      const readiness_pct = Math.round(orchestratorResult.readiness_score * 100);
+      const checks = orchestratorResult.checks;
+
+      function _dimGap(check) {
+        if (check.status === 'unavailable' || check.status === 'error') {
+          return check.error || (check.status + ' — re-run prerequisite');
+        }
+        return null;
       }
-      function fileSize(rel) {
-        try {
-          const p = join(packDir, rel);
-          if (!existsSync(p)) return -1;
-          return statSync(p).size;
-        } catch { return -1; }
+      function _hmGap(hm) {
+        const base = _dimGap(hm);
+        if (base) return base;
+        if (Array.isArray(hm.gaps) && hm.gaps.length) return hm.gaps.slice(0, 2).join('; ');
+        return null;
       }
-      const cvSize = Math.max(fileSize('tailored-cv.md'), fileSize('cv-tailored.md'));
-      check('Tailored CV', 'tailored-cv.md present + ≥1000 chars',
-        cvSize >= 1000 ? 1 : (cvSize > 0 ? 0.5 : 0),
-        cvSize > 0 ? 'Tailored CV is thin — re-run cv-tailor for richer bullets' : 'Tailored CV missing — run cv-tailor');
-      const clSize = fileSize('cover-letter.md');
-      check('Cover letter', 'cover-letter.md present + ≥800 chars',
-        clSize >= 800 ? 1 : (clSize > 0 ? 0.5 : 0),
-        clSize > 0 ? 'Cover letter is thin — extend to 800+ chars' : 'Cover letter missing');
-      const ffSize = fileSize('form-fields.md');
-      check('Form fields', 'form-fields.md present',
-        ffSize >= 500 ? 1 : (ffSize > 0 ? 0.5 : 0),
-        ffSize > 0 ? 'Form fields drafted but thin' : 'Form fields not prepared');
-      const hmIntelPath = join(ROOT, 'data', 'hm-intel', resolvedSlug + '.json');
-      let hmHas = 0;
-      if (existsSync(hmIntelPath)) {
-        try {
-          const hm = JSON.parse(readFileSync(hmIntelPath, 'utf-8'));
-          hmHas = (hm && (hm.hiring_manager || hm.recruiter || hm.team_summary)) ? 1 : 0.5;
-        } catch { hmHas = 0.5; }
+      function _atsGap(ats) {
+        const base = _dimGap(ats);
+        if (base) return base;
+        if (Array.isArray(ats.missing_keywords) && ats.missing_keywords.length) {
+          return 'Missing: ' + ats.missing_keywords.slice(0, 4).join(', ');
+        }
+        return null;
       }
-      check('HM intel', 'data/hm-intel/<slug>.json populated', hmHas,
-        hmHas === 0 ? 'No HM intel collected yet — run hiring-manager-research' : 'HM intel exists but thin');
-      const interviewPrepSize = fileSize('interview-prep-teaser.md');
-      check('Interview prep teaser', 'interview-prep-teaser.md present',
-        interviewPrepSize >= 500 ? 1 : (interviewPrepSize > 0 ? 0.5 : 0),
-        interviewPrepSize > 0 ? 'Interview prep is thin' : 'Interview prep teaser not drafted');
-      const polishedDir = join(packDir, 'polished');
-      let polishScore = 0;
-      if (existsSync(polishedDir)) {
-        try {
-          const polishedFiles = readdirSync(polishedDir).filter(f => /\.(md|pdf)$/.test(f));
-          polishScore = polishedFiles.length >= 4 ? 1 : (polishedFiles.length > 0 ? 0.5 : 0);
-        } catch {}
+      function _voiceGap(voice) {
+        const base = _dimGap(voice);
+        if (base) return base;
+        if (Array.isArray(voice.rule_failures) && voice.rule_failures.length) {
+          return voice.rule_failures.slice(0, 2).map(f => (f && (f.rule || f.name)) || String(f)).join('; ');
+        }
+        return null;
       }
-      check('Polish complete', 'polished/ folder has ≥4 artifacts', polishScore,
-        polishScore === 0 ? 'Polish run not done — click Polish Materials' : 'Polish partial — re-run');
-      const refsSize = Math.max(fileSize('references.md'), fileSize('referrals.md'));
-      check('References / referrals', 'references.md or referrals.md present',
-        refsSize >= 300 ? 1 : (refsSize > 0 ? 0.5 : 0),
-        refsSize > 0 ? 'References thin' : 'References + referrals not drafted');
-      const sum = dimensions.reduce((acc, d) => acc + d.score, 0);
-      const readiness_pct = Math.round((sum / dimensions.length) * 100);
-      const gap_list = dimensions.filter(d => d.gap).map(d => d.label + ': ' + d.gap);
+
+      const dimensions = [
+        {
+          label: 'HM-persona match',
+          score: typeof checks.hm.score === 'number' ? checks.hm.score : 0,
+          gap: _hmGap(checks.hm),
+        },
+        {
+          label: 'ATS keyword match',
+          score: typeof checks.ats.score === 'number' ? checks.ats.score : 0,
+          gap: _atsGap(checks.ats),
+        },
+        {
+          label: 'Voice retention',
+          score: typeof checks.voice.score === 'number' ? checks.voice.score : 0,
+          gap: _voiceGap(checks.voice),
+        },
+      ];
+      const gap_list = Array.isArray(orchestratorResult.suggestions)
+        ? orchestratorResult.suggestions.map(s => s.action)
+        : [];
       const driveEnabled = process.env.DRIVE_SYNC_ENABLED === 'true';
       let drive_status = 'disabled';
       if (driveEnabled) {
@@ -9608,7 +9678,10 @@ async function generatePack(){
           }
         } catch { drive_status = 'unknown'; }
       }
-      const can_polish = polishScore < 1 && readiness_pct >= 40;
+      // Step 4 (2026-05-25): can_polish gates the Polish CTA in the modal.
+      // Polish makes sense when there's room to improve (not perfect score)
+      // AND content has cleared a minimum bar (don't waste polish on garbage).
+      const can_polish = readiness_pct >= 30 && readiness_pct < 100;
       // Lazy-load dotenv (the launchd-wrapped dashboard-server doesn't source
       // .env at startup) so GEMINI_API_KEY is available. override:true is REQUIRED
       // — Mitchell's shell pre-sets GEMINI_API_KEY to empty, so dotenv without
@@ -9644,7 +9717,7 @@ async function generatePack(){
       const result = {
         ok: true,
         slug: resolvedSlug,
-        ready: readiness_pct >= 80,
+        ready: orchestratorResult.overall_status === 'ready',
         readiness_pct,
         gap_list,
         dimensions,
@@ -9652,6 +9725,13 @@ async function generatePack(){
         drive_status,
         drive_enabled: driveEnabled,
         why,
+        // Step 4 typed-contract additions (dealbreaker spec). Existing UI
+        // consumers ignore these; new consumers (e.g., the per-sub-check
+        // popouts in scripts/build-dashboard.mjs) read them directly.
+        overall_status: orchestratorResult.overall_status,
+        readiness_score: orchestratorResult.readiness_score,
+        checks: orchestratorResult.checks,
+        suggestions: orchestratorResult.suggestions,
         _cache_key: cacheKey,
         _cached_at: Date.now(),
       };

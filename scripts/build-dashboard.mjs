@@ -3022,6 +3022,36 @@ function _buildGapInterviewPrompt({ title, detail, severity, company, role, repo
   ].join('\n');
 }
 
+
+// ── Layer-3 deep-refresh intel-freshness probe ──────────────────────
+// Reads data/hm-intel/<company-slug>-<role-slug>.json mtime + returns a
+// status band aligned with lib/refresh-cache-registry.mjs:hardMaxTtlDays=14.
+// Used to (a) badge each apply-now row's action cell, (b) drive the
+// section-header "Refresh stale (N)" CTA + bulk modal.
+//   fresh   (<7d)
+//   cooling (7-13d)
+//   stale   (>=14d — past hardMaxTtlDays)
+//   missing (no cache file — never deep-refreshed)
+function _computeIntelFreshness(r) {
+  try {
+    const cSlug = String(r.company || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    const rSlug = String(r.role    || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    const hmPath = join(ROOT, 'data', 'hm-intel', `${cSlug}-${rSlug}.json`);
+    if (!existsSync(hmPath)) {
+      return { hasFile: false, ageDays: Infinity, status: 'missing', path: hmPath };
+    }
+    const st = statSync(hmPath);
+    const ageDays = (Date.now() - st.mtimeMs) / 86400000;
+    let status;
+    if (ageDays < 7)       status = 'fresh';
+    else if (ageDays < 14) status = 'cooling';
+    else                   status = 'stale';
+    return { hasFile: true, ageDays, status, path: hmPath };
+  } catch (_) {
+    return { hasFile: false, ageDays: Infinity, status: 'missing', path: null };
+  }
+}
+
 function renderRow(r, idx) {
   const archetype = getReportArchetype(r.reportPath);
   // Prefer the queue's canonical_url (resolved by lib/jd-url-canonicalizer.mjs
@@ -3480,7 +3510,25 @@ function renderRow(r, idx) {
   <td class="location-cell">${locationCell}</td>
   <td class="benefits-cell">${benefitsCell}</td>
   <td class="people-cell">${peopleCell}</td>
-  <td class="muted-text mobile-hide">${htmlEscape(r.date)}${(function(){try{const s=scoreStaleness({evalDate:r.date,status:r.status});return renderStalenessBadge(s);}catch(e){return '';}})()}</td>
+  <td class="muted-text mobile-hide">${htmlEscape(r.date)}${(function(){try{const s=scoreStaleness({evalDate:r.date,status:r.status});return renderStalenessBadge(s);}catch(e){return '';}})()}${(function(){
+      // 2026-05-24 v2: intel-age chip — surfaces hm-intel cache freshness
+      // alongside the eval-date staleness badge. Color-coded by the same
+      // 4-band status the per-row Deep Refresh button uses.
+      try {
+        const fr = _computeIntelFreshness(r);
+        const label = fr.status === 'missing'
+          ? 'never'
+          : fr.ageDays >= 1 ? Math.round(fr.ageDays) + 'd' : '<1d';
+        const tip = fr.status === 'stale'
+          ? 'hm-intel cache is past the 14d ceiling — click \u21bb in the action cell to deep-refresh'
+          : fr.status === 'cooling'
+            ? 'hm-intel cache is approaching the 14d ceiling'
+            : fr.status === 'missing'
+              ? 'no hm-intel cache for this row \u2014 click \u21bb to fire the first deep refresh'
+              : 'hm-intel cache is fresh';
+        return '<span class="intel-age-chip intel-age-' + fr.status + '" title="' + tip + '">intel ' + label + '</span>';
+      } catch (e) { return ''; }
+    })()}</td>
   <td class="muted-text">${evalAge(r.date)}</td>
   <td class="action-cell">
     <!-- D2 Wave G1: kebab menu button (⋮) — primary action entry point -->
@@ -3489,6 +3537,37 @@ function renderRow(r, idx) {
       aria-label="Actions for ${htmlEscape(r.company)} ${htmlEscape(r.role)}"
       onclick="event.stopPropagation();openKebabMenu(this,'${idx}','${htmlEscape(url)}','${r.reportPath ? htmlEscape('reports/' + basename(r.reportPath).replace(/\.md$/, '.html')) : ''}','${verifySlug}',${htmlEscape(String(r.num))})"
       title="Actions: Apply, Report, Email, Verify">⋮</button>
+    ${(function(){
+      // 2026-05-24: per-row Deep Refresh CTA. Color-codes the row's hm-intel
+      // cache age + opens the cost-confirmation modal on click. Always visible
+      // (no jumpy layout) but de-emphasized for fresh rows; promoted for stale.
+      const fr = _computeIntelFreshness(r);
+      const ageLabel = fr.status === 'missing'
+        ? 'never'
+        : fr.ageDays >= 1 ? Math.round(fr.ageDays) + 'd' : '<1d';
+      const tip = fr.status === 'stale'
+        ? 'Intel ' + ageLabel + ' old (past 14d ceiling) — click for a 7-slot deep refresh ($25-$50)'
+        : fr.status === 'cooling'
+          ? 'Intel ' + ageLabel + ' old (approaching 14d) — click for a 7-slot deep refresh ($25-$50)'
+          : fr.status === 'missing'
+            ? 'No hm-intel cache for this row — click for the first 7-slot deep refresh ($25-$50)'
+            : 'Intel ' + ageLabel + ' old (fresh) — click for a 7-slot deep refresh ($25-$50)';
+      const num = htmlEscape(String(r.num || ''));
+      const company = htmlEscape(r.company || '');
+      const role = htmlEscape(r.role || '');
+      return '<button type="button" class="row-deep-refresh-btn row-deep-refresh-' + fr.status + '"'
+        + ' data-row-id="' + num + '"'
+        + ' data-status="' + fr.status + '"'
+        + ' data-age-days="' + (Number.isFinite(fr.ageDays) ? fr.ageDays.toFixed(1) : '-1') + '"'
+        + ' data-company="' + company + '"'
+        + ' data-role="' + role + '"'
+        + ' aria-label="Deep refresh hm-intel for ' + company + ' ' + role + '"'
+        + ' title="' + tip + '"'
+        + ' onclick="event.stopPropagation();openDeepRefreshModal(' + num + ', this)">'
+        + String.fromCharCode(8635)
+        + '<span class="row-deep-refresh-age">' + ageLabel + '</span>'
+        + '</button>';
+    })()}
     <!-- Legacy links (preserved for kbd nav apply via action-cell selector) -->
     <span class="sr-only">${applyLink}</span>
   </td>
@@ -5061,6 +5140,36 @@ async function build() {
   // Apply-now table rows
   const applyNowRows = applyNowSorted.map((r, i) => renderRow(r, `apply-${i}`)).join('\n');
   const allRows = sortedByScore.map((r, i) => renderRow(r, `all-${i}`)).join('\n');
+
+  // ── Layer-3 stale-row inventory for the section-header CTA + bulk modal ──
+  // Counts rows whose hm-intel cache is stale (>=14d) or missing. Mounted as
+  // window.__DEEP_REFRESH_STALE_ROWS__ so the bulk modal can render the list
+  // client-side without a fresh API round-trip.
+  const _deepRefreshStaleRows = [];
+  for (const r of applyNowSorted) {
+    const fr = _computeIntelFreshness(r);
+    if (fr.status === 'stale' || fr.status === 'missing' || fr.status === 'cooling') {
+      _deepRefreshStaleRows.push({
+        num: r.num,
+        company: r.company || '',
+        role: r.role || '',
+        status: fr.status,
+        ageDays: Number.isFinite(fr.ageDays) ? Number(fr.ageDays.toFixed(1)) : null,
+        score: r.score || 0,
+      });
+    }
+  }
+  _deepRefreshStaleRows.sort((a, b) => {
+    const rank = { stale: 0, missing: 1, cooling: 2 };
+    const ra = rank[a.status], rb = rank[b.status];
+    if (ra !== rb) return ra - rb;
+    if (a.ageDays === null && b.ageDays === null) return b.score - a.score;
+    if (a.ageDays === null) return -1;
+    if (b.ageDays === null) return 1;
+    return b.ageDays - a.ageDays;
+  });
+  const _deepRefreshStaleJson = JSON.stringify(_deepRefreshStaleRows).replace(/<\//g, '<\\/');
+  const _deepRefreshStaleCount = _deepRefreshStaleRows.filter(r => r.status === 'stale' || r.status === 'missing').length;
 
   // ── Wave C-B: pre-bake data for drill-in renderers ───────────────────────
   // All data computed here at build time. Browser renderers reference
@@ -7779,6 +7888,168 @@ async function build() {
     cursor: pointer; letter-spacing: 0;
   }
   .reset-order-btn:hover { background: var(--surface); color: var(--text); border-color: var(--text-3); }
+  /* 2026-05-24 — Refresh-stale CTA in the apply-now panel header. Sits next
+     to the reset-order button when one or more rows are past the 14-day
+     hm-intel cache ceiling. Amber so it reads as "do this," not destructive. */
+  .refresh-stale-btn {
+    margin-left: 8px;
+    font-size: 12px; font-weight: 600;
+    background: rgba(217, 119, 6, 0.12);
+    color: #b45309;
+    border: 1px solid rgba(217, 119, 6, 0.5);
+    padding: 4px 11px; border-radius: var(--radius-sm);
+    cursor: pointer; letter-spacing: 0;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  body.dark .refresh-stale-btn { color: #f59e0b; border-color: rgba(245, 158, 11, 0.55); background: rgba(245, 158, 11, 0.10); }
+  .refresh-stale-btn:hover { background: rgba(217, 119, 6, 0.22); }
+  body.dark .refresh-stale-btn:hover { background: rgba(245, 158, 11, 0.20); }
+  .refresh-stale-count {
+    font-variant-numeric: tabular-nums; font-weight: 700;
+    background: rgba(217, 119, 6, 0.22); color: #92400e;
+    padding: 1px 7px; border-radius: 999px; font-size: 11px;
+  }
+  body.dark .refresh-stale-count { background: rgba(245, 158, 11, 0.28); color: #fcd34d; }
+
+  /* 2026-05-24 — Per-row Deep Refresh button in the action cell. */
+  .row-deep-refresh-btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    margin-left: 4px;
+    padding: 3px 7px;
+    font-size: 11px; font-weight: 600;
+    line-height: 1.1;
+    background: transparent;
+    color: var(--text-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    vertical-align: middle;
+    transition: background .12s, border-color .12s, color .12s;
+  }
+  .row-deep-refresh-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--text-3); }
+  .row-deep-refresh-btn:focus-visible { outline: 2px solid var(--accent, #0969da); outline-offset: 2px; }
+  .row-deep-refresh-age { font-weight: 500; font-size: 10px; opacity: 0.85; }
+  .row-deep-refresh-fresh   { color: var(--text-4); border-color: var(--border); opacity: 0.7; }
+  .row-deep-refresh-fresh:hover { opacity: 1; }
+  .row-deep-refresh-cooling { color: #92400e; border-color: rgba(217, 119, 6, 0.45); background: rgba(217, 119, 6, 0.06); }
+  body.dark .row-deep-refresh-cooling { color: #fcd34d; border-color: rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.08); }
+  .row-deep-refresh-stale { color: #b91c1c; border-color: rgba(220, 38, 38, 0.5); background: rgba(220, 38, 38, 0.08); }
+  body.dark .row-deep-refresh-stale { color: #fca5a5; border-color: rgba(248, 113, 113, 0.55); background: rgba(248, 113, 113, 0.10); }
+  .row-deep-refresh-stale:hover { background: rgba(220, 38, 38, 0.16); }
+  .row-deep-refresh-missing { color: var(--text-3); border-color: var(--border-strong); border-style: dashed; }
+  .row-deep-refresh-missing:hover { color: var(--text); border-color: var(--text-3); }
+
+  /* 2026-05-24 v2: intel-age chip beside the Eval Date staleness badge.
+     Surfaces hm-intel cache freshness independently of the eval-date age. */
+  .intel-age-chip {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 7px;
+    font-size: 10px; font-weight: 600;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-4);
+    letter-spacing: 0.01em;
+    vertical-align: middle;
+    line-height: 1.4;
+  }
+  .intel-age-fresh   { color: var(--text-4); border-color: var(--border); opacity: 0.7; }
+  .intel-age-cooling { color: #92400e; border-color: rgba(217, 119, 6, 0.45); background: rgba(217, 119, 6, 0.06); }
+  body.dark .intel-age-cooling { color: #fcd34d; border-color: rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.08); }
+  .intel-age-stale   { color: #b91c1c; border-color: rgba(220, 38, 38, 0.5); background: rgba(220, 38, 38, 0.08); font-weight: 700; }
+  body.dark .intel-age-stale { color: #fca5a5; border-color: rgba(248, 113, 113, 0.55); background: rgba(248, 113, 113, 0.10); }
+  .intel-age-missing { color: var(--text-3); border-style: dashed; font-style: italic; }
+
+  /* ── Deep Refresh confirmation modal ──────────────────────────────── */
+  #deep-refresh-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 2300; backdrop-filter: blur(2px); }
+  #deep-refresh-backdrop.visible { display: block; }
+  #deep-refresh-modal {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: min(560px, 96vw); max-height: 86vh; overflow-y: auto; z-index: 2301;
+    background: var(--surface); border-radius: 12px; border: 1px solid var(--border);
+    box-shadow: var(--shadow-lg); display: none;
+  }
+  #deep-refresh-modal.wide { width: min(760px, 96vw); }
+  #deep-refresh-modal.visible { display: block; }
+  .drm-header { padding: 18px 22px 12px; border-bottom: 1px solid var(--border); }
+  .drm-title { margin: 0; font-size: 17px; font-weight: 700; color: var(--text); letter-spacing: -0.01em; }
+  .drm-subtitle { margin: 4px 0 0; font-size: 13px; color: var(--text-2); }
+  .drm-body { padding: 16px 22px 12px; }
+  .drm-section { margin-bottom: 14px; }
+  .drm-section h4 {
+    margin: 0 0 8px; font-size: 11.5px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .04em; color: var(--text-3);
+  }
+  .drm-stat-grid {
+    display: grid; grid-template-columns: 1fr auto;
+    gap: 4px 16px; font-size: 13px;
+  }
+  .drm-stat-label { color: var(--text-2); }
+  .drm-stat-value { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+  .drm-stat-value.drm-cost-headline {
+    font-size: 22px; font-weight: 800; color: var(--text);
+    letter-spacing: -0.01em;
+  }
+  .drm-slot-list { list-style: none; padding: 0; margin: 0; font-size: 13px; color: var(--text-2); }
+  .drm-slot-list li { padding: 4px 0; padding-left: 22px; position: relative; }
+  .drm-slot-list li::before { content: "+"; position: absolute; left: 8px; color: var(--text-3); font-weight: 700; }
+  .drm-row-table {
+    width: 100%; border-collapse: collapse; font-size: 12.5px;
+    margin-top: 4px;
+  }
+  .drm-row-table th, .drm-row-table td {
+    text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border);
+    color: var(--text);
+  }
+  .drm-row-table th { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); font-weight: 700; background: var(--surface-2); }
+  .drm-row-table td.drm-age-stale   { color: #b91c1c; font-weight: 700; }
+  .drm-row-table td.drm-age-cooling { color: #b45309; font-weight: 600; }
+  .drm-row-table td.drm-age-missing { color: var(--text-3); font-style: italic; }
+  body.dark .drm-row-table td.drm-age-stale   { color: #fca5a5; }
+  body.dark .drm-row-table td.drm-age-cooling { color: #fcd34d; }
+  .drm-row-table tr.drm-row-fired { opacity: 0.5; }
+  .drm-row-table tr.drm-row-fired td.drm-status-cell { color: var(--green-fg); font-weight: 700; }
+  .drm-row-table input[type="checkbox"] { width: 15px; height: 15px; cursor: pointer; }
+  .drm-budget {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 12px; background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    margin-top: 10px; font-size: 12.5px;
+  }
+  .drm-budget-label { color: var(--text-3); font-weight: 500; }
+  .drm-budget-val { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .drm-warn {
+    padding: 9px 12px;
+    background: rgba(220, 38, 38, 0.08);
+    border: 1px solid rgba(220, 38, 38, 0.35);
+    border-radius: var(--radius-sm);
+    font-size: 12px; color: var(--text);
+    margin-top: 10px;
+  }
+  .drm-warn strong { color: #b91c1c; }
+  body.dark .drm-warn strong { color: #fca5a5; }
+  .drm-footer {
+    display: flex; gap: 10px; padding: 12px 22px 18px;
+    border-top: 1px solid var(--border);
+    background: var(--surface-2);
+    border-radius: 0 0 12px 12px;
+  }
+  .drm-btn {
+    flex: 1; padding: 10px 14px;
+    border-radius: var(--radius-sm); cursor: pointer;
+    font-size: 13px; font-weight: 600;
+    border: 1px solid var(--border);
+    background: var(--surface); color: var(--text);
+    transition: background .12s, border-color .12s;
+  }
+  .drm-btn:hover { background: var(--surface-2); }
+  .drm-btn-primary {
+    background: #d97706; border-color: #d97706; color: #ffffff;
+  }
+  .drm-btn-primary:hover { background: #b45309; border-color: #b45309; }
+  .drm-btn[disabled] { opacity: .5; cursor: not-allowed; }
+
 
   /* Drag handle: hidden by default, fades in on row hover. On touch
      devices (no hover), it stays visible at low opacity so the affordance
@@ -13220,6 +13491,25 @@ async function build() {
     </div>
   </div>
 
+  <!-- 2026-05-24 — Deep Refresh modal (per-row + bulk). Mounted at body root so
+       it floats above the table. openDeepRefreshModal(rowId) populates the
+       per-row variant; openBulkDeepRefreshModal() populates the bulk-select
+       variant. Both fire POST /api/refresh-deep on confirm. -->
+  <div id="deep-refresh-backdrop" onclick="closeDeepRefreshModal()"></div>
+  <div id="deep-refresh-modal" onclick="event.stopPropagation()" role="dialog" aria-labelledby="deep-refresh-title" aria-modal="true">
+    <div class="drm-header">
+      <h3 class="drm-title" id="deep-refresh-title">Deep refresh</h3>
+      <p class="drm-subtitle" id="deep-refresh-subtitle">Layer-3 council research on the row's full intel surface.</p>
+    </div>
+    <div class="drm-body" id="deep-refresh-body">
+      <div class="drm-section">Loading row data…</div>
+    </div>
+    <div class="drm-footer">
+      <button type="button" class="drm-btn" onclick="closeDeepRefreshModal()">Cancel</button>
+      <button type="button" class="drm-btn drm-btn-primary" id="deep-refresh-confirm" onclick="confirmDeepRefresh()">Fire deep refresh</button>
+    </div>
+  </div>
+
   <!-- Pipeline job toast (in-flight progress indicator) -->
   <div id="pipeline-toast" role="status" aria-live="polite">
     <button class="pipeline-toast-close" onclick="closePipelineToast()" aria-label="Dismiss">✕</button>
@@ -13625,6 +13915,11 @@ async function build() {
        always available, even when builderLog.latest is empty (first run). -->
   <script>
   window.__PIPELINE_ACTIVITY__ = ${JSON.stringify(pipelineActivity)};
+  // Deep Refresh stale-row inventory (2026-05-24) — drives the bulk modal.
+  // Each entry: { num, company, role, status: 'stale'|'missing'|'cooling',
+  //               ageDays: number|null, score: number }.
+  // Computed at build time; client reads but never mutates.
+  window.__DEEP_REFRESH_STALE_ROWS__ = ${_deepRefreshStaleJson};
   </script>
 
   ${applyNow.length > 0 ? `
@@ -13634,6 +13929,12 @@ async function build() {
         onclick="event.stopPropagation();resetApplyNowOrder()" aria-label="Reset to default sort (score desc, then date)">
         ↺ Reset order
       </button>
+      ${_deepRefreshStaleCount > 0 ? `<button type="button" id="apply-now-refresh-stale" class="refresh-stale-btn"
+        onclick="event.stopPropagation();openBulkDeepRefreshModal()"
+        aria-label="Open the bulk Deep Refresh modal for ${_deepRefreshStaleCount} stale or missing row${_deepRefreshStaleCount === 1 ? '' : 's'}"
+        title="Open Deep Refresh modal: ${_deepRefreshStaleCount} row${_deepRefreshStaleCount === 1 ? '' : 's'} past the 14-day hm-intel cache ceiling. ~\$25-\$50 per row.">
+        ${String.fromCharCode(8635)} Refresh stale <span class="refresh-stale-count">${_deepRefreshStaleCount}</span>
+      </button>` : ''}
       <span class="panel-chevron">▾</span>
     </h2>
     <p class="panel-subtitle" title="Drag a row's ⋮⋮ handle to prioritize. Click any row to expand.">Score ≥ 4.0 · Evaluated / Responded / Interview only</p>
@@ -20141,8 +20442,12 @@ window.tonightPickCreateMaterials = tonightPickCreateMaterials;
 // skill via POST /api/apply-pack-polish (dashboard-server.mjs:8533). Falls
 // back to a toast with the manual CLI command if the API isn't available.
 async function tonightPickPolish() {
-  var pick = window._tonightPickData;
-  if (!pick) { try { pick = JSON.parse(document.getElementById('tonight-pick-data').textContent); } catch (_) {} }
+  // Canonical accessor — matches every other tonightPick* handler. Reads
+  // TONIGHT_PICK_QUEUE[_currentPickIdx] first so "Pick another" cycling is
+  // respected, then falls back to TONIGHT_PICK_DATA (today's top pick).
+  // The build never sets window._tonightPickData nor emits the
+  // #tonight-pick-data JSON-script element — those accessors silently no-op.
+  var pick = (TONIGHT_PICK_QUEUE && TONIGHT_PICK_QUEUE[_currentPickIdx]) || TONIGHT_PICK_DATA;
   if (!pick || !pick.num) { console.warn('[tp-polish] no pick'); return; }
   var btn = document.getElementById('tonight-pick-polish-btn');
   if (btn) { btn.disabled = true; btn.textContent = '✨ Polishing…'; }
@@ -30614,35 +30919,426 @@ async function invokeBuildPackStage(rowId, stage, btn) {
 window.invokeBuildPackStage = invokeBuildPackStage;
 
 // ── refresh-master Phase 3 deliverable 6: ↻ Deep refresh CTA ──
-// Confirms cost ~$25–$50, posts to /api/refresh-deep, opens job popout.
-async function invokeDeepRefresh(rowId, btn) {
-  rowId = String(rowId || '').trim();
-  if (!rowId || !/^\\d+$/.test(rowId)) {
+// 2026-05-24 rewrite: native window.confirm() replaced with the rich
+// #deep-refresh-modal (per-row + bulk variants). Same backend endpoint
+// (POST /api/refresh-deep, 7-slot council=7 research, ~$25-$50 per row).
+//
+// The drawer button kept its 'invokeDeepRefresh' name for backward compat
+// — it now just opens the per-row modal. The per-row + bulk modals are
+// the canonical surface for the cost-confirmation step (no more
+// native browser confirm dialogs).
+
+const DEEP_REFRESH_PER_ROW_COST_LOW  = 25;
+const DEEP_REFRESH_PER_ROW_COST_HIGH = 50;
+const DEEP_REFRESH_SLOTS = [
+  'hm-intel (council research)',
+  'toxicity composite',
+  'strategy-ceiling per metric',
+  'positioning (council + adjudicator)',
+  'liveness (URL still active?)',
+  'ats-detection (re-scan pack artifacts)',
+  'role-enrichment (benefits + sentiment + people)',
+];
+
+// Modal-instance state — tracks which mode + what rows are queued.
+window._drmState = window._drmState || { mode: null, rows: [], firing: false };
+
+function _drmEsc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function _drmAgeLabel(ageDays, status) {
+  if (status === 'missing' || ageDays == null) return 'never refreshed';
+  if (ageDays < 1) return '<1d old';
+  return Math.round(ageDays) + 'd old';
+}
+
+function openDeepRefreshModal(rowId, btn) {
+  rowId = String(rowId == null ? '' : rowId).trim();
+  if (!rowId || !/^[0-9]+$/.test(rowId)) {
     if (window.toast) window.toast('Deep refresh: numeric row required', 'error');
     return;
   }
-  const ok = window.confirm('Deep refresh fires a 7-slot nuclear sweep for this row:\\n  · hm-intel (council research)\\n  · toxicity composite\\n  · strategy-ceiling per metric\\n  · positioning (council + adjudicator)\\n  · liveness (URL still active?)\\n  · ats-detection (re-scan pack artifacts)\\n  · role-enrichment (benefits + sentiment + people)\\n\\nProjected cost: $25–$50. ETA: 3–8 min.\\n\\nProceed?');
-  if (!ok) return;
-  const origText = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '↻ Deep refreshing…'; }
+  // Pull the row's freshness data from the rendered button if available;
+  // fall back to data on window.__DEEP_REFRESH_STALE_ROWS__.
+  let company = '', role = '', status = 'unknown', ageDays = null;
+  if (btn) {
+    company = btn.getAttribute('data-company') || '';
+    role    = btn.getAttribute('data-role')    || '';
+    status  = btn.getAttribute('data-status')  || 'unknown';
+    const a = parseFloat(btn.getAttribute('data-age-days') || '');
+    ageDays = Number.isFinite(a) && a >= 0 ? a : null;
+  }
+  if (!company && Array.isArray(window.__DEEP_REFRESH_STALE_ROWS__)) {
+    const hit = window.__DEEP_REFRESH_STALE_ROWS__.find(r => String(r.num) === rowId);
+    if (hit) { company = hit.company; role = hit.role; status = hit.status; ageDays = hit.ageDays; }
+  }
+  window._drmState = { mode: 'single', rows: [{ num: rowId, company, role, status, ageDays }], firing: false, results: {} };
+
+  const titleEl    = document.getElementById('deep-refresh-title');
+  const subtitleEl = document.getElementById('deep-refresh-subtitle');
+  const bodyEl     = document.getElementById('deep-refresh-body');
+  const modalEl    = document.getElementById('deep-refresh-modal');
+  const confirmBtn = document.getElementById('deep-refresh-confirm');
+  if (!titleEl || !subtitleEl || !bodyEl || !modalEl || !confirmBtn) return;
+  modalEl.classList.remove('wide');
+
+  titleEl.textContent = 'Deep refresh row #' + rowId;
+  subtitleEl.textContent = 'Layer-3 council=7 research on the full intel surface for this role.';
+  confirmBtn.textContent = 'Fire deep refresh ($' + DEEP_REFRESH_PER_ROW_COST_LOW + '-$' + DEEP_REFRESH_PER_ROW_COST_HIGH + ')';
+  confirmBtn.disabled = false;
+  confirmBtn.onclick = confirmDeepRefresh;
+
+  const slotLis = DEEP_REFRESH_SLOTS.map(s => '<li>' + _drmEsc(s) + '</li>').join('');
+  bodyEl.innerHTML =
+      '<div class="drm-section">'
+    +   '<h4>Row</h4>'
+    +   '<div class="drm-stat-grid">'
+    +     '<div class="drm-stat-label">Company</div>'
+    +     '<div class="drm-stat-value">' + _drmEsc(company || '-') + '</div>'
+    +     '<div class="drm-stat-label">Role</div>'
+    +     '<div class="drm-stat-value">' + _drmEsc(role || '-') + '</div>'
+    +     '<div class="drm-stat-label">hm-intel cache</div>'
+    +     '<div class="drm-stat-value">' + _drmEsc(_drmAgeLabel(ageDays, status)) + ' (' + _drmEsc(status) + ')</div>'
+    +   '</div>'
+    + '</div>'
+    + '<div class="drm-section">'
+    +   '<h4>What deep refresh fires</h4>'
+    +   '<ul class="drm-slot-list">' + slotLis + '</ul>'
+    +   '<div class="drm-budget"><span class="drm-budget-label">Council size</span><span class="drm-budget-val">7 LLMs (Opus 4.7, Sonnet 4.6, GPT-5, Gemini 2.5 Pro, Sonar Deep, Sonar Reasoning Pro, Grok-4-x-search)</span></div>'
+    + '</div>'
+    + '<div class="drm-section">'
+    +   '<h4>Cost + time</h4>'
+    +   '<div class="drm-stat-grid">'
+    +     '<div class="drm-stat-label">Projected cost</div>'
+    +     '<div class="drm-stat-value drm-cost-headline">$' + DEEP_REFRESH_PER_ROW_COST_LOW + '-$' + DEEP_REFRESH_PER_ROW_COST_HIGH + '</div>'
+    +     '<div class="drm-stat-label">ETA</div>'
+    +     '<div class="drm-stat-value">3-8 minutes</div>'
+    +   '</div>'
+    + '</div>'
+    + (status === 'fresh'
+        ? '<div class="drm-warn"><strong>Note</strong> — this row is currently fresh (<7d). The refresh will fire anyway, but the existing cache is unlikely to have meaningfully drifted yet.</div>'
+        : '')
+    + '<div class="drm-section" id="deep-refresh-status-region" hidden>'
+    +   '<h4>Status</h4>'
+    +   '<div id="deep-refresh-status-msg"></div>'
+    + '</div>';
+
+  document.getElementById('deep-refresh-backdrop').classList.add('visible');
+  modalEl.classList.add('visible');
+}
+window.openDeepRefreshModal = openDeepRefreshModal;
+
+function openBulkDeepRefreshModal() {
+  const stale = Array.isArray(window.__DEEP_REFRESH_STALE_ROWS__) ? window.__DEEP_REFRESH_STALE_ROWS__.slice() : [];
+  // Default selection: rows past the 14d ceiling + rows with no cache yet.
+  // Cooling rows (7-13d) are listed but unchecked by default — preserves
+  // budget while making the next-stale candidates visible at a glance.
+  const rows = stale.map(r => ({
+    num: String(r.num),
+    company: r.company || '',
+    role: r.role || '',
+    status: r.status || 'unknown',
+    ageDays: typeof r.ageDays === 'number' ? r.ageDays : null,
+    score: typeof r.score === 'number' ? r.score : 0,
+    selected: r.status === 'stale' || r.status === 'missing',
+  }));
+  window._drmState = { mode: 'bulk', rows, firing: false, results: {} };
+
+  const titleEl    = document.getElementById('deep-refresh-title');
+  const subtitleEl = document.getElementById('deep-refresh-subtitle');
+  const bodyEl     = document.getElementById('deep-refresh-body');
+  const modalEl    = document.getElementById('deep-refresh-modal');
+  const confirmBtn = document.getElementById('deep-refresh-confirm');
+  if (!titleEl || !subtitleEl || !bodyEl || !modalEl || !confirmBtn) return;
+  modalEl.classList.add('wide');
+
+  const staleN   = rows.filter(r => r.status === 'stale').length;
+  const missingN = rows.filter(r => r.status === 'missing').length;
+  const coolingN = rows.filter(r => r.status === 'cooling').length;
+
+  titleEl.textContent = 'Deep refresh — bulk';
+  subtitleEl.textContent = staleN + ' stale + ' + missingN + ' missing + ' + coolingN + ' cooling (cooling rows unchecked by default; check rows to include)';
+  confirmBtn.onclick = confirmDeepRefresh;
+
+  const rowsHtml = rows.length === 0
+    ? '<div class="drm-section"><em>No stale, missing, or cooling rows right now. Every apply-now row has fresh hm-intel within the 14d ceiling.</em></div>'
+    : (
+        '<table class="drm-row-table" id="drm-row-table">'
+      + '<thead><tr><th><input type="checkbox" id="drm-select-all" onchange="drmToggleAll(this)" aria-label="Select all rows"></th><th>Row</th><th>Company</th><th>Role</th><th>Age</th><th>Score</th><th class="drm-status-cell">Status</th></tr></thead>'
+      + '<tbody>'
+      + rows.map((r) => (
+          '<tr id="drm-row-' + r.num + '">'
+        +   '<td><input type="checkbox" class="drm-row-check" data-row-num="' + _drmEsc(r.num) + '" ' + (r.selected ? 'checked' : '') + ' onchange="drmRecomputeCost()"></td>'
+        +   '<td>#' + _drmEsc(r.num) + '</td>'
+        +   '<td>' + _drmEsc(r.company) + '</td>'
+        +   '<td>' + _drmEsc(r.role) + '</td>'
+        +   '<td class="drm-age-' + _drmEsc(r.status) + '">' + _drmEsc(_drmAgeLabel(r.ageDays, r.status)) + '</td>'
+        +   '<td>' + (Number(r.score) || 0).toFixed(1) + '</td>'
+        +   '<td class="drm-status-cell">queued</td>'
+        + '</tr>'
+        )).join('')
+      + '</tbody></table>'
+      );
+
+  bodyEl.innerHTML =
+      '<div class="drm-section">'
+    +   '<h4>What deep refresh fires per row</h4>'
+    +   '<ul class="drm-slot-list">' + DEEP_REFRESH_SLOTS.map(s => '<li>' + _drmEsc(s) + '</li>').join('') + '</ul>'
+    + '</div>'
+    + '<div class="drm-section">'
+    +   '<h4>Rows queued for refresh</h4>'
+    +   rowsHtml
+    + '</div>'
+    + '<div class="drm-budget"><span class="drm-budget-label">Selected · projected cost</span><span class="drm-budget-val" id="drm-bulk-cost">$0-$0</span></div>'
+    + '<div class="drm-warn"><strong>This will fire sequentially.</strong> Each row takes 3-8 min + costs $25-$50. The modal stays open + reports per-row status as each one completes. You can close the modal to detach — the jobs keep running on the server.</div>'
+    + '<div class="drm-section" id="deep-refresh-status-region" hidden style="margin-top:14px">'
+    +   '<h4>Status</h4>'
+    +   '<div id="deep-refresh-status-msg"></div>'
+    + '</div>';
+
+  document.getElementById('deep-refresh-backdrop').classList.add('visible');
+  modalEl.classList.add('visible');
+  drmRecomputeCost();
+}
+window.openBulkDeepRefreshModal = openBulkDeepRefreshModal;
+
+function drmToggleAll(checkbox) {
+  const checks = document.querySelectorAll('.drm-row-check');
+  checks.forEach(c => { c.checked = !!checkbox.checked; });
+  drmRecomputeCost();
+}
+window.drmToggleAll = drmToggleAll;
+
+function drmRecomputeCost() {
+  const checks = document.querySelectorAll('.drm-row-check');
+  let n = 0;
+  checks.forEach(c => { if (c.checked) n += 1; });
+  const lo = n * DEEP_REFRESH_PER_ROW_COST_LOW;
+  const hi = n * DEEP_REFRESH_PER_ROW_COST_HIGH;
+  const costEl = document.getElementById('drm-bulk-cost');
+  if (costEl) costEl.textContent = n + ' row' + (n === 1 ? '' : 's') + ' · $' + lo + '-$' + hi;
+  const confirmBtn = document.getElementById('deep-refresh-confirm');
+  if (confirmBtn) {
+    confirmBtn.disabled = n === 0;
+    confirmBtn.textContent = n === 0
+      ? 'Select at least one row'
+      : 'Fire ' + n + ' deep refresh' + (n === 1 ? '' : 'es') + ' ($' + lo + '-$' + hi + ')';
+  }
+}
+window.drmRecomputeCost = drmRecomputeCost;
+
+function closeDeepRefreshModal() {
+  // Note: if jobs are already firing, this just hides the modal — the
+  // background jobs keep running on the server (the SSE streams aren't tied
+  // to the modal). User can re-open via the section-header button.
+  const backdrop = document.getElementById('deep-refresh-backdrop');
+  const modal    = document.getElementById('deep-refresh-modal');
+  if (backdrop) backdrop.classList.remove('visible');
+  if (modal)    modal.classList.remove('visible');
+}
+window.closeDeepRefreshModal = closeDeepRefreshModal;
+
+// SSE streamer for a single deep-refresh job. Updates the row's status cell
+// with live phase / step / fraction-complete from the alpha-job NDJSON stream.
+// Resolves when the stream emits its terminal event (status === 'done' OR
+// 'failed' OR the EventSource closes). Returns { ok, jobId, finalEvent? }.
+async function _drmStreamJob(jobId, streamUrl, rowEl) {
+  return new Promise((resolve) => {
+    const statusCell = rowEl ? rowEl.querySelector('td.drm-status-cell') : null;
+    const setStatus = (text, color) => {
+      if (!statusCell) return;
+      statusCell.textContent = text;
+      if (color) statusCell.style.color = color;
+    };
+    let resolved = false;
+    const finish = (result) => {
+      if (resolved) return;
+      resolved = true;
+      try { es.close(); } catch (_) {}
+      resolve(result);
+    };
+    const es = new EventSource(streamUrl);
+    es.addEventListener('message', (e) => {
+      let ev;
+      try { ev = JSON.parse(e.data); } catch { return; }
+      // Common NDJSON event shape from alpha-job stream:
+      //   { t, phase, step, fraction?, status? }
+      const phase = ev.phase || ev.step || ev.stage || '';
+      const frac = (typeof ev.fraction === 'number') ? Math.round(ev.fraction * 100) : null;
+      if (ev.status === 'done' || ev.exitCode === 0) {
+        setStatus('done', 'var(--green-fg)');
+        if (rowEl) rowEl.classList.add('drm-row-fired');
+        finish({ ok: true, jobId, finalEvent: ev });
+        return;
+      }
+      if (ev.status === 'failed' || (typeof ev.exitCode === 'number' && ev.exitCode !== 0)) {
+        setStatus('failed: ' + (ev.error || 'exit ' + ev.exitCode).slice(0, 50), '#b91c1c');
+        finish({ ok: false, jobId, error: ev.error || 'failed', finalEvent: ev });
+        return;
+      }
+      // Progress event — update status cell with phase + percent.
+      if (phase) {
+        const label = frac !== null ? phase + ' · ' + frac + '%' : phase;
+        setStatus(label.slice(0, 60), '');
+      }
+    });
+    es.addEventListener('error', () => {
+      // EventSource closed (stream ended) — if we didn't already resolve, treat as done.
+      // (The stream closes when the spawned process exits 0 + the SSE writer flushes.)
+      setTimeout(() => {
+        if (!resolved) {
+          setStatus('done', 'var(--green-fg)');
+          if (rowEl) rowEl.classList.add('drm-row-fired');
+          finish({ ok: true, jobId, finalEvent: { status: 'done', via: 'stream-close' } });
+        }
+      }, 500);
+    });
+  });
+}
+
+// Post + stream one deep-refresh job. Replaces the old fire-and-forget POST.
+async function _drmPostOneRow(rowNum, rowEl) {
+  // Visual: mark row as firing, then POST, then stream SSE until done.
+  if (rowEl) {
+    const statusCell = rowEl.querySelector('td.drm-status-cell');
+    if (statusCell) { statusCell.textContent = 'launching...'; statusCell.style.color = ''; }
+  }
+  let postRes, postData;
   try {
-    const r = await fetch('/api/refresh-deep', {
+    postRes = await fetch('/api/refresh-deep', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rowId }),
+      body: JSON.stringify({ rowId: String(rowNum) }),
     });
-    const data = await r.json();
-    if (!data.ok) throw new Error(data.error || 'refresh-deep API error');
-    if (typeof window.drillIn === 'function') {
-      window.drillIn('alpha-job', data.jobId, null);
-    } else if (window.toast) {
-      window.toast('Deep refresh started: ' + data.jobId, 'info');
+    postData = await postRes.json().catch(() => ({}));
+    if (!postRes.ok || !postData.ok) {
+      throw new Error(postData.error || ('HTTP ' + postRes.status));
     }
   } catch (err) {
-    if (window.toast) window.toast('Deep refresh error: ' + (err.message || String(err)), 'error');
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = origText; }
+    if (rowEl) {
+      const statusCell = rowEl.querySelector('td.drm-status-cell');
+      if (statusCell) {
+        statusCell.style.color = '#b91c1c';
+        statusCell.textContent = 'launch failed: ' + (err.message || String(err)).slice(0, 60);
+      }
+    }
+    return { ok: false, error: err.message || String(err) };
   }
+  const streamUrl = postData.stream_url || ('/api/refresh-deep-stream/' + postData.jobId);
+  return _drmStreamJob(postData.jobId, streamUrl, rowEl);
+}
+
+// Trigger a dashboard rebuild + reload the current page. Used after deep-refresh
+// completion so the freshly-refreshed intel surfaces inline. Soft-reload uses
+// location.reload() which preserves scroll position in most browsers.
+async function _drmRebuildAndReload() {
+  try {
+    if (window.toast) window.toast('Deep refresh complete — rebuilding dashboard...', 'info');
+    const r = await fetch('/api/rebuild', { method: 'POST' });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !data.ok) throw new Error(data.error || ('HTTP ' + r.status));
+    // Stream the rebuild to know when it finishes, then reload.
+    await new Promise((resolve) => {
+      const es = new EventSource(data.stream_url || ('/api/rebuild-stream/' + data.jobId));
+      let done = false;
+      const finish = () => { if (done) return; done = true; try { es.close(); } catch (_) {} resolve(); };
+      es.addEventListener('message', (e) => {
+        let ev; try { ev = JSON.parse(e.data); } catch { return; }
+        if (ev.status === 'done' || ev.exitCode === 0) finish();
+        if (ev.status === 'failed') finish();
+      });
+      es.addEventListener('error', () => setTimeout(finish, 500));
+      setTimeout(finish, 60000); // hard 60s ceiling so we never hang
+    });
+    if (window.toast) window.toast('Rebuild done — reloading...', 'success');
+    setTimeout(() => location.reload(), 600);
+  } catch (err) {
+    if (window.toast) window.toast('Rebuild failed: ' + (err.message || String(err)) + ' — reload manually to see fresh intel', 'error');
+  }
+}
+
+async function confirmDeepRefresh() {
+  const state = window._drmState || { mode: null, rows: [] };
+  const confirmBtn = document.getElementById('deep-refresh-confirm');
+  const statusRegion = document.getElementById('deep-refresh-status-region');
+  const statusMsg = document.getElementById('deep-refresh-status-msg');
+  if (state.firing) return; // double-click guard
+  state.firing = true;
+
+  if (state.mode === 'single') {
+    // Single-row mode: auto-rebuild + reload after completion (v2 2026-05-24)
+    const row = state.rows[0];
+    if (!row) { closeDeepRefreshModal(); return; }
+    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Firing deep refresh...'; }
+    if (statusRegion) statusRegion.hidden = false;
+    if (statusMsg) statusMsg.innerHTML = 'POST /api/refresh-deep { rowId: ' + row.num + ' } — then streaming live...';
+    // For single-row mode we still open the alpha-job popout so the user has
+    // a detailed view of the council research, AND we stream into a fake
+    // status target so the modal shows progress until the job ends.
+    const fakeRowEl = document.createElement('tr');
+    const fakeCell = document.createElement('td');
+    fakeCell.className = 'drm-status-cell';
+    fakeRowEl.appendChild(fakeCell);
+    // Also POST + open the popout in parallel. _drmPostOneRow will POST + stream.
+    const res = await _drmPostOneRow(row.num, fakeRowEl);
+    if (res.ok) {
+      if (typeof window.drillIn === 'function') window.drillIn('alpha-job', res.jobId, null);
+      if (statusMsg) statusMsg.innerHTML = 'Council research complete. Job <code>' + _drmEsc(res.jobId) + '</code> finished. Rebuilding dashboard + reloading...';
+      // Auto-rebuild + reload so the fresh intel surfaces inline.
+      _drmRebuildAndReload();
+      setTimeout(closeDeepRefreshModal, 800);
+    } else {
+      if (statusMsg) statusMsg.innerHTML = '<strong style="color:#b91c1c">Failed:</strong> ' + _drmEsc(res.error);
+      if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'Retry'; }
+    }
+    state.firing = false;
+    return;
+  }
+
+  if (state.mode === 'bulk') {
+    // Bulk mode: auto-rebuild + reload ONCE after all N rows complete (v2 2026-05-24)
+    // Per-row SSE streaming updates the modal table inline — no per-row popout.
+    const checks = Array.from(document.querySelectorAll('.drm-row-check')).filter(c => c.checked);
+    if (checks.length === 0) { state.firing = false; return; }
+    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Firing ' + checks.length + ' deep refreshes...'; }
+    if (statusRegion) statusRegion.hidden = false;
+    if (statusMsg) statusMsg.textContent = 'Firing sequentially with a 2s stagger between each row...';
+
+    let okCount = 0;
+    let errCount = 0;
+    for (let i = 0; i < checks.length; i += 1) {
+      const c = checks[i];
+      const rowNum = c.getAttribute('data-row-num');
+      const rowEl = document.getElementById('drm-row-' + rowNum);
+      if (statusMsg) statusMsg.textContent = 'Row ' + (i + 1) + ' of ' + checks.length + ' · streaming /api/refresh-deep-stream for #' + rowNum + '...';
+      // _drmPostOneRow now POSTs + streams + resolves on completion (or failure).
+      // Each row's status cell is updated live by the streamer.
+      const res = await _drmPostOneRow(rowNum, rowEl);
+      if (res.ok) okCount += 1;
+      else errCount += 1;
+      if (i < checks.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+    if (statusMsg) statusMsg.innerHTML = 'All ' + checks.length + ' jobs complete: ' + okCount + ' succeeded, ' + errCount + ' failed. Rebuilding dashboard + reloading...';
+    // Single rebuild + reload after ALL N complete (per Mitchell's bulk-reload decision).
+    if (okCount > 0) {
+      _drmRebuildAndReload();
+    }
+    if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'Close'; confirmBtn.onclick = closeDeepRefreshModal; }
+    state.firing = false;
+    return;
+  }
+}
+window.confirmDeepRefresh = confirmDeepRefresh;
+
+// Backward-compat shim — the drawer button still calls invokeDeepRefresh()
+// by name. Route it through the new modal.
+async function invokeDeepRefresh(rowId, btn) {
+  openDeepRefreshModal(rowId, btn);
 }
 window.invokeDeepRefresh = invokeDeepRefresh;
 

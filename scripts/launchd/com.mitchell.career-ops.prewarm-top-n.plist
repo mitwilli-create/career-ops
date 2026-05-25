@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        com.mitchell.career-ops.prewarm-top-n
+
+        Scheduled pre-warm for apply-now drawer caches (PR-06, 2026-05-25).
+
+        Daily 04:30 PT: warms hm-chance + interview-likelihood + team-health
+        for top-15 active apply-now rows so drawer open is instant (<100ms)
+        instead of 2-5s LLM call.
+
+        On Sundays the script auto-upgrades to weekly mode (all-35 pass).
+
+        Hard cost caps:
+          Daily:  $50 / cycle
+          Weekly: $105 / cycle
+
+        macOS Tahoe (25.x) launchd KeepAlive regression notes
+        (bug-class: launchd-keepalive-tahoe, AGENTS.md Pattern F):
+        - KeepAlive MUST be false — true causes rapid-respawn flapping loop
+        - RunAtLoad MUST be false — avoids spurious boot-time execution
+        - AbandonProcessGroup MUST be true — ensures detached nohup child
+          survives when launchd's bash wrapper exits
+        - Log paths MUST be under ~/Library/Logs/ NOT ~/Documents/
+          (macOS Tahoe TCC sandbox silently blocks writes to Documents)
+
+        Bootstrap (LOADED-BUT-DISABLED day 1 — run after reviewing first
+        --dry-run output per AGENTS.md § Scheduled vs. User-Initiated):
+
+            cp scripts/launchd/com.mitchell.career-ops.prewarm-top-n.plist \
+               ~/Library/LaunchAgents/
+            launchctl bootstrap gui/$(id -u) \
+                ~/Library/LaunchAgents/com.mitchell.career-ops.prewarm-top-n.plist
+
+        Enable after first --dry-run review:
+            launchctl enable gui/$(id -u)/com.mitchell.career-ops.prewarm-top-n
+
+        Kill switch:
+            launchctl setenv PREWARM_ENABLED false
+
+        First manual dry-run (before loading plist):
+            node scripts/agents/prewarm-top-n.mjs --dry-run --top 15
+    -->
+
+    <key>Label</key>
+    <string>com.mitchell.career-ops.prewarm-top-n</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>nohup /Users/mitchellwilliams/.nvm/versions/node/v24.14.0/bin/node /Users/mitchellwilliams/Documents/career-ops/scripts/agents/prewarm-top-n.mjs --top 15 &gt;&gt; /Users/mitchellwilliams/Library/Logs/career-ops/prewarm-top-n.out 2&gt;&gt; /Users/mitchellwilliams/Library/Logs/career-ops/prewarm-top-n.err &amp;</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/mitchellwilliams/Documents/career-ops</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <!-- CRITICAL — RunAtLoad=false prevents spurious boot-time execution -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- CRITICAL — KeepAlive=false prevents Tahoe rapid-respawn flapping bug -->
+    <key>KeepAlive</key>
+    <false/>
+
+    <!-- CRITICAL — allows nohup'd node child to outlive the bash wrapper -->
+    <key>AbandonProcessGroup</key>
+    <true/>
+
+    <!-- Log paths MUST live outside ~/Documents/ — macOS Tahoe TCC blocks
+         launchd from writing to log files under Documents (silent EX_CONFIG=78).
+         Pattern F / feedback_tahoe_sandbox_calendar_interval.md. Fixed 2026-05-22. -->
+    <key>StandardOutPath</key>
+    <string>/Users/mitchellwilliams/Library/Logs/career-ops/prewarm-top-n.out</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/mitchellwilliams/Library/Logs/career-ops/prewarm-top-n.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/mitchellwilliams/.nvm/versions/node/v24.14.0/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/mitchellwilliams</string>
+    </dict>
+</dict>
+</plist>

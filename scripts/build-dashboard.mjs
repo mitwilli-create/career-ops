@@ -361,6 +361,44 @@ function loadLastBatchSummary() {
   };
 }
 
+// ── PR-06 (2026-05-25) — Pre-warm status for drawer footer ────────
+// Reads data/prewarm-status/<today>.json produced by prewarm-top-n.mjs.
+// Returns a stable descriptor for window.__PREWARM_STATUS__ so the
+// drawer footer can show "Pre-warm: 13/15 ready (2 deferred · last run 04:30 PT)"
+// without any live fetches. Falls back to null when the file is absent
+// (first run before 04:30 PT, or day-0 before plist is enabled).
+function loadPrewarmStatus() {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const fp = join(ROOT, 'data', 'prewarm-status', today + '.json');
+    if (!existsSync(fp)) return null;
+    const raw = JSON.parse(readFileSync(fp, 'utf-8'));
+    // Compute ready / deferred counts for the summary line.
+    const rows = Array.isArray(raw.rows) ? raw.rows : [];
+    const ready = rows.filter(r => r.hm_fresh && r.il_fresh && r.th_fresh).length;
+    const deferred = rows.filter(r => r.deferred).length;
+    // Format last_run as HH:MM PT, e.g. "04:30 PT".
+    let lastRunStr = null;
+    if (raw.completed_at) {
+      try {
+        lastRunStr = new Date(raw.completed_at).toLocaleTimeString('en-US', {
+          hour: '2-digit', minute: '2-digit', hour12: false,
+          timeZone: 'America/Los_Angeles',
+        }) + ' PT';
+      } catch (_) { /* leave null */ }
+    }
+    return {
+      mode: raw.mode || 'daily',
+      ready,
+      total: rows.length,
+      deferred,
+      last_run: lastRunStr,
+      completed_at: raw.completed_at || null,
+      cost_usd: typeof raw.total_cost_usd === 'number' ? raw.total_cost_usd : null,
+    };
+  } catch (_) { return null; }
+}
+
 // ── Data extraction ───────────────────────────────────────────────
 
 function parseApplications() {
@@ -4092,6 +4130,8 @@ async function build() {
   const pipelineActivity = loadPipelineActivity();
   // 4.13 (2026-05-22) — last-batch reliability summary for the A7 strip.
   pipelineActivity.last_batch = loadLastBatchSummary();
+  // PR-06 (2026-05-25) — pre-warm status for drawer footer.
+  const prewarmStatus = loadPrewarmStatus();
   const today = new Date().toISOString().slice(0, 10);
   const generated = new Date().toISOString();
   const generatedShort = new Date(generated).toLocaleTimeString('en-US', {
@@ -11687,6 +11727,20 @@ async function build() {
   body.dark .drawer-artifact-link:hover { background: rgba(56,139,253,0.08); }
   .drawer-artifact-name { font-family: ui-monospace, monospace; font-size: 11.5px; }
   .drawer-artifact-size { color: var(--text-4); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+  /* PR-06 (2026-05-25): pre-warm status line at bottom of apply-now drawer body. */
+  .drawer-prewarm-footer {
+    margin-top: 10px; padding-top: 8px;
+    border-top: 1px dashed var(--border, #d0d7de);
+    font-size: 11px; color: var(--text-3);
+    display: flex; align-items: center; gap: 6px;
+    flex-wrap: wrap;
+  }
+  .drawer-prewarm-footer .prewarm-label {
+    font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+    font-size: 10px; color: var(--text-4);
+  }
+  .drawer-prewarm-footer .prewarm-detail { color: var(--text-3); }
+  .drawer-prewarm-footer .prewarm-deferred { color: var(--text-4); }
   /* Inventory #10 (2026-05-18): deeplink pulse for ?focus= targets.
      Brief glow so the user knows where the heartbeat link landed them. */
   .deeplink-target {
@@ -14074,6 +14128,10 @@ async function build() {
   //               ageDays: number|null, score: number }.
   // Computed at build time; client reads but never mutates.
   window.__DEEP_REFRESH_STALE_ROWS__ = ${_deepRefreshStaleJson};
+  // PR-06 (2026-05-25) — pre-warm status for the apply-now drawer footer.
+  // Null when no status file exists for today (not yet run, or day-0).
+  // Shape: { mode, ready, total, deferred, last_run, completed_at, cost_usd }
+  window.__PREWARM_STATUS__ = ${JSON.stringify(prewarmStatus)};
   </script>
 
   ${applyNow.length > 0 ? `
@@ -16119,6 +16177,33 @@ function openRightRailForDetail(idx, detailRow) {
       artifactMount.setAttribute('data-row-num', String(num));
       bodyEl.appendChild(artifactMount);
       _drawerLoadArtifactManifest(num, artifactMount);
+      // PR-06 (2026-05-25) — pre-warm status footer for apply-now drawer.
+      // Surfaces "Pre-warm: X/Y ready (N deferred · last run HH:MM PT)" so
+      // Mitchell can see at a glance whether popout caches are hot.
+      // Reads window.__PREWARM_STATUS__ (build-time bake from today's status file).
+      // tone-safe: no "failed/broken/missing/stale" language.
+      (function _renderPrewarmFooter() {
+        var ps = window.__PREWARM_STATUS__;
+        var footerEl = document.createElement('div');
+        footerEl.className = 'drawer-prewarm-footer';
+        if (!ps) {
+          footerEl.innerHTML =
+            '<span class="prewarm-label">Pre-warm</span>'
+            + '<span class="prewarm-detail">not yet run today</span>';
+        } else {
+          var readyStr = ps.ready + '/' + ps.total + ' ready';
+          var parts = [];
+          if (ps.deferred > 0) parts.push(ps.deferred + ' deferred');
+          if (ps.last_run) parts.push('last run ' + ps.last_run);
+          if (ps.mode === 'weekly') parts.push('weekly');
+          var detailStr = parts.length ? ' (' + parts.join(' \\u00b7 ') + ')' : '';
+          footerEl.innerHTML =
+            '<span class="prewarm-label">Pre-warm</span>'
+            + '<span class="prewarm-detail">' + readyStr + '</span>'
+            + (detailStr ? '<span class="prewarm-deferred">' + detailStr + '</span>' : '');
+        }
+        bodyEl.appendChild(footerEl);
+      })();
     }
 
     bodyEl.scrollTop = 0;

@@ -52,6 +52,11 @@ import { detectFunnelGap, renderFunnelNudge }                      from '../lib/
 import { scoreStaleness, renderStalenessBadge }                    from '../lib/staleness-nudge.mjs';
 import { computeToxicityComposite }                                from '../lib/toxicity-composite.mjs';
 import { snapshotForRender as _snapshotCredentials }               from '../lib/credentials.mjs';
+// PR-05 (apply-now UX overhaul, 2026-05-25) — cooldown banner cross-reference.
+// Replaces the hardcoded "Override if you have a recruiter ask or internal
+// referral" sentence with a grounded statement naming a warm contact (when one
+// exists in data/network-database.json) or honestly noting no warm coverage.
+import { resolveCooldownContext } from '../lib/cooldown-context.mjs';
 const parseYaml = yaml.load;
 
 // ── Phase 4.1 (2026-05-22 closure / P8) — credentials cache for chip + modal ──
@@ -4198,9 +4203,29 @@ async function build() {
       const endStr = cooldown.latestEnd.toISOString().slice(0, 10);
       const driver = cooldown.driverRejection;
       const priorWord = `${cooldown.totalCount} prior rejection${cooldown.totalCount === 1 ? '' : 's'}`;
+      // PR-05 (2026-05-25) — Replace the hardcoded "Override if you have a
+      // recruiter ask or internal referral" sentence with auto-cross-reference
+      // against hm-intel ∩ network-database. Per Mitchell's locked Q3 in
+      // .claude/audit/apply-now-ux-audit-2026-05-25/strategy-adjudicated.md
+      // §6 R28-R30: "Auto-cross-reference + replace text."
+      const _cSlugCd = String(r.company || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      const _rSlugCd = String(r.role    || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      let _coolText;
+      try {
+        const _cooldownCtx = resolveCooldownContext(
+          { slug: `${_cSlugCd}-${_rSlugCd}`, company: r.company, role: r.role },
+          { rootDir: ROOT },
+        );
+        _coolText = _cooldownCtx.replacement_text;
+      } catch (_e) {
+        // Fail-open: surfacing the cooldown banner is more important than the
+        // exact override copy. Keep the older neutral fallback if anything
+        // throws inside the resolver.
+        _coolText = 'No active recruiter touch in network — apply via portal.';
+      }
       r._throttle = {
         status: 'cooldown',
-        label: `🛑 Cooldown until ${endStr} — ${priorWord}. Override if you have a recruiter ask or internal referral.`,
+        label: `🛑 Cooldown until ${endStr} — ${priorWord}. ${_coolText}`,
         note: `Most recent rejection was for "${driver.role}" on ${driver.date} at the ${driver.stage.replace(/_/g, ' ')} stage. The rule: after 3+ rejections at the same stage with the same company, wait until the cooldown window clears before applying to a similar role. This cooldown clears on ${endStr}.`,
       };
     } else if (policy && active >= policy.cap) {

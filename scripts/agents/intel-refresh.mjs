@@ -102,28 +102,35 @@ async function refreshHmIntel(row, opts = {}) {
     emit({ slot: 'hm-intel', row: row.num, cache: 'hit', path: target });
     return { ok: true, cache: 'hit', path: target };
   }
-  // The existing hiring-manager-research.mjs script handles the full multi-LLM
-  // research pipeline. Shell out to it with --row so it writes the canonical
-  // cache file. We do NOT replicate its logic here — that script is the source
-  // of truth for hm-intel research.
-  // 2026-05-22 P4 fix: the canonical script was removed/renamed. If it's
-  // missing, gracefully skip this slot (cached data stays). Without this
-  // guard, the spawnSync exits 1 silently and the deep refresh appears to
-  // "succeed" while doing nothing for hm-intel. Surface the missing-script
-  // condition explicitly so the caller can decide whether to rebuild it.
-  const scriptPath = join(ROOT, 'scripts', 'hiring-manager-research.mjs');
+  // Routing (2026-05-25 full-spec restoration):
+  //   - When called with mode === 'deep-council-7' OR opts.deep === true
+  //     (the dashboard's "Deep refresh" modal sets this), shell out to the
+  //     real full-spec agent at scripts/hiring-manager-research.mjs.
+  //   - Otherwise (nightly --all, mini refreshes), fall through to
+  //     scripts/populate-hm-intel-mini.mjs which is cheaper (~$0.10/row).
+  // The full-spec script enforces $50/row hard cap + $1000/month hard
+  // refusal independently — intel-refresh does not need to repeat budget
+  // logic.
+  const deep = opts.deep === true || opts.mode === 'deep-council-7';
+  const fullSpecPath = join(ROOT, 'scripts', 'hiring-manager-research.mjs');
+  const miniPath     = join(ROOT, 'scripts', 'populate-hm-intel-mini.mjs');
+  const scriptPath   = deep ? fullSpecPath : miniPath;
+
   if (!existsSync(scriptPath)) {
     emit({ slot: 'hm-intel', row: row.num, step: 'skipped-missing-script', script: scriptPath });
     const hasCache = existsSync(target);
     return { ok: hasCache, cache: hasCache ? 'kept_due_to_missing_script' : 'no_cache_and_no_script', path: target, missing_script: true };
   }
-  emit({ slot: 'hm-intel', row: row.num, step: 'starting-research', no_skip_deep: true });
+
+  emit({ slot: 'hm-intel', row: row.num, step: 'starting-research', mode: deep ? 'deep-council-7' : 'mini', script: scriptPath });
   const { spawnSync } = await import('child_process');
-  const args = [scriptPath, '--role', String(row.num), '--no-skip-deep'];
-  const result = spawnSync('node', args, { cwd: ROOT, stdio: 'inherit', env: process.env, timeout: 1200_000 });
+  const args = deep
+    ? [scriptPath, '--row', String(row.num), ...(opts.force ? ['--force'] : [])]
+    : [scriptPath, '--rows', String(row.num)];
+  const result = spawnSync('node', args, { cwd: ROOT, stdio: 'inherit', env: process.env, timeout: 1500_000 });
   const ok = result.status === 0;
-  emit({ slot: 'hm-intel', row: row.num, step: 'research-done', exit_code: result.status, path: target });
-  return { ok, exit_code: result.status, path: target };
+  emit({ slot: 'hm-intel', row: row.num, step: 'research-done', exit_code: result.status, path: target, mode: deep ? 'deep-council-7' : 'mini' });
+  return { ok, exit_code: result.status, path: target, mode: deep ? 'deep-council-7' : 'mini' };
 }
 
 /* -------- SLOT 2: toxicity composite -------- */
@@ -564,12 +571,17 @@ async function cliMain() {
   const all = flag('--all');
   const force = flag('--force');
   const slotsArg = arg('--slots', 'all');
+  // --mode deep-council-7  ⇒  hm-intel slot routes to the full-spec
+  // scripts/hiring-manager-research.mjs (council-of-7 + dealbreaker)
+  // instead of the cheap mini script. The dashboard's "Deep refresh"
+  // modal POSTs to /api/refresh-deep which sets this mode.
+  const mode = arg('--mode', null);
   const slots = slotsArg.split(',').map(s => s.trim()).filter(Boolean);
   if (!all && !row) {
     process.stderr.write('Usage: node scripts/agents/intel-refresh.mjs --row <N>  OR  --all\n');
     process.exit(2);
   }
-  const out = await runIntelRefresh({ row, all, slots, opts: { force } });
+  const out = await runIntelRefresh({ row, all, slots, opts: { force, mode, deep: mode === 'deep-council-7' } });
   process.stdout.write(JSON.stringify(out, null, 2) + '\n');
   process.exit(out.ok ? 0 : 1);
 }

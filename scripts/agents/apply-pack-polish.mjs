@@ -401,41 +401,36 @@ export async function runPolishPack(opts = {}) {
         continue;
       }
 
-      // Cost-warn-orchestrator force-abandon (2026-05-24). Once cumulative
-      // pack cost crosses the warn threshold, all NOT-YET-STARTED artifacts
-      // get abandoned without polish. Distinguished from cost-cap by:
-      // (a) it's a SOFT $5 threshold vs the $500 hard cap, (b) it leaves
-      // already-running artifacts to finish, (c) it sets early_abandoned:
-      // true so polish-status-loader's ⏸ icon surfaces in the dashboard.
-      if (cumulativeCost >= costWarnUsd) {
-        if (!costWarnOrchestratorFired) {
-          costWarnOrchestratorFired = true;
-          emitProgress({
-            phase: 'phase-2',
-            warning: 'cost-warn-threshold-crossed',
-            cumulative_cost_usd: +cumulativeCost.toFixed(4),
-            threshold_usd: costWarnUsd,
-            will_force_abandon_remaining: true,
-          });
-        }
-        emitProgress({ phase: 'phase-2', artifact: conf.kind, skipped: 'cost-warn-force-abandon', cumulative_cost_usd: +cumulativeCost.toFixed(4) });
-        perArtifact[conf.kind] = {
-          confidence: 0,
-          rounds_used: 0,
-          total_rounds_across_outer: 0,
-          adversarial_findings: [],
-          cost_usd: 0,
-          duration_ms: 0,
-          converged: false,
-          early_abandoned: true,
-          abandoned: true,
-          abandon_reason: 'cost-warn-threshold',
-          confidence_history: [],
-          error: null,
-          trace_path: null,
-        };
-        writeSummaryToDisk();
-        continue;
+      // Cost-warn informational only (was force-abandon 2026-05-24 PR #194;
+      // converted to informational 2026-05-25 per bug-2026-05-25-022). Once
+      // cumulative pack cost crosses the warn threshold, emit ONE warning
+      // progress event for the dashboard, then continue processing remaining
+      // artifacts normally.
+      //
+      // Rationale for removing the force-abandon: the previous behavior
+      // (abandon all NOT-YET-STARTED artifacts) destroyed every apply pack
+      // whose natural polish cost exceeded $5 — typical for a 6-artifact pack
+      // at the 0.99 max-quality target where each artifact runs ~$1-3. Net
+      // effect was $5 spent producing zero shippable artifacts on every run.
+      //
+      // The real runaway guards remain in place:
+      //   - Per-artifact: POLISH_MAX_ROUNDS=6 caps any single artifact at
+      //     ~6 × $0.50 = $3 worst-case.
+      //   - Per-pack: cumulativeCost >= costCap ($500) check above (line 397)
+      //     still aborts a genuine runaway before this point is reached.
+      //
+      // The dashboard's polish-status widget still surfaces the warning via
+      // the emitProgress event below; the difference is the apply pipeline
+      // is no longer killed by it.
+      if (cumulativeCost >= costWarnUsd && !costWarnOrchestratorFired) {
+        costWarnOrchestratorFired = true;
+        emitProgress({
+          phase: 'phase-2',
+          warning: 'cost-warn-threshold-crossed',
+          cumulative_cost_usd: +cumulativeCost.toFixed(4),
+          threshold_usd: costWarnUsd,
+          will_force_abandon_remaining: false,
+        });
       }
 
       let srcText = readArtifactSrc(packInfo.slug, conf);

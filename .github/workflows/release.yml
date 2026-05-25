@@ -1,7 +1,20 @@
 name: Release Please
+# 2026-05-24: switched from `push: branches [main]` to `workflow_dispatch` only.
+# Background: release-please-action@v4 was hitting GITHUB_TOKEN installation
+# rate limits on every push because its commit-scan anchor was missing (manifest
+# version 1.8.0 had no matching GitHub Release entry the action could find;
+# package-name + tag-component config also mismatched). Three attempted config
+# fixes did not stop the backfill. Manual-trigger keeps the option to cut a
+# release on demand without auto-firing on every push.
+#
+# To cut a release: Actions tab → Release Please → Run workflow → main
+# Or via CLI: gh workflow run release.yml --repo mitwilli-create/career-ops --ref main
+#
+# To re-enable auto-firing later: restore the `push: branches: [main]` block
+# below. Before doing so, fix the underlying anchor mismatch — either set
+# `include-component-in-tag: false` in release-please-config.json or rename
+# tags to `career-ops-v<version>` to match the configured package-name.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -16,8 +29,3 @@ jobs:
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
-          # Anchor the commit scan at the manifest-sync-to-1.8.0 commit so
-          # release-please does not backfill the whole history searching for
-          # the missing v1.7.0/v1.8.0 tags. Without this anchor the action
-          # exhausts the GITHUB_TOKEN's installation rate limit on every push.
-          last-release-sha: b8306362c875b32a674de7ece2593ff629d829d2

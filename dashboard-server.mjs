@@ -9220,7 +9220,11 @@ async function generatePack(){
       // intel-refresh's CLI parser ignores unknown flags safely.
       const args = [join(ROOT, 'scripts/agents/intel-refresh.mjs'), '--row', String(rowId), '--slots', 'all', '--force', '--mode', 'deep-council-7'];
       const { jobId, logPath } = _alphaSpawn({ kind: 'refresh-deep', args });
-      return json({ ok: true, jobId, log_path: logPath, stream_url: `/api/refresh-deep-stream/${jobId}`, projected_cost_usd: 50, council_size: 7, slots: 'all' });
+      // 2026-05-25: projected_cost_usd bumped 50 → 105 to reflect companion-agent slots
+      // wired into intel-refresh.mjs (PR #216). Breakdown: 7 internal slots ~$50 +
+      // hm-chance --max-cost-usd 30 + interview-likelihood --max-cost-usd 25. The
+      // modal text shows "$25-$105" instead of "$25-$50" so users aren't surprised.
+      return json({ ok: true, jobId, log_path: logPath, stream_url: `/api/refresh-deep-stream/${jobId}`, projected_cost_usd: 105, council_size: 7, slots: 'all' });
     });
     return;
   }

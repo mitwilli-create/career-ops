@@ -3546,12 +3546,12 @@ function renderRow(r, idx) {
         ? 'never'
         : fr.ageDays >= 1 ? Math.round(fr.ageDays) + 'd' : '<1d';
       const tip = fr.status === 'stale'
-        ? 'Intel ' + ageLabel + ' old (past 14d ceiling) — click for a 7-slot deep refresh ($25-$50)'
+        ? 'Intel ' + ageLabel + ' old (past 14d ceiling) — click for a 7-slot deep refresh ($25-$105)'
         : fr.status === 'cooling'
-          ? 'Intel ' + ageLabel + ' old (approaching 14d) — click for a 7-slot deep refresh ($25-$50)'
+          ? 'Intel ' + ageLabel + ' old (approaching 14d) — click for a 7-slot deep refresh ($25-$105)'
           : fr.status === 'missing'
-            ? 'No hm-intel cache for this row — click for the first 7-slot deep refresh ($25-$50)'
-            : 'Intel ' + ageLabel + ' old (fresh) — click for a 7-slot deep refresh ($25-$50)';
+            ? 'No hm-intel cache for this row — click for the first 7-slot deep refresh ($25-$105)'
+            : 'Intel ' + ageLabel + ' old (fresh) — click for a 7-slot deep refresh ($25-$105)';
       const num = htmlEscape(String(r.num || ''));
       const company = htmlEscape(r.company || '');
       const role = htmlEscape(r.role || '');
@@ -3752,7 +3752,7 @@ function renderRow(r, idx) {
       })()}
       <div class="drawer-slash-cmds" style="display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
         <!-- refresh-master Phase 3 deliverable 6: ↻ Deep refresh CTA. Fires
-             full council-7 Layer-3 research. Confirm modal shows ~$25-$50 cost.
+             full council-7 Layer-3 research. Confirm modal shows ~$25-$105 cost.
              Closure 3.16 (2026-05-22): full-width horizontal bar per spec.
              Phase 4.2 (2026-05-23): label now honest — names the 7 slots
              /api/refresh-deep actually fires (--slots all). -->
@@ -31568,7 +31568,7 @@ window.invokeBuildPackStage = invokeBuildPackStage;
 // ── refresh-master Phase 3 deliverable 6: ↻ Deep refresh CTA ──
 // 2026-05-24 rewrite: native window.confirm() replaced with the rich
 // #deep-refresh-modal (per-row + bulk variants). Same backend endpoint
-// (POST /api/refresh-deep, 7-slot council=7 research, ~$25-$50 per row).
+// (POST /api/refresh-deep, 7-slot council=7 research, ~$25-$105 per row).
 //
 // The drawer button kept its 'invokeDeepRefresh' name for backward compat
 // — it now just opens the per-row modal. The per-row + bulk modals are
@@ -31740,7 +31740,7 @@ function openBulkDeepRefreshModal() {
     +   rowsHtml
     + '</div>'
     + '<div class="drm-budget"><span class="drm-budget-label">Selected · projected cost</span><span class="drm-budget-val" id="drm-bulk-cost">$0-$0</span></div>'
-    + '<div class="drm-warn"><strong>This will fire sequentially.</strong> Each row takes 3-8 min + costs $25-$50. The modal stays open + reports per-row status as each one completes. You can close the modal to detach — the jobs keep running on the server.</div>'
+    + '<div class="drm-warn"><strong>This will fire sequentially.</strong> Each row takes 3-8 min + costs $25-$105. The modal stays open + reports per-row status as each one completes. You can close the modal to detach — the jobs keep running on the server.</div>'
     + '<div class="drm-section" id="deep-refresh-status-region" hidden style="margin-top:14px">'
     +   '<h4>Status</h4>'
     +   '<div id="deep-refresh-status-msg"></div>'

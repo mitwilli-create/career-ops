@@ -69,9 +69,9 @@ DO NOT exit success after step 3. Workers that hit weekly-limit or auth-timeout 
 
 Your worktree (`isolation: "worktree"`) is isolated. STAY THERE.
 
-- DO NOT `cd /Users/mitchellwilliams/Documents/career-ops` — the main repo may be checked out on a sibling instance's branch. `cd` prefixes silently move you out of isolation, landing commits on whatever sibling branch is currently checked out.
-- DO NOT `cd /Users/mitchellwilliams/Documents/career-ops/.claude/worktrees/<other-agent-worktree>` either — same risk.
-- Use absolute paths for any file ops: `Read /Users/.../career-ops/.claude/worktrees/<your-id>/foo.mjs` not `Read .claude/worktrees/<your-id>/foo.mjs`.
+- DO NOT `cd ~/Documents/career-ops` — the main repo may be checked out on a sibling instance's branch. `cd` prefixes silently move you out of isolation, landing commits on whatever sibling branch is currently checked out.
+- DO NOT `cd ~/Documents/career-ops/.claude/worktrees/<other-agent-worktree>` either — same risk.
+- Use absolute paths for any file ops: `Read ~/Documents/career-ops/.claude/worktrees/<your-id>/foo.mjs` not `Read .claude/worktrees/<your-id>/foo.mjs`.
 - If you need a gitignored file from main (`cv.md`, `data/hm-intel/*.json`, `apply-pack/*`): symlink it into your worktree at start, `ln -sfn <main-repo>/<path> <your-worktree>/<path>`. Never `cd` to read it.
 
 ## Standard exit shape

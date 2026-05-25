@@ -219,13 +219,37 @@ export async function runPolishPack(opts = {}) {
   const envCap = Number(process.env.POLISH_COST_CAP_USD);
   const costCap = Number.isFinite(opts.costCap) ? opts.costCap : (Number.isFinite(envCap) ? envCap : 500);
   const noCache = opts.noCache === true;
-  const maxRounds = opts.maxRoundsPerArtifact ?? 6;
+  const maxRounds = opts.maxRoundsPerArtifact ?? Number(process.env.POLISH_MAX_ROUNDS) ?? 6;
+
+  // Cost-warn threshold (2026-05-24). Per-artifact: lib/polish-loop.mjs logs
+  // an NDJSON WARN every round once total artifact cost crosses the
+  // threshold. Per-pack (here): force-abandon any artifacts that have not
+  // started yet when cumulative pack cost crosses the threshold. Default $5.
+  // Override via POLISH_COST_WARN_USD env or opts.costWarnUsd.
+  const _envCostWarn = parseFloat(process.env.POLISH_COST_WARN_USD || '');
+  const costWarnUsd = Number.isFinite(opts.costWarnUsd) && opts.costWarnUsd > 0
+    ? opts.costWarnUsd
+    : (Number.isFinite(_envCostWarn) && _envCostWarn > 0 ? _envCostWarn : 5);
+
+  // Dependency-injection hooks (2026-05-24) for testing. Each falls through
+  // to the imported function when opts.<fn> is not a function. The unit
+  // test at tests/polish-orchestrator-summary.test.mjs uses these to verify
+  // the incremental-summary-write path without hitting any LLM API. The
+  // subprocess SIGTERM test at tests/polish-sigterm-e2e.test.mjs uses them
+  // to keep the spawned process slow + deterministic so the parent can
+  // send SIGTERM during a known phase.
+  const _harvestPolishSignals = typeof opts.harvestPolishSignals === 'function' ? opts.harvestPolishSignals : harvestPolishSignals;
+  const _polishArtifact = typeof opts.polishArtifact === 'function' ? opts.polishArtifact : polishArtifact;
+  const _checkPackCoherence = typeof opts.checkPackCoherence === 'function' ? opts.checkPackCoherence : checkPackCoherence;
 
   let packInfo;
-  if (opts.row) {
+  // packInfoOverride lets the test skip the apply-now-queue.json lookup +
+  // pass a synthetic pack descriptor pointing at a temp dir.
+  if (opts.packInfoOverride && typeof opts.packInfoOverride === 'object') {
+    packInfo = opts.packInfoOverride;
+  } else if (opts.row) {
     packInfo = findPackByRow(opts.row);
     if (!packInfo) {
-      // Fallback to slug-fragment discovery if apply-now-queue is missing the row
       const padded = String(opts.row).padStart(3, '0');
       const discovered = discoverPackBySlugLike(padded);
       if (discovered) packInfo = { ...discovered, rowId: Number(opts.row) };
@@ -236,16 +260,13 @@ export async function runPolishPack(opts = {}) {
   }
   if (!packInfo) return { status: 'error', error: `pack not found for row=${opts.row} slug=${opts.slugFragment}`, duration_ms: Date.now() - t0 };
 
-  emitProgress({ phase: 'init', pack: packInfo.slug, artifacts, target_confidence: target, cost_cap_usd: costCap });
+  emitProgress({ phase: 'init', pack: packInfo.slug, artifacts, target_confidence: target, cost_cap_usd: costCap, cost_warn_usd: costWarnUsd, max_rounds_per_artifact: maxRounds });
 
   const dataDir = join(ROOT, 'data', 'apply-packs', packInfo.slug);
   mkdirSync(dataDir, { recursive: true });
+  const summaryPath = join(dataDir, 'polish-orchestrator-summary.json');
 
   // ── Cost trace (Mitchell decision α.2) ─────────────────────────────────────
-  // initCostTrace returns an opts.onCostRecord callback. Pass it through every
-  // callCouncil invocation (directly and via harvestPolishSignals / polishArtifact)
-  // so per-call cost is logged to data/polish-cost-trace-<date>.json.
-  // The callback is best-effort — a trace write failure never blocks polish.
   const onCostRecord = initCostTrace('apply-pack-polish', ROOT);
 
   const jdText = readJdText(packInfo.slug);
@@ -254,178 +275,312 @@ export async function runPolishPack(opts = {}) {
   const articleDigest = existsSync(join(ROOT, 'article-digest.md')) ? readFileSync(join(ROOT, 'article-digest.md'), 'utf-8') : '';
   const voiceBrief = existsSync(join(ROOT, 'data', 'voice-reference-brief.md')) ? readFileSync(join(ROOT, 'data', 'voice-reference-brief.md'), 'utf-8') : '';
 
-  /* ---------- PHASE 1 — signal harvest ---------- */
-  emitProgress({ phase: 'phase-1', step: 'harvesting-signals', pack: packInfo.slug });
-  const signals = await harvestPolishSignals({
-    slug: packInfo.slug,
-    company: packInfo.company,
-    role: packInfo.role,
-    jdText,
-    opts: { refresh: noCache, costCap: 40, onCostRecord, phase: 'phase-1' },
-  });
-  emitProgress({ phase: 'phase-1', step: 'signals-ready', priorities: signals.hiring_manager_priorities?.length || 0, pruned: signals.dealbreaker_pruned?.length || 0, cost_usd: signals.meta?.cost_usd ?? 0, cache: signals.meta?.cache });
-  try { recordRun({ agent: 'apply-pack-polish', stage: 'phase-1-signals', costUsd: signals.meta?.cost_usd ?? 0, status: 'success' }); } catch {}
-
-  /* ---------- PHASE 2 — per-artifact polish loop ---------- */
+  // ── Summary state + writer (2026-05-24 — convergence-runaway fix) ────────
+  // Refactor: write polish-orchestrator-summary.json INCREMENTALLY after
+  // every artifact, on SIGTERM/SIGINT, and on uncaught exception. The
+  // previous design wrote the file only at the very end, so a killed
+  // process — like PID 45655 at 82 min after spending $8.27 on row #48 —
+  // left no orchestrator record and polish-status-loader treated the row
+  // as "never polished" even after the spend was real.
+  //
+  // The summary always includes a `coherence` block (real one from Phase 3
+  // when available; stub otherwise) so polish-status-loader can read it.
+  // `partial: true` flags the summary as written before Phase 3 ran.
   const perArtifact = {};
-  let cumulativeCost = signals.meta?.cost_usd || 0;
-  for (const key of artifacts) {
-    const conf = ARTIFACT_MAP[key];
-    if (!conf) {
-      emitProgress({ phase: 'phase-2', artifact: key, error: 'unknown artifact key' });
-      continue;
-    }
+  let signals = null;
+  let cumulativeCost = 0;
+  let coherence = null;
+  let costWarnOrchestratorFired = false;
 
-    if (cumulativeCost >= costCap) {
-      emitProgress({ phase: 'phase-2', artifact: key, skipped: 'cost-cap-reached', cumulative: cumulativeCost });
-      perArtifact[conf.kind] = { confidence: 0, rounds_used: 0, error: 'cost-cap-reached-before-artifact', skipped: true };
-      continue;
-    }
-
-    let srcText = readArtifactSrc(packInfo.slug, conf);
-    if (!srcText && ['impact-doc', 'references', 'referrals'].includes(conf.kind)) {
-      emitProgress({ phase: 'phase-2', artifact: conf.kind, step: 'generating-from-scratch' });
-      srcText = await generateIfMissing({ kind: conf.kind, packSlug: packInfo.slug, dataDir, packInfo, hmIntel, jdText });
-      if (srcText) {
-        // Also write to apply-pack/<slug>/ so downstream consumers find it
-        try {
-          const dest = join(ROOT, 'apply-pack', packInfo.slug, conf.srcFile);
-          mkdirSync(dirname(dest), { recursive: true });
-          writeFileSync(dest, srcText, 'utf-8');
-        } catch (e) {
-          emitProgress({ phase: 'phase-2', artifact: conf.kind, warning: `failed to mirror to apply-pack: ${String(e.message || e)}` });
-        }
-      }
-    }
-    if (!srcText) {
-      emitProgress({ phase: 'phase-2', artifact: conf.kind, error: 'no-source-and-no-generator' });
-      perArtifact[conf.kind] = { confidence: 0, rounds_used: 0, error: 'no-source-text' };
-      continue;
-    }
-
-    emitProgress({ phase: 'phase-2', artifact: conf.kind, step: 'polish-loop-start', src_len: srcText.length });
-
-    const tracePath = join(dataDir, `polish-trace-${conf.kind}.md`);
-    let polish;
-    try {
-      polish = await polishArtifact({
-        artifactKind: conf.kind,
-        artifactText: srcText,
-        signals,
-        cvText, articleDigest, voiceBrief,
-        opts: {
-          targetConfidence: target,
-          maxRounds,
-          outerRetries: 3,
-          costCap: Math.max(10, Math.min(120, (costCap - cumulativeCost) / Math.max(artifacts.length - Object.keys(perArtifact).length, 1))),
-          tracePath,
-          onCostRecord,                 // Mitchell decision α.2 — pass cost trace callback
-          phase: 'phase-2',
-          artifactSlug: conf.kind,
-          // Early-abandonment knobs (added 2026-05-19, conservative defaults)
-          earlyAbandonDisabled: opts.earlyAbandonDisabled === true,
-          earlyAbandonAfterRound: opts.earlyAbandonAfterRound,
-          earlyAbandonMaxConfidence: opts.earlyAbandonMaxConfidence,
-          earlyAbandonMinDelta: opts.earlyAbandonMinDelta,
-          onSignalsRefresh: async () => {
-            const refreshed = await harvestPolishSignals({
-              slug: packInfo.slug,
-              company: packInfo.company,
-              role: packInfo.role,
-              jdText,
-              opts: { refresh: true, costCap: 50, onCostRecord, phase: 'phase-2-refresh' },
-            });
-            return refreshed;
-          },
-        },
-      });
-    } catch (e) {
-      polish = { confidence: 0, rounds_used: 0, error: String(e.message || e), final_artifact_text: srcText, adversarial_findings: [], cost_usd: 0 };
-    }
-
-    // Write polished artifact back to BOTH locations: data/apply-packs/<slug>/<dataFile>.md (canonical agent output)
-    // and apply-pack/<slug>/<srcFile>.md (consumer-facing). Mirror so renderer + dashboard see polish.
-    try {
-      writeFileSync(join(dataDir, conf.dataFile), polish.final_artifact_text || srcText, 'utf-8');
-      // Mirror to consumer location ONLY if confidence ≥ target — don't overwrite
-      // a human-reviewed artifact with a non-converged polish attempt
-      if (polish.confidence >= target) {
-        const dest = join(ROOT, 'apply-pack', packInfo.slug, conf.srcFile);
-        if (existsSync(dirname(dest))) writeFileSync(dest, polish.final_artifact_text || srcText, 'utf-8');
-      }
-    } catch (e) {
-      emitProgress({ phase: 'phase-2', artifact: conf.kind, warning: `failed to write polished artifact: ${String(e.message || e)}` });
-    }
-
-    cumulativeCost += polish.cost_usd || 0;
-    perArtifact[conf.kind] = {
-      confidence: polish.confidence,
-      rounds_used: polish.rounds_used,
-      adversarial_findings: polish.adversarial_findings || [],
-      cost_usd: polish.cost_usd || 0,
-      duration_ms: polish.duration_ms || 0,
-      converged: polish.converged === true,
-      early_abandoned: polish.early_abandoned === true,
-      confidence_history: polish.confidence_history || [],
-      error: polish.error || null,
-      trace_path: tracePath.replace(ROOT + '/', ''),
-    };
-    emitProgress({
-      phase: 'phase-2', artifact: conf.kind, step: 'polish-loop-done',
-      confidence: polish.confidence,
-      converged: polish.converged === true,
-      early_abandoned: polish.early_abandoned === true,
-      rounds: polish.rounds_used,
-      adversarial: (polish.adversarial_findings || []).length,
-      cost_usd: polish.cost_usd || 0,
-      cumulative_cost_usd: cumulativeCost,
-    });
-  }
-
-  /* ---------- PHASE 3 — cross-artifact coherence ---------- */
-  emitProgress({ phase: 'phase-3', step: 'coherence-checks-start', pack: packInfo.slug });
-  let coherence;
-  try {
-    coherence = await checkPackCoherence({
-      packSlug: packInfo.slug,
-      dataPackDir: dataDir,
-      perArtifact,
-      opts: { targetConfidence: target },
-    });
-  } catch (e) {
-    coherence = {
+  function buildSummary({ abortReason = null, errorReason = null } = {}) {
+    const isPartial = !coherence;
+    const fallbackCoherence = {
       final_recommendation: 'NEEDS_HUMAN',
-      blocking_issues: [{ scope: 'pack', finding: `coherence error: ${String(e.message || e)}`, severity: 'caution' }],
+      blocking_issues: [
+        ...(abortReason ? [{ scope: 'orchestrator', finding: `orchestrator aborted: ${abortReason}`, severity: 'caution' }] : []),
+        ...(errorReason ? [{ scope: 'orchestrator', finding: `orchestrator error: ${errorReason}`, severity: 'caution' }] : []),
+        ...(isPartial && !abortReason && !errorReason ? [{ scope: 'orchestrator', finding: 'phase-3 not yet run', severity: 'info' }] : []),
+      ],
       per_artifact_confidence: Object.fromEntries(Object.entries(perArtifact).map(([k, v]) => [k, v.confidence || 0])),
       cross_coherence: {},
-      diff_narrative: 'coherence layer failed',
-      meta: { error: String(e.message || e) },
+      diff_narrative: abortReason
+        ? `Orchestrator aborted before coherence pass: ${abortReason}`
+        : errorReason
+          ? `Orchestrator threw before coherence pass: ${errorReason}`
+          : 'Phase 3 (coherence) not yet run',
+      meta: {
+        generated_at: new Date().toISOString(),
+        partial: true,
+        abort_reason: abortReason,
+        error: errorReason,
+      },
+    };
+    const finalCoherence = coherence || fallbackCoherence;
+    return {
+      ok: !abortReason && !errorReason,
+      pack_slug: packInfo.slug,
+      row_id: packInfo.rowId,
+      company: packInfo.company,
+      role: packInfo.role,
+      target_confidence: target,
+      cost_cap_usd: costCap,
+      cost_warn_usd: costWarnUsd,
+      max_rounds_per_artifact: maxRounds,
+      total_cost_usd: Math.round(cumulativeCost * 10000) / 10000,
+      duration_ms: Date.now() - t0,
+      artifacts: perArtifact,
+      coherence: finalCoherence,
+      signals_meta: signals?.meta || null,
+      final_recommendation: finalCoherence.final_recommendation,
+      partial: isPartial,
+      abort_reason: abortReason,
+      error: errorReason,
     };
   }
-  emitProgress({ phase: 'phase-3', step: 'coherence-done', final_recommendation: coherence.final_recommendation, blocking: coherence.blocking_issues?.length || 0 });
 
-  const summary = {
-    ok: true,
-    pack_slug: packInfo.slug,
-    row_id: packInfo.rowId,
-    company: packInfo.company,
-    role: packInfo.role,
-    target_confidence: target,
-    cost_cap_usd: costCap,
-    total_cost_usd: Math.round(cumulativeCost * 10000) / 10000,
-    duration_ms: Date.now() - t0,
-    artifacts: perArtifact,
-    coherence,
-    signals_meta: signals.meta || null,
-    final_recommendation: coherence.final_recommendation,
+  function writeSummaryToDisk(extras = {}) {
+    try {
+      const s = buildSummary(extras);
+      writeFileSync(summaryPath, JSON.stringify(s, null, 2), 'utf-8');
+      return s;
+    } catch (e) {
+      try { emitProgress({ phase: 'summary-write-error', error: String(e.message || e) }); } catch { /* */ }
+      return null;
+    }
+  }
+
+  // Signal handlers — flush partial summary on SIGTERM/SIGINT then exit.
+  // Default to install since every current invocation is a subprocess
+  // (CLI or dashboard spawn). Opt out via opts.installSignalHandlers ===
+  // false (used by smoke tests that don't want the handlers attached to
+  // the test process).
+  const sigtermH = () => {
+    try { writeSummaryToDisk({ abortReason: 'SIGTERM' }); } catch { /* */ }
+    try { emitProgress({ phase: 'shutdown', signal: 'SIGTERM', summary_path: summaryPath.replace(ROOT + '/', '') }); } catch { /* */ }
+    process.exit(143);
   };
+  const sigintH = () => {
+    try { writeSummaryToDisk({ abortReason: 'SIGINT' }); } catch { /* */ }
+    try { emitProgress({ phase: 'shutdown', signal: 'SIGINT', summary_path: summaryPath.replace(ROOT + '/', '') }); } catch { /* */ }
+    process.exit(130);
+  };
+  let signalsInstalled = false;
+  if (opts.installSignalHandlers !== false) {
+    process.on('SIGTERM', sigtermH);
+    process.on('SIGINT', sigintH);
+    signalsInstalled = true;
+  }
 
-  // Persist the orchestrator-level summary alongside polish-summary.md
   try {
-    writeFileSync(join(dataDir, 'polish-orchestrator-summary.json'), JSON.stringify(summary, null, 2), 'utf-8');
-  } catch { /* */ }
+    /* ---------- PHASE 1 — signal harvest ---------- */
+    emitProgress({ phase: 'phase-1', step: 'harvesting-signals', pack: packInfo.slug });
+    signals = await _harvestPolishSignals({
+      slug: packInfo.slug,
+      company: packInfo.company,
+      role: packInfo.role,
+      jdText,
+      opts: { refresh: noCache, costCap: 40, onCostRecord, phase: 'phase-1' },
+    });
+    emitProgress({ phase: 'phase-1', step: 'signals-ready', priorities: signals.hiring_manager_priorities?.length || 0, pruned: signals.dealbreaker_pruned?.length || 0, cost_usd: signals.meta?.cost_usd ?? 0, cache: signals.meta?.cache });
+    try { recordRun({ agent: 'apply-pack-polish', stage: 'phase-1-signals', costUsd: signals.meta?.cost_usd ?? 0, status: 'success' }); } catch {}
+    cumulativeCost = signals.meta?.cost_usd || 0;
+    writeSummaryToDisk(); // incremental save after Phase 1
 
-  return summary;
+    /* ---------- PHASE 2 — per-artifact polish loop ---------- */
+    for (const key of artifacts) {
+      const conf = ARTIFACT_MAP[key];
+      if (!conf) {
+        emitProgress({ phase: 'phase-2', artifact: key, error: 'unknown artifact key' });
+        continue;
+      }
+
+      if (cumulativeCost >= costCap) {
+        emitProgress({ phase: 'phase-2', artifact: key, skipped: 'cost-cap-reached', cumulative: cumulativeCost });
+        perArtifact[conf.kind] = { confidence: 0, rounds_used: 0, error: 'cost-cap-reached-before-artifact', skipped: true };
+        writeSummaryToDisk();
+        continue;
+      }
+
+      // Cost-warn-orchestrator force-abandon (2026-05-24). Once cumulative
+      // pack cost crosses the warn threshold, all NOT-YET-STARTED artifacts
+      // get abandoned without polish. Distinguished from cost-cap by:
+      // (a) it's a SOFT $5 threshold vs the $500 hard cap, (b) it leaves
+      // already-running artifacts to finish, (c) it sets early_abandoned:
+      // true so polish-status-loader's ⏸ icon surfaces in the dashboard.
+      if (cumulativeCost >= costWarnUsd) {
+        if (!costWarnOrchestratorFired) {
+          costWarnOrchestratorFired = true;
+          emitProgress({
+            phase: 'phase-2',
+            warning: 'cost-warn-threshold-crossed',
+            cumulative_cost_usd: +cumulativeCost.toFixed(4),
+            threshold_usd: costWarnUsd,
+            will_force_abandon_remaining: true,
+          });
+        }
+        emitProgress({ phase: 'phase-2', artifact: conf.kind, skipped: 'cost-warn-force-abandon', cumulative_cost_usd: +cumulativeCost.toFixed(4) });
+        perArtifact[conf.kind] = {
+          confidence: 0,
+          rounds_used: 0,
+          total_rounds_across_outer: 0,
+          adversarial_findings: [],
+          cost_usd: 0,
+          duration_ms: 0,
+          converged: false,
+          early_abandoned: true,
+          abandoned: true,
+          abandon_reason: 'cost-warn-threshold',
+          confidence_history: [],
+          error: null,
+          trace_path: null,
+        };
+        writeSummaryToDisk();
+        continue;
+      }
+
+      let srcText = readArtifactSrc(packInfo.slug, conf);
+      if (!srcText && ['impact-doc', 'references', 'referrals'].includes(conf.kind)) {
+        emitProgress({ phase: 'phase-2', artifact: conf.kind, step: 'generating-from-scratch' });
+        srcText = await generateIfMissing({ kind: conf.kind, packSlug: packInfo.slug, dataDir, packInfo, hmIntel, jdText });
+        if (srcText) {
+          try {
+            const dest = join(ROOT, 'apply-pack', packInfo.slug, conf.srcFile);
+            mkdirSync(dirname(dest), { recursive: true });
+            writeFileSync(dest, srcText, 'utf-8');
+          } catch (e) {
+            emitProgress({ phase: 'phase-2', artifact: conf.kind, warning: `failed to mirror to apply-pack: ${String(e.message || e)}` });
+          }
+        }
+      }
+      if (!srcText) {
+        emitProgress({ phase: 'phase-2', artifact: conf.kind, error: 'no-source-and-no-generator' });
+        perArtifact[conf.kind] = { confidence: 0, rounds_used: 0, error: 'no-source-text' };
+        writeSummaryToDisk();
+        continue;
+      }
+
+      emitProgress({ phase: 'phase-2', artifact: conf.kind, step: 'polish-loop-start', src_len: srcText.length });
+
+      const tracePath = join(dataDir, `polish-trace-${conf.kind}.md`);
+      let polish;
+      try {
+        polish = await _polishArtifact({
+          artifactKind: conf.kind,
+          artifactText: srcText,
+          signals,
+          cvText, articleDigest, voiceBrief,
+          opts: {
+            targetConfidence: target,
+            maxRounds,
+            // Per-artifact hard cap on TOTAL rounds across outer attempts
+            // (added 2026-05-24). Default 6. See lib/polish-loop.mjs
+            // § Max-rounds-per-artifact-cap.
+            maxRoundsPerArtifact: maxRounds,
+            costWarnUsd,
+            outerRetries: 3,
+            costCap: Math.max(10, Math.min(120, (costCap - cumulativeCost) / Math.max(artifacts.length - Object.keys(perArtifact).length, 1))),
+            tracePath,
+            onCostRecord,
+            phase: 'phase-2',
+            artifactSlug: conf.kind,
+            earlyAbandonDisabled: opts.earlyAbandonDisabled === true,
+            earlyAbandonAfterRound: opts.earlyAbandonAfterRound,
+            earlyAbandonMaxConfidence: opts.earlyAbandonMaxConfidence,
+            earlyAbandonMinDelta: opts.earlyAbandonMinDelta,
+            onSignalsRefresh: async () => {
+              const refreshed = await harvestPolishSignals({
+                slug: packInfo.slug,
+                company: packInfo.company,
+                role: packInfo.role,
+                jdText,
+                opts: { refresh: true, costCap: 50, onCostRecord, phase: 'phase-2-refresh' },
+              });
+              return refreshed;
+            },
+          },
+        });
+      } catch (e) {
+        polish = { confidence: 0, rounds_used: 0, error: String(e.message || e), final_artifact_text: srcText, adversarial_findings: [], cost_usd: 0 };
+      }
+
+      // Write polished artifact back to BOTH locations: data/apply-packs/<slug>/<dataFile>.md
+      // and apply-pack/<slug>/<srcFile>.md (consumer-facing mirror).
+      try {
+        writeFileSync(join(dataDir, conf.dataFile), polish.final_artifact_text || srcText, 'utf-8');
+        if (polish.confidence >= target) {
+          const dest = join(ROOT, 'apply-pack', packInfo.slug, conf.srcFile);
+          if (existsSync(dirname(dest))) writeFileSync(dest, polish.final_artifact_text || srcText, 'utf-8');
+        }
+      } catch (e) {
+        emitProgress({ phase: 'phase-2', artifact: conf.kind, warning: `failed to write polished artifact: ${String(e.message || e)}` });
+      }
+
+      cumulativeCost += polish.cost_usd || 0;
+      perArtifact[conf.kind] = {
+        confidence: polish.confidence,
+        rounds_used: polish.rounds_used,
+        total_rounds_across_outer: polish.total_rounds_across_outer ?? polish.rounds_used ?? 0,
+        adversarial_findings: polish.adversarial_findings || [],
+        cost_usd: polish.cost_usd || 0,
+        duration_ms: polish.duration_ms || 0,
+        converged: polish.converged === true,
+        early_abandoned: polish.early_abandoned === true,
+        abandoned: polish.abandoned === true,
+        abandon_reason: polish.abandon_reason || null,
+        confidence_history: polish.confidence_history || [],
+        error: polish.error || null,
+        trace_path: tracePath.replace(ROOT + '/', ''),
+      };
+      emitProgress({
+        phase: 'phase-2', artifact: conf.kind, step: 'polish-loop-done',
+        confidence: polish.confidence,
+        converged: polish.converged === true,
+        early_abandoned: polish.early_abandoned === true,
+        abandoned: polish.abandoned === true,
+        abandon_reason: polish.abandon_reason || null,
+        rounds: polish.rounds_used,
+        adversarial: (polish.adversarial_findings || []).length,
+        cost_usd: polish.cost_usd || 0,
+        cumulative_cost_usd: cumulativeCost,
+      });
+      // Incremental summary write after each artifact — if the process dies
+      // here, the file on disk has the latest state.
+      writeSummaryToDisk();
+    }
+
+    /* ---------- PHASE 3 — cross-artifact coherence ---------- */
+    emitProgress({ phase: 'phase-3', step: 'coherence-checks-start', pack: packInfo.slug });
+    try {
+      coherence = await _checkPackCoherence({
+        packSlug: packInfo.slug,
+        dataPackDir: dataDir,
+        perArtifact,
+        opts: { targetConfidence: target },
+      });
+    } catch (e) {
+      coherence = {
+        final_recommendation: 'NEEDS_HUMAN',
+        blocking_issues: [{ scope: 'pack', finding: `coherence error: ${String(e.message || e)}`, severity: 'caution' }],
+        per_artifact_confidence: Object.fromEntries(Object.entries(perArtifact).map(([k, v]) => [k, v.confidence || 0])),
+        cross_coherence: {},
+        diff_narrative: 'coherence layer failed',
+        meta: { error: String(e.message || e) },
+      };
+    }
+    emitProgress({ phase: 'phase-3', step: 'coherence-done', final_recommendation: coherence.final_recommendation, blocking: coherence.blocking_issues?.length || 0 });
+
+    const summary = buildSummary();
+    writeSummaryToDisk();
+    return summary;
+  } catch (e) {
+    writeSummaryToDisk({ errorReason: String(e.message || e) });
+    throw e;
+  } finally {
+    if (signalsInstalled) {
+      try { process.off('SIGTERM', sigtermH); } catch { /* */ }
+      try { process.off('SIGINT', sigintH); } catch { /* */ }
+    }
+  }
 }
 
 /* ----------------------------------- CLI ----------------------------------- */
@@ -435,7 +590,7 @@ async function cliMain() {
   function flag(f) { return args.includes(f); }
 
   if (flag('--help') || flag('-h')) {
-    process.stdout.write(`Usage: node scripts/agents/apply-pack-polish.mjs --row <N> [--artifacts cv,cover,form,impact,refs,referrals] [--target-confidence 0.99] [--cost-cap 500] [--no-cache] [--no-early-abandon] [--early-abandon-after 3] [--early-abandon-max-confidence 0.50] [--early-abandon-min-delta 0.05]\n`);
+    process.stdout.write(`Usage: node scripts/agents/apply-pack-polish.mjs --row <N> [--artifacts cv,cover,form,impact,refs,referrals] [--target-confidence 0.99] [--cost-cap 500] [--max-rounds 6] [--cost-warn-usd 5] [--no-cache] [--no-early-abandon] [--early-abandon-after 3] [--early-abandon-max-confidence 0.50] [--early-abandon-min-delta 0.05]\n`);
     process.exit(0);
   }
 
@@ -446,6 +601,12 @@ async function cliMain() {
   const costCap = Number(arg('--cost-cap', '500'));
   const noCache = flag('--no-cache');
   const artifacts = artifactsArg ? artifactsArg.split(',').map(s => s.trim()).filter(Boolean) : DEFAULT_ARTIFACTS;
+  // Max-rounds-per-artifact + cost-warn knobs (added 2026-05-24). When --max-rounds
+  // or --cost-warn-usd are absent, runPolishPack falls back to env then defaults.
+  const maxRoundsArg = arg('--max-rounds', null);
+  const maxRoundsPerArtifact = maxRoundsArg != null ? Number(maxRoundsArg) : undefined;
+  const costWarnArg = arg('--cost-warn-usd', null);
+  const costWarnUsd = costWarnArg != null ? Number(costWarnArg) : undefined;
   // Early-abandonment knobs (default on; --no-early-abandon disables)
   const earlyAbandonDisabled = flag('--no-early-abandon');
   const earlyAbandonAfterRound = Number(arg('--early-abandon-after', '3'));
@@ -459,6 +620,8 @@ async function cliMain() {
     targetConfidence,
     costCap,
     noCache,
+    maxRoundsPerArtifact,
+    costWarnUsd,
     earlyAbandonDisabled,
     earlyAbandonAfterRound,
     earlyAbandonMaxConfidence,

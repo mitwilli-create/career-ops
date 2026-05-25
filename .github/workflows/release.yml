@@ -16,3 +16,8 @@ jobs:
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+          # Anchor the commit scan at the manifest-sync-to-1.8.0 commit so
+          # release-please does not backfill the whole history searching for
+          # the missing v1.7.0/v1.8.0 tags. Without this anchor the action
+          # exhausts the GITHUB_TOKEN's installation rate limit on every push.
+          last-release-sha: b8306362c875b32a674de7ece2593ff629d829d2

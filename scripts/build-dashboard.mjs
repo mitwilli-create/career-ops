@@ -29453,36 +29453,52 @@ function _scannerFetchAndRender() {
 }
 function scannerAction(name, action) {
   var isAll = name === 'all';
+  var displayName = isAll ? 'all scanners' : name;
+  var actionLabel = action === 'refresh' ? 'Triggering' : action === 'reboot' ? 'Rebooting' : 'Disabling';
+  var doneLabel   = action === 'refresh' ? 'triggered'  : action === 'reboot' ? 'rebooted'  : 'disabled';
+
+  // Disable buttons to prevent double-submit
   var body = document.getElementById('scanner-popout-body');
   if (body) {
-    var el = isAll ? null : body.querySelector('[data-scanner="' + name + '"]');
-    // Brief visual feedback
-    var btns = isAll ? body.querySelectorAll('button') : (el ? el.querySelectorAll('button') : []);
-    btns.forEach(function(b) { b.disabled = true; });
+    var targetEl = isAll ? body : (body.querySelector('[data-scanner="' + name + '"]') || body);
+    targetEl.querySelectorAll('button').forEach(function(b) { b.disabled = true; });
   }
-  var urls = [];
-  if (isAll) {
-    var rows = (document.getElementById('scanner-popout-body') || {}).querySelectorAll ? document.getElementById('scanner-popout-body').querySelectorAll('[data-scanner-name]') : [];
-    if (rows.length === 0) {
-      // Fallback: fetch status then iterate
-      fetch('/api/scanner/status', { cache: 'no-store' })
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-          (d.scanners || []).forEach(function(s) {
-            if (action === 'reboot' && s.status !== 'red') return; // reboot-all only targets offline
-            fetch('/api/scanner/' + action + '/' + encodeURIComponent(s.name), { method: 'POST' });
-          });
-          setTimeout(_scannerFetchAndRender, 2000);
-        });
-      return;
+  if (window.toast) window.toast(actionLabel + ' ' + displayName + '\\u2026', 'info');
+
+  function _done(ok, count) {
+    var suffix = action !== 'disable' ? ' \\u2014 new results in ~15 min' : '';
+    var msg = ok
+      ? (isAll ? (count || 0) + ' scanner(s) ' + doneLabel + suffix : displayName + ' ' + doneLabel + suffix)
+      : 'Scanner action failed \\u2014 check launchctl logs';
+    if (window.toast) window.toast(msg, ok ? 'success' : 'error');
+    if (ok && action !== 'disable') {
+      setTimeout(closeScannerPopout, 1800);
+    } else {
+      setTimeout(_scannerFetchAndRender, 600);
     }
   }
+
+  if (isAll) {
+    fetch('/api/scanner/status', { cache: 'no-store' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var targets = (d.scanners || []).filter(function(s) {
+          return action !== 'reboot' || s.status === 'red';
+        });
+        if (!targets.length) { _done(true, 0); return; }
+        Promise.all(targets.map(function(s) {
+          return fetch('/api/scanner/' + action + '/' + encodeURIComponent(s.name), { method: 'POST' })
+            .catch(function() {});
+        })).then(function() { _done(true, targets.length); });
+      })
+      .catch(function() { _done(false); });
+    return;
+  }
+
   fetch('/api/scanner/' + action + '/' + encodeURIComponent(name), { method: 'POST' })
     .then(function(r) { return r.json(); })
-    .then(function(d) {
-      setTimeout(_scannerFetchAndRender, 2000);
-    })
-    .catch(function() { setTimeout(_scannerFetchAndRender, 1000); });
+    .then(function(d) { _done(d && d.ok !== false); })
+    .catch(function() { _done(false); });
 }
 window.openScannerPopout  = openScannerPopout;
 window.closeScannerPopout = closeScannerPopout;

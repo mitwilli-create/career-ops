@@ -1,0 +1,377 @@
+# config/github-cleaner-personas.yml
+#
+# 16 verticals × 7 source platforms — defines the canvas Phase 2 of
+# github-cleaner researches over. The per-model briefs (in
+# lib/github-cleaner/rubric-cache.mjs:composePerModelBriefs) read this file
+# to know which verticals each model should prioritize and which sources to
+# canvas.
+#
+# Default weights are derived from Mitchell's cv.md content (verticals he's
+# most demonstrated in get weight 1.0; aspirational verticals get 0.5-0.8).
+# Edit weights here without touching code — the cache will invalidate on the
+# personas.yml sha change automatically.
+#
+# See: data/github-cleaner-design-2026-05-22.md § Phase 2.
+#
+# Status: SKELETON — weights are first-pass estimates from the cv.md scan.
+# The full build pass will derive these more rigorously from a cv-content
+# analysis sub-routine.
+
+version: 1
+last_updated: 2026-05-22
+
+# ─────────────────────────── 16 verticals ───────────────────────────────────
+# Each vertical:
+#   weight: 0.0–1.0 — how much weight the audit gives findings tagged to it
+#   cluster: groups verticals for the rubric's vertical_lenses pivot view
+#   demonstrated: true if Mitchell has shipped public work in this vertical
+#   aspirational: true if this is a target lane he wants to move into
+#   keywords: terms the council models search for in JDs / posts / threads
+#   sample_role_titles: concrete titles that map to this vertical
+
+verticals:
+  communications:
+    weight: 1.0
+    cluster: communications
+    demonstrated: true
+    aspirational: false
+    keywords: [communications, comms, internal comms, external comms, corporate comms, exec comms]
+    sample_role_titles:
+      - Head of Communications
+      - Director of AI Communications
+      - Senior Communications Manager
+      - Communications Strategist
+
+  editorial:
+    weight: 1.0
+    cluster: communications
+    demonstrated: true
+    aspirational: false
+    keywords: [editorial, editorial lead, editor, editor in chief, content editor]
+    sample_role_titles:
+      - Editorial Lead
+      - Editorial Director
+      - Senior Editor, AI
+
+  audience_engagement:
+    weight: 1.0
+    cluster: communications
+    demonstrated: true
+    aspirational: false
+    keywords: [audience engagement, audience development, community engagement, user engagement]
+    sample_role_titles:
+      - Head of Audience Engagement
+      - Director of Audience Development
+      - Community Engagement Lead
+
+  content_strategy:
+    weight: 1.0
+    cluster: communications
+    demonstrated: true
+    aspirational: false
+    keywords: [content strategy, content strategist, narrative strategy, brand storytelling]
+    sample_role_titles:
+      - Head of Content Strategy
+      - Director of Content
+      - Content Strategist
+
+  pgm:
+    weight: 0.9
+    cluster: program_management
+    demonstrated: true
+    aspirational: false
+    keywords: [program management, pgm, program manager, programs lead]
+    sample_role_titles:
+      - Program Manager
+      - Senior Program Manager
+      - Programs Lead
+
+  tpgm:
+    weight: 0.85
+    cluster: program_management
+    demonstrated: true
+    aspirational: true
+    keywords: [technical program manager, tpm, tpgm, technical program management]
+    sample_role_titles:
+      - Technical Program Manager
+      - Senior TPM
+      - Staff TPM
+
+  ai:
+    weight: 0.85
+    cluster: ai_foundations
+    demonstrated: true
+    aspirational: false
+    keywords: [artificial intelligence, AI strategy, AI initiatives, AI programs]
+    sample_role_titles:
+      - AI Strategist
+      - Head of AI Programs
+
+  gen_ai:
+    weight: 0.85
+    cluster: ai_foundations
+    demonstrated: true
+    aspirational: false
+    keywords: [generative AI, gen AI, LLM, large language models, foundation models]
+    sample_role_titles:
+      - Generative AI Strategist
+      - Gen AI Lead
+
+  ai_pgm:
+    weight: 1.0  # unified-lens 2026-05-26: AI Program Manager — archetype 1 of 3
+    cluster: ai_program_management
+    demonstrated: true
+    aspirational: true
+    keywords: [AI program manager, AI program management, AI PgM, AI initiatives PM]
+    sample_role_titles:
+      - AI Program Manager
+      - Senior AI Program Manager
+      - Head of AI Programs
+
+  ai_tpgm:
+    weight: 0.9
+    cluster: ai_program_management
+    demonstrated: false
+    aspirational: true
+    keywords: [AI technical program manager, AI TPM, AI TPgM, ML TPM]
+    sample_role_titles:
+      - AI Technical Program Manager
+      - ML Technical Program Manager
+
+  ai_enablement:
+    weight: 0.85
+    cluster: ai_building
+    demonstrated: true
+    aspirational: true
+    keywords: [AI enablement, AI adoption, AI rollout, AI deployment, AI productivity]
+    sample_role_titles:
+      - AI Enablement Lead
+      - Head of AI Adoption
+      - AI Productivity Lead
+
+  ai_solutions_architecture:
+    weight: 1.0  # unified-lens 2026-05-26: Field/Solutions Engineer — archetype 2 of 3
+    cluster: ai_building
+    demonstrated: false
+    aspirational: true
+    keywords: [AI solutions architect, AI SA, solutions architect AI, customer AI engineer, forward deployed]
+    sample_role_titles:
+      - AI Solutions Architect
+      - Forward Deployed Engineer
+      - Customer-Facing AI Engineer
+
+  ai_model_behavior:
+    weight: 0.75
+    cluster: ai_building
+    demonstrated: false
+    aspirational: true
+    keywords: [model behavior, model behaviour, AI model behavior, behavioral architect, alignment lead, model evaluation]
+    sample_role_titles:
+      - Model Behavior Architect
+      - AI Model Behavior Lead
+      - Behavioral Alignment Engineer
+
+  applied_ai:
+    weight: 1.0  # unified-lens 2026-05-26: Applied AI Architect — archetype 3 of 3
+    cluster: ai_building
+    demonstrated: true
+    aspirational: false
+    keywords: [applied AI, applied ML, AI engineering, AI applications, AI engineer]
+    sample_role_titles:
+      - Applied AI Engineer
+      - Applied ML Lead
+      - AI Applications Engineer
+
+  ai_builder:
+    weight: 0.8
+    cluster: ai_building
+    demonstrated: true
+    aspirational: false
+    keywords: [AI builder, AI craftsman, agent builder, AI tinkerer, AI hacker]
+    sample_role_titles:
+      - AI Builder
+      - Agent Builder
+      - AI Tinkerer-in-Residence
+
+  ai_product_management:
+    weight: 1.0
+    cluster: destination
+    demonstrated: true
+    aspirational: true
+    keywords: [AI product manager, AI PM, AI product, AI PMM, product manager AI]
+    sample_role_titles:
+      - AI Product Manager
+      - Senior AI Product Manager
+      - AI Product Lead
+      - Head of AI Product
+
+# ─────────────────────── 7 source platforms ─────────────────────────────────
+# Each platform:
+#   enabled: false skips that platform (don't break briefs that reference it)
+#   freshness_window_days: signals older than this are STALE
+#   notes: free-form notes the briefs reference for source-specific phrasing
+
+source_platforms:
+  reddit:
+    enabled: true
+    freshness_window_days: 90
+    subreddits_to_canvas:
+      - cscareerquestions
+      - ExperiencedDevs
+      - ProductManagement
+      - MachineLearning
+      - OpenAI
+      - AnthropicAI
+      - aiagents
+      - LocalLLaMA
+      - SolutionsArchitect
+      - communitymanager
+      - PublicRelations
+    notes: |
+      Reddit reasoning works best with Perplexity sonar-reasoning-pro.
+      Quote-and-cite candidate evaluation discussions; don't summarize.
+
+  x:
+    enabled: true
+    freshness_window_days: 60
+    handles_to_canvas:
+      - hiring-manager-public-accounts-at-target-companies   # resolved at run-time from personas.yml + apply-now-queue
+      - recruiter-public-accounts-at-target-companies
+      - ai-builder-community-leaders
+      - public-engineering-and-PM-leaders-at-AI-labs
+    notes: |
+      Grok-4 + Grok-4-x-search are the load-bearing canvases here.
+      Capture engagement signals: replies, quote-retweets, bookmarks-relative-to-likes,
+      candidate-introduction-post engagement rate.
+
+  linkedin:
+    enabled: true
+    freshness_window_days: 90
+    surfaces:
+      - hiring-manager-posts
+      - recruiter-posts
+      - exec-and-spokesperson-posts-at-target-companies
+      - engagement-signals-on-candidate-intro-posts
+    notes: |
+      LinkedIn is best researched by Perplexity sonar-deep-research (cited
+      excerpts) + Gemini Deep Research Max (Google Search grounding picks up
+      public LinkedIn pages). Grok also catches LinkedIn content cross-posted
+      to X.
+
+  blind:
+    enabled: true
+    freshness_window_days: 120
+    notes: |
+      Anonymous employee discussions on candidate filtering + interview
+      processes at AI labs and AI-forward companies. Perplexity sonar-deep-
+      research handles citations; sonar-reasoning-pro handles synthesis
+      across multiple threads.
+
+  glassdoor:
+    enabled: true
+    freshness_window_days: 120
+    surfaces:
+      - interview-experience-threads
+      - employee-reviews
+      - exec-and-recruiter-public-statements
+    notes: |
+      Interview-experience threads are gold for "what hiring managers actually
+      ask" vs the JD's stated requirements. Perplexity sonar-deep-research
+      is the load-bearing canvas here.
+
+  indeed:
+    enabled: true
+    freshness_window_days: 60
+    surfaces:
+      - active-JD-inventory
+      - JD-keyword-frequency-shifts-vs-90d-ago
+      - company-page-content-and-engagement
+    notes: |
+      Indeed has the broadest JD index. Gemini Deep Research Max + Perplexity
+      sonar-deep-research are the load-bearing canvases. The diff against
+      90-day-old JDs is signal-rich.
+
+  company_spokespersons:
+    enabled: true
+    freshness_window_days: 180
+    surfaces:
+      - company-blog-posts
+      - press-releases
+      - conference-talks-and-transcripts
+      - podcast-appearances
+      - exec-interviews
+    notes: |
+      What target-company spokespeople (CEOs, CTOs, VPs of AI, hiring leads)
+      are publicly saying about what they hire for, what they value, what
+      shape of candidate they want. Gemini Deep Research Max is uniquely
+      strong here (Google Search grounding picks up press releases and
+      conference transcripts; analyst takes from Gartner/Forrester/IDC).
+
+# ───────────────────── Per-model brief assignment ───────────────────────────
+# Tells composePerModelBriefs() which platforms each model is load-bearing for.
+# A model may canvas additional platforms opportunistically, but these are
+# the ones the brief explicitly instructs it to focus on.
+
+model_brief_focus:
+  "xai:grok-4":
+    primary_sources: [x, linkedin]
+    primary_verticals_filter: all  # Grok is best at horizontal X-chatter; let it canvas any vertical it hits
+    notes: Live X access — hiring-manager + recruiter chatter, engagement signals.
+
+  "xai:grok-4-x-search":
+    primary_sources: [x]
+    primary_verticals_filter: all
+    notes: Real-time X + web blend. Surface emerging keywords/signals < 7 days old.
+
+  "perplexity:sonar-deep-research":
+    primary_sources: [glassdoor, blind, indeed, linkedin]
+    primary_verticals_filter: all
+    notes: Cross-platform synthesis with explicit citations. Interview threads + employee reviews + JD scale.
+
+  "perplexity:sonar-reasoning-pro":
+    primary_sources: [reddit]
+    primary_verticals_filter: all
+    notes: Reddit thread reasoning. Quote-and-cite candidate evaluation discussions.
+
+  "openai:gpt-5":
+    primary_sources: [company_spokespersons, x]
+    primary_verticals_filter: all
+    notes: AI forum culture norms + FAANG-tier engineering culture at AI labs. Conference talks + community blog norms.
+
+  "google:gemini-3.1-pro-preview":
+    primary_sources: [indeed, company_spokespersons, linkedin, glassdoor]
+    primary_verticals_filter: all
+    deep_research_max: true
+    notes: |
+      Industry-trend grounding via Google Search. Q1/Q2 2026 hiring trends,
+      90-day JD diff against current JDs, analyst takes (Gartner/Forrester/IDC),
+      spokesperson/exec interview transcripts. Use --no-skip-deep.
+
+  "anthropic:claude-opus-4-7":
+    primary_sources: synthesize
+    role: synthesis_and_per_claim_confidence
+    notes: |
+      Receives all 6 other models' responses + the persona vertical weights.
+      Identifies universal vs role-specific signals. Flags contradictions.
+      Assigns confidence tier per claim. Dealbreaker is a separate downstream
+      step; Opus's role here is the first synthesis pass before adjudication.
+
+# ────────────────────── Dealbreaker confidence tiers ────────────────────────
+
+dealbreaker_thresholds:
+  verified:
+    min_models: 3
+    min_source_platforms: 2
+  corroborated:
+    # Either 2 models OR 2 source platforms qualifies
+    min_models_or_platforms: 2
+  unique_plausible:
+    # 1 model, 1 source, but must have an actual URL + be architecturally sound
+    require_url: true
+    require_architectural_grounding: true
+  contradicted:
+    # 2+ models with directly opposing claims
+    min_opposing_models: 2
+  stale:
+    # Default freshness window — overridable per platform
+    default_max_age_days: 90

@@ -478,3 +478,7 @@ scripts/staging-shot*.mjs
 data/career-ops-health-spend.jsonl
 # Audit directories for dated sessions (content is work-product, path reveals session dates)
 .claude/audit/2026-05-26/
+
+# Closeout reports — personal pipeline data
+data/closeout-*.md
+data/closeout-*.json

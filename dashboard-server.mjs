@@ -12,7 +12,7 @@ import { execSync as _execSync, spawn as _spawn, spawnSync as _spawnSync } from 
 import { homedir } from 'os';
 import yaml from 'js-yaml';
 import { marked } from 'marked';
-import { tierCostEstimates as _tierCostEstimates } from './lib/process-all-tiers.mjs';
+import { tierCostEstimates as _tierCostEstimates, resolveTier as _resolveTier } from './lib/process-all-tiers.mjs';
 import { parseApplicationsFile } from './lib/parse-applications.mjs';
 import { resolveRowToPackInput } from './lib/build-pack-stage-input.mjs';
 import { statusKey, statusBadgeClass } from './lib/status-key.mjs';
@@ -573,7 +573,12 @@ const HIGH_CONFIDENCE_PREGEN_RATE = clampEnvFloat('HIGH_CONFIDENCE_PREGEN_RATE',
 const COMPANY_CACHE_HIT_RATE      = clampEnvFloat('COMPANY_CACHE_HIT_RATE',       0.50,  0, 1);     // % of unique companies already cached (30d TTL)
 
 const PER_RUN_CAP_RUN_BATCH    = clampEnvFloat('PER_RUN_CAP_RUN_BATCH_USD',    25,  0, 10_000);
-const PER_RUN_CAP_PROCESS_ALL  = clampEnvFloat('PER_RUN_CAP_PROCESS_ALL_USD',  250, 0, 10_000);
+const PER_RUN_CAP_PROCESS_ALL  = clampEnvFloat('PER_RUN_CAP_PROCESS_ALL_USD',  1000, 0, 10_000);
+// 2026-05-26 — Audit-log threshold. Every Process All spawn whose cost estimate
+// exceeds this gets recorded to data/process-all-audit.jsonl. Defaults to $250
+// (the pre-2026-05-26 cap) so the audit trail captures every "non-trivial spend"
+// run regardless of whether the cap is currently $250, $1000, or env-overridden.
+const PROCESS_ALL_AUDIT_THRESHOLD_USD = clampEnvFloat('PROCESS_ALL_AUDIT_THRESHOLD_USD', 250, 0, 10_000);
 const PER_RUN_CAP_APPLY_PACK   = clampEnvFloat('PER_RUN_CAP_APPLY_PACK_USD',   5,   0, 10_000);
 const DAILY_CAP_OVERNIGHT      = clampEnvFloat('DAILY_CAP_OVERNIGHT_USD',      20,  0, 10_000);
 // Single-row apply-pack estimate (council pricing). build-apply-pack.mjs today
@@ -1512,32 +1517,43 @@ function spawnProcessAll({ sendEmail, force, companies, tier }) {
   // Cap enforcement (calibration 2026-05-16): refuse to spawn if per-run cap
   // or monthly budget exceeded. `force: true` overrides — for the user-explicit
   // "I know what I'm doing, fire it anyway" path.
-  // Tier-5 uses the tier5_estimate total instead of normal-tier total.
-  const isTier5 = String(tier) === '5';
+  //
+  // 2026-05-26 — tier-id aware. The 3-tier modal (lib/process-all-tiers.mjs)
+  // sends tier='1'|'2'|'3'. resolveTier() handles those + legacy 'normal'|'5'.
+  // Each non-Tier-1 run reads its own cost estimate from preview.process_all
+  // .tier_estimates[N] (which lib/process-all-tiers.mjs:tierCostEstimates produces).
+  const tierObj   = _resolveTier(tier);
+  const tierId    = tierObj.id;
+  const tierLabel = `Tier ${tierId} · ${tierObj.name}`;
+  // 2026-05-26 — compute cost UNCONDITIONALLY (out of the !force branch) so the
+  // audit log below can record it on every spawn, not just non-forced ones.
+  const preview = buildPipelinePreview();
+  const tierEstimates = preview.process_all.tier_estimates;
+  const costForCap = (tierEstimates && tierEstimates[tierId] && tierEstimates[tierId].total_cost_usd != null)
+    ? tierEstimates[tierId].total_cost_usd
+    : preview.process_all.total_cost_usd;
   if (!force) {
-    const preview = buildPipelinePreview();
-    const costForCap = isTier5
-      ? (preview.process_all.tier5_estimate?.total_cost_usd || 0)
-      : preview.process_all.total_cost_usd;
     if (costForCap > PER_RUN_CAP_PROCESS_ALL) {
       return {
         ok: false,
-        error: `Process All${isTier5 ? ' (Tier-5)' : ''} estimate $${costForCap.toFixed(2)} exceeds per-run cap $${PER_RUN_CAP_PROCESS_ALL}. Pass force:true to override, or raise PER_RUN_CAP_PROCESS_ALL_USD env.`,
+        error: `Process All (${tierLabel}) estimate $${costForCap.toFixed(2)} exceeds per-run cap $${PER_RUN_CAP_PROCESS_ALL}. Pass force:true to override, or raise PER_RUN_CAP_PROCESS_ALL_USD env.`,
         cap_exceeded: 'per_run',
         estimated_cost_usd: costForCap,
         cap_usd: PER_RUN_CAP_PROCESS_ALL,
-        tier: isTier5 ? '5' : 'normal',
+        tier: String(tierId),
+        tier_name: tierObj.name,
       };
     }
     if (preview.spent_30d_usd + costForCap > preview.effective_budget_usd) {
       return {
         ok: false,
-        error: `Process All${isTier5 ? ' (Tier-5)' : ''} would push 30d spend ($${preview.spent_30d_usd.toFixed(2)} + $${costForCap.toFixed(2)}) past effective monthly budget $${preview.effective_budget_usd}. Activate burst mode (MONTHLY_BUDGET_USD_BURST + MONTHLY_BUDGET_BURST_UNTIL) or pass force:true.`,
+        error: `Process All (${tierLabel}) would push 30d spend ($${preview.spent_30d_usd.toFixed(2)} + $${costForCap.toFixed(2)}) past effective monthly budget $${preview.effective_budget_usd}. Activate burst mode (MONTHLY_BUDGET_USD_BURST + MONTHLY_BUDGET_BURST_UNTIL) or pass force:true.`,
         cap_exceeded: 'monthly',
         estimated_cost_usd: costForCap,
         spent_30d_usd: preview.spent_30d_usd,
         effective_budget_usd: preview.effective_budget_usd,
-        tier: isTier5 ? '5' : 'normal',
+        tier: String(tierId),
+        tier_name: tierObj.name,
       };
     }
   }
@@ -1548,7 +1564,10 @@ function spawnProcessAll({ sendEmail, force, companies, tier }) {
   const args = [join(ROOT, 'scripts/process-all-pipeline.mjs'), `--job-id=${jobId}`];
   if (sendEmail) args.push('--send-email');
   if (force) args.push('--cap-override');
-  if (isTier5) args.push('--tier=5');
+  // Always pass --tier=N explicitly so the orchestrator routes the correct
+  // triage + eval models. Tier-1 is the orchestrator's default but being
+  // explicit removes ambiguity and shows up in process listings.
+  args.push(`--tier=${tierId}`);
   // Optional company subset (Task 2 — 2-phase modal). Pass through to the
   // orchestrator as a comma-separated list. Sanitized: only letters / digits /
   // hyphen / underscore / comma / space allowed so a malicious payload can't
@@ -1563,6 +1582,34 @@ function spawnProcessAll({ sendEmail, force, companies, tier }) {
     }
     if (safe.length) args.push(`--companies=${safe.join(',')}`);
   }
+  // 2026-05-26 — Audit log every Process All spawn whose cost estimate exceeds
+  // PROCESS_ALL_AUDIT_THRESHOLD_USD (default $250). Append-only JSONL at
+  // data/process-all-audit.jsonl. Records cost, tier, force flag, companies
+  // scope so spend over the original cap is always reviewable after the fact.
+  if (costForCap > PROCESS_ALL_AUDIT_THRESHOLD_USD) {
+    try {
+      const auditEntry = {
+        ts: new Date().toISOString(),
+        jobId,
+        tier_id: tierId,
+        tier_name: tierObj.name,
+        cost_estimate_usd: Math.round(costForCap * 100) / 100,
+        cap_usd: PER_RUN_CAP_PROCESS_ALL,
+        force,
+        send_email: !!sendEmail,
+        companies_count: Array.isArray(companies) ? companies.length : null,
+        companies: Array.isArray(companies) ? companies.slice(0, 50) : null,
+        eval_model: tierObj.eval_model,
+        triage_model: tierObj.triage_model,
+      };
+      appendFileSync(join(ROOT, 'data/process-all-audit.jsonl'), JSON.stringify(auditEntry) + '\n');
+    } catch (auditErr) {
+      // Audit log failure must NOT block the spawn — the run is what the user
+      // asked for; the log is best-effort observability.
+      console.warn(`[process-all] audit log write failed: ${auditErr.message}`);
+    }
+  }
+
   // P0.7 Q5 (2026-05-20 iter9): capture PID synchronously via the statically-
   // imported _spawn so /api/batch/cancel can SIGTERM the running child later.
   // Previously this used a dynamic import, which deferred PID availability and
@@ -5538,8 +5585,15 @@ const server = createServer((req, res) => {
         if (p.confirm !== true) return 'confirm must be boolean true';
         if (p.sendEmail !== undefined && typeof p.sendEmail !== 'boolean') return 'sendEmail must be boolean';
         if (p.force !== undefined && typeof p.force !== 'boolean') return 'force must be boolean';
-        // Quality tier — only 'normal' (default) or '5' accepted.
-        if (p.tier !== undefined && p.tier !== 'normal' && p.tier !== '5' && p.tier !== 5) return 'tier must be "normal" or "5"';
+        // Quality tier — 3-tier modal sends '1' | '2' | '3' (lib/process-all-tiers.mjs).
+        // Legacy values 'normal' (default) + '5' (Tier-5 button via confirmTier5Run) preserved.
+        // resolveTier() in lib/process-all-tiers.mjs accepts all of these and routes them.
+        if (p.tier !== undefined) {
+          const VALID_TIERS = ['normal', '1', '2', '3', '5', 1, 2, 3, 5];
+          if (!VALID_TIERS.includes(p.tier)) {
+            return 'tier must be one of: "normal", "1", "2", "3", "5"';
+          }
+        }
         if (p.companies !== undefined) {
           if (!Array.isArray(p.companies)) return 'companies must be an array of strings';
           if (p.companies.length > 200) return 'companies cap is 200 entries';

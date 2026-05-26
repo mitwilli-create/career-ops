@@ -22,6 +22,10 @@ data/regression-bug-queue.jsonl
 data/v2-rollback-counter.jsonl
 data/v2-fix-log.jsonl
 data/v2-verify-spend.jsonl
+# Process All audit log (PR cap-raise 2026-05-26) — append-only record of every
+# spawn whose cost estimate exceeded $250; includes companies list which can
+# contain personal pipeline data.
+data/process-all-audit.jsonl
 data/ef-mode-state.json
 data/logs/regression-guard-*.log
 # Drawer auto-enrich (PR-03 2026-05-25) — job state cache + lock files + daily spend ledger

@@ -47,7 +47,7 @@ try {
   config({ path: join(ROOT, '.env'), override: true });
 } catch { /* dotenv optional */ }
 
-import { callCouncil } from '../../lib/council.mjs';
+import { callCouncil, COUNCIL_FANOUT_LINEUP } from '../../lib/council.mjs';
 import { buildGroundedPrompt } from '../../lib/ground-prompt.mjs';
 import { reserveQuota, recordTokens } from '../../lib/quota-tracker.mjs';
 
@@ -432,6 +432,13 @@ async function runCouncilResearch(row, opts = {}) {
   const council = await callCouncil({
     prompt,
     systemPrompt: grounded.system,
+    // 2026-05-26 fix: post-2026-05-25 DEFAULT_LINEUP was downgraded to single-vendor
+    // (anthropic:claude-sonnet-4-6), so leaving models unspecified produced ONE
+    // response — but line 458's `parses.length < 2` threshold meant every call
+    // returned `council-too-thin` for 0 file writes (~$1/row burned for nothing).
+    // Explicit COUNCIL_FANOUT_LINEUP restores the pre-2026-05-25 4-vendor
+    // adversarial fan-out that the script's adjudication step requires.
+    models: COUNCIL_FANOUT_LINEUP,
     opts: {
       timeoutMs: 180_000,
       maxTokens: 3500,

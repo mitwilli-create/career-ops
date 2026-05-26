@@ -39,7 +39,8 @@ function extractApiUrl(entry) {
 /**
  * Ashby API response shape:
  *   { jobs: [{ id, title, jobUrl, isListed, publishedDate, location: {name},
- *              department: {name}, team: {name} }] }
+ *              department: {name}, team: {name},
+ *              compensation: { scrapeableCompensationSalarySummary, compensationTiers } }] }
  */
 function parseJobs(data, companyName) {
   const raw = Array.isArray(data?.jobs) ? data.jobs : [];
@@ -50,6 +51,7 @@ function parseJobs(data, companyName) {
       url: job.jobUrl || '',
       company: companyName,
       location: job.location?.name || '',
+      comp: job.compensation?.scrapeableCompensationSalarySummary || '',
     }));
 }
 

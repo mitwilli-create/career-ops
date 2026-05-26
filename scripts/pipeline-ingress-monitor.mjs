@@ -119,9 +119,13 @@ const SCANNERS = [
     cadenceHours: 24,
     // fixed 2026-05-26: was data/logs/ which doesn't receive launchd output
     logPathFn: () => join(LAUNCHD_LOGS, 'company-pulse-launchd.out'),
-    outputs: ['data/intel-cache/'],
-    successPattern: /exit code: 0|pulse refresh complete/i,
-    ingestPattern: /(?:companies refreshed|signals updated):\s*(\d+)/i,
+    // fixed 2026-05-26: was data/intel-cache/ (empty placeholder); real outputs land in data/company-pulse/
+    outputs: ['data/company-pulse/'],
+    // fixed 2026-05-26: was /exit code: 0|pulse refresh complete/i which never matched
+    // actual script output. scan-company-pulse.mjs emits "N refreshed, M failed" on
+    // successful run and "All candidates are fresh" when nothing to do (both = success).
+    successPattern: /\d+\s+refreshed,\s+\d+\s+failed|All candidates are fresh/i,
+    ingestPattern: /(\d+)\s+refreshed,\s+\d+\s+failed/i,
   },
   {
     name: 'scrape-frequent',

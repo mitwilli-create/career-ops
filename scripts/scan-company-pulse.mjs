@@ -25,6 +25,15 @@
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import dotenv from 'dotenv';
+
+// Load .env BEFORE installRunRecord / any consumer. launchd doesn't inherit
+// .env automatically; without this, PERPLEXITY_API_KEY (and other vendor keys)
+// are missing inside the launchd-fired run, callCouncil returns immediately
+// with missingKeys, and the bridge writes empty pulse reports with $0 cost.
+// Same F1b fix pattern as scripts/heartbeat.mjs (see env_secrets memory).
+dotenv.config({ path: join(dirname(fileURLToPath(import.meta.url)), '..', '.env'), override: true });
+
 import { installRunRecord } from '../lib/job-runs-ledger.mjs';
 
 const __jobRun = installRunRecord('company-pulse');

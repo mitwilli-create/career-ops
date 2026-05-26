@@ -28,10 +28,15 @@ import { readFileSync, writeFileSync, existsSync, statSync, readdirSync, mkdirSy
 import { execSync } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { homedir } from 'os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const STATE_FILE = join(ROOT, 'data/pipeline-ingress-state.json');
+// macOS Tahoe TCC blocks launchd from writing logs under ~/Documents/.
+// All plist StandardOutPath/StandardErrorPath entries point here instead.
+// (Pattern F — feedback_tahoe_sandbox_calendar_interval.md, fixed 2026-05-22)
+const LAUNCHD_LOGS = join(homedir(), 'Library/Logs/career-ops');
 
 // ─────────────────────────────────────────────────────────────────────────
 // Scanner registry
@@ -40,8 +45,12 @@ const SCANNERS = [
   {
     name: 'portal-scan',
     label: 'com.mitchell.career-ops.scan',
-    cadenceHours: 4,         // every 4h business-hours PT
-    logPathFn: () => latestDatedLog('scan-'),
+    // scan-unattended.mjs fires every 24h (StartInterval=86400); cadence set to
+    // 25h so the freshness check allows a few hours of drift before going RED.
+    cadenceHours: 25,
+    // scan-unattended.mjs writes to data/logs/scan-{DATE}.log (dated, not launchd stdout).
+    // Use 'scan-202' prefix to exclude scan-hn-* logs that also start with 'scan-'.
+    logPathFn: () => latestDatedLog('scan-202'),
     outputs: ['data/pipeline.md', 'data/scan-history.tsv'],
     successPattern: /scan-\w+\.mjs exit code: 0/,
     ingestPattern: /New offers added:\s*(\d+)/,
@@ -51,44 +60,55 @@ const SCANNERS = [
     name: 'scan-email-poll',
     label: 'com.mitchell.career-ops.scan-email-poll',
     cadenceHours: 0.25,      // every 15 min
-    logPathFn: () => join(ROOT, 'data/logs/scan-email-poll.log'),
+    // plist writes stdout+stderr to ~/Library/Logs/career-ops/scan-email-poll.log
+    // (fixed 2026-05-26: was data/logs/ which doesn't receive launchd output)
+    logPathFn: () => join(LAUNCHD_LOGS, 'scan-email-poll.log'),
     outputs: ['data/pipeline.md'],
-    successPattern: /processed|exit code: 0/,
+    // actual log format: "State saved: historyId=..." | "Messages processed: N"
+    successPattern: /State saved|Messages processed|scan-email-poll starting/,
     ingestPattern: /(?:New offers added|URLs extracted|Messages processed):\s*(\d+)/,
   },
   {
     name: 'scan-hn-hiring',
     label: 'com.mitchell.career-ops.scan-hn-hiring',
-    cadenceHours: 4,
+    // plist fires daily at 09:30 PT; 25h cadence allows drift before going RED
+    cadenceHours: 25,
     logPathFn: () => latestDatedLog('scan-hn-'),
     outputs: ['data/pipeline.md'],
-    successPattern: /exit code: 0|HN Hiring summary/,
-    ingestPattern: /(?:New offers added|HN matches):\s*(\d+)/,
+    // actual log format: "[ISO] === scan-hn-hiring completed ===" and "Stats: N/M..."
+    successPattern: /scan-hn-hiring completed|Stats:\s*\d+\/\d+/,
+    ingestPattern: /(\d+)\s+new$/,
     errorPattern: /HTTP 5\d{2}|fetch failed/,
   },
   {
     name: 'scan-vc-portfolios',
     label: 'com.mitchell.career-ops.scan-vc-portfolios',
     cadenceHours: 12,
-    logPathFn: () => join(ROOT, 'data/logs/scan-vc-portfolios.out'),
+    // plist writes stdout to ~/Library/Logs/career-ops/scan-vc-portfolios.out
+    // (fixed 2026-05-26: was data/logs/ which doesn't receive launchd output)
+    logPathFn: () => join(LAUNCHD_LOGS, 'scan-vc-portfolios.out'),
     outputs: ['data/pipeline.md'],
-    successPattern: /exit code: 0|portfolios scanned/i,
-    ingestPattern: /(?:added|matched):\s*(\d+)/,
+    successPattern: /exit code: 0|portfolios scanned|New offers added/i,
+    ingestPattern: /(?:New offers added|added|matched):\s*(\d+)/,
   },
   {
     name: 'community-scan',
     label: 'com.mitchell.career-ops.community-scan',
     cadenceHours: 24,
-    logPathFn: () => join(ROOT, 'data/logs/community-scan.log'),
+    // plist writes stdout+stderr to ~/Library/Logs/career-ops/community-scan.log
+    // (fixed 2026-05-26: was data/logs/ which doesn't receive launchd output)
+    logPathFn: () => join(LAUNCHD_LOGS, 'community-scan.log'),
     outputs: ['data/pipeline.md'],
-    successPattern: /exit code: 0|community signals/,
-    ingestPattern: /(?:found|added):\s*(\d+)/,
+    // actual log format: "[community-scan] Done. Added: 0 URLs  |  Skipped (dupes): 0"
+    successPattern: /\[community-scan\] Done|community-scan starting/,
+    ingestPattern: /Added:\s*(\d+)/,
   },
   {
     name: 'skill-ingest',
     label: 'com.mitchell.career-ops.skill-ingest',
     cadenceHours: 168,       // weekly
-    logPathFn: () => join(ROOT, 'data/logs/skill-ingest-launchd.out'),
+    // fixed 2026-05-26: was data/logs/ which doesn't receive launchd output
+    logPathFn: () => join(LAUNCHD_LOGS, 'skill-ingest-launchd.out'),
     outputs: [],
     successPattern: /exit code: 0|skill ingestion complete/i,
     ingestPattern: /(?:skills|patterns) (?:added|ingested):\s*(\d+)/i,
@@ -97,7 +117,8 @@ const SCANNERS = [
     name: 'company-pulse',
     label: 'com.mitchell.career-ops.company-pulse',
     cadenceHours: 24,
-    logPathFn: () => join(ROOT, 'data/logs/company-pulse-launchd.out'),
+    // fixed 2026-05-26: was data/logs/ which doesn't receive launchd output
+    logPathFn: () => join(LAUNCHD_LOGS, 'company-pulse-launchd.out'),
     outputs: ['data/intel-cache/'],
     successPattern: /exit code: 0|pulse refresh complete/i,
     ingestPattern: /(?:companies refreshed|signals updated):\s*(\d+)/i,
@@ -106,7 +127,8 @@ const SCANNERS = [
     name: 'scrape-frequent',
     label: 'com.mitchell.career-ops.scrape-frequent',
     cadenceHours: 4,
-    logPathFn: () => join(ROOT, 'data/logs/scrape-frequent-launchd.out'),
+    // scrape-only.mjs logs to data/logs/scrape-YYYY-MM-DD.log (not launchd stdout)
+    logPathFn: () => latestDatedLog('scrape-'),
     outputs: ['data/pipeline.md'],
     successPattern: /exit code: 0|scrape complete/i,
     ingestPattern: /(?:New offers added|URLs?):\s*(\d+)/,

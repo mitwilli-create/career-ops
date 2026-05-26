@@ -368,6 +368,27 @@
   </entry>
 
   <!-- ============================================================
+       LinkedIn job digest — ESP delivery domains (added 2026-05-26)
+       Subject pattern: "New jobs: X at Y and N more jobs"
+       These come through LinkedIn's email delivery service (e.linkedin.com /
+       em.linkedin.com) which is separate from the direct alert senders
+       already covered in the Tier-1 linkedin entry above.
+       ============================================================ -->
+
+  <entry>
+    <category term='filter'></category>
+    <title>LinkedIn job digest (ESP delivery domains)</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-linkedin-digest</id>
+    <updated>2026-05-26T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='@e.linkedin.com OR @em.linkedin.com OR jobs@email.linkedin.com OR no-reply@email.linkedin.com OR jobs@linkedin.com OR linkedin@linkedin.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <!-- ============================================================
        AI-specific job boards and newsletters (added 2026-05-26)
        ============================================================ -->
 

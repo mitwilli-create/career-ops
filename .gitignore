@@ -474,3 +474,7 @@ scripts/staging-shot*.mjs
 .claude/audit/gemini-audit-prep-2026-05-24/
 .claude/audit/retro-screenshots-2026-05-19/
 .claude/audit/f1b-padding-2026-05-21/screenshot-*-2026-05-24*.png
+# career-ops-health agent spend ledger (runtime telemetry, regenerated each run)
+data/career-ops-health-spend.jsonl
+# Audit directories for dated sessions (content is work-product, path reveals session dates)
+.claude/audit/2026-05-26/

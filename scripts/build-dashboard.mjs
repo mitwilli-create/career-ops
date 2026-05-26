@@ -19679,19 +19679,15 @@ _drillInRegister('pack-stage-result', function(id) {
         }).join('')
       + '<\/div>';
   } else if (typeof result.output === 'string') {
-    // Render markdown → HTML via the inline marked bundle so cv-tailored.md /
-    // cover-letter.md / linkedin-dm.md / form-fields.md tables, lists,
-    // headers, and **bold** show as formatted content rather than raw
-    // markdown characters. Falls back to escaped <pre> if marked isn't
-    // loaded for any reason. Wired 2026-05-26 via /eval-ux-audit.
-    var _packStageFallback = '<pre style="font-size:12.5px;line-height:1.55;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px;white-space:pre-wrap;word-break:break-word;margin:0;max-height:520px;overflow:auto">' + _esc(result.output) + '<\/pre>';
-    var _packStageRendered = _packStageFallback;
-    try {
-      if (typeof window !== 'undefined' && window.marked && typeof window.marked.parse === 'function') {
-        _packStageRendered = '<div class="markdown-body" style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px;margin:0;max-height:520px;overflow:auto">' + window.marked.parse(String(result.output)) + '<\/div>';
-      }
-    } catch (e) { _packStageRendered = _packStageFallback; }
-    bodyHtml = _packStageRendered;
+    // Render markdown → HTML via the canonical window._renderMd helper
+    // (injected in <head> alongside the marked bundle). See AGENTS.md
+    // § Bug class: client-side-dependency-bridge-gap for why this MUST
+    // route through the shared helper rather than reimplementing the
+    // marked.parse / pre+esc dance inline. Per PR-A consolidation
+    // (2026-05-26).
+    bodyHtml = '<div class="markdown-body" style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px;margin:0;max-height:520px;overflow:auto">'
+      + window._renderMd(result.output)
+      + '<\/div>';
   } else if (result.output) {
     bodyHtml = '<pre style="font-size:12px;line-height:1.4;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px;white-space:pre-wrap;word-break:break-word;margin:0;max-height:520px;overflow:auto">'
       + _esc(JSON.stringify(result.output, null, 2))
@@ -22857,17 +22853,14 @@ function _renderApplyClipboardModal(modal, formFieldsText, slug, applyHref, back
   // list structure). The rendered body lives in the DOM as HTML for
   // human reading; the clipboard payload comes from rawBodies[idx].
   var rawBodies = sections.map(_bodyOf);
-  // Helper: render markdown → HTML via the inline marked bundle if it
-  // loaded; fall back to escaped <pre> when marked is unavailable so
-  // the modal degrades to today's behavior rather than going blank.
-  function _renderMd(text) {
-    try {
-      if (typeof window !== 'undefined' && window.marked && typeof window.marked.parse === 'function') {
-        return window.marked.parse(String(text || ''));
-      }
-    } catch (e) { /* fall through to plain text */ }
-    return '<pre style="margin:0;font-family:inherit;font-size:12.5px;line-height:1.6;color:var(--text-2);white-space:pre-wrap;word-wrap:break-word">' + _esc(text) + '</pre>';
-  }
+  // Markdown rendering goes through window._renderMd, the canonical client-side
+  // markdown helper injected after minification (see scripts/build-dashboard.mjs
+  // marked-injection step + AGENTS.md § Bug class: client-side-dependency-
+  // bridge-gap). Per PR-A consolidation (2026-05-26), we do NOT redefine the
+  // helper inline here — using the shared global ensures every render site
+  // shares one parse strategy + fallback. window._renderMd is guaranteed to be
+  // defined before any inline JS in <body> runs because the helper script is
+  // injected into <head> alongside the marked bundle.
   // Scrollable section list
   html += '<div style="flex:1;overflow-y:auto;padding:4px 24px 8px">';
   for (var j = 0; j < sections.length; j++) {
@@ -22878,7 +22871,7 @@ function _renderApplyClipboardModal(modal, formFieldsText, slug, applyHref, back
     html += '<div style="font-size:13px;font-weight:600;color:var(--text);line-height:1.4;flex:1">' + _esc(sec.title) + '</div>';
     html += '<button type="button" class="apply-clipboard-copy-btn" data-section-idx="' + j + '" style="flex-shrink:0;padding:4px 10px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);border-radius:4px;cursor:pointer;font-size:11px;font-weight:500">' + String.fromCharCode(0x2398) + ' Copy</button>';
     html += '</div>';
-    html += '<div class="apply-clipboard-body markdown-body" style="margin:0;padding:10px 14px;background:var(--surface-2,#0f1118);border-radius:4px;border:1px solid var(--border-2,var(--border));overflow-x:auto">' + _renderMd(bodyText) + '</div>';
+    html += '<div class="apply-clipboard-body markdown-body" style="margin:0;padding:10px 14px;background:var(--surface-2,#0f1118);border-radius:4px;border:1px solid var(--border-2,var(--border));overflow-x:auto">' + window._renderMd(bodyText) + '</div>';
     html += '</div>';
   }
   html += '</div>';
@@ -38726,25 +38719,64 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 
   const minifiedHtml = _minifyHtmlOutput(externalizedHtml);
 
-  // Inline marked.umd.js (markdown→HTML parser) so the Apply Now modal +
-  // pack-stage-result drill-in can render apply-pack/*.md content as real
-  // HTML tables / blockquotes / bold rather than raw markdown characters.
-  // Injected AFTER minification because the minifier's `/* ... */`
-  // stripper is not JS-tokenizer-aware and would corrupt marked's regex
-  // literals (which include /* */ patterns inside character classes).
-  // Self-contained dashboard posture preserved — no external CDN dep.
-  // Wired 2026-05-26 via /eval-ux-audit.
+  // Inline marked.umd.js (markdown→HTML parser) AND the window._renderMd
+  // canonical helper so the Apply Now modal + pack-stage-result drill-in
+  // can render apply-pack/*.md content as real HTML tables / blockquotes /
+  // bold rather than raw markdown characters. Injected AFTER minification
+  // because the minifier's `/* ... */` stripper is not JS-tokenizer-aware
+  // and would corrupt marked's regex literals (which include /* */ patterns
+  // inside character classes). Self-contained dashboard posture preserved —
+  // no external CDN dep. See AGENTS.md § Bug class: client-side-dependency-
+  // bridge-gap for the doctrine behind this pattern.
+  //
+  // window._renderMd is the ONLY sanctioned client-side path for displaying
+  // .md content. Every render site (Apply Now modal, pack-stage drill-in,
+  // any future surface) MUST call window._renderMd(text) rather than
+  // inlining its own marked.parse / pre+esc fallback. The helper's
+  // existence is the structural tripwire: anyone removing the marked
+  // bundle without removing this helper produces a quietly-broken
+  // dashboard; anyone removing the helper without removing every call
+  // site gets an immediate runtime error.
+  // Wired 2026-05-26 via /eval-ux-audit (PR-A consolidation).
   let htmlWithMarked = minifiedHtml;
   try {
     const markedUmdPath = join(ROOT, 'node_modules/marked/lib/marked.umd.js');
     if (existsSync(markedUmdPath)) {
       const markedUmdSrc = readFileSync(markedUmdPath, 'utf-8');
+      // Helper definition is its own <script> block immediately after the
+      // marked bundle so concerns stay separated + diff-tooling reviews
+      // are cleaner. Both arrive in <head> via the same injection step.
+      const renderMdHelper = [
+        '<script>',
+        '/* window._renderMd — canonical client-side markdown renderer.',
+        '   The ONLY sanctioned path for displaying .md content client-side.',
+        '   Wraps window.marked.parse with a try/catch + pre+esc fallback.',
+        '   See AGENTS.md § Bug class: client-side-dependency-bridge-gap. */',
+        '(function(){',
+        '  function _escForFallback(s){',
+        '    return String(s==null?"":s)',
+        '      .replace(/&/g,"&amp;").replace(/</g,"&lt;")',
+        '      .replace(/>/g,"&gt;").replace(/"/g,"&quot;");',
+        '  }',
+        '  window._renderMd = function _renderMd(text){',
+        '    try {',
+        '      if (window.marked && typeof window.marked.parse === "function") {',
+        '        return window.marked.parse(String(text==null?"":text));',
+        '      }',
+        '    } catch (e) { /* fall through to escaped pre */ }',
+        '    return "<pre style=\\"margin:0;font-family:inherit;font-size:12.5px;line-height:1.6;color:var(--text-2);white-space:pre-wrap;word-wrap:break-word\\">"',
+        '      + _escForFallback(text) + "</pre>";',
+        '  };',
+        '})();',
+        '</script>',
+        ''
+      ].join('\n');
       // Use a single-pass replace on the FIRST </head> only (the dashboard
       // has two <head> blocks; only the main one at the top needs marked).
       const headIdx = htmlWithMarked.indexOf('</head>');
       if (headIdx > -1) {
         const inlineMarkedScript = '<script>/* marked v18 UMD bundle — inlined 2026-05-26 via /eval-ux-audit (renders apply-pack/*.md content in Apply Now modal + pack-stage drill-in) */\n' + markedUmdSrc + '\n</script>\n';
-        htmlWithMarked = htmlWithMarked.slice(0, headIdx) + inlineMarkedScript + htmlWithMarked.slice(headIdx);
+        htmlWithMarked = htmlWithMarked.slice(0, headIdx) + inlineMarkedScript + renderMdHelper + htmlWithMarked.slice(headIdx);
       }
     } else {
       console.warn('[build-dashboard] marked.umd.js not found — Apply Now modal will degrade to raw text');

@@ -10839,6 +10839,26 @@ async function build() {
     border-top: 1px solid var(--border);
     font-size: 11px; color: var(--text-3);
   }
+  #pill-popover .people-research-btn {
+    display: flex; align-items: center; gap: 6px;
+    width: 100%; margin-top: 12px; padding: 8px 12px;
+    background: rgba(99,102,241,0.12); border: 1px solid rgba(99,102,241,0.35);
+    border-radius: 6px; color: #a5b4fc; font-size: 12px; font-weight: 600;
+    cursor: pointer; text-align: left; transition: background 0.15s, border-color 0.15s;
+    letter-spacing: 0.01em;
+  }
+  #pill-popover .people-research-btn:hover {
+    background: rgba(99,102,241,0.22); border-color: rgba(99,102,241,0.6); color: #c7d2fe;
+  }
+  #pill-popover .people-research-btn.copied {
+    background: rgba(22,163,74,0.15); border-color: rgba(22,163,74,0.5); color: #86efac;
+  }
+  #pill-popover .people-research-btn.copy-err {
+    background: rgba(220,38,38,0.12); border-color: rgba(220,38,38,0.4); color: #fca5a5;
+  }
+  #pill-popover .people-research-icon {
+    font-size: 13px; opacity: 0.85; flex-shrink: 0;
+  }
   #pill-popover .pill-popover-row {
     display: flex; gap: 8px; margin: 3px 0;
   }
@@ -30030,6 +30050,53 @@ window._copyGapInterviewPrompt = function (btn) {
   }
 };
 
+// People-research prompt clipboard copy (2026-05-26).
+// Prompt is built + stored in window.__lastPeopleResearchPrompt when the
+// people pill-popover renders. Single-popover invariant keeps the global fresh.
+window._copyPeopleResearchPrompt = function (btn) {
+  if (!btn) return;
+  var text = window.__lastPeopleResearchPrompt || '';
+  if (!text) return;
+  function flashOk() {
+    var prev = btn.textContent;
+    btn.innerHTML = '&#10003; Copied';
+    btn.classList.add('copied');
+    setTimeout(function () {
+      btn.innerHTML = '<span class="people-research-icon">&#x2731;</span> Claude Code: Research People';
+      btn.classList.remove('copied');
+    }, 1600);
+  }
+  function flashErr(msg) {
+    var prev = btn.textContent;
+    btn.textContent = '\\u2717 ' + (msg || 'Failed');
+    btn.classList.add('copy-err');
+    setTimeout(function () {
+      btn.innerHTML = '<span class="people-research-icon">&#x2731;</span> Claude Code: Research People';
+      btn.classList.remove('copy-err');
+    }, 2400);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(flashOk).catch(function (e) {
+      flashErr(e && e.message ? e.message.slice(0, 40) : 'Failed');
+    });
+    return;
+  }
+  try {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'absolute';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = document.execCommand('copy');
+    ta.remove();
+    if (ok) flashOk(); else flashErr('Copy blocked');
+  } catch (e) {
+    flashErr('No clipboard');
+  }
+};
+
 // ── Tier-legend modal ──────────────────────────────────────────
 const TIER_LEGEND = ${JSON.stringify(TIER_LEGEND)};
 const TIER_BY_CODE = Object.fromEntries(TIER_LEGEND.map(t => [t.code, t]));
@@ -30856,12 +30923,26 @@ function _renderPillPopover(d) {
         + '<div class="pill-popover-body">' + personLink + suffix + '</div>'
         + (p.rationale ? '<div class="pill-popover-meta-inline">' + esc(p.rationale) + '</div>' : '');
     };
+    // Build people-research prompt and stash in global (single-popover invariant).
+    var _prRecruiter = (d.recruiter && d.recruiter.name && d.recruiter.name !== 'unknown') ? d.recruiter.name : 'Not identified';
+    var _prRecruiterLi = (d.recruiter && d.recruiter.linkedin_url && d.recruiter.linkedin_url !== 'unknown') ? d.recruiter.linkedin_url : 'unknown';
+    var _prHm = (d.hiring_manager && d.hiring_manager.name && d.hiring_manager.name !== 'unknown') ? d.hiring_manager.name : 'Not identified';
+    var _prHmLi = (d.hiring_manager && d.hiring_manager.linkedin_url && d.hiring_manager.linkedin_url !== 'unknown') ? d.hiring_manager.linkedin_url : 'unknown';
+    var _prNetwork = '';
+    if (d.network && Array.isArray(d.network.connections) && d.network.connections.length) {
+      _prNetwork = d.network.connections.slice(0, 8).map(function(c) { return (c.name || '') + (c.title ? ' (' + c.title + ')' : ''); }).join(', ');
+    }
+    var _prCompanySlug = (d.company || '').toLowerCase().replace(/[^a-z0-9]+/g, '.');
+    var _prCompanyDomain = _prCompanySlug ? _prCompanySlug + '.com' : '<company-domain>';
+    var _prPrompt = '/researcher\\n\\nResearch all people connected to the **' + (d.role || '') + '** role at **' + (d.company || '') + '**. This is a high-priority apply-now opportunity — I need a comprehensive people-intelligence report before reaching out.\\n\\n## Known context\\n- Role: ' + (d.role || '') + ' at ' + (d.company || '') + '\\n- Likely recruiter: ' + _prRecruiter + ' (LinkedIn: ' + _prRecruiterLi + ')\\n- Likely hiring manager: ' + _prHm + ' (LinkedIn: ' + _prHmLi + ')\\n- My LinkedIn connections at ' + (d.company || '') + ': ' + (_prNetwork || 'none identified yet') + '\\n\\n## Research tasks\\n\\n### Task 1 — Social signal sweep (Grok-4, X/Twitter-grounded)\\nUse Grok-4 with live X search to find:\\n- Anyone currently at ' + (d.company || '') + ' posting about the ' + (d.role || '') + ' team or active hiring\\n- The recruiter (' + _prRecruiter + ') and HM (' + _prHm + ') on X — their handles, recent posts, what they engage with and respond to\\n- ' + (d.company || '') + ' employees posting publicly about culture, team composition, or the AI/product stack\\n- Any X thread or Blind post mentioning this role or the team it reports to\\n- LinkedIn posts (Grok web-grounded) from ' + (d.company || '') + ' people celebrating new hires or team announcements for this function\\n\\n### Task 2 — Deep people research (Perplexity sonar-deep-research)\\nFor each person identified in Task 1 plus any additional leads found:\\n- Full name, current title at ' + (d.company || '') + ', LinkedIn URL\\n- Career background — prior companies, tenure at ' + (d.company || '') + '\\n- Publicly visible specialties, interests, thought-leadership topics\\n- Estimated best-contact window: timezone, posting frequency, preferred platform\\n- Any shared ground with Mitchell Williams (AI systems, applied AI, program management, media/journalism-to-AI career arc, CNN/YouTube/NYT background)\\n\\n### Task 3 — Outreach playbook per person\\nFor each identified contact:\\n- 1-paragraph "why reach out to THIS person" rationale\\n- Recommended channel (LinkedIn DM vs email vs X reply)\\n- 2-sentence personalized conversation hook grounded in their actual public content\\n- Optimal timing based on their posting/engagement patterns\\n\\n### Task 4 — Hunter.io email discovery\\nAfter the people report is complete, surface emails for direct outreach.\\nRun a Hunter.io domain search against domain: ' + _prCompanyDomain + '\\nUse the HUNTER_API_KEY env var. Endpoint: GET https://api.hunter.io/v2/domain-search?domain=DOMAIN&type=personal&api_key=KEY\\nFilter results to confidence >= 70. Cross-reference Hunter results against the Task 1-2 people roster to surface verified direct + personal emails for each contact.\\n\\n## Output format\\nProduce a markdown report with:\\n1. **Executive summary** — top 3 contacts ranked by warm-path probability\\n2. **Full people roster** — one card per person with all Task 2 fields\\n3. **Outreach playbook** — Task 3 output per person\\n4. **Email roster** — Hunter.io results cross-referenced to names\\n\\n## My background (for personalization context)\\n- 10+ years building AI-era content + product systems at CNN, YouTube, NYT\\n- Now targeting Applied AI Engineer / AI Program Manager / Solutions Architect roles at AI-native companies\\n- Shipped production AI systems; strong technical + GTM hybrid profile\\n- LinkedIn: linkedin.com/in/mitwilli | GitHub: mitwilli-create';
+    window.__lastPeopleResearchPrompt = _prPrompt;
     return '<div class="pill-popover-kind">People · ' + esc(d.company || '') + '</div>'
       + '<h4 class="pill-popover-headline">' + esc(d.role || '') + '</h4>'
       + _renderNetworkBlock(d.network)
       + personBlock('Likely recruiter', d.recruiter)
       + personBlock('Likely hiring manager', d.hiring_manager)
-      + (d.confidence ? '<div class="pill-popover-meta">Confidence: ' + esc(d.confidence) + '</div>' : '');
+      + (d.confidence ? '<div class="pill-popover-meta">Confidence: ' + esc(d.confidence) + '</div>' : '')
+      + '<button class="people-research-btn" onclick="window._copyPeopleResearchPrompt(this)" title="Copy a multi-LLM research prompt (Grok + Perplexity + Hunter) to find all people connected to this role"><span class="people-research-icon">&#x2731;</span> Claude Code: Research People</button>';
   }
   return '<div class="pill-popover-empty">No detail available.</div>';
 }

@@ -9352,6 +9352,15 @@ async function build() {
   .dcard { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; }
   .dcard-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-4); margin-bottom: 6px; }
   ${polishCardStyles()}
+  /* Dark-mode safety net for strategy-ceiling cards — overrides stale cached HTML that may
+     still have hardcoded light-mode inline styles (background:#fff, border:#e5e7eb).
+     Text colors can't be overridden without !important on inline styles; cache-clear is the
+     canonical fix. This covers the most visible case (white card on dark background). */
+  body.dark .strategy-card {
+    background: var(--surface, #11131c) !important;
+    border-color: var(--border, #232737) !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,.35) !important;
+  }
   .dcard-body { font-size: 12.5px; line-height: 1.55; color: var(--text-2); }
   /* 2026-05-18 Wave B: static (non-drill) cards never show a pointer or
      hover affordance — they're display-only. Kept separate from .dcard-drill

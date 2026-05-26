@@ -297,6 +297,34 @@ function writeDashboardPanel(findings, canaryResults, decisionDocPath) {
   return panelPath;
 }
 
+// ─── Layer 1 (2026-05-26): auto-rebuild dashboard after panel write ─────────
+// Closes the stale-dashboard-after-panel-refresh bug class: panel JSON is
+// refreshed by this agent but dashboard/index.html still has the prior
+// __REGRESSION_GUARD_DATA__ baked in until someone rebuilds. Spawning the
+// build as a detached background process keeps the widget aligned with
+// panel JSON without blocking regression-guard's own exit. Env-gated by
+// REGRESSION_GUARD_AUTO_REBUILD_DASHBOARD (default true).
+function rebuildDashboard(reason) {
+  const auto = process.env.REGRESSION_GUARD_AUTO_REBUILD_DASHBOARD !== 'false';
+  if (!auto) {
+    log(`auto-rebuild dashboard: SKIPPED (REGRESSION_GUARD_AUTO_REBUILD_DASHBOARD=false, reason=${reason})`);
+    return;
+  }
+  try {
+    log(`auto-rebuild dashboard: spawning scripts/build-dashboard.mjs (reason: ${reason})`);
+    const child = spawnChild('node', ['scripts/build-dashboard.mjs'], {
+      cwd: REPO_ROOT,
+      stdio: 'ignore',
+      detached: true,
+      env: { ...process.env },
+    });
+    child.unref();
+    log(`auto-rebuild dashboard: spawned PID ${child.pid}, detached (reason: ${reason})`);
+  } catch (err) {
+    log(`auto-rebuild dashboard: ERROR ${err.message} (reason: ${reason})`, 'error');
+  }
+}
+
 // ─── Modes ──────────────────────────────────────────────────────────────────
 function killSwitchCheck() {
   if (!ENABLED) {
@@ -440,7 +468,9 @@ async function runScheduled({ dryRun = false } = {}) {
   // Persist state + write report
   state.findingHistory[TODAY] = findings.length;
   saveState(state);
-  return writeReport(findings, canaryResults, 'scheduled', cap.spent, false);
+  const result = writeReport(findings, canaryResults, 'scheduled', cap.spent, false);
+  rebuildDashboard('scheduled-run');
+  return result;
 }
 
 function writeReport(findings, canaryResults, mode, spendToday, calibrationWeek, isolatedSubagentNote = null) {
@@ -526,7 +556,9 @@ async function runSeedBaselines({ trialCapUsd = 10 } = {}) {
   state.findingHistory[TODAY] = findings.length;
   saveState(state);
 
-  return writeReport(findings, canaryResults, 'seed-baselines', getTodaySpend(), true);
+  const result = writeReport(findings, canaryResults, 'seed-baselines', getTodaySpend(), true);
+  rebuildDashboard('seed-baselines');
+  return result;
 }
 
 // ─── --deep single-session v1.0 stub + v1.1 multi-session orchestrator ──────
@@ -1450,6 +1482,9 @@ ENV:
   REGRESSION_GUARD_PER_CALL_WARN_USD=5          (soft warn, does NOT block)
   REGRESSION_GUARD_TRANSCRIPT_BASELINE_ENABLED=false   (feature flag — flip after 30d baseline-build)
   REGRESSION_GUARD_DEEP_BUDGET_USD=20           (default --deep budget envelope)
+  REGRESSION_GUARD_AUTO_REBUILD_DASHBOARD=true  (L1, 2026-05-26 — spawn build-dashboard.mjs after panel write)
+  DEPLOY_VERIFY_COMMIT_SHA                      (L2, 2026-05-26 — set by /deploy-verify when invoking --seed-baselines)
+  DEPLOY_VERIFY_REPORT_PATH                     (L2, 2026-05-26 — set by /deploy-verify when invoking --seed-baselines)
 
 OUTPUT:
   .claude/audit/<YYYY-MM-DD>/regression-report-<YYYY-MM-DD>.md             (single-session / scheduled)

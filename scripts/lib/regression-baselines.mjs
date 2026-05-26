@@ -50,11 +50,15 @@ export function loadBaseline(baselineDir, type) {
  * @param {string} opts.via           who/what set this (e.g., 'scheduled', 'seed-baselines')
  * @param {string} opts.setByLabel    free-form set_by label (e.g., 'regression-guard @ 2026-05-23')
  * @param {number} opts.expiryDays    days until baseline expires
+ * @param {string} [opts.commitSha]   optional deploy commit SHA (L2, 2026-05-26 — used by /deploy-verify
+ *                                    auto-reseed to link this baseline write to a specific deploy)
+ * @param {string} [opts.deployReport] optional deploy report path (L2, 2026-05-26 — same purpose)
  * @returns {object} the full baseline record written to disk
  */
 export function writeBaseline({
   baselineDir, provenancePath, type, data, kind = 'data',
   via = 'scheduled', setByLabel = '', expiryDays = 30,
+  commitSha = null, deployReport = null,
 }) {
   if (!BASELINE_KINDS.has(kind)) {
     throw new Error(`writeBaseline: invalid kind="${kind}". Must be one of: ${[...BASELINE_KINDS].join(', ')}`);
@@ -71,11 +75,14 @@ export function writeBaseline({
     expires_at: expires.toISOString(),
     data,
   };
+  if (commitSha) baseline.commit_sha = commitSha;
+  if (deployReport) baseline.deploy_report = deployReport;
   writeFileSync(baselinePath(baselineDir, type), JSON.stringify(baseline, null, 2));
   if (provenancePath) {
-    appendFileSync(provenancePath, JSON.stringify({
-      type, kind, action: 'set', at: now.toISOString(), via,
-    }) + '\n');
+    const provenance = { type, kind, action: 'set', at: now.toISOString(), via };
+    if (commitSha) provenance.commit_sha = commitSha;
+    if (deployReport) provenance.deploy_report = deployReport;
+    appendFileSync(provenancePath, JSON.stringify(provenance) + '\n');
   }
   return baseline;
 }

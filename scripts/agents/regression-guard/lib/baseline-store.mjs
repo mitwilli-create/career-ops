@@ -21,12 +21,21 @@ export function loadBaseline(type) {
 }
 
 export function writeBaseline(type, data, kind = 'data', via = 'scheduled') {
+  // L2, 2026-05-26: if /deploy-verify set DEPLOY_VERIFY_COMMIT_SHA +
+  // DEPLOY_VERIFY_REPORT_PATH before invoking --seed-baselines, thread the
+  // values through so the baseline JSON + _provenance.jsonl entry both
+  // carry a hard link back to the originating deploy. Closes the
+  // stale-baseline-poisoning provenance gap.
+  const commitSha = process.env.DEPLOY_VERIFY_COMMIT_SHA || null;
+  const deployReport = process.env.DEPLOY_VERIFY_REPORT_PATH || null;
+  const effectiveVia = commitSha ? 'deploy-verify' : via;
   return base.writeBaseline({
     baselineDir: BASELINE_DIR,
     provenancePath: BASELINE_PROVENANCE_PATH,
-    type, data, kind, via,
+    type, data, kind, via: effectiveVia,
     setByLabel: `regression-guard @ ${TODAY}`,
     expiryDays: BASELINE_EXPIRY_DAYS,
+    commitSha, deployReport,
   });
 }
 

@@ -569,15 +569,13 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
   const evaluatedToday = meta.evaluatedToday || 0;
   const newFromAlerts  = meta.newFromAlerts || 0;
   const newRoles       = meta.newRoles || 0;
-  const runwayAlert    = meta.runwayAlert || false;
-  const runwayState    = meta.runwayState || 'healthy';
   const outreachDue    = meta.outreachDue || 0;
   const applyNow       = meta.applyNow    || [];
   const whatsNew       = meta.whatsNew    || [];
 
   // H3 — no-news early-exit check
   const deltaScore    = meta.deltaScore   || 0;
-  const noNewsToday   = (newRoles === 0 && !runwayAlert && deltaScore === 0 && outreachDue === 0);
+  const noNewsToday   = (newRoles === 0 && deltaScore === 0 && outreachDue === 0);
 
   // Preheader preview text (state-driven, leads with TONIGHT'S APPLY company)
   const preheaderText = buildHeartbeatPreheader(meta);
@@ -831,7 +829,7 @@ async function renderDispatchHtml(meta) {
   return renderDispatchMorning({
     ...meta,
     // heartbeat.mjs's meta object already contains queueCount, trackedCount,
-    // evaluatedToday, runwayState, runwayAlert, outreachDue, newRoles, topRole,
+    // evaluatedToday, outreachDue, newRoles, topRole,
     // applyNow, whatsNew. F-5 needs todaysFocus and density too — recompute
     // both here so the dispatch module stays decoupled from heartbeat.mjs's
     // private state.
@@ -1102,13 +1100,13 @@ async function getTodaysFocus(metaState) {
     return buildFocusFallback(metaState);
   }
 
-  const { newRoles = 0, runwayAlert = false, runwayState = 'healthy',
+  const { newRoles = 0,
           outreachDue = 0, queueCount = 0, applyNow = [] } = metaState;
   // Compute rough runway days from weeks env (same as computeRunwayDensityForHeartbeat)
   const runwayWeeks = parseInt(process.env.RUNWAY_WEEKS || '12');
   const runwayDays = runwayWeeks * 7;
 
-  const stateStr = `{newRoles=${newRoles}, applyNowReady=${queueCount}, outreachDue=${outreachDue}, runwayDays=${runwayDays}, runwayAlert=${runwayAlert}, runwayState=${runwayState}}`;
+  const stateStr = `{newRoles=${newRoles}, applyNowReady=${queueCount}, outreachDue=${outreachDue}, runwayDays=${runwayDays}}`;
 
   // Phase E2 finding-005 (council-divergence-analysis.md) — anchor the focus
   // to the TONIGHT'S APPLY pack rather than free-form coaching. Without this
@@ -1205,14 +1203,13 @@ async function getTodaysFocus(metaState) {
 function buildFocusFallback(metaState) {
   // Phase E2 finding-005 — fallback also anchored to TONIGHT'S APPLY when
   // a pick exists, so the no-LLM path mirrors the anchored-LLM path.
-  const { newRoles = 0, runwayAlert = false, outreachDue = 0, queueCount = 0, applyNow = [] } = metaState;
+  const { newRoles = 0, outreachDue = 0, queueCount = 0, applyNow = [] } = metaState;
   const pick = (applyNow && applyNow.length > 0) ? applyNow[0] : null;
   if (pick) {
     const co = pick.company || 'top role';
     const scoreStr = pick.score ? pick.score.toFixed(2) : '—';
     return `Tonight, ship the ${co} apply pack — ${scoreStr}/5, highest-leverage move in your queue.`;
   }
-  if (runwayAlert) return `Queue dry + runway tight — push outreach to 10+ touches this week and run a triage pass tonight.`;
   if (newRoles > 0) return `${newRoles} new role${newRoles === 1 ? '' : 's'} scored 4.0 or above — open the top one, build your apply pack, and submit tonight.`;
   if (outreachDue > 0) return `${outreachDue} follow-up${outreachDue === 1 ? '' : 's'} due today — send them before noon so nothing stalls.`;
   return `Queue empty — run a triage pass on the pipeline before EOD to keep the runway window intact.`;
@@ -2094,15 +2091,9 @@ async function generateHeartbeat() {
   // Pull state for the dynamic subject + hidden preheader (Phase 2 Day-1 quick
   // wins, 2026-05-17). The four signals all-7-models converged on:
   //   - newRoles: today's freshly surfaced ≥ 4.0 roles (whatsNew[])
-  //   - runwayAlert + runwayState: retired 2026-05-25 (bug-2026-05-25-225);
-  //     hardcoded to defaults so downstream subject/preheader never emit
-  //     runway text.
   //   - outreachDue: count of due_today contacts in the Outreach Cadence block
   //   - topRole: { name, score } for the highest-scoring Apply-Now row,
   //     used in the preheader preview text on alerting days
-  const runwayState = 'healthy';
-  const runwayAlertFiring = false;
-
   let outreachDue = 0;
   try {
     const summary = buildOutreachSummary();
@@ -2121,8 +2112,6 @@ async function generateHeartbeat() {
     evaluatedToday: reportsToday,
     newFromAlerts: inflow.emailNew,
     newRoles: whatsNew.length,
-    runwayState,
-    runwayAlert: runwayAlertFiring,
     outreachDue,
     topRole,
     // Pass applyNow so renderHtmlEmail can derive TONIGHT'S APPLY independently
@@ -2145,16 +2134,16 @@ async function generateHeartbeat() {
 // No-news: "Ops: all clear — {date}"
 // Normal:  "Ops: apply ElevenLabs Comms (4.6) · 2 outreach due — {date}"
 function buildHeartbeatSubject(meta) {
-  const { date, newRoles = 0, runwayAlert = false, runwayState = 'healthy',
+  const { date, newRoles = 0,
           outreachDue = 0, trackedCount = 0, deltaScore = 0, applyNow = [] } = meta || {};
 
   // H3 — no-news early-exit subject
-  const noNewsToday = (newRoles === 0 && !runwayAlert && (deltaScore || 0) === 0 && outreachDue === 0);
+  const noNewsToday = (newRoles === 0 && (deltaScore || 0) === 0 && outreachDue === 0);
   if (noNewsToday) {
     return `Ops: all clear — ${date}`;
   }
 
-  const alerting = (applyNow && applyNow.length > 0) || newRoles >= 1 || runwayAlert === true || outreachDue >= 1;
+  const alerting = (applyNow && applyNow.length > 0) || newRoles >= 1 || outreachDue >= 1;
   if (!alerting) {
     return `Ops: steady · ${trackedCount} tracked — ${date}`;
   }
@@ -2175,10 +2164,6 @@ function buildHeartbeatSubject(meta) {
   if (outreachDue >= 1) {
     parts.push(`${outreachDue} outreach due`);
   }
-  if (runwayAlert) {
-    const glyph = runwayState === 'critical' ? '🚨' : '⚠️';
-    parts.push(`${glyph} runway ${runwayState}`);
-  }
 
   const subject = `Ops: ${parts.join(' · ')} — ${date}`;
   // Cap at 80 chars to avoid mobile truncation
@@ -2189,10 +2174,10 @@ function buildHeartbeatSubject(meta) {
 // APPLY company so inbox preview reinforces the subject's priority signal).
 // Capped at ~110 chars to fit Gmail's preview width without truncation.
 function buildHeartbeatPreheader(meta) {
-  const { newRoles = 0, runwayAlert = false, runwayState = 'healthy',
+  const { newRoles = 0,
           outreachDue = 0, trackedCount = 0, topRole = null, applyNow = [] } = meta || {};
 
-  const alerting = (applyNow && applyNow.length > 0) || newRoles >= 1 || runwayAlert === true || outreachDue >= 1;
+  const alerting = (applyNow && applyNow.length > 0) || newRoles >= 1 || outreachDue >= 1;
   let text;
   if (alerting) {
     // Lead with TONIGHT'S APPLY company + score, then outreach count
@@ -2203,8 +2188,7 @@ function buildHeartbeatPreheader(meta) {
         ? `Top: ${topRole.name} (${Number(topRole.score).toFixed(2)}).`
         : `Queue active.`;
     const outreachPart = outreachDue > 0 ? ` ${outreachDue} outreach due.` : '';
-    const runwayPart = runwayAlert ? ` Runway: ${runwayState}.` : '';
-    text = `${topPart}${outreachPart}${runwayPart}`;
+    text = `${topPart}${outreachPart}`;
   } else {
     text = `${trackedCount} tracked. ${newRoles} new today. Steady.`;
   }

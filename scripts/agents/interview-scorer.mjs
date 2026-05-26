@@ -32,7 +32,6 @@ try {
   config({ path: join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.env'), override: true });
 } catch { /* dotenv optional */ }
 
-import { SONNET } from '../../lib/models.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..', '..');
@@ -50,40 +49,31 @@ const date = arg('--date', new Date().toISOString().slice(0, 10));
 const inlineAnswer = arg('--answer');
 const answerFile = arg('--answer-file');
 
-// ── Anthropic API call ─────────────────────────────────────────────────
+// ── LLM call via callCouncil (cost-distribution Part 2, 2026-05-25) ─────────
+// Refactored to route through callCouncil for prompt-cache breakpoints +
+// per-vendor monthly-cap guards. structured_extraction taskType resolves to
+// anthropic:claude-sonnet-4-6 — same model that SONNET pointed at.
 async function callSonnet(systemPrompt, userPrompt, maxTokens = 2000) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set in env');
-
-  let res;
-  try {
-    res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: SONNET,
-        max_tokens: maxTokens,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userPrompt }],
-      }),
-      signal: AbortSignal.timeout(120_000), // Phase A.0 hardening — LLM API timeout
-    });
-  } catch (e) {
-    if (e.name === 'TimeoutError' || e.name === 'AbortError') {
-      throw new Error('Anthropic API timeout after 120s — slow upstream. Not retrying.');
+  const { callCouncil } = await import('../../lib/council.mjs');
+  const res = await callCouncil({
+    prompt: userPrompt,
+    opts: {
+      taskType: 'structured_extraction',  // → anthropic:claude-sonnet-4-6
+      systemPrompt,
+      maxTokens,
+      timeoutMs: 120_000,
+      agentSlug: 'interview-scorer',
+    },
+  });
+  const result = res.results?.[0];
+  if (!result) throw new Error('callCouncil returned no results');
+  if (result.error) {
+    if (/timeout/i.test(String(result.error))) {
+      throw new Error('LLM API timeout — slow upstream. Not retrying.');
     }
-    throw e;
+    throw new Error(`LLM error: ${result.error}`);
   }
-  if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(`Anthropic API error ${res.status}: ${txt.slice(0, 500)}`);
-  }
-  const data = await res.json();
-  return data.content?.[0]?.text || '';
+  return result.content || '';
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────

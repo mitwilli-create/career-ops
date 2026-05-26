@@ -335,10 +335,11 @@ async function refreshPositioning(row, opts = {}) {
     return { ok: false, error: String(e.message || e) };
   }
 
-  // Adjudicate via Opus
+  // Adjudicate via Sonnet (cost-distribution Part 2, 2026-05-25 — downgraded
+  // from Opus 4.7. Adjudication framing preserved; same skeptical posture.).
   const allParses = (council.results || []).map(r => (r.content ? extractJson(r.content) : null)).filter(Boolean);
   const adjPrompt = [
-    `You are the Opus dealbreaker layer. Adjudicate the council's positioning candidates for Mitchell at ${row.company} — ${row.role}.`,
+    `You are the dealbreaker layer. Adjudicate the council's positioning candidates for Mitchell at ${row.company} — ${row.role}.`,
     `Per-model responses: ${JSON.stringify(allParses).slice(0, 5000)}`,
     ``,
     `Return STRICT JSON with the FINAL positioning Mitchell should use:`,
@@ -351,7 +352,10 @@ async function refreshPositioning(row, opts = {}) {
   try {
     const adj = await callCouncil({
       prompt: adjPrompt,
-      models: ['anthropic:claude-opus-4-7'],
+      // cost-distribution Part 2 (2026-05-25): positioning adjudicator downgraded
+      // from Opus 4.7 to Sonnet 4.6. Adjudication is a structured-extraction
+      // task; Sonnet handles it reliably at ~5x lower cost.
+      models: ['anthropic:claude-sonnet-4-6'],
       opts: { timeoutMs: 180000,
         maxTokens: 2000,
         cacheStableContent: stableCorpus,

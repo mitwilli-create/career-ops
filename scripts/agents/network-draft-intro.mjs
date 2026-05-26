@@ -188,53 +188,42 @@ The message should be from Mitchell in first person, addressed directly to ${p.f
 It must feel like a genuine human DM, not a template. It should earn the read.`;
 }
 
-// LLM call (single Anthropic Sonnet — draft-intro is a quick creative task,
-// not a research task, so council fan-out is overkill here)
+// LLM call via callCouncil (cost-distribution Part 2, 2026-05-25).
+// Refactored from direct Anthropic fetch — routes through callCouncil for
+// prompt-cache breakpoints + per-vendor monthly-cap guards. voice_match_writing
+// taskType keeps Opus 4.7 as the default (Mitchell's locked decision for
+// voice-matching). Switch to structured_extraction or pass explicit
+// `models: ['anthropic:claude-sonnet-4-6']` if cost matters more than fidelity
+// for a given run.
 async function callSonnet(prompt, groundingCtx = {}) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
-
-  // PR-02: grounded system prepend — Anthropic vendor path (full corpus).
+  const { callCouncil } = await import('../../lib/council.mjs');
   const baseSystem = `You are a voice-matching assistant. You draft LinkedIn messages that sound exactly like Mitchell Williams — a specific human being with a calibrated written voice. You match his register: em-dash density, problem-statement openers, concrete metric anchoring, earned closers. You never write corporate PR language.`;
   const systemPrompt = _groundedSystem(baseSystem, groundingCtx);
 
-  const body = {
-    model: 'claude-sonnet-4-6',
-    max_tokens: 600,
-    messages: [{ role: 'user', content: prompt }],
-    system: systemPrompt,
-  };
-
-  let resp;
-  try {
-    resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(120_000), // Phase A.0 hardening — LLM API timeout
-    });
-  } catch (e) {
-    if (e.name === 'TimeoutError' || e.name === 'AbortError') {
-      throw new Error('Anthropic API timeout after 120s — slow upstream. Not retrying.');
+  const res = await callCouncil({
+    prompt,
+    opts: {
+      taskType: 'voice_match_writing',  // → anthropic:claude-opus-4-7
+      systemPrompt,
+      maxTokens: 600,
+      timeoutMs: 120_000,
+      agentSlug: 'network-draft-intro',
+    },
+  });
+  const result = res.results?.[0];
+  if (!result) throw new Error('callCouncil returned no results');
+  if (result.error) {
+    if (/timeout/i.test(String(result.error))) {
+      throw new Error('LLM API timeout — slow upstream. Not retrying.');
     }
-    throw e;
+    throw new Error(`LLM error: ${result.error}`);
   }
-
-  if (!resp.ok) {
-    const txt = await resp.text();
-    throw new Error(`Anthropic API error ${resp.status}: ${txt.slice(0, 200)}`);
-  }
-
-  const data = await resp.json();
-  const content = data.content?.[0]?.text || '';
-  const inputTokens  = data.usage?.input_tokens || 0;
-  const outputTokens = data.usage?.output_tokens || 0;
-  // claude-sonnet-4-6: $3/M input, $15/M output (2026 pricing)
-  const costUsd = (inputTokens / 1_000_000) * 3 + (outputTokens / 1_000_000) * 15;
+  const content = result.content || '';
+  const totalTok = result.tokens || 0;
+  const inputTokens  = Math.round(totalTok * 0.85);
+  const outputTokens = Math.round(totalTok * 0.15);
+  // Use callCouncil's costUsd estimate — it knows the resolved model and rates.
+  const costUsd = Number(result.costUsd) || ((inputTokens / 1_000_000) * 3 + (outputTokens / 1_000_000) * 15);
   try { recordTokens('anthropic', inputTokens + outputTokens); } catch {}
   return { content, inputTokens, outputTokens, costUsd };
 }

@@ -62,7 +62,6 @@ try {
 } catch { /* dotenv optional */ }
 
 import { callCouncil } from '../../lib/council.mjs';
-import { fetchJson } from '../../lib/safe-fetch.mjs';
 import { buildGroundedPrompt } from '../../lib/ground-prompt.mjs';
 import { reserveQuota, recordTokens } from '../../lib/quota-tracker.mjs';
 
@@ -448,12 +447,11 @@ async function runDealbreakerAdjudication(row, parses, opts = {}) {
     councilResponses: parses,
   });
 
-  // Opus inline dealbreaker pass. The dealbreaker agent (~/.claude/agents/dealbreaker.md)
-  // uses opus model + claim-adjudication mode. Here we invoke Opus directly via the
-  // Anthropic API to mirror the same skeptical-classification workflow without spawning
-  // a separate Agent (Agent tool isn't available inside an .mjs script context).
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
+  // cost-distribution Part 2 (2026-05-25): dealbreaker adjudication downgraded
+  // from Opus 4.7 to Sonnet 4.6 via callCouncil. Routing: structured_extraction
+  // taskType resolves to Sonnet 4.6. Skeptical-adjudicator framing preserved
+  // via systemPrompt. Opus 4.7 stays the canonical session model and remains
+  // available via explicit `models: ['anthropic:claude-opus-4-7']` if needed.
 
   const systemPrompt = [
     `You are the dealbreaker — the final reviewer of cross-model research.`,
@@ -469,38 +467,39 @@ async function runDealbreakerAdjudication(row, parses, opts = {}) {
   ].join('\n');
 
   const t0 = Date.now();
-  let j;
+  let adjudicated = null;
+  let adjudicationCost = 0;
+  let usage = {};
   try {
-    j = await fetchJson('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      signal: AbortSignal.timeout(180_000),
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
+    const adj = await callCouncil({
+      prompt: adjudicationPrompt,
+      opts: {
+        taskType: 'structured_extraction',
+        systemPrompt,
+        maxTokens: 4000,
+        timeoutMs: 180_000,
+        agentSlug: 'interview-likelihood:dealbreaker',
       },
-      body: JSON.stringify({
-        model: 'claude-opus-4-7',
-        max_tokens: 4000,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: adjudicationPrompt }],
-      }),
-    }, { bodyTimeoutMs: 120_000, errPrefix: 'anthropic-opus-dealbreaker' });
+    });
+    const result = adj.results?.[0];
+    if (!result || result.error) {
+      const errMsg = result?.error || 'callCouncil returned no result';
+      emit({ slot: 'il', row: row.num, phase: 'adjudicate-failed', error: errMsg });
+      throw new Error(errMsg);
+    }
+    const content = result.content || '';
+    adjudicated = extractJson(content);
+    if (!adjudicated || typeof adjudicated.likelihood_pct !== 'number') {
+      const adjudicationMs = Date.now() - t0;
+      return { error: 'adjudication-parse-failed', raw: content.slice(0, 500), adjudication_ms: adjudicationMs };
+    }
+    adjudicationCost = adj.report?.totalCost || result.costUsd || 0;
+    usage = { input_tokens: 0, output_tokens: 0, total_tokens: result.tokens || 0 };
   } catch (err) {
     emit({ slot: 'il', row: row.num, phase: 'adjudicate-failed', error: String(err.message || err) });
     throw err;
   }
   const adjudicationMs = Date.now() - t0;
-
-  const content = (j.content && j.content[0] && j.content[0].text) || '';
-  const adjudicated = extractJson(content);
-  if (!adjudicated || typeof adjudicated.likelihood_pct !== 'number') {
-    return { error: 'adjudication-parse-failed', raw: content.slice(0, 500), adjudication_ms: adjudicationMs };
-  }
-
-  const usage = j.usage || {};
-  // Opus 4.7 pricing approx: $15/$75 per 1M input/output (rough).
-  const adjudicationCost = (usage.input_tokens || 0) * 15 / 1_000_000 + (usage.output_tokens || 0) * 75 / 1_000_000;
 
   emit({ slot: 'il', row: row.num, phase: 'adjudicate-done',
     pct: adjudicated.likelihood_pct, conf: adjudicated.confidence,

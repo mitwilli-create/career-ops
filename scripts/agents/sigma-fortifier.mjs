@@ -805,8 +805,13 @@ function scanOuterTemplateUnescape() {
 
 // ─── Council fan-out per finding ───────────────────────────────────────────────
 
+// cost-distribution Part 2 (2026-05-25): Opus 4.7 removed from sigma council
+// lineup — Sonnet 4.6 carries the Anthropic leaf. Opus stays available via
+// explicit `callCouncil({ models: ['anthropic:claude-opus-4-7'] })` for
+// adversarial-bias-check callers that need it. Sigma's adversarial fan-out is
+// preserved at 5 models (was 6); the per-finding council still gets multi-
+// vendor disagreement signal.
 const COUNCIL_LINEUP = [
-  'anthropic:claude-opus-4-7',
   'anthropic:claude-sonnet-4-6',
   'openai:gpt-5',
   'xai:grok-4',
@@ -950,7 +955,9 @@ async function councilFanOut(finding) {
     return { verdict: 'NEEDS_HUMAN_REVIEW', proposals, cost, reason: 'no model returned an OLD block that matches the file verbatim and uniquely' };
   }
 
-  // Prefer Opus → Sonnet → GPT-5 ordering when multiple are viable
+  // Prefer Sonnet → GPT-5 → ... ordering when multiple are viable
+  // (cost-distribution Part 2, 2026-05-25 — Opus 4.7 removed from default lineup;
+  // explicit `models:` callers can still surface it as the highest-priority winner)
   const priority = ['anthropic:claude-opus-4-7', 'anthropic:claude-sonnet-4-6', 'openai:gpt-5', 'xai:grok-4', 'google:gemini-2.5-pro', 'perplexity:sonar-reasoning-pro'];
   viable.sort((a, b) => priority.indexOf(a.model) - priority.indexOf(b.model));
   const winner = viable[0];

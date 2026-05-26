@@ -258,7 +258,11 @@ function lexicalTagCommit(commit) {
   return tags;
 }
 
-// ── Phase D: optional LLM tagging pass (Sonnet) ──────────────────────
+// ── Phase D: optional LLM tagging pass (Sonnet via callCouncil) ──────────────
+// cost-distribution Part 2 (2026-05-25): refactored to route through
+// callCouncil so this caller benefits from prompt-cache breakpoints + per-vendor
+// monthly-cap guards + the structured_extraction routing default. Schema +
+// cache + timeout semantics preserved.
 async function llmTagCluster(clusterCommits) {
   if (!DO_LLM_TAG) return null;
   if (!process.env.ANTHROPIC_API_KEY) {
@@ -294,24 +298,22 @@ Output STRICT JSON (no markdown, no commentary):
 Commits:
 ${summary}`;
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
+    const { callCouncil } = await import('../../lib/council.mjs');
+    const res = await callCouncil({
+      prompt,
+      opts: {
+        taskType: 'structured_extraction',  // → anthropic:claude-sonnet-4-6
+        maxTokens: 800,
+        timeoutMs: 120_000,
+        agentSlug: 'builder-log:llm-tag',
       },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 800,
-        temperature: 0,
-        messages: [{ role: 'user', content: prompt }],
-      }),
-      signal: AbortSignal.timeout(120_000), // Phase A.0 hardening — LLM API timeout
     });
-    if (!res.ok) { console.error('[builder-log] llm-tag HTTP', res.status); return null; }
-    const data = await res.json();
-    const text = (data.content || []).filter(c => c.type === 'text').map(c => c.text).join('');
+    const result = res.results?.[0];
+    if (!result || result.error) {
+      console.error('[builder-log] llm-tag error:', result?.error || 'no result');
+      return null;
+    }
+    const text = result.content || '';
     const m = text.match(/\{[\s\S]*\}/);
     if (!m) { console.error('[builder-log] llm-tag no JSON in response'); return null; }
     const tags = JSON.parse(m[0]);

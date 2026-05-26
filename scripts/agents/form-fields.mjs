@@ -222,61 +222,32 @@ function estimateCostUsd({ input = 0, output = 0 } = {}) {
 }
 
 /**
- * Try Haiku via direct Anthropic API call; falls back to council.mjs openai:gpt-5
- * if ANTHROPIC_API_KEY is not set or Haiku returns a non-2xx.
+ * Route via callCouncil (cost-distribution Part 2, 2026-05-25). Form-fields are
+ * a structured-extraction task — taskType resolves to anthropic:claude-sonnet-4-6
+ * by default, which has better instruction-following than Haiku for this
+ * structured-JSON workload. Fallback path remains via callCouncil's per-vendor
+ * cap + missing-key handling. The Haiku-direct-fetch path has been removed —
+ * route through callCouncil to gain prompt-cache breakpoints + cost-trace.
  */
 async function callHaikuOrFallback(userPrompt, systemPrompt, maxTokens) {
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  if (anthropicKey) {
-    try {
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'x-api-key': anthropicKey,
-          'anthropic-version': '2023-06-01',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5',
-          max_tokens: maxTokens,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: userPrompt }],
-        }),
-        signal: AbortSignal.timeout(90_000),
-      });
-      if (r.ok) {
-        const j = await r.json();
-        const content = j.content?.[0]?.text || '';
-        const totalTok = (j.usage?.input_tokens || 0) + (j.usage?.output_tokens || 0);
-        return {
-          content,
-          tokens: totalTok,
-          modelUsed: 'claude-haiku-4-5',
-          inputTokens: j.usage?.input_tokens || 0,
-          outputTokens: j.usage?.output_tokens || 0,
-        };
-      }
-    } catch { /* fall through to gpt-5 */ }
-  }
-
-  // Fallback: openai:gpt-5 via council.mjs
   const councilResult = await callCouncil({
     prompt: userPrompt,
-    models: ['openai:gpt-5'],
-    opts: { timeoutMs: 180000,
+    opts: {
+      taskType: 'structured_extraction',  // → anthropic:claude-sonnet-4-6
       systemPrompt,
       maxTokens,
-      reasoningEffort: 'minimal',
+      timeoutMs: 120_000,
+      agentSlug: 'form-fields',
     },
   });
   const result = councilResult.results?.[0];
-  if (!result) throw new Error('callCouncil returned no results (fallback)');
-  if (result.error) throw new Error(`LLM error (fallback): ${result.error}`);
+  if (!result) throw new Error('callCouncil returned no results');
+  if (result.error) throw new Error(`LLM error: ${result.error}`);
   const totalTok = result.tokens || 0;
   return {
     content: result.content,
     tokens: totalTok,
-    modelUsed: result.modelUsed || 'openai:gpt-5',
+    modelUsed: result.modelUsed || 'claude-sonnet-4-6',
     inputTokens: Math.round(totalTok * 0.85),
     outputTokens: Math.round(totalTok * 0.15),
   };
@@ -308,7 +279,7 @@ export async function runFormFields(input) {
   if (!rfs.existsSync(cvPath)) {
     return {
       stage: STAGE, status: 'error', output: null,
-      diagnostics: { duration_ms: Date.now() - t0, cost_estimate_usd: 0, tokens_used: { input: 0, output: 0, cached: 0 }, model_used: 'claude-haiku-4-5' },
+      diagnostics: { duration_ms: Date.now() - t0, cost_estimate_usd: 0, tokens_used: { input: 0, output: 0, cached: 0 }, model_used: 'claude-sonnet-4-6' },
       error: 'cv.md not found at repo root',
     };
   }
@@ -374,7 +345,7 @@ export async function runFormFields(input) {
   const MAX_COMPLETION_TOKENS = 2000;
   let llmResult = null;
   let llmError = null;
-  let modelUsed = 'claude-haiku-4-5';
+  let modelUsed = 'claude-sonnet-4-6';
   let tokensUsed = { input: 0, output: 0, cached: 0 };
 
   try {

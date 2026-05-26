@@ -33,6 +33,18 @@ import { join } from 'node:path';
 import { REPO_ROOT } from '../lib/config.mjs';
 import { hashCite } from '../lib/citation-policy.mjs';
 
+// Known-FP suppression — see data/regression-guard-suppressions.json
+const _suppressionPath = join(REPO_ROOT, 'data/regression-guard-suppressions.json');
+const _suppressions = (() => {
+  try {
+    if (!existsSync(_suppressionPath)) return [];
+    return JSON.parse(readFileSync(_suppressionPath, 'utf-8')).type_01_suppressions || [];
+  } catch { return []; }
+})();
+function _isSuppressed(trimmedLine, subtype) {
+  return _suppressions.some(s => s.subtype === subtype && s.match_content === trimmedLine);
+}
+
 export function detectType1Code(state) {
   const findings = [];
   // Pattern A — single-backslash regex inside outer template at build-dashboard.mjs
@@ -72,6 +84,8 @@ export function detectType1Code(state) {
         const winEnd = Math.min(src.length, offset + l.length + STRICT_WINDOW_CHARS);
         const context = src.slice(winStart, winEnd);
         if (INLINE_JS_MARKER_RE.test(context)) {
+          // Known-FP suppression — see data/regression-guard-suppressions.json
+          if (_isSuppressed(l.trim(), 'outer-template-unescape-suspect')) continue;
           findings.push({
             type: 1,
             severity: 'HIGH',
@@ -103,6 +117,8 @@ export function detectType1Code(state) {
       if (LOOSE_LINE_RE.test(l)) {
         // Don't double-emit: skip if STRICT detector already emitted on this line
         if (findings.some(f => f.line === i + 1 && f.subtype === 'outer-template-unescape-suspect')) continue;
+        // Known-FP suppression — see data/regression-guard-suppressions.json
+        if (_isSuppressed(l.trim(), 'outer-template-unescape-loose')) continue;
         findings.push({
           type: 1,
           severity: 'LOW',

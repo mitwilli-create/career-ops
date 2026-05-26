@@ -10013,6 +10013,66 @@ async function generatePack(){
     return;
   }
 
+  // ── Scanner status + control endpoints (Phase 5E, 2026-05-26) ───────────────
+  // GET /api/scanner/status → scanner inventory from data/pipeline-ingress-state.json
+  // POST /api/scanner/refresh/:name → launchctl kickstart (immediate trigger)
+  // POST /api/scanner/reboot/:name  → launchctl kickstart -k (force-restart)
+  // POST /api/scanner/disable/:name → launchctl bootout (remove from schedule)
+
+  if (url === '/api/scanner/status' && req.method === 'GET') {
+    const fp = join(ROOT, 'data', 'pipeline-ingress-state.json');
+    if (!existsSync(fp)) return json({ ok: false, error: 'pipeline-ingress-state.json not generated yet' }, 404);
+    try {
+      const state = JSON.parse(readFileSync(fp, 'utf8'));
+      return json({ ok: true, generated_at: state.generated_at, summary: state.summary, scanners: state.scanners || [] });
+    } catch (e) {
+      return json({ ok: false, error: e.message }, 500);
+    }
+  }
+
+  const scannerRefreshM = url.match(/^\/api\/scanner\/refresh\/([^/?]+)$/);
+  const scannerRebootM  = url.match(/^\/api\/scanner\/reboot\/([^/?]+)$/);
+  const scannerDisableM = url.match(/^\/api\/scanner\/disable\/([^/?]+)$/);
+
+  if ((scannerRefreshM || scannerRebootM || scannerDisableM) && req.method === 'POST') {
+    const action = scannerRefreshM ? 'refresh' : scannerRebootM ? 'reboot' : 'disable';
+    const scannerName = decodeURIComponent((scannerRefreshM || scannerRebootM || scannerDisableM)[1]);
+
+    const fp = join(ROOT, 'data', 'pipeline-ingress-state.json');
+    if (!existsSync(fp)) return json({ ok: false, error: 'pipeline-ingress-state.json not found' }, 404);
+    const state = JSON.parse(readFileSync(fp, 'utf8'));
+    const scanner = (state.scanners || []).find(s => s.name === scannerName);
+    if (!scanner) return json({ ok: false, error: `scanner not found: ${scannerName}` }, 404);
+
+    const label = scanner.label;
+    if (!label) return json({ ok: false, error: `no launchd label for scanner: ${scannerName}` }, 422);
+
+    const uid = process.getuid ? process.getuid() : 501;
+    const domain = `gui/${uid}`;
+    const svcPath = `${domain}/${label}`;
+
+    try {
+      let cmd, note;
+      if (action === 'refresh') {
+        // kickstart (no -k) — starts a new instance without stopping a running one
+        cmd = `launchctl kickstart ${svcPath}`;
+        note = `Triggered scan for ${scannerName}`;
+      } else if (action === 'reboot') {
+        // kickstart -k — stops + restarts
+        cmd = `launchctl kickstart -k ${svcPath}`;
+        note = `Rebooted ${scannerName}`;
+      } else {
+        // disable + bootout — removes from schedule until re-enabled
+        cmd = `launchctl disable ${svcPath} && launchctl bootout ${svcPath} 2>/dev/null; true`;
+        note = `Disabled ${scannerName}`;
+      }
+      _execSync(cmd, { encoding: 'utf8', timeout: 10000 });
+      return json({ ok: true, action, scanner: scannerName, label, note });
+    } catch (e) {
+      return json({ ok: false, action, scanner: scannerName, label, error: e.message?.slice(0, 240) || 'launchctl failed' });
+    }
+  }
+
   // Static files from dashboard/
   // Normalize: /dashboard/ and /dashboard are aliases for /
   const normalUrl = (url === '/dashboard' || url === '/dashboard/') ? '/' : url;

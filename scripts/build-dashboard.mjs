@@ -28776,8 +28776,8 @@ function _renderPipelineActivity(data) {
     var slabel = r > 0
       ? 'Scanners: ' + g + ' live · ' + (y + r) + ' need attention'
       : (y > 0 ? 'Scanners: ' + g + ' live · ' + y + ' lagging' : 'Scanners: ' + total + ' live');
-    var stip = (data.ingress.scanner_count || total) + ' portal scanners · ' + g + ' live · ' + y + ' lagging · ' + r + ' offline · ' + (data.ingress.generated_at || 'no timestamp');
-    html += _chip(scls, slabel, stip);
+    var stip = (data.ingress.scanner_count || total) + ' portal scanners · ' + g + ' live · ' + y + ' lagging · ' + r + ' offline · ' + (data.ingress.generated_at || 'no timestamp') + ' · click to manage';
+    html += '<button type="button" class="pa-chip pa-chip-button ' + scls + '" title="' + _esc(stip) + '" onclick="if(window.openScannerPopout)window.openScannerPopout()">' + _esc(slabel) + '</button>';
   } else {
     html += _chip('pa-chip-muted', 'Scanners: —', 'data/pipeline-ingress-state.json not generated yet');
   }
@@ -29387,6 +29387,110 @@ document.addEventListener('keydown', function (e) {
     e.stopPropagation();
     closeSystemHealthModal();
   }
+}, true);
+
+// ── Scanner management popout (Phase 5E, 2026-05-26) ──────────
+var _scannerPopoutPollTimer = null;
+
+function openScannerPopout() {
+  var bd = document.getElementById('scanner-popout-backdrop');
+  var md = document.getElementById('scanner-popout-modal');
+  if (!bd || !md) return;
+  bd.style.display = 'block';
+  md.style.display = 'block';
+  md.setAttribute('aria-hidden', 'false');
+  _scannerFetchAndRender();
+  _scannerPopoutPollTimer = setInterval(_scannerFetchAndRender, 5000);
+  var closeBtn = md.querySelector('button[onclick*="closeScannerPopout"]');
+  if (closeBtn) try { closeBtn.focus({ preventScroll: true }); } catch (_) { closeBtn.focus(); }
+}
+function closeScannerPopout() {
+  var bd = document.getElementById('scanner-popout-backdrop');
+  var md = document.getElementById('scanner-popout-modal');
+  if (bd) bd.style.display = 'none';
+  if (md) { md.style.display = 'none'; md.setAttribute('aria-hidden', 'true'); }
+  clearInterval(_scannerPopoutPollTimer);
+  _scannerPopoutPollTimer = null;
+}
+function _scannerFetchAndRender() {
+  var body = document.getElementById('scanner-popout-body');
+  var stamp = document.getElementById('scanner-popout-updated');
+  fetch('/api/scanner/status', { cache: 'no-store' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (!data.ok) {
+        if (body) body.innerHTML = '<div style="color:#ef4444;padding:16px;font-size:13px">Error: ' + String(data.error || 'unknown') + '</div>';
+        return;
+      }
+      if (stamp) stamp.textContent = 'updated ' + new Date().toLocaleTimeString();
+      if (!body) return;
+      var scanners = data.scanners || [];
+      var STATUS_COLOR = { green: '#22c55e', yellow: '#f59e0b', red: '#ef4444' };
+      var STATUS_LABEL = { green: 'Live', yellow: 'Lagging', red: 'Offline' };
+      var rows = scanners.map(function(s) {
+        var col = STATUS_COLOR[s.status] || '#94a3b8';
+        var lbl = STATUS_LABEL[s.status] || s.status;
+        var age = s.log && s.log.ageHours != null ? (s.log.ageHours < 1 ? Math.round(s.log.ageHours * 60) + 'm ago' : s.log.ageHours.toFixed(1) + 'h ago') : '—';
+        var warns = (s.warnings || []).map(function(w) { return '<div style="font-size:10px;color:#f59e0b;margin-top:2px">⚠ ' + w + '</div>'; }).join('');
+        return '<div style="display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:1px solid var(--border,#2d2f3a)">'
+          + '<span style="width:8px;height:8px;border-radius:50%;background:' + col + ';flex-shrink:0;margin-top:5px"></span>'
+          + '<div style="flex:1;min-width:0">'
+          + '<div style="font-size:13px;font-weight:500;color:var(--text-1,#e2e8f0)">' + s.name + ' <span style="font-size:11px;color:' + col + '">' + lbl + '</span></div>'
+          + '<div style="font-size:11px;color:var(--text-3,#64748b)">cadence: ' + (s.cadenceHours || '?') + 'h · last log: ' + age + '</div>'
+          + warns
+          + '</div>'
+          + '<div style="display:flex;gap:6px;flex-shrink:0">'
+          + '<button type="button" onclick="scannerAction(\\'' + s.name + '\\',\\'refresh\\')" style="font-size:11px;padding:4px 8px;border-radius:4px;border:1px solid #3b82f6;background:transparent;color:#3b82f6;cursor:pointer">▶ Trigger</button>'
+          + '<button type="button" onclick="scannerAction(\\'' + s.name + '\\',\\'reboot\\')" style="font-size:11px;padding:4px 8px;border-radius:4px;border:1px solid var(--border,#2d2f3a);background:transparent;color:var(--text-2,#94a3b8);cursor:pointer">↻ Reboot</button>'
+          + '<button type="button" onclick="scannerAction(\\'' + s.name + '\\',\\'disable\\')" style="font-size:11px;padding:4px 8px;border-radius:4px;border:1px solid #ef4444;background:transparent;color:#ef4444;cursor:pointer">✕ Disable</button>'
+          + '</div></div>';
+      });
+      body.innerHTML = rows.join('') || '<div style="color:var(--text-3);padding:16px;font-size:13px">No scanner data.</div>';
+    })
+    .catch(function(e) {
+      if (body) body.innerHTML = '<div style="color:#ef4444;padding:16px;font-size:13px">Failed to load: ' + String(e.message || e) + '</div>';
+    });
+}
+function scannerAction(name, action) {
+  var isAll = name === 'all';
+  var body = document.getElementById('scanner-popout-body');
+  if (body) {
+    var el = isAll ? null : body.querySelector('[data-scanner="' + name + '"]');
+    // Brief visual feedback
+    var btns = isAll ? body.querySelectorAll('button') : (el ? el.querySelectorAll('button') : []);
+    btns.forEach(function(b) { b.disabled = true; });
+  }
+  var urls = [];
+  if (isAll) {
+    var rows = (document.getElementById('scanner-popout-body') || {}).querySelectorAll ? document.getElementById('scanner-popout-body').querySelectorAll('[data-scanner-name]') : [];
+    if (rows.length === 0) {
+      // Fallback: fetch status then iterate
+      fetch('/api/scanner/status', { cache: 'no-store' })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          (d.scanners || []).forEach(function(s) {
+            if (action === 'reboot' && s.status !== 'red') return; // reboot-all only targets offline
+            fetch('/api/scanner/' + action + '/' + encodeURIComponent(s.name), { method: 'POST' });
+          });
+          setTimeout(_scannerFetchAndRender, 2000);
+        });
+      return;
+    }
+  }
+  fetch('/api/scanner/' + action + '/' + encodeURIComponent(name), { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      setTimeout(_scannerFetchAndRender, 2000);
+    })
+    .catch(function() { setTimeout(_scannerFetchAndRender, 1000); });
+}
+window.openScannerPopout  = openScannerPopout;
+window.closeScannerPopout = closeScannerPopout;
+window.scannerAction      = scannerAction;
+document.addEventListener('keydown', function(e) {
+  if (e.key !== 'Escape') return;
+  var md = document.getElementById('scanner-popout-modal');
+  if (md && md.style.display !== 'none') { e.stopPropagation(); closeScannerPopout(); }
 }, true);
 
 // ── Gap modal ──────────────────────────────────────────────────
@@ -35514,6 +35618,30 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     <div class="tp-progress-footer" id="tp-progress-footer">
       <button type="button" class="tonight-pick-btn-ghost" onclick="tonightPickCloseProgress()" aria-label="Close progress modal">Close</button>
     </div>
+  </div>
+</div>
+
+<!-- ──────────────────────────────────────────────────────────────
+     Scanner management modal (Phase 5E, 2026-05-26) — opens from
+     the clickable Scanners chip in the pipeline activity bar.
+     Lists each scanner with status + last-run + per-scanner actions.
+     Bind: openScannerPopout() / closeScannerPopout().
+     ────────────────────────────────────────────────────────────── -->
+<div id="scanner-popout-backdrop" onclick="closeScannerPopout()" aria-hidden="true" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9000"></div>
+<div id="scanner-popout-modal" role="dialog" aria-modal="true" aria-labelledby="scanner-popout-title" aria-hidden="true" onclick="event.stopPropagation()" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(680px,96vw);max-height:85vh;overflow-y:auto;background:var(--surface-2,#0f1117);border:1px solid var(--border,#2d2f3a);border-radius:12px;z-index:9001;padding:0">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px 12px;border-bottom:1px solid var(--border,#2d2f3a)">
+    <h3 id="scanner-popout-title" style="margin:0;font-size:15px;font-weight:600;color:var(--text-1,#e2e8f0)">Scanner Management</h3>
+    <div style="display:flex;gap:8px;align-items:center">
+      <span id="scanner-popout-updated" style="font-size:11px;color:var(--text-3,#64748b)">loading…</span>
+      <button type="button" onclick="closeScannerPopout()" aria-label="Close scanner management" style="background:none;border:none;color:var(--text-3,#64748b);cursor:pointer;font-size:16px;padding:2px 6px">✕</button>
+    </div>
+  </div>
+  <div id="scanner-popout-body" style="padding:16px 20px">
+    <div style="text-align:center;padding:32px 0;color:var(--text-3,#64748b);font-size:13px">Loading scanner status…</div>
+  </div>
+  <div style="padding:12px 20px;border-top:1px solid var(--border,#2d2f3a);display:flex;gap:8px;flex-wrap:wrap">
+    <button type="button" id="scanner-reboot-all-btn" onclick="scannerAction('all','reboot')" style="flex:1;min-width:140px;padding:8px 14px;border-radius:6px;border:1px solid var(--border,#2d2f3a);background:var(--surface-3,#1a1d2a);color:var(--text-1,#e2e8f0);font-size:13px;cursor:pointer">↻ Reboot all offline</button>
+    <button type="button" id="scanner-refresh-all-btn" onclick="scannerAction('all','refresh')" style="flex:1;min-width:140px;padding:8px 14px;border-radius:6px;border:none;background:#3b82f6;color:#fff;font-size:13px;cursor:pointer">▶ Trigger all now</button>
   </div>
 </div>
 

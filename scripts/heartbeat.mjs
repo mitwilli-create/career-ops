@@ -778,12 +778,9 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
   const kpiEvalBadge     = deltaBadge(evaluatedToday, yday?.evaluatedToday, { invert: false });
   const kpiTrackedBadge  = deltaBadge(trackedCount,   yday?.trackedCount,   { invert: false });
 
-  // H4 — Severity-tiered runway alert (in §6 Pipeline Pulse)
-  let runwayAlertHtml = '';
-  try {
-    const density = computeRunwayDensityForHeartbeat();
-    runwayAlertHtml = renderRunwayAlertTiered(density);
-  } catch {}
+  // H4 — runway alert retired 2026-05-25 (bug-2026-05-25-225). Functions
+  // computeRunwayDensityForHeartbeat + renderRunwayAlertTiered retained below
+  // for reference; call-site removed.
 
   // Tier 5 system-status banner (calibration brief 2026-05-16)
   // Phase A · A3 · HIGH-1 (2026-05-19) — banner now renders as a one-liner with
@@ -878,7 +875,6 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
   // discard pattern follow)
   let contextSectionsHtml = '';
   if (cdpAuthBannerHtml) contextSectionsHtml += cdpAuthBannerHtml;
-  if (runwayAlertHtml) contextSectionsHtml += runwayAlertHtml;
   if (polishSummaryHtml) contextSectionsHtml += polishSummaryHtml;
   if (systemBannerHtml) contextSectionsHtml += systemBannerHtml;
   if (cronHealthHtml) contextSectionsHtml += cronHealthHtml;
@@ -965,8 +961,9 @@ async function renderDispatchHtml(meta) {
     // removal — Haiku call was coupled to runway-state prompt context; the
     // Apply-Now Queue ticker + hero "Tonight's Apply" already carry the
     // single-target directive without LLM overhead.
+    // runway density retired 2026-05-25 (bug-2026-05-25-225).
     todaysFocus: '',
-    density:     computeRunwayDensityForHeartbeat(),
+    density:     null,
     markdownBody: meta._markdownBody || '',
   });
 }
@@ -2219,21 +2216,14 @@ async function generateHeartbeat() {
   // Pull state for the dynamic subject + hidden preheader (Phase 2 Day-1 quick
   // wins, 2026-05-17). The four signals all-7-models converged on:
   //   - newRoles: today's freshly surfaced ≥ 4.0 roles (whatsNew[])
-  //   - runwayAlert + runwayState: stretched / critical / healthy (from
-  //     computeRunwayDensityForHeartbeat — same source the renderRunwayAlert
-  //     block uses, so subject + body stay aligned)
+  //   - runwayAlert + runwayState: retired 2026-05-25 (bug-2026-05-25-225);
+  //     hardcoded to defaults so downstream subject/preheader never emit
+  //     runway text.
   //   - outreachDue: count of due_today contacts in the Outreach Cadence block
   //   - topRole: { name, score } for the highest-scoring Apply-Now row,
   //     used in the preheader preview text on alerting days
-  let runwayState = 'healthy';
-  let runwayAlertFiring = false;
-  try {
-    const density = computeRunwayDensityForHeartbeat();
-    if (density && density.ok) {
-      runwayState = density.health; // 'healthy' | 'stretched' | 'critical'
-      runwayAlertFiring = density.health !== 'healthy';
-    }
-  } catch { /* soft-fail — keep healthy/false defaults */ }
+  const runwayState = 'healthy';
+  const runwayAlertFiring = false;
 
   let outreachDue = 0;
   try {

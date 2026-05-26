@@ -13169,6 +13169,70 @@ async function build() {
   .inline-edit-select:focus, .inline-edit-input:focus {
     box-shadow: var(--ring-blue);
   }
+
+  /* ── Markdown-rendered content (Apply Now modal + pack-stage drill-in) ──
+     Wired 2026-05-26 via /eval-ux-audit to fix raw-markdown-as-text bug
+     where pipe-delimited tables, double-asterisk bold, and gt-prefixed
+     blockquotes were showing as literal characters instead of rendered
+     HTML. Marked v18 is bundled inline at build time; this CSS gives
+     its output a dark theme that matches the surrounding modal chrome. */
+  .markdown-body { color: var(--text-2); font-size: 12.5px; line-height: 1.6; }
+  .markdown-body > *:first-child { margin-top: 0; }
+  .markdown-body > *:last-child  { margin-bottom: 0; }
+  .markdown-body p { margin: 8px 0; }
+  .markdown-body strong { color: var(--text); font-weight: 600; }
+  .markdown-body em { font-style: italic; }
+  .markdown-body a { color: var(--blue-fg, #60a5fa); text-decoration: underline; }
+  .markdown-body code {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 1px 5px; border-radius: 3px; font-size: 0.92em;
+  }
+  .markdown-body pre {
+    background: var(--surface);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 10px 12px; margin: 8px 0; overflow-x: auto;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12px; line-height: 1.55;
+  }
+  .markdown-body pre code {
+    background: transparent; border: 0; padding: 0; font-size: inherit;
+  }
+  .markdown-body blockquote {
+    border-left: 3px solid var(--blue-fg, #60a5fa);
+    padding: 6px 12px; margin: 8px 0;
+    color: var(--text-3);
+    background: color-mix(in srgb, var(--blue-fg, #60a5fa) 6%, var(--surface));
+    border-radius: 0 4px 4px 0;
+  }
+  .markdown-body blockquote p { margin: 4px 0; }
+  .markdown-body ul, .markdown-body ol { padding-left: 22px; margin: 6px 0; }
+  .markdown-body li { margin: 3px 0; }
+  .markdown-body li > p { margin: 3px 0; }
+  .markdown-body hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
+  .markdown-body h1, .markdown-body h2, .markdown-body h3,
+  .markdown-body h4, .markdown-body h5, .markdown-body h6 {
+    color: var(--text); margin: 14px 0 6px; font-weight: 600;
+  }
+  .markdown-body h1 { font-size: 18px; }
+  .markdown-body h2 { font-size: 16px; }
+  .markdown-body h3 { font-size: 14px; }
+  .markdown-body h4, .markdown-body h5, .markdown-body h6 { font-size: 13px; }
+  .markdown-body table {
+    border-collapse: collapse; margin: 10px 0;
+    font-size: 12.5px; width: 100%; display: table;
+  }
+  .markdown-body th {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 6px 10px; text-align: left;
+    font-weight: 600; color: var(--text);
+  }
+  .markdown-body td {
+    border: 1px solid var(--border);
+    padding: 6px 10px; vertical-align: top; color: var(--text-2);
+  }
 </style>
 </head>
 <body class="dark">
@@ -19615,9 +19679,19 @@ _drillInRegister('pack-stage-result', function(id) {
         }).join('')
       + '<\/div>';
   } else if (typeof result.output === 'string') {
-    bodyHtml = '<pre style="font-size:12.5px;line-height:1.55;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px;white-space:pre-wrap;word-break:break-word;margin:0;max-height:520px;overflow:auto">'
-      + _esc(result.output)
-      + '<\/pre>';
+    // Render markdown → HTML via the inline marked bundle so cv-tailored.md /
+    // cover-letter.md / linkedin-dm.md / form-fields.md tables, lists,
+    // headers, and **bold** show as formatted content rather than raw
+    // markdown characters. Falls back to escaped <pre> if marked isn't
+    // loaded for any reason. Wired 2026-05-26 via /eval-ux-audit.
+    var _packStageFallback = '<pre style="font-size:12.5px;line-height:1.55;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px;white-space:pre-wrap;word-break:break-word;margin:0;max-height:520px;overflow:auto">' + _esc(result.output) + '<\/pre>';
+    var _packStageRendered = _packStageFallback;
+    try {
+      if (typeof window !== 'undefined' && window.marked && typeof window.marked.parse === 'function') {
+        _packStageRendered = '<div class="markdown-body" style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px;margin:0;max-height:520px;overflow:auto">' + window.marked.parse(String(result.output)) + '<\/div>';
+      }
+    } catch (e) { _packStageRendered = _packStageFallback; }
+    bodyHtml = _packStageRendered;
   } else if (result.output) {
     bodyHtml = '<pre style="font-size:12px;line-height:1.4;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px;white-space:pre-wrap;word-break:break-word;margin:0;max-height:520px;overflow:auto">'
       + _esc(JSON.stringify(result.output, null, 2))
@@ -22777,17 +22851,34 @@ function _renderApplyClipboardModal(modal, formFieldsText, slug, applyHref, back
   html += '<p style="margin:6px 0 0;font-size:11px;color:var(--text-4)">Pack: <code style="font-family:ui-monospace,monospace;background:var(--surface-2);padding:1px 5px;border-radius:3px">' + _esc(slug) + '</code></p></div>';
   html += '<button type="button" id="apply-clipboard-close" aria-label="Close" style="background:transparent;border:none;color:var(--text-3);font-size:20px;cursor:pointer;padding:0 4px;line-height:1">' + String.fromCharCode(215) + '</button>';
   html += '</div></div>';
+  // Pre-extract raw bodies into a closure-scoped array so the Copy
+  // button can paste the original markdown source (rather than the
+  // rendered HTML's textContent, which would flatten tables and lose
+  // list structure). The rendered body lives in the DOM as HTML for
+  // human reading; the clipboard payload comes from rawBodies[idx].
+  var rawBodies = sections.map(_bodyOf);
+  // Helper: render markdown → HTML via the inline marked bundle if it
+  // loaded; fall back to escaped <pre> when marked is unavailable so
+  // the modal degrades to today's behavior rather than going blank.
+  function _renderMd(text) {
+    try {
+      if (typeof window !== 'undefined' && window.marked && typeof window.marked.parse === 'function') {
+        return window.marked.parse(String(text || ''));
+      }
+    } catch (e) { /* fall through to plain text */ }
+    return '<pre style="margin:0;font-family:inherit;font-size:12.5px;line-height:1.6;color:var(--text-2);white-space:pre-wrap;word-wrap:break-word">' + _esc(text) + '</pre>';
+  }
   // Scrollable section list
   html += '<div style="flex:1;overflow-y:auto;padding:4px 24px 8px">';
   for (var j = 0; j < sections.length; j++) {
     var sec = sections[j];
-    var bodyText = _bodyOf(sec);
+    var bodyText = rawBodies[j];
     html += '<div class="apply-clipboard-section" style="border-bottom:1px solid var(--border);padding:14px 0" data-section-idx="' + j + '">';
     html += '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:8px">';
     html += '<div style="font-size:13px;font-weight:600;color:var(--text);line-height:1.4;flex:1">' + _esc(sec.title) + '</div>';
     html += '<button type="button" class="apply-clipboard-copy-btn" data-section-idx="' + j + '" style="flex-shrink:0;padding:4px 10px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);border-radius:4px;cursor:pointer;font-size:11px;font-weight:500">' + String.fromCharCode(0x2398) + ' Copy</button>';
     html += '</div>';
-    html += '<pre class="apply-clipboard-body" style="margin:0;padding:10px 12px;background:var(--surface-2,#0f1118);border-radius:4px;font-family:inherit;font-size:12.5px;line-height:1.6;color:var(--text-2);white-space:pre-wrap;word-wrap:break-word;border:1px solid var(--border-2,var(--border))">' + _esc(bodyText) + '</pre>';
+    html += '<div class="apply-clipboard-body markdown-body" style="margin:0;padding:10px 14px;background:var(--surface-2,#0f1118);border-radius:4px;border:1px solid var(--border-2,var(--border));overflow-x:auto">' + _renderMd(bodyText) + '</div>';
     html += '</div>';
   }
   html += '</div>';
@@ -22805,10 +22896,18 @@ function _renderApplyClipboardModal(modal, formFieldsText, slug, applyHref, back
     (function (btn) {
       btn.addEventListener('click', async function () {
         var idx = parseInt(btn.getAttribute('data-section-idx'), 10);
-        var body = modal.querySelector('.apply-clipboard-section[data-section-idx="' + idx + '"] .apply-clipboard-body');
-        if (!body) return;
+        // Read raw markdown source from rawBodies (closure-scoped) so
+        // the clipboard payload preserves table pipes / list dashes /
+        // bold asterisks for paste into apply-form text fields. Falls
+        // back to body.textContent if rawBodies somehow lost the slot.
+        var clipboardText = (Number.isFinite(idx) && rawBodies[idx] != null) ? rawBodies[idx] : null;
+        if (clipboardText == null) {
+          var body = modal.querySelector('.apply-clipboard-section[data-section-idx="' + idx + '"] .apply-clipboard-body');
+          if (!body) return;
+          clipboardText = body.textContent;
+        }
         try {
-          await navigator.clipboard.writeText(body.textContent);
+          await navigator.clipboard.writeText(clipboardText);
           btn.textContent = String.fromCharCode(0x2713) + ' Copied';
           setTimeout(function () { btn.innerHTML = String.fromCharCode(0x2398) + ' Copy'; }, 1500);
         } catch (e) {
@@ -38626,9 +38725,36 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   });
 
   const minifiedHtml = _minifyHtmlOutput(externalizedHtml);
-  const minBytes = Buffer.byteLength(minifiedHtml, 'utf8');
 
-  writeFileSync(OUT_PATH, minifiedHtml);
+  // Inline marked.umd.js (markdown→HTML parser) so the Apply Now modal +
+  // pack-stage-result drill-in can render apply-pack/*.md content as real
+  // HTML tables / blockquotes / bold rather than raw markdown characters.
+  // Injected AFTER minification because the minifier's `/* ... */`
+  // stripper is not JS-tokenizer-aware and would corrupt marked's regex
+  // literals (which include /* */ patterns inside character classes).
+  // Self-contained dashboard posture preserved — no external CDN dep.
+  // Wired 2026-05-26 via /eval-ux-audit.
+  let htmlWithMarked = minifiedHtml;
+  try {
+    const markedUmdPath = join(ROOT, 'node_modules/marked/lib/marked.umd.js');
+    if (existsSync(markedUmdPath)) {
+      const markedUmdSrc = readFileSync(markedUmdPath, 'utf-8');
+      // Use a single-pass replace on the FIRST </head> only (the dashboard
+      // has two <head> blocks; only the main one at the top needs marked).
+      const headIdx = htmlWithMarked.indexOf('</head>');
+      if (headIdx > -1) {
+        const inlineMarkedScript = '<script>/* marked v18 UMD bundle — inlined 2026-05-26 via /eval-ux-audit (renders apply-pack/*.md content in Apply Now modal + pack-stage drill-in) */\n' + markedUmdSrc + '\n</script>\n';
+        htmlWithMarked = htmlWithMarked.slice(0, headIdx) + inlineMarkedScript + htmlWithMarked.slice(headIdx);
+      }
+    } else {
+      console.warn('[build-dashboard] marked.umd.js not found — Apply Now modal will degrade to raw text');
+    }
+  } catch (e) {
+    console.warn('[build-dashboard] failed to inline marked.umd.js:', e.message);
+  }
+  const minBytes = Buffer.byteLength(htmlWithMarked, 'utf8');
+
+  writeFileSync(OUT_PATH, htmlWithMarked);
   console.log(`Wrote ${OUT_PATH}`);
 
   // Write the externalized pill data alongside contacts.json. Lazy-fetched

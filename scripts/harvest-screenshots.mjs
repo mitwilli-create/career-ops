@@ -114,11 +114,12 @@ try {
   await go(page, '/');
   console.log('\n── sidebar widgets ──────────────────');
 
-  // Sidebar sections visible at load
+  // Sidebar sections visible at load. `#sidebar-runway` was retired
+  // 2026-05-25 alongside the broader runway-coupling sweep (PR #233 +
+  // follow-up) and was removed from this list at the same time.
   const sidebarWidgets = [
     { sel: '#sidebar',                   name: 'sidebar-full' },
     { sel: '#sidebar-batch',             name: 'batch' },
-    { sel: '#sidebar-runway',            name: 'runway' },
     { sel: '#sidebar-contacts',          name: 'contacts' },
     { sel: '#sidebar-pipeline-actions',  name: 'pipeline-actions' },
     { sel: '#sidebar-recent-updates',    name: 'recent-updates' },

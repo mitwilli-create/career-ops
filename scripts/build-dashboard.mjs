@@ -5789,9 +5789,11 @@ async function build() {
       }
     } catch (_) { _cbData.trackerNotes = {}; _cbData.rowMeta = {}; }
 
-    // Wave B fix (2026-05-18): bake apply-now JDs so the Runway-health
-    // drill-in can list the roles driving the verdict — company, role,
-    // posting date, score.
+    // Wave B fix (2026-05-18): bake apply-now JDs into the page payload
+    // so drill-in widgets can list the roles driving any verdict —
+    // company, role, posting date, score. (The original Runway-health
+    // drill-in this enabled was retired 2026-05-25; the baked JD data
+    // is now consumed by other apply-now surfaces.)
     try {
       _cbData.applyNowJDs = applyNow.map(r => ({
         num: r.num,
@@ -9885,7 +9887,7 @@ async function build() {
   /* ── Sidebar readiness chip (TPgM relocation 2026-05-17) ───── */
   /* Compact card in sidebar footer area: headline score + velocity arrow +
      "See full →" button that opens the full TPgM widget as a drill-in drawer.
-     Styled to match .sidebar-runway patterns (same margin/padding/border). */
+     Margin / padding / border match the rest of the sidebar widget set. */
   .sidebar-readiness {
     margin: 4px 10px 6px;
     padding: 8px 10px;
@@ -29079,262 +29081,15 @@ function _scrollDrawerTo(className, triggerEl) {
 }
 window._scrollDrawerTo = _scrollDrawerTo;
 
-function _rdRenderBody(d) {
-  const body = document.getElementById('runway-detail-body');
-  if (!body) return;
-  if (!d || !d.ok) {
-    const msg = (d && d.error) || 'Unknown error';
-    body.innerHTML = '<div style="padding: 24px; color: var(--red-fg); font-size: 13px;">Could not load runway detail: ' + _rdEsc(msg) + '</div>';
-    return;
-  }
-  const health = d.health || 'unknown';
-  const healthLbl = health.charAt(0).toUpperCase() + health.slice(1);
-  // Section 1 — Health summary (Pillar 1 scannability)
-  // Issue 7 (2026-05-18): cells are clickable. Runway → opens the
-  // calibration/sources; Health → scrolls to active conversations;
-  // Active conversations count → scrolls to the conversations table.
-  const summary =
-    '<div class="rd-summary">' +
-      '<div class="rd-summary-cell rd-summary-cell-clickable" role="button" tabindex="0" onclick="_rdScrollToSection(\\'rd-section-runway\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();_rdScrollToSection(\\'rd-section-runway\\')}" title="See pipeline-health source (runway is an input, not a calculation)">' +
-        '<div class="rd-summary-label">Runway</div>' +
-        '<div class="rd-summary-val">' + _rdEsc(d.runway_weeks ?? '—') + ' weeks</div>' +
-      '</div>' +
-      '<div class="rd-summary-cell rd-summary-cell-clickable" role="button" tabindex="0" onclick="_rdExplainHealth(\\'' + _rdEsc(health) + '\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();_rdExplainHealth(\\'' + _rdEsc(health) + '\\')}" title="Click for what &quot;' + _rdEsc(healthLbl) + '&quot; means + the roles driving it">' +
-        '<div class="rd-summary-label">Health</div>' +
-        '<div class="rd-summary-val ' + _rdEsc(health) + '">' + _rdEsc(healthLbl) + '</div>' +
-      '</div>' +
-      '<div class="rd-summary-cell rd-summary-cell-clickable" role="button" tabindex="0" onclick="_rdScrollToSection(\\'rd-section-active\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();_rdScrollToSection(\\'rd-section-active\\')}" title="See active conversations table below">' +
-        '<div class="rd-summary-label">Active conversations</div>' +
-        '<div class="rd-summary-val">' + _rdEsc((d.active_conversations || []).length) + '</div>' +
-      '</div>' +
-    '</div>' +
-    (d.health_reason
-      ? '<div class="rd-rationale" style="margin-bottom:14px">' + _rdEsc(d.health_reason) + '</div>'
-      : '');
-
-  // Section 2 — Active conversations table (Pillar 3 strengths+limitations)
-  const active = d.active_conversations || [];
-  const activeTable = active.length
-    ? '<div class="rd-table-wrap table-scroll">' +
-        '<table class="rd-table" id="rd-active-table">' +
-          '<thead><tr>' +
-            '<th>Tier</th><th>Contact</th><th>Company</th><th>Role</th><th>Channel</th><th>Last touch</th><th>Status</th>' +
-          '</tr></thead>' +
-          '<tbody>' +
-            active.map(c => {
-              const tierCls = 'rd-tier-' + _rdEsc(c.tier || 'B');
-              const days = (c.days_since != null) ? (c.days_since + 'd ago') : '—';
-              // Issue 7 (2026-05-18): row click opens contacts directory pre-filtered to this contact.
-              const nameForFilter = _rdEsc(JSON.stringify(c.name || ''));
-              return '<tr class="rd-row-clickable" role="button" tabindex="0" data-contact-name="' + _rdEsc(c.name || '') + '" onclick="_rdOpenContactRow(' + nameForFilter + ')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();_rdOpenContactRow(' + nameForFilter + ')}" title="' + _rdEsc((c.name || '') + ' · ' + (c.company || '') + ' · ' + (c.role_title || '') + ' — click for contact detail') + '">' +
-                '<td><span class="' + tierCls + '">' + _rdEsc(c.tier || '—') + '</span></td>' +
-                '<td>' + _rdEsc(c.name || '—') + '</td>' +
-                '<td>' + _rdEsc(c.company || '—') + '</td>' +
-                '<td title="' + _rdEsc(c.role_title || '') + '">' + _rdEsc(c.role_title || '—') + '</td>' +
-                '<td>' + _rdEsc(_rdFmtChannel(c.channel)) + '</td>' +
-                '<td>' + _rdEsc(days) + '</td>' +
-                '<td>' + _rdEsc(c.status || '—') + '</td>' +
-              '</tr>';
-            }).join('') +
-          '</tbody>' +
-        '</table>' +
-      '</div>'
-    : '<div style="padding: 14px; color: var(--text-3); font-size: 12.5px; text-align: center;">No active conversations yet. Log your first outreach to start building density.</div>';
-
-  // Section 3 — Recent touches (last 7d)
-  const touches = d.recent_touches_7d || [];
-  const touchesTable = touches.length
-    ? '<div class="rd-table-wrap table-scroll">' +
-        '<table class="rd-table" id="rd-touches-table">' +
-          '<thead><tr>' +
-            '<th>When</th><th>Direction</th><th>Channel</th><th>Contact</th><th>Company</th><th>Summary</th>' +
-          '</tr></thead>' +
-          '<tbody>' +
-            touches.slice(0, 50).map(t => {
-              const dir = t.outbound ? '↗ out' : '↙ in';
-              const dirCls = t.outbound ? 'rd-direction-out' : 'rd-direction-in';
-              const nameForFilter = _rdEsc(JSON.stringify(t.contact_name || ''));
-              const clickHandler = t.contact_name
-                ? ' class="rd-row-clickable" role="button" tabindex="0" onclick="_rdOpenContactRow(' + nameForFilter + ')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();_rdOpenContactRow(' + nameForFilter + ')}"'
-                : '';
-              return '<tr' + clickHandler + ' title="' + _rdEsc(t.summary || '') + '">' +
-                '<td>' + _rdEsc(_rdFmtRelTime(t.ts_iso)) + '</td>' +
-                '<td class="' + dirCls + '">' + _rdEsc(dir) + '</td>' +
-                '<td>' + _rdEsc(_rdFmtChannel(t.channel)) + '</td>' +
-                '<td>' + _rdEsc(t.contact_name || '—') + '</td>' +
-                '<td>' + _rdEsc(t.company || '—') + '</td>' +
-                '<td title="' + _rdEsc(t.summary || '') + '" data-fulltext="' + _rdEsc(t.summary || '') + '">' + _rdEsc((t.summary || '').slice(0, 90)) + ((t.summary || '').length > 90 ? '…' : '') + '</td>' +
-              '</tr>';
-            }).join('') +
-          '</tbody>' +
-        '</table>' +
-      '</div>'
-    : '<div style="padding: 14px; color: var(--text-3); font-size: 12.5px; text-align: center;">No touches logged in the last 7 days.</div>';
-
-  // Section 4 — Response rate trend (Pillar 3 strengths+limitations)
-  const trend = d.response_rate_trend || {};
-  const t7  = trend.this_7d  || {};
-  const t30 = trend.last_30d || {};
-  const deltaIcon = trend.delta === 'up'   ? '<span class="rd-trend-up">↑</span>'
-                  : trend.delta === 'down' ? '<span class="rd-trend-down">↓</span>'
-                                           : '<span class="rd-trend-flat">—</span>';
-  const trendBlock =
-    '<div class="rd-summary" style="grid-template-columns: 1fr 1fr 1fr; gap: 10px;">' +
-      '<div class="rd-summary-cell">' +
-        '<div class="rd-summary-label">This week</div>' +
-        '<div class="rd-summary-val">' + _rdEsc(Math.round((t7.rate || 0) * 100)) + '%</div>' +
-        '<div class="rd-rationale">' + _rdEsc(t7.responses || 0) + ' replies / ' + _rdEsc(t7.outbound || 0) + ' sent</div>' +
-      '</div>' +
-      '<div class="rd-summary-cell">' +
-        '<div class="rd-summary-label">Last 30d</div>' +
-        '<div class="rd-summary-val">' + _rdEsc(Math.round((t30.rate || 0) * 100)) + '%</div>' +
-        '<div class="rd-rationale">' + _rdEsc(t30.responses || 0) + ' replies / ' + _rdEsc(t30.outbound || 0) + ' sent</div>' +
-      '</div>' +
-      '<div class="rd-summary-cell">' +
-        '<div class="rd-summary-label">Trend</div>' +
-        '<div class="rd-summary-val">' + deltaIcon + '</div>' +
-        '<div class="rd-rationale">' + _rdEsc(trend.delta || 'flat') + '</div>' +
-      '</div>' +
-    '</div>';
-
-  // Section 5 — Who to contact next (Pillar 2 action proximity)
-  // 2026-05-18 — Each row now ends with a "Draft DM" button per Mitchell's
-  // mega-list ("Runway 'who to contact next' rows wire to draft-DM action").
-  // Click → rdDraftDm() reuses the existing openEmailPopover() draft flow
-  // pre-filled with contact name / company / channel / rationale so the DM
-  // starts with context.
-  const next = d.who_to_contact_next || [];
-  const nextTable = next.length
-    ? '<div class="rd-table-wrap table-scroll">' +
-        '<table class="rd-table" id="rd-next-table">' +
-          '<thead><tr>' +
-            '<th>Rank</th><th>Tier</th><th>Contact</th><th>Company</th><th>Days silent</th><th>Why now</th><th>Channel</th><th>Action</th>' +
-          '</tr></thead>' +
-          '<tbody>' +
-            next.map((n, i) => {
-              const tierCls = 'rd-tier-' + _rdEsc(n.tier || 'B');
-              const ch = n.suggested_channel || 'linkedin_dm';
-              const draftPayload = _rdEsc(JSON.stringify({
-                name: n.name || '',
-                company: n.company || '',
-                channel: ch,
-                rationale: n.rationale || '',
-                tier: n.tier || 'B',
-              }));
-              const draftBtn = (n.name && n.company)
-                ? '<button type="button" class="rd-draft-dm-btn" data-rd-draft="' + draftPayload + '" onclick="rdDraftDm(this);event.stopPropagation()" title="Draft a ' + _rdEsc(_rdFmtChannel(ch)) + ' to ' + _rdEsc(n.name) + '">✉ Draft DM</button>'
-                : '<span class="muted-text" style="font-size:11px">—</span>';
-              return '<tr title="' + _rdEsc(n.rationale || '') + '">' +
-                '<td>' + (i + 1) + '</td>' +
-                '<td><span class="' + tierCls + '">' + _rdEsc(n.tier || '—') + '</span></td>' +
-                '<td>' + _rdEsc(n.name || '—') + '</td>' +
-                '<td>' + _rdEsc(n.company || '—') + '</td>' +
-                '<td>' + _rdEsc((n.days_since != null) ? (n.days_since + 'd') : '—') + '</td>' +
-                '<td title="' + _rdEsc(n.rationale || '') + '" data-fulltext="' + _rdEsc(n.rationale || '') + '">' + _rdEsc(n.rationale || '—') + '</td>' +
-                '<td>' + _rdEsc(_rdFmtChannel(ch)) + '</td>' +
-                '<td>' + draftBtn + '</td>' +
-              '</tr>';
-            }).join('') +
-          '</tbody>' +
-        '</table>' +
-      '</div>'
-    : '<div style="padding: 14px; color: var(--text-3); font-size: 12.5px; text-align: center;">No outreach candidates ranked. Add contacts via the Outreach Pulse panel.</div>';
-
-  body.innerHTML =
-    summary +
-    '<div class="rd-section" id="rd-section-active">' +
-      '<h4 class="rd-section-title">Active conversations (' + _rdEsc(active.length) + ')</h4>' + activeTable +
-    '</div>' +
-    '<div class="rd-section" id="rd-section-touches">' +
-      '<h4 class="rd-section-title">Touches — last 7 days (' + _rdEsc(touches.length) + ')</h4>' + touchesTable +
-    '</div>' +
-    '<div class="rd-section" id="rd-section-trend">' +
-      '<h4 class="rd-section-title">Response rate trend</h4>' + trendBlock +
-    '</div>' +
-    '<div class="rd-section" id="rd-section-next">' +
-      '<h4 class="rd-section-title">Who to contact next</h4>' + nextTable +
-    '</div>' +
-    '<div class="rd-section" id="rd-section-runway">' +
-      '<h4 class="rd-section-title">Pipeline health vs runway</h4>' +
-      '<div class="rd-rationale" style="padding:10px 14px">' +
-        '<strong>Runway is an input, not a calculation.</strong> ' +
-        'It defaults to 12 weeks via the <code>RUNWAY_WEEKS</code> env constant. ' +
-        'The numbers above measure pipeline DENSITY (active conversations, touches in 7d/30d, ' +
-        'response rate) and grade it against runway-aware thresholds: ' +
-        '<strong>healthy</strong> = ≥ 5 active conversations AND ≥ 10 touches/7d; ' +
-        '<strong>stretched</strong> = at least one of those, but not both; ' +
-        '<strong>critical</strong> = neither threshold met. ' +
-        'Computed by <code>computeRecruiterPipelineDensity</code> in ' +
-        '<a href="https://github.com/mitwilli-create/career-ops/blob/main/dashboard-server.mjs#L381" target="_blank" rel="noopener">dashboard-server.mjs:381</a>. ' +
-        'Thresholds tunable via <code>PIPELINE_HEALTH_THRESHOLDS</code> in that file.' +
-      '</div>' +
-    '</div>';
-
-  // Invariant #8 — apply universal table baseline to every freshly-rendered table
-  if (typeof window.applyUniversalTableBaseline === 'function') {
-    try { window.applyUniversalTableBaseline({ root: body }); } catch (_) {}
-  }
-}
-
-async function _rdFetchAndRender() {
-  let data;
-  try {
-    const r = await fetch('/api/runway-detail', { cache: 'no-store' });
-    // γ GAMMA fix 2026-05-19 (post-tunnel-resolution): previously this
-    // accepted a 502/503/504 response and tried to .json() it, which usually
-    // threw on HTML error bodies — but if a 5xx returned valid JSON without
-    // an "ok" field, the bug surfaced as a generic "Unknown error" in
-    // _rdRenderBody instead of naming the HTTP status. Surface the status.
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    data = await r.json();
-  } catch (e) {
-    const body = document.getElementById('runway-detail-body');
-    if (body) body.innerHTML = '<div style="text-align:center; padding: 30px 16px; color: var(--red-fg, #cf222e); font-size: 13px;">Failed to load runway detail (' + (e && e.message ? e.message : 'network error') + ') — is dashboard-server.mjs running?</div>';
-    return;
-  }
-  _rdRenderBody(data);
-  _runwayDetailLastFetchMs = Date.now();
-  _rdUpdateStamp();
-}
-
-function openRunwayDetailModal() {
-  const bd = document.getElementById('runway-detail-backdrop');
-  const md = document.getElementById('runway-detail-modal');
-  if (!bd || !md) return;
-  bd.classList.add('visible');
-  md.classList.add('visible');
-  bd.setAttribute('aria-hidden', 'false');
-  md.setAttribute('aria-hidden', 'false');
-  _rdFetchAndRender();
-  if (_runwayDetailPollInterval) clearInterval(_runwayDetailPollInterval);
-  _runwayDetailPollInterval = setInterval(_rdFetchAndRender, 30000);
-  if (_runwayDetailStampInterval) clearInterval(_runwayDetailStampInterval);
-  _runwayDetailStampInterval = setInterval(_rdUpdateStamp, 1000);
-  const closeBtn = md.querySelector('.runway-detail-close');
-  if (closeBtn && typeof closeBtn.focus === 'function') {
-    try { closeBtn.focus({ preventScroll: true }); } catch (_) { closeBtn.focus(); }
-  }
-}
-function closeRunwayDetailModal() {
-  const bd = document.getElementById('runway-detail-backdrop');
-  const md = document.getElementById('runway-detail-modal');
-  if (bd) { bd.classList.remove('visible'); bd.setAttribute('aria-hidden', 'true'); }
-  if (md) { md.classList.remove('visible'); md.setAttribute('aria-hidden', 'true'); }
-  if (_runwayDetailPollInterval) { clearInterval(_runwayDetailPollInterval); _runwayDetailPollInterval = null; }
-  if (_runwayDetailStampInterval) { clearInterval(_runwayDetailStampInterval); _runwayDetailStampInterval = null; }
-}
-window.openRunwayDetailModal  = openRunwayDetailModal;
-window.closeRunwayDetailModal = closeRunwayDetailModal;
-
-// Esc closes runway detail (capture so it beats global Esc handlers)
-document.addEventListener('keydown', function (e) {
-  if (e.key !== 'Escape') return;
-  const md = document.getElementById('runway-detail-modal');
-  if (md && md.classList.contains('visible')) {
-    e.stopPropagation();
-    closeRunwayDetailModal();
-  }
-}, true);
+// The runway-detail modal renderer + poller + opener/closer + Esc
+// handler used to live here. All of it was retired 2026-05-25 alongside
+// the broader runway-coupling sweep -- the /api/runway-detail endpoint
+// it polled is now a 410 Gone on the server, and the #runway-detail-X
+// DOM elements + CSS were removed below in this same change. Removed:
+// _rdRenderBody, _rdFetchAndRender, openRunwayDetailModal,
+// closeRunwayDetailModal, plus the modal-scoped Esc-key handler and
+// the window.openRunwayDetailModal / window.closeRunwayDetailModal
+// bindings. No replacement modal is shipped.
 
 // ── Scan activity modal (2026-05-17) ─────────────────────────────
 // Opens from the live-ticker pill click. Reads /api/scan-activity.
@@ -34459,18 +34214,13 @@ function openMobileSettingsSheet(btn) {
       '<button type="button" class="toolbar-btn" style="min-height:48px;width:100%;text-align:left;padding:12px 14px" onclick="toggleDemoMode()">' +
         (demoOn ? '🎭  Disable demo mode' : '🎭  Enable demo mode') +
       '</button>' +
-      // 2026-05-20 — Behavior section. Hides the sidebar Runway widget +
-      // dials outreach intensity. Reads via /api/settings on open, writes
-      // via /api/settings POST + mirrors localStorage for instant feedback.
+      // 2026-05-20 — Behavior section. Dials outreach intensity. Reads via
+      // /api/settings on open, writes via /api/settings POST + mirrors
+      // localStorage for instant feedback. (The legacy Show-Runway-widget
+      // toggle was removed 2026-05-25 alongside the runway-coupling sweep.)
       '<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">' +
         '<div style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin-bottom:8px">Behavior</div>' +
-        '<label style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border:1px solid var(--border);border-radius:8px;cursor:pointer" for="settings-runway-toggle">' +
-          '<span>Show Runway widget' +
-            '<div class="muted-text" style="font-size:11.5px;line-height:1.4;margin-top:2px">The pulsing red \\'RUNWAY · CRITICAL\\' card in the left sidebar. Off = sidebar one less card.</div>' +
-          '</span>' +
-          '<input type="checkbox" id="settings-runway-toggle" onchange="window._setSetting(\\'show_runway_widget\\', this.checked)">' +
-        '</label>' +
-        '<label style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border:1px solid var(--border);border-radius:8px;cursor:pointer;margin-top:8px" for="settings-outreach-intensity">' +
+        '<label style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border:1px solid var(--border);border-radius:8px;cursor:pointer" for="settings-outreach-intensity">' +
           '<span>Outreach intensity — global' +
             '<div class="muted-text" style="font-size:11.5px;line-height:1.4;margin-top:2px">If set to Gentle/Aggressive, overrides warm/cold below. Normal = let the per-degree knobs decide.</div>' +
           '</span>' +
@@ -34524,8 +34274,9 @@ function openMobileSettingsSheet(btn) {
       const res = await fetch('/api/settings', { cache: 'no-store' });
       if (!res.ok) return;
       const { settings } = await res.json();
-      const rw = document.getElementById('settings-runway-toggle');
-      if (rw) rw.checked = settings.show_runway_widget !== false;
+      // (Show-Runway-widget toggle removed 2026-05-25; no settings-runway-toggle
+      // hydration needed. Stale settings.show_runway_widget values, if any,
+      // are simply ignored.)
       const o = settings.outreach || {};
       const setSelect = (id, val) => { const el = document.getElementById(id); if (el && val) el.value = val; };
       setSelect('settings-outreach-intensity', o.global_intensity);
@@ -35204,20 +34955,21 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   }
 
   /* ──────────────────────────────────────────────────────────────
-     Runway detail modal (sibling of batch-status-modal — same
-     visual frame, different content).
+     Modal frame — shared by scan-activity + system-health modals.
+     The runway-detail modal that previously shared this frame was
+     retired 2026-05-25 alongside the broader runway-coupling sweep
+     (its selectors are gone from this block but the visual frame
+     and the .rd-* utility classes below are kept for the
+     scan-activity + system-health siblings to reuse).
      ────────────────────────────────────────────────────────────── */
-  #runway-detail-backdrop,
   #scan-activity-backdrop,
   #system-health-backdrop {
     display: none; position: fixed; inset: 0;
     background: rgba(0,0,0,.5); z-index: 2000;
     backdrop-filter: blur(2px);
   }
-  #runway-detail-backdrop.visible,
   #scan-activity-backdrop.visible,
   #system-health-backdrop.visible { display: block; }
-  #runway-detail-modal,
   #scan-activity-modal,
   #system-health-modal {
     display: none; position: fixed;
@@ -35229,10 +34981,8 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     box-shadow: var(--shadow-lg);
     flex-direction: column;
   }
-  #runway-detail-modal.visible,
   #scan-activity-modal.visible,
   #system-health-modal.visible { display: flex; }
-  .runway-detail-header,
   .scan-activity-header,
   .system-health-header {
     position: sticky; top: 0; background: var(--surface);
@@ -35240,19 +34990,16 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     padding: 14px 20px; display: flex; align-items: center; gap: 12px;
     border-radius: 12px 12px 0 0;
   }
-  .runway-detail-header h3,
   .scan-activity-header h3,
   .system-health-header h3 {
     margin: 0; font-size: 15px; font-weight: 600; color: var(--text); flex: 1;
   }
-  .runway-detail-updated,
   .scan-activity-updated,
   .system-health-updated {
     font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums;
     padding: 2px 8px; background: var(--surface-2);
     border-radius: 999px;
   }
-  .runway-detail-updated.live::before,
   .scan-activity-updated.live::before,
   .system-health-updated.live::before {
     content: ""; display: inline-block; width: 6px; height: 6px;
@@ -35260,22 +35007,18 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     margin-right: 6px; vertical-align: middle;
     animation: batch-status-pulse 1.6s ease-in-out infinite;
   }
-  .runway-detail-close,
   .scan-activity-close,
   .system-health-close {
     background: none; border: none; font-size: 18px;
     cursor: pointer; color: var(--text-3); padding: 0 4px;
     line-height: 1;
   }
-  .runway-detail-close:hover,
   .scan-activity-close:hover,
   .system-health-close:hover { color: var(--text); }
-  .runway-detail-close:focus-visible,
   .scan-activity-close:focus-visible,
   .system-health-close:focus-visible {
     outline: 2px solid var(--blue-fg-dark, #1d4ed8); outline-offset: 2px;
   }
-  .runway-detail-body,
   .scan-activity-body,
   .system-health-body {
     padding: var(--space-4, 16px) var(--space-5, 20px);
@@ -35297,7 +35040,8 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     font-size: var(--fs-meta, 11px); text-transform: uppercase;
     letter-spacing: 0.06em; color: var(--text-3); font-weight: 700;
   }
-  /* Pillar 1 — scannable verdict row at the top of the runway modal */
+  /* Shared scannable verdict row — formerly used by the retired runway
+     modal; preserved because other modal-like surfaces reuse the .rd-* utility classes. */
   .rd-summary {
     display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;
     margin-bottom: 16px;
@@ -35317,7 +35061,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   .rd-summary-val.healthy   { color: var(--green-fg, #2da44e); }
   .rd-summary-val.stretched { color: var(--orange-fg, #bc4c00); }
   .rd-summary-val.critical  { color: var(--red-fg, #cf222e); }
-  /* Issue 7 (2026-05-18): clickable summary cells + table rows in runway-detail. */
+  /* Issue 7 (2026-05-18): clickable summary cells + table rows. */
   .rd-summary-cell-clickable {
     cursor: pointer; transition: background .12s, border-color .12s, transform .08s;
   }
@@ -35374,7 +35118,8 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     text-underline-offset: 2px; cursor: pointer; border-radius: 2px;
   }
   .sa-drill-company:hover { color: var(--green-fg, #16a34a); text-decoration-style: solid; }
-  /* Draft DM button on each Who-to-contact-next row (2026-05-18). */
+  /* Draft DM button — was used by the retired runway modal; preserved
+     here as a utility class for any future modal that wires draft-DM. */
   .rd-draft-dm-btn {
     background: var(--blue-bg, rgba(9,105,218,0.12));
     color: var(--blue-fg, #0969da);
@@ -35410,41 +35155,13 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   .live-ticker:focus-visible {
     outline: 2px solid var(--blue-fg-dark, #1d4ed8); outline-offset: 2px;
   }
-  .sidebar-runway-detailclickhint {
-    font-size: 10.5px; color: var(--text-3); font-style: italic;
-    margin-top: 4px; opacity: .8;
-  }
-  /* 2026-05-18: replaced the italic "click label for full detail" hint
-     with an explicit, accessible CTA button. */
-  .sidebar-runway-explain-btn {
-    display: block;
-    width: 100%;
-    margin-top: 6px;
-    padding: 6px 10px;
-    background: transparent;
-    border: 1px solid var(--border, rgba(255,255,255,.10));
-    border-radius: 6px;
-    color: var(--text-2);
-    font-size: 11.5px;
-    font-weight: 600;
-    text-align: left;
-    cursor: pointer;
-    font-family: inherit;
-    transition: background var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast);
-  }
-  .sidebar-runway-explain-btn:hover {
-    background: var(--surface-2);
-    border-color: var(--border-strong, var(--border));
-    color: var(--text);
-  }
-  .sidebar-runway-explain-btn:focus-visible {
-    outline: 2px solid var(--blue-fg); outline-offset: 1px;
-  }
-  body.sidebar-collapsed .sidebar-runway-explain-btn { display: none; }
-  body.sidebar-collapsed .sidebar-runway-detailclickhint { display: none; }
+
+  /* The .sidebar-runway-detailclickhint + .sidebar-runway-explain-btn
+     rules that lived here were retired 2026-05-25 alongside the
+     runway-coupling sweep. Their host element (the sidebar Runway
+     widget) was removed by PR #233, so the rules were dead CSS. */
 
   @media (max-width: 720px) {
-    #runway-detail-modal,
     #scan-activity-modal,
     #system-health-modal { width: 96vw; max-height: 92vh; }
     .rd-summary { grid-template-columns: 1fr; }
@@ -35757,25 +35474,12 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   </aside>
 </div>
 
-<!-- ──────────────────────────────────────────────────────────────
-     Runway detail modal (2026-05-17) — opens from #sidebar-runway
-     label click. Click-through detail for the pipeline-density widget.
-     Live-polled every 30s while open via /api/runway-detail.
-     Bind: openRunwayDetailModal() / closeRunwayDetailModal().
-     Tables inside this modal pick up invariant #8 baseline via the
-     applyUniversalTableBaseline() pass run after each render.
-     ────────────────────────────────────────────────────────────── -->
-<div id="runway-detail-backdrop" onclick="closeRunwayDetailModal()" aria-hidden="true"></div>
-<div id="runway-detail-modal" role="dialog" aria-modal="true" aria-labelledby="runway-detail-title" aria-hidden="true" onclick="event.stopPropagation()">
-  <div class="runway-detail-header">
-    <h3 id="runway-detail-title">Pipeline runway — live</h3>
-    <span id="runway-detail-updated" class="runway-detail-updated" aria-live="polite">loading…</span>
-    <button type="button" class="runway-detail-close" onclick="closeRunwayDetailModal()" aria-label="Close runway detail">✕</button>
-  </div>
-  <div class="runway-detail-body" id="runway-detail-body">
-    <div style="text-align:center; padding: 40px 16px; color: var(--text-3); font-size: 13px;">Loading…</div>
-  </div>
-</div>
+<!-- The Runway detail modal that lived here (2026-05-17) was retired
+     2026-05-25 alongside the broader runway-coupling sweep. The
+     #runway-detail-backdrop + #runway-detail-modal DOM nodes, the
+     openRunwayDetailModal() / closeRunwayDetailModal() bindings, and
+     the /api/runway-detail endpoint were all removed in the same
+     change. No replacement modal is shipped. -->
 
 <!-- ──────────────────────────────────────────────────────────────
      Scan activity modal (2026-05-17) — opens from the live-ticker

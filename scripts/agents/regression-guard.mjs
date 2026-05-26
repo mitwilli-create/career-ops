@@ -1052,7 +1052,7 @@ async function runDeepMultiSession(opts) {
     }
     const remaining = budget - sessionRunSpend;
     if (remaining < PER_SESSION_BUDGET_USD * 0.5) {
-      // Soft warning — likely insufficient runway for an honest pass
+      // Soft warning — likely insufficient budget headroom for an honest pass
       log(`WARN: only $${remaining.toFixed(4)} budget remaining (≈${(remaining / PER_SESSION_BUDGET_USD).toFixed(2)} session-pass) — may abort mid-session`, 'warn');
     }
 

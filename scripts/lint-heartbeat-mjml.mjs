@@ -18,10 +18,10 @@
  *      sentence-level body text. Body text MUST use text3 (muted_color) or
  *      darker. The dark-on-dark body needs the AA threshold.
  *
- *   2. Panel containers (.card, .runway-card, .signal-pulse-card, etc.) MUST
- *      have either a top-3px-accent-row OR a border-top to anchor them
- *      visually on the dark body. A panel with NEITHER reads as a floating
- *      div with no anchor.
+ *   2. Panel containers (.card, .signal-pulse-card, .tonight-card, etc.)
+ *      MUST have either a top-3px-accent-row OR a border-top to anchor
+ *      them visually on the dark body. A panel with NEITHER reads as a
+ *      floating div with no anchor.
  *
  *   3. mj-section / mj-column emitting background-color="#ffffff" while the
  *      body is dark — flag as a regression (white card on dark body is the
@@ -129,8 +129,8 @@ function rule1_text4UsedForBody(content, fileLabel) {
 // Exempts MJML-compiler-generated container divs (mj-column-per-*, mj-outlook-
 // group-fix, header-banner) — those are wrappers whose border lives on an
 // inner element after the MJML compile pass. The lint targets author-written
-// panels (.tonight-card, .due-today-card, .runway-card, etc.) where the
-// inline style IS the authored anchor mechanism.
+// panels (.tonight-card, .due-today-card, .signal-pulse-card, etc.)
+// where the inline style IS the authored anchor mechanism.
 function rule2_panelAnchor(content, fileLabel) {
   const violations = [];
   // Find every panel-styled container. Heuristic: div with class containing

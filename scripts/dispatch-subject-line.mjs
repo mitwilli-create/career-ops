@@ -24,7 +24,7 @@
  *
  * CLI smoke:
  *   node scripts/dispatch-subject-line.mjs \
- *     --hero-event='{"surface":"morning","date":"2026-05-20","queueDepth":0,"runwayState":"past-floor","outreachTouches":{"sent":0,"target":10}}'
+ *     --hero-event='{"surface":"morning","date":"2026-05-20","queueDepth":0,"outreachTouches":{"sent":0,"target":10}}'
  */
 
 import { dirname, join, resolve } from 'node:path';
@@ -62,7 +62,6 @@ const HAIKU_TIMEOUT_MS = 10_000;
  * @param {'morning'|'evening'} heroEvent.surface
  * @param {string} heroEvent.date                      YYYY-MM-DD
  * @param {number} heroEvent.queueDepth                # of apply-ready roles
- * @param {'healthy'|'stretched'|'critical'|'past-floor'} heroEvent.runwayState
  * @param {{company:string, role:string, score:number, closesIn?:string}} [heroEvent.topPendingAction]
  * @param {{from:string, company?:string}} [heroEvent.recentReply]
  * @param {{sent:number, target:number}} [heroEvent.outreachTouches]
@@ -269,13 +268,8 @@ const FALLBACK_TEMPLATES = [
       return `${e.topPendingAction.company} ${e.topPendingAction.role} · ${score}/5 ready`;
     },
   },
-  {
-    id: 'morning:empty-past-floor',
-    surface: 'morning',
-    applies: e => e.surface === 'morning' && Number(e.queueDepth) === 0
-      && e.runwayState === 'past-floor',
-    build: () => 'the queue is empty · push outreach today',
-  },
+  // (morning:empty-past-floor template was retired 2026-05-25 alongside
+  // the runway-coupling sweep — heroEvent.runwayState is no longer passed.)
   {
     id: 'morning:outreach-behind',
     surface: 'morning',
@@ -306,16 +300,8 @@ const FALLBACK_TEMPLATES = [
       return `${e.recentReply.from} replied at ${time} · path open`;
     },
   },
-  {
-    id: 'evening:past-floor',
-    surface: 'evening',
-    applies: e => e.surface === 'evening' && e.runwayState === 'past-floor',
-    build: e => {
-      const sent = e.outreachTouches?.sent ?? 0;
-      const target = e.outreachTouches?.target ?? 10;
-      return `floor still breached · ${sent} of ${target} this week`;
-    },
-  },
+  // (evening:past-floor template was retired 2026-05-25 alongside the
+  // runway-coupling sweep — heroEvent.runwayState is no longer passed.)
   {
     id: 'evening:touch-landed',
     surface: 'evening',
@@ -330,7 +316,7 @@ const FALLBACK_TEMPLATES = [
     build: e => {
       const dayName = dayNameFromIsoDate(e.date);
       const tracked = e.queueDepth ?? 0;
-      return `end of ${dayName} · ${tracked} tracked, runway holds`;
+      return `end of ${dayName} · ${tracked} tracked`;
     },
   },
 

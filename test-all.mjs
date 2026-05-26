@@ -301,7 +301,7 @@ console.log('\n7. Absolute path check');
 //     worktree-local agents can locate the canonical .env. Defensive,
 //     not the primary lookup; the relative-path candidate is tried first.
 //   - lib/preflight-gates.mjs — `df -k /Users/mitchellwilliams` for the
-//     dashboard runway-widget disk-free check. The user-home prefix is
+//     dashboard disk-free preflight gate. The user-home prefix is
 //     intentional (df target = the volume that holds career-ops data).
 // AGENTS.md exclusion (added 2026-05-23): AGENTS.md sometimes contains
 // absolute paths for downstream-agent context (e.g., regression-guard spec

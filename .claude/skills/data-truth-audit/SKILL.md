@@ -1,6 +1,6 @@
 ---
 name: data-truth-audit
-description: Audit every computed metric on the career-ops dashboard for accuracy, freshness, source-attribution, and null-handling. Use when Mitchell asks "are the dashboard numbers accurate", "audit my metrics", "trace metric X back to source", "find stale data on the dashboard", "is the runway widget lying", or types /data-truth-audit.
+description: Audit every computed metric on the career-ops dashboard for accuracy, freshness, source-attribution, and null-handling. Use when Mitchell asks "are the dashboard numbers accurate", "audit my metrics", "trace metric X back to source", "find stale data on the dashboard", "are the widget tooltips telling the truth", or types /data-truth-audit.
 user_invocable: true
 metadata:
   type: audit
@@ -28,7 +28,7 @@ Run it any time after touching `lib/*.mjs`, `dashboard-server.mjs`, or `scripts/
 
 Four sweeps:
 
-1. **False attribution sweep** — greps `scripts/build-dashboard.mjs` for every `lib/X.mjs` string reference inside tooltips, "View source" links, and source comments. Verifies each referenced file exists. The original γ audit found a runway tooltip claiming compute lived in `lib/recruiter-pipeline-density.mjs` — a file that did not exist.
+1. **False attribution sweep** — greps `scripts/build-dashboard.mjs` for every `lib/X.mjs` string reference inside tooltips, "View source" links, and source comments. Verifies each referenced file exists. The original γ audit (2026-05-19) found a tooltip claiming compute lived in `lib/recruiter-pipeline-density.mjs` — a file that did not exist; that whole widget has since been retired (2026-05-25 runway-coupling sweep), but the false-attribution failure mode is what this sweep keeps watching for.
 
 2. **Hardcoded date sweep** — searches `lib/*.mjs` for `Today is YYYY-MM-DD` literals in non-comment code. The γ audit found 3 LLM prompts with `"Today is 2026-05-17 PT"` baked in; every call from those entry points lied about the date.
 
@@ -68,7 +68,7 @@ node scripts/agents/data-truth-auditor.mjs --all
 
 Then read `data/data-truth-audit-{TODAY}.md`, summarize the findings, and tier them AAA / AA / A / B same as the original γ audit. For each AAA, propose an inline fix.
 
-**Mitchell:** "is the runway widget tooltip still pointing at a real file?"
+**Mitchell:** "are any dashboard widget tooltips still pointing at files that no longer exist?"
 **You:**
 ```bash
 node scripts/agents/data-truth-auditor.mjs --check-attribution

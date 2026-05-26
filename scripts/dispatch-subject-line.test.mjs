@@ -37,20 +37,25 @@ function withEnv(overrides, fn) {
 }
 
 // =============================================================================
-// 1. Morning queue empty + runway past-floor
+// 1. Morning queue empty + outreach behind → outreach push subject
 // =============================================================================
+//
+// (Prior to 2026-05-25 this test exercised the `morning:empty-past-floor`
+// fallback which fired on heroEvent.runwayState === 'past-floor'. That
+// template was retired alongside the broader runway-coupling sweep. Same
+// shape of input + same operator intent now flows through
+// `morning:outreach-behind`, which fires whenever outreach is below target.)
 
-test('morning queue empty + past-floor → outreach push subject', async () => {
+test('morning queue empty + outreach behind → outreach push subject', async () => {
   const hero = {
     surface: 'morning',
     date: '2026-05-20',
     queueDepth: 0,
-    runwayState: 'past-floor',
     outreachTouches: { sent: 0, target: 10 },
   };
   const out = await generateSubject(hero, { forceFallback: true });
   assert.equal(out.source, 'fallback');
-  assert.equal(out.subject, 'the queue is empty · push outreach today');
+  assert.equal(out.subject, '0 of 10 touches · push outreach');
   assert.ok(out.subject.length <= HARD_CAP);
 });
 
@@ -63,7 +68,6 @@ test('morning top role ≥4.5 → company role score subject', async () => {
     surface: 'morning',
     date: '2026-05-20',
     queueDepth: 3,
-    runwayState: 'stretched',
     topPendingAction: { company: 'OpenAI', role: 'FDE', score: 4.6 },
     outreachTouches: { sent: 5, target: 10 },
   };
@@ -81,7 +85,6 @@ test('morning with recent reply → person replied subject', async () => {
     surface: 'morning',
     date: '2026-05-20',
     queueDepth: 2,
-    runwayState: 'healthy',
     recentReply: { from: 'Brandon', company: 'Anthropic' },
   };
   const out = await generateSubject(hero, { forceFallback: true });
@@ -98,7 +101,6 @@ test('evening with recent reply → person replied at time subject', async () =>
     surface: 'evening',
     date: '2026-05-20',
     queueDepth: 4,
-    runwayState: 'stretched',
     recentReply: { from: 'Sarah', time: '3pm' },
   };
   const out = await generateSubject(hero, { forceFallback: true });
@@ -115,15 +117,11 @@ test('evening quiet → end of day subject with weekday name', async () => {
     surface: 'evening',
     date: '2026-05-20', // a Wednesday (2026-05-20)
     queueDepth: 12,
-    runwayState: 'stretched',
   };
   const out = await generateSubject(hero, { forceFallback: true });
   assert.equal(out.source, 'fallback');
   // 2026-05-20 is a Wednesday (verified)
-  assert.ok(
-    out.subject.startsWith('end of wednesday · 12 tracked'),
-    `expected weekday-prefixed subject, got: ${out.subject}`
-  );
+  assert.equal(out.subject, 'end of wednesday · 12 tracked');
 });
 
 // =============================================================================
@@ -135,7 +133,6 @@ test('fallbackTriggered=true → [fallback] prefix', async () => {
     surface: 'morning',
     date: '2026-05-20',
     queueDepth: 0,
-    runwayState: 'past-floor',
     outreachTouches: { sent: 0, target: 10 },
     fallbackTriggered: true,
   };
@@ -157,7 +154,6 @@ test('HEARTBEAT_TEST_MODE=true → [F-TEST] prefix', async () => {
     surface: 'morning',
     date: '2026-05-20',
     queueDepth: 0,
-    runwayState: 'past-floor',
     outreachTouches: { sent: 0, target: 10 },
   };
   await withEnv({ HEARTBEAT_TEST_MODE: 'true' }, async () => {
@@ -178,7 +174,6 @@ test('test mode + fallbackTriggered → both prefixes stack ([F-TEST] [fallback]
     surface: 'morning',
     date: '2026-05-20',
     queueDepth: 0,
-    runwayState: 'past-floor',
     outreachTouches: { sent: 0, target: 10 },
     fallbackTriggered: true,
   };
@@ -222,7 +217,6 @@ test('morning errors take priority over queue + reply', () => {
     surface: 'morning',
     date: '2026-05-20',
     queueDepth: 5,
-    runwayState: 'healthy',
     errors: 3,
     recentReply: { from: 'Brandon' },
     topPendingAction: { company: 'OpenAI', role: 'FDE', score: 4.8 },
@@ -232,19 +226,23 @@ test('morning errors take priority over queue + reply', () => {
 });
 
 // =============================================================================
-// 12. Evening past-floor (no reply / errors) → floor-breached subject
+// 12. Evening with touches landed + new queue items → touch-landed subject
 // =============================================================================
+//
+// (Prior to 2026-05-25 this slot tested the `evening:past-floor` template
+// which fired on heroEvent.runwayState === 'past-floor'. That template
+// was retired alongside the broader runway-coupling sweep. The remaining
+// applicable evening templates are now reply / touch-landed / quiet.)
 
-test('evening past-floor without reply → floor breached subject', () => {
+test('evening with touch landed + queue depth → touch-landed subject', () => {
   const hero = {
     surface: 'evening',
     date: '2026-05-20',
     queueDepth: 2,
-    runwayState: 'past-floor',
     outreachTouches: { sent: 3, target: 10 },
   };
   const subject = pickFallback(hero);
-  assert.equal(subject, 'floor still breached · 3 of 10 this week');
+  assert.equal(subject, 'one touch landed · 2 new in the queue');
 });
 
 // =============================================================================

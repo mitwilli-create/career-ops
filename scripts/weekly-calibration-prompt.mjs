@@ -39,7 +39,7 @@
  *                                  contacts (no validated outreach hook)
  *   (e) Calibration brief drift:  whether the most recent brief is older
  *                                  than 30 days (asks Mitchell to refresh)
- *   (f) Geography / runway constraints (always asks for re-confirmation)
+ *   (f) Geography + life-context re-confirmation (always asked)
  *
  * Output:
  *   data/weekly-calibration-prompt-{YYYY-MM-DD}.md
@@ -397,15 +397,15 @@ function composeQuestions({
     questions.push({
       id: 'brief_refresh',
       title: 'Calibration brief drift check',
-      ask: `Your most recent career-calibration brief is ${drift.days_old == null ? 'missing' : `${drift.days_old} days old`}. In 3-5 sentences: have your role-priority order, comp targets, geography, or runway changed since? If yes, name the change. If no, just say "STILL CURRENT" and we'll keep using the existing brief.`,
+      ask: `Your most recent career-calibration brief is ${drift.days_old == null ? 'missing' : `${drift.days_old} days old`}. In 3-5 sentences: have your role-priority order, comp targets, or geography changed since? If yes, name the change. If no, just say "STILL CURRENT" and we'll keep using the existing brief.`,
       detail_lines: drift.file ? [`   - Current brief: data/${drift.file}`] : [],
     });
   }
 
-  // Q6 — Pipeline / runway re-confirmation (always asked — anchor question)
+  // Q6 — Pipeline pulse + life-context (always asked — anchor question)
   questions.push({
-    id: 'runway_check',
-    title: 'Weekly runway + headspace check',
+    id: 'pipeline_pulse',
+    title: 'Weekly pipeline + headspace check',
     ask: `In 2-3 sentences, tell me: (a) how many active recruiter conversations you have this week, (b) your current best-case "earliest realistic offer" date, and (c) any external pressure that's changed in the last 7 days (Google role intensity, family, health, finances).`,
     detail_lines: [
       `   - Tracker total: ${applications.rows.length} rows`,
@@ -469,7 +469,7 @@ function renderPrompt({ date, questions, brief, applications, pipeline }) {
   promptBody.push('- **Target archetypes (priority order):** AI Program Manager > AI Solutions Architect > Forward Deployed Engineer > AI Enablement Lead > Engineering Editorial Lead (bridge role only).');
   promptBody.push('- **Comp target:** $250-320K TC; floor $110K base; pre-IPO Series C+ only.');
   promptBody.push('- **Geography:** Seattle (current) > West Coast metros > Dallas/Chicago > NYC > international.');
-  promptBody.push('- **Runway constraint:** under 3 months if Mitchell leaves Google without an offer — needs offer in hand before transition.');
+  promptBody.push('- **Transition constraint:** Mitchell needs an offer in hand before leaving Google. (The legacy "<3-month runway" framing of this constraint was retired 2026-05-25; the underlying requirement — secure-offer-first — is unchanged.)');
   promptBody.push('');
   promptBody.push('## Your job');
   promptBody.push('');

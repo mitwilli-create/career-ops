@@ -47,7 +47,13 @@ import { buildOutreachMailto } from '../lib/mailto-helpers.mjs';
 // 2026-05-17 — inline compute below (mirrors dashboard-server.mjs's
 // computeRecruiterPipelineDensity so heartbeat doesn't depend on the
 // dashboard server being running).
-import { renderSystemBanner, renderDiscardPatternSection, renderRunwayAlert, renderCdpAuthHealthSection, renderPolishSummarySection, renderCronHealthBanner } from '../lib/heartbeat-system-banner.mjs';
+// Note: `renderRunwayAlert` dropped from this import 2026-05-25 — the
+// runway-alert email widget was retired in the broader runway-coupling
+// sweep (lib/heartbeat-system-banner.mjs no longer exports it). The
+// local `renderRunwayAlertTiered` helper + its call-site below are
+// out of scope for this PR (heartbeat.mjs was handled by PR #222);
+// follow-up cleanup will retire them separately.
+import { renderSystemBanner, renderDiscardPatternSection, renderCdpAuthHealthSection, renderPolishSummarySection, renderCronHealthBanner } from '../lib/heartbeat-system-banner.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);

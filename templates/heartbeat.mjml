@@ -80,8 +80,8 @@
         .next-moves-card * { color: #374151 !important; }
         .next-move-row, .next-move-row * { color: #374151 !important; }
         .next-move-row { background: #ffffff !important; border-color: #e5e7eb !important; }
-        .runway-card     { background: #ffffff !important; border-color: #e5e7eb !important; }
-        .runway-card *   { color: #374151 !important; }
+        /* .runway-card rules removed 2026-05-25 alongside the broader
+           runway-coupling sweep — no element emits the class any longer. */
         .system-banner   { background: #ffffff !important; border-color: #e5e7eb !important; }
         .system-banner * { color: #374151 !important; }
       }
@@ -165,7 +165,9 @@
       </mj-column>
     </mj-section>
 
-    <!-- §6b Runway alert + system banner + discard pattern — all in one slot -->
+    <!-- §6b Context banners — system banner + discard pattern (runway-alert
+         block was retired 2026-05-25; the slot survives for the remaining
+         banners). -->
     <mj-section padding="0 0 8px 0">
       <mj-column>
         <mj-text padding="0">{{contextSectionsHtml}}</mj-text>

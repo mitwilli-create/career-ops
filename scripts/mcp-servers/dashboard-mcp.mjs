@@ -122,7 +122,7 @@ server.tool(
 server.tool(
   'dashboard_render_widget',
   'Return the rendered inner HTML and key computed CSS properties for a widget. ' +
-  'Use a CSS selector or widget ID (e.g. "#sidebar-batch" or ".runway-widget").',
+  'Use a CSS selector or widget ID (e.g. "#sidebar-batch" or ".pipeline-widget").',
   {
     type: 'object',
     properties: {
@@ -274,11 +274,14 @@ server.tool(
     const widgets = await page.evaluate(() => {
       const results = [];
       const seen = new Set();
-      // Collect elements with IDs, ARIA roles, or widget classes
+      // Collect elements with IDs, ARIA roles, or widget classes. The
+      // legacy `[class*="runway"]` selector was retired 2026-05-25
+      // alongside the broader runway-coupling sweep — no .runway-*
+      // classes are emitted by the dashboard any longer.
       const candidates = document.querySelectorAll(
         '[id], [role="widget"], [role="dialog"], [role="region"], ' +
         '[class*="sidebar"], [class*="widget"], [class*="modal"], [class*="drawer"], ' +
-        '[class*="runway"], [class*="batch"], [class*="pipeline"], [class*="panel"]'
+        '[class*="batch"], [class*="pipeline"], [class*="panel"]'
       );
       for (const el of candidates) {
         const key = el.id || el.className;

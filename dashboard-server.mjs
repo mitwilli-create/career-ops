@@ -769,19 +769,15 @@ function getEffectiveMonthlyBudget() {
   return getMonthlyBudget() + getBurstBudget();
 }
 
-// ── Recruiter pipeline density (Phase 6, calibration 2026-05-16) ──────────
-// Mitchell's <3-month runway means pipeline density matters as much as per-role
-// fit. This function computes pipeline-health metrics from the outreach
-// tracker. Surfaced via /api/recruiter-pipeline-density for the dashboard
-// widget and rolled into the heartbeat email's runway alert section.
-const RUNWAY_WEEKS_DEFAULT = parseInt(process.env.RUNWAY_WEEKS || '12');
-const PIPELINE_HEALTH_THRESHOLDS = {
-  active_healthy:   5,   // 5+ active conversations = healthy
-  active_stretched: 3,   // 3-4 active = stretched
-  touches_healthy:  10,  // 10+ touches/week = healthy
-  touches_stretched: 5,  // 5-9 touches/week = stretched
-  response_rate_healthy: 0.30,
-};
+// ── Recruiter pipeline density (retired 2026-05-25) ──────────────────────
+// `RUNWAY_WEEKS_DEFAULT`, `PIPELINE_HEALTH_THRESHOLDS`,
+// `computeRecruiterPipelineDensity`, and `computeRunwayDetail` lived here
+// previously. They were the compute behind the sidebar Runway widget +
+// /api/recruiter-pipeline-density + /api/runway-detail. Both endpoints +
+// their consumers (build-dashboard.mjs runway-detail modal, heartbeat
+// runway-alert section) were retired across PR #222, PR #233, and the
+// follow-up sweep. No replacement compute is shipped — the dashboard +
+// heartbeat surfaces no longer lead with a runway-framed urgency signal.
 
 // Classifies a free-text discard reason into a coarse tag for grouping.
 // Lightweight keyword match; refine over time as patterns emerge.
@@ -799,279 +795,9 @@ function classifyDiscardReason(reason) {
   return 'other';
 }
 
-function computeRecruiterPipelineDensity() {
-  let contacts = [];
-  try { contacts = listOutreachContacts(); } catch (e) {
-    return { ok: false, error: `outreach tracker unavailable: ${e.message}` };
-  }
-  const now = Date.now();
-  const sevenDaysAgo = now - 7 * 86400000;
-  const thirtyDaysAgo = now - 30 * 86400000;
-
-  let active = 0, responded = 0, dead = 0, total = contacts.length;
-  let activeByTier = { A: 0, B: 0, C: 0, unspecified: 0 };
-  let activeByType = { recruiter: 0, hm: 0, sourcer: 0, peer: 0, exec: 0, founder: 0 };
-  let touches7d = 0, touches30d = 0;
-  let lastTouchTs = 0;
-
-  for (const c of contacts) {
-    if (c.status === 'dead') { dead++; continue; }
-    if (c.status === 'awaiting_reply' || c.status === 'warm' || c.status === 'responded') {
-      active++;
-      const tier = (c.tier || 'unspecified').toUpperCase();
-      if (tier === 'A' || tier === 'B' || tier === 'C') activeByTier[tier]++;
-      else activeByTier.unspecified++;
-      const ct = c.contact_type || 'recruiter';
-      if (activeByType[ct] !== undefined) activeByType[ct]++;
-    }
-    if (c.status === 'responded') responded++;
-
-    // Count touches in time windows
-    const touches = Array.isArray(c.touches) ? c.touches : [];
-    for (const t of touches) {
-      const ts = Date.parse(t.ts);
-      if (!isFinite(ts)) continue;
-      if (ts >= sevenDaysAgo) touches7d++;
-      if (ts >= thirtyDaysAgo) touches30d++;
-      if (ts > lastTouchTs) lastTouchTs = ts;
-    }
-  }
-
-  const responseRate = total > 0 ? Math.round((responded / total) * 100) / 100 : 0;
-
-  // Health verdict
-  let health, reasons = [];
-  if (active >= PIPELINE_HEALTH_THRESHOLDS.active_healthy &&
-      touches7d >= PIPELINE_HEALTH_THRESHOLDS.touches_healthy) {
-    health = 'healthy';
-    reasons.push(`${active} active conversations + ${touches7d} touches this week`);
-  } else if (active >= PIPELINE_HEALTH_THRESHOLDS.active_stretched ||
-             touches7d >= PIPELINE_HEALTH_THRESHOLDS.touches_stretched) {
-    health = 'stretched';
-    if (active < PIPELINE_HEALTH_THRESHOLDS.active_healthy) reasons.push(`only ${active} active conversations (target: ${PIPELINE_HEALTH_THRESHOLDS.active_healthy}+)`);
-    if (touches7d < PIPELINE_HEALTH_THRESHOLDS.touches_healthy) reasons.push(`only ${touches7d} touches this week (target: ${PIPELINE_HEALTH_THRESHOLDS.touches_healthy}+)`);
-  } else {
-    health = 'critical';
-    reasons.push(`${active} active conversations + ${touches7d} touches this week — both below stretched thresholds`);
-  }
-
-  // Runway alert: given Mitchell's runway, project whether pipeline can land an offer in time
-  const runwayWeeks = RUNWAY_WEEKS_DEFAULT;
-  const daysSinceLastTouch = lastTouchTs ? Math.round((now - lastTouchTs) / 86400000) : null;
-  const runwayAlert = (health === 'critical')
-    ? `🚨 Pipeline below threshold for ${runwayWeeks}-week runway. Increase outreach velocity to ${PIPELINE_HEALTH_THRESHOLDS.touches_healthy}+ touches/week immediately.`
-    : (health === 'stretched')
-      ? `⚠️  Pipeline stretched for ${runwayWeeks}-week runway. Add ${Math.max(0, PIPELINE_HEALTH_THRESHOLDS.active_healthy - active)} more active conversations and ${Math.max(0, PIPELINE_HEALTH_THRESHOLDS.touches_healthy - touches7d)} more touches this week.`
-      : `✅ Pipeline density adequate for ${runwayWeeks}-week runway.`;
-
-  return {
-    ok: true,
-    runway_weeks: runwayWeeks,
-    health,
-    health_reasons: reasons,
-    runway_alert: runwayAlert,
-    contacts: {
-      total,
-      active,
-      responded,
-      dead,
-      response_rate: responseRate,
-      active_by_tier: activeByTier,
-      active_by_type: activeByType,
-    },
-    velocity: {
-      touches_last_7d:  touches7d,
-      touches_last_30d: touches30d,
-      days_since_last_touch: daysSinceLastTouch,
-    },
-    thresholds: PIPELINE_HEALTH_THRESHOLDS,
-    computed_at: new Date().toISOString(),
-  };
-}
-
-// ── Runway detail (calibration 2026-05-17, click-through on runway widget) ─
-// Click-through detail payload for the sidebar runway widget. Composes:
-//   - active_conversations: contacts with status != dead, sorted by recency
-//   - recent_touches_7d:    all touches in the last 7 days (most recent first)
-//   - response_rate_trend:  this-7d vs last-30d outbound→response ratio
-//   - who_to_contact_next:  ranked recommendations (tier-A unresponded >
-//                           tier-B unresponded > tier-A with prior response > …),
-//                           capped at 5 items
-// Returned by GET /api/runway-detail and consumed by openRunwayDetailModal().
-function computeRunwayDetail() {
-  let contacts = [];
-  try { contacts = listOutreachContacts(); } catch (e) {
-    return { ok: false, error: `outreach tracker unavailable: ${e.message}` };
-  }
-  // Pull the high-level density verdict as the runway header summary.
-  const density = computeRecruiterPipelineDensity();
-  const now = Date.now();
-  const sevenDaysAgo  = now - 7  * 86400000;
-  const thirtyDaysAgo = now - 30 * 86400000;
-  const lastSevenDaysAgo = now - 14 * 86400000; // for outbound-vs-response delta
-
-  // ── Active conversations (everything not dead, sorted by recency) ──
-  const activeConversations = contacts
-    .filter(c => c.status !== 'dead')
-    .map(c => {
-      const touches = Array.isArray(c.touches) ? c.touches : [];
-      const last = touches.length ? touches[touches.length - 1] : null;
-      const lastTs = last ? Date.parse(last.ts) : 0;
-      const days = lastTs ? Math.round((now - lastTs) / 86400000) : null;
-      return {
-        contact_id: c.contact_id,
-        name: c.name || '',
-        company: c.company || '',
-        role_title: c.title_at_send || '',
-        tier: c.tier || 'B',
-        contact_type: c.contact_type || '',
-        channel: last ? last.channel : '',
-        status: c.status,
-        last_touch_iso: last ? last.ts : null,
-        days_since: days,
-        next_action: c.next_action || null,
-      };
-    })
-    .sort((a, b) => {
-      // Most recent touch first; nulls last.
-      const ta = a.last_touch_iso ? Date.parse(a.last_touch_iso) : 0;
-      const tb = b.last_touch_iso ? Date.parse(b.last_touch_iso) : 0;
-      return tb - ta;
-    });
-
-  // ── Recent touches (last 7d) — flat list across contacts ──
-  const recentTouches = [];
-  for (const c of contacts) {
-    const touches = Array.isArray(c.touches) ? c.touches : [];
-    for (const t of touches) {
-      const ts = Date.parse(t.ts);
-      if (!isFinite(ts) || ts < sevenDaysAgo) continue;
-      recentTouches.push({
-        ts_iso: t.ts,
-        channel: t.channel || '',
-        contact_name: c.name || '',
-        company: c.company || '',
-        outbound: t.outbound !== false,
-        summary: (t.summary || '').slice(0, 240),
-      });
-    }
-  }
-  recentTouches.sort((a, b) => Date.parse(b.ts_iso) - Date.parse(a.ts_iso));
-
-  // ── Response rate trend (this 7d vs last 30d) ──
-  let out7  = 0, res7  = 0;
-  let out30 = 0, res30 = 0;
-  for (const c of contacts) {
-    const touches = Array.isArray(c.touches) ? c.touches : [];
-    for (const t of touches) {
-      const ts = Date.parse(t.ts);
-      if (!isFinite(ts)) continue;
-      const outbound = t.outbound !== false;
-      if (ts >= sevenDaysAgo) {
-        if (outbound) out7++;
-        else res7++;
-      }
-      if (ts >= thirtyDaysAgo) {
-        if (outbound) out30++;
-        else res30++;
-      }
-    }
-  }
-  const rate7  = out7  > 0 ? +(res7  / out7).toFixed(2)  : 0;
-  const rate30 = out30 > 0 ? +(res30 / out30).toFixed(2) : 0;
-  const delta = rate7 > rate30 ? 'up' : rate7 < rate30 ? 'down' : 'flat';
-
-  // ── Who to contact next — tier × silence × prior-engagement ranking ──
-  // Rank rule per task spec:
-  //   tier-A unresponded > tier-B unresponded > tier-A with prior response >
-  //   tier-B with prior response > tier-C unresponded > tier-C responded
-  // Within tier+status group: oldest-silent first (longest gap = most urgent).
-  // Snoozed contacts excluded. Cap at 5.
-  function tierWeight(t) {
-    if (t === 'A') return 3;
-    if (t === 'B') return 2;
-    return 1; // C / unspecified
-  }
-  function statusBucket(c) {
-    // unresponded = awaiting_reply or warm (we wrote and they haven't)
-    // responded   = already replied; lower urgency to re-engage
-    if (c.status === 'responded') return 0;
-    if (c.status === 'awaiting_reply' || c.status === 'warm') return 1;
-    return -1; // dead etc.
-  }
-  function isSnoozed(c) {
-    if (!c.snoozed_until) return false;
-    const t = Date.parse(c.snoozed_until);
-    return isFinite(t) && t > now;
-  }
-  const candidates = contacts
-    .filter(c => c.status !== 'dead')
-    .filter(c => !isSnoozed(c))
-    .map(c => {
-      const touches = Array.isArray(c.touches) ? c.touches : [];
-      const last = touches.length ? touches[touches.length - 1] : null;
-      const lastTs = last ? Date.parse(last.ts) : 0;
-      const daysSilent = lastTs ? Math.round((now - lastTs) / 86400000) : 999;
-      const tw = tierWeight((c.tier || 'B').toUpperCase());
-      const sb = statusBucket(c);
-      return { c, daysSilent, tw, sb };
-    })
-    .filter(x => x.sb >= 0);
-
-  candidates.sort((a, b) => {
-    // Unresponded tier-A first (sb=1 + tw=3), then unresponded tier-B (sb=1 + tw=2),
-    // then responded tier-A (sb=0 + tw=3) — combined ordering key
-    // We rank by (sb*10 + tw) descending, then days silent descending.
-    const ka = a.sb * 10 + a.tw;
-    const kb = b.sb * 10 + b.tw;
-    if (kb !== ka) return kb - ka;
-    return b.daysSilent - a.daysSilent;
-  });
-
-  const whoNext = candidates.slice(0, 5).map(({ c, daysSilent }) => {
-    let rationale;
-    const tier = (c.tier || 'B').toUpperCase();
-    if (c.status === 'awaiting_reply' || c.status === 'warm') {
-      rationale = `Tier-${tier} ${c.contact_type || 'contact'} · ${daysSilent}d silent · awaiting reply`;
-    } else if (c.status === 'responded') {
-      rationale = `Tier-${tier} responded · ${daysSilent}d since last touch · keep warm`;
-    } else {
-      rationale = `Tier-${tier} ${c.contact_type || 'contact'} · ${daysSilent}d silent`;
-    }
-    // Suggest channel: existing next_action channel if present, else best guess
-    let suggestedChannel = c.next_action?.draft_template_id?.startsWith('email_') ? 'email'
-      : (c.intel?.email_guess?.confidence === 'high' ? 'email' : 'linkedin_dm');
-    return {
-      contact_id: c.contact_id,
-      name: c.name || '',
-      company: c.company || '',
-      role_title: c.title_at_send || '',
-      tier,
-      rationale,
-      suggested_channel: suggestedChannel,
-      next_action: c.next_action || null,
-      days_since: daysSilent,
-    };
-  });
-
-  return {
-    ok: true,
-    runway_weeks: density.runway_weeks ?? RUNWAY_WEEKS_DEFAULT,
-    health: density.health || 'unknown',
-    health_reason: Array.isArray(density.health_reasons)
-      ? density.health_reasons.join(' · ')
-      : (density.runway_alert || ''),
-    active_conversations:    activeConversations,
-    recent_touches_7d:       recentTouches,
-    response_rate_trend: {
-      this_7d:  { outbound: out7,  responses: res7,  rate: rate7  },
-      last_30d: { outbound: out30, responses: res30, rate: rate30 },
-      delta,
-    },
-    who_to_contact_next: whoNext,
-    generated_at: new Date().toISOString(),
-  };
-}
+// `computeRecruiterPipelineDensity` and `computeRunwayDetail` were
+// retired here 2026-05-25 (see the comment block above for the audit
+// trail). Net-removed ~270 LOC.
 
 function getRolling30dSpend() {
   const fp = join(ROOT, 'data/cost-log.tsv');
@@ -5498,15 +5224,14 @@ const server = createServer((req, res) => {
     });
     return;
   }
-  if (url === '/api/recruiter-pipeline-density') {
-    // Phase 6 (calibration 2026-05-16): pipeline-density widget data source.
-    // Used by the dashboard runway-alert widget + heartbeat email runway section.
-    return json(computeRecruiterPipelineDensity());
-  }
-  if (url === '/api/runway-detail') {
-    // 2026-05-17 — click-through detail for the runway sidebar widget.
-    // Powers openRunwayDetailModal(); polled every 30s while modal open.
-    return json(computeRunwayDetail());
+  if (url === '/api/recruiter-pipeline-density' || url === '/api/runway-detail') {
+    // Endpoints retired 2026-05-25 alongside the runway-coupling sweep.
+    // The compute functions (`computeRecruiterPipelineDensity`,
+    // `computeRunwayDetail`) and their consumers (sidebar widget, popout
+    // modal, heartbeat banner) were removed across PR #222, PR #233, and
+    // this follow-up sweep. Returns HTTP 410 Gone so any stale poller
+    // visibly fails instead of silently getting an empty body.
+    return json({ ok: false, error: 'endpoint retired 2026-05-25' }, 410);
   }
   if (url === '/api/discard-with-reason' && req.method === 'POST') {
     // Item #1 from 2026-05-16 incomplete-task review: capture WHY a row was
@@ -5943,8 +5668,11 @@ const server = createServer((req, res) => {
   // 2026-05-20 — user-editable dashboard preferences. Backed by
   // data/dashboard-settings.json (file-of-record, cross-device) and
   // shadowed by localStorage 'careerOps.settings' (per-browser overrides).
-  // Schema: { show_runway_widget: bool, outreach: { global_intensity,
-  // warm_intensity, cold_intensity, suppression[] } }.
+  // Schema: { outreach: { global_intensity, warm_intensity,
+  // cold_intensity, suppression[] } }.
+  // (The legacy `show_runway_widget` toggle was removed from the schema
+  // 2026-05-25 alongside the runway-coupling sweep; any stale value in
+  // an existing settings file is harmless and may be left in place.)
   if (url === '/api/settings' && req.method === 'GET') {
     const fp = join(ROOT, 'data', 'dashboard-settings.json');
     if (!existsSync(fp)) return json({ ok: true, settings: {} });

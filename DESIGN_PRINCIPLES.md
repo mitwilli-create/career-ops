@@ -65,7 +65,7 @@ That sentence is load-bearing. Memorize it. Every screen, every section, every p
 **In practice:**
 - Sidebar Batch box shows real-time completed / failed / running / pending — click to expand to full live detail (per-batch durations, costs, recent failures)
 - System-status banner in heartbeat email reports which Tier 5 features are active
-- Runway-density widget surfaces pipeline health verdict (healthy / stretched / critical) with the underlying metrics in click-to-expand detail
+- Pipeline-health verdict (healthy / stretched / critical) surfaces in the heartbeat email's system banner with the underlying metrics in click-to-expand detail (the standalone sidebar runway-density widget that previously surfaced this was retired 2026-05-25 alongside the broader runway-coupling sweep)
 - Process All modal shows running progress + per-company status during the orchestrator run
 - Background subagent runs report progress to logs the user can tail
 - Every long-running script writes a `_summary.md` artifact + appends to `data/cost-log.tsv`

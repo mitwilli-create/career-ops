@@ -366,4 +366,86 @@
     <apps:property name='sizeOperator' value='s_sl'/>
     <apps:property name='sizeUnit' value='s_smb'/>
   </entry>
+
+  <!-- ============================================================
+       AI-specific job boards and newsletters (added 2026-05-26)
+       ============================================================ -->
+
+  <entry>
+    <category term='filter'></category>
+    <title>Pallet AI/tech job boards (Lenny's, The Browser Company, etc.)</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-pallet</id>
+    <updated>2026-05-26T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='jobs@pallet.com OR noreply@pallet.com OR hello@pallet.com OR alerts@pallet.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>Work at a Startup (Y Combinator job alerts)</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-yc-wats</id>
+    <updated>2026-05-26T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='jobs@workatastartup.com OR noreply@workatastartup.com OR team@workatastartup.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>Lenny's Newsletter job digest + similar product-focused boards</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-lennysnewsletter</id>
+    <updated>2026-05-26T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='jobs@lennysnewsletter.com OR noreply@lennysnewsletter.com OR hello@lenny.email'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>Levels.fyi job alerts (comp-benchmarked roles at top tech cos)</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-levelsfyi</id>
+    <updated>2026-05-26T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='jobs@levels.fyi OR noreply@levels.fyi OR alerts@levels.fyi'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>Contra / Toptal / Andela (AI contractor and FTE hybrid boards)</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-contra</id>
+    <updated>2026-05-26T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='jobs@contra.com OR noreply@contra.com OR hello@contra.com OR notifications@contra.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
+
+  <entry>
+    <category term='filter'></category>
+    <title>Techinasia / Hirist / Joble (APAC AI/tech boards — signal diversity)</title>
+    <id>tag:mail.google.com,2008:filter:career-ops-apac-boards</id>
+    <updated>2026-05-26T00:00:00Z</updated>
+    <content></content>
+    <apps:property name='from' value='noreply@jobleads.com OR alerts@joblift.com OR jobs@remoteok.com OR noreply@remoteok.com OR hello@remoteok.com'/>
+    <apps:property name='label' value='career-ops/alerts'/>
+    <apps:property name='shouldArchive' value='true'/>
+    <apps:property name='sizeOperator' value='s_sl'/>
+    <apps:property name='sizeUnit' value='s_smb'/>
+  </entry>
 </feed>

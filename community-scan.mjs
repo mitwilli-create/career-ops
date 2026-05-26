@@ -39,9 +39,12 @@ const SOURCES = [
   { name: 'r/LocalLLaMA',         url: 'https://www.reddit.com/r/LocalLLaMA/.rss',         tier: 2 },
   { name: 'r/MLOps',              url: 'https://www.reddit.com/r/MLOps/.rss',              tier: 1 },
   { name: 'r/AI_Agents',          url: 'https://www.reddit.com/r/AI_Agents/.rss',          tier: 1 },
+  { name: 'r/AIjobs',             url: 'https://www.reddit.com/r/AIjobs/.rss',            tier: 1 },
   { name: 'r/cscareerquestions',  url: 'https://www.reddit.com/r/cscareerquestions/.rss',  tier: 3 },
   { name: 'r/datascience',        url: 'https://www.reddit.com/r/datascience/.rss',        tier: 3 },
   { name: 'r/artificial',         url: 'https://www.reddit.com/r/artificial/.rss',         tier: 3 },
+  // Y Combinator Work at a Startup — active YC-batch company listings
+  { name: 'YC Work at a Startup', url: 'https://www.workatastartup.com/jobs.rss',          tier: 1 },
   // HN Who's Hiring — monthly thread (May 2026)
   { name: 'HN Who\'s Hiring',     url: 'https://hn.algolia.com/api/v1/search?tags=ask_hn&query=who+is+hiring&numericFilters=created_at_i>1746057600', tier: 2, type: 'hn' },
 ];

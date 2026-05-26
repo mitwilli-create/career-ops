@@ -71,11 +71,12 @@ function envNum(name, dflt) {
 }
 
 const ENABLED        = envBool('BUG_RESOLVER_ENABLED', true);
-const DAILY_USD_CAP  = envNum('BUG_RESOLVER_DAILY_USD', 150);
-// Per-bug cap bumped 30 → 50 on 2026-05-25 as part of the MAX QUALITY
-// routing change — gpt-5-5-pro implement phase widens worst-case spend on
-// a single stubborn bug. Daily cap holds at $150 (~3 such bugs/day max).
-const PER_BUG_CAP    = envNum('BUG_RESOLVER_PER_BUG_CAP', 50);
+// Recalibrated 2026-05-26: observed actual ~$0.16-0.80/run; $25 = ~5x max.
+// Was $150 (set before spend data existed — never approached).
+const DAILY_USD_CAP  = envNum('BUG_RESOLVER_DAILY_USD', 25);
+// Recalibrated 2026-05-26: full 7-phase audit+implement+verify ~$0.50-2/bug;
+// $10 = 5x realistic max. Was $50 (pre-spend-data default).
+const PER_BUG_CAP    = envNum('BUG_RESOLVER_PER_BUG_CAP', 10);
 const MAX_BUGS       = envNum('BUG_RESOLVER_MAX_BUGS_PER_RUN', 5);
 
 // ─── CLI parse ──────────────────────────────────────────────────────────────

@@ -66,7 +66,9 @@ export function envStr(name, dflt) {
 // ─── Mitchell's locked decisions (see agent JSDoc + AGENTS.md env-var table) ─
 export const ENABLED                  = envBool('REGRESSION_GUARD_ENABLED', true);
 export const AUTO_ACTION              = envBool('REGRESSION_GUARD_AUTO_ACTION', false);
-export const DAILY_USD_CAP            = envNum('REGRESSION_GUARD_DAILY_USD', 20);
+// Recalibrated 2026-05-26: deterministic scans cost $0; deep forensics ~$0.50-2.
+// $10 allows 5+ deep runs before firing. Was $20 (never approached).
+export const DAILY_USD_CAP            = envNum('REGRESSION_GUARD_DAILY_USD', 10);
 export const PER_CALL_WARN_USD        = envNum('REGRESSION_GUARD_PER_CALL_WARN_USD', 5);
 export const CANARY_FAIL_SHUT         = envBool('REGRESSION_GUARD_CANARY_FAIL_SHUT', true);
 export const BASELINE_EXPIRY_DAYS     = envNum('REGRESSION_GUARD_BASELINE_EXPIRY_DAYS', 30);
@@ -74,7 +76,8 @@ export const SELF_THROTTLE_THRESHOLD  = envNum('REGRESSION_GUARD_SELF_THROTTLE_T
 export const TRANSCRIPT_BASELINE_ON   = envBool('REGRESSION_GUARD_TRANSCRIPT_BASELINE_ENABLED', false);
 export const CROSS_SESSION_CADENCE    = envStr('REGRESSION_GUARD_CROSS_SESSION_CADENCE', 'daily');
 export const GEMINI_TIER              = envStr('REGRESSION_GUARD_GEMINI_TIER', 'preview');
-export const DEEP_BUDGET_USD          = envNum('REGRESSION_GUARD_DEEP_BUDGET_USD', 20);
+// Recalibrated 2026-05-26 alongside DAILY_USD_CAP. Was $20.
+export const DEEP_BUDGET_USD          = envNum('REGRESSION_GUARD_DEEP_BUDGET_USD', 10);
 export const SILENT_PERIOD_BY_TYPE    = parseSilentPeriods(
   envStr('REGRESSION_GUARD_SILENT_PERIOD_DAYS_BY_TYPE', DEFAULT_SILENT_PERIODS_CSV)
 );

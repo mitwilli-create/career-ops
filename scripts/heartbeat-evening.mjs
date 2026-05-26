@@ -674,10 +674,6 @@ async function renderEveningHtmlEmail(markdownBody, meta = {}) {
 </div>`.trim();
   } catch { /* non-fatal */ }
 
-  // Evening runway alert panel — retired 2026-05-25; HTML context section
-  // emits empty content so the legacy template variable still binds cleanly.
-  const runwayAlertHtml = '';
-
   // Discard pattern section (HTML) — always in evening when data exists
   let discardSectionHtml = '';
   const _isFriday = new Date(TARGET_DATE + 'T12:00:00').getDay() === 5;
@@ -688,8 +684,7 @@ async function renderEveningHtmlEmail(markdownBody, meta = {}) {
   // Evening summary banner (goes into actionSectionsHtml slot)
   const actionSectionsHtml = systemBannerHtml;
 
-  // Context slot: runway alert mid-digest
-  const contextSectionsHtml = runwayAlertHtml;
+  const contextSectionsHtml = '';
 
   const contentHtml = renderContentHtml(markdownBody);
 

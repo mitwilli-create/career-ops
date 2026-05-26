@@ -182,8 +182,6 @@ function extractStateFields(state, surface) {
   const trackedCount  = state.trackedCount  ?? 0;
   const evaluatedToday= state.evaluatedToday?? 0;
   const outreachDue   = state.outreachDue   ?? 0;
-  const runwayState   = state.runwayState   || 'healthy';
-  const runwayAlert   = state.runwayAlert   || false;
   const newRoles      = state.newRoles      ?? 0;
   const topRole       = state.topRole       || null;
   const todaysFocus   = state.todaysFocus   || '';        // Haiku-generated directive (from heartbeat.mjs)
@@ -194,24 +192,17 @@ function extractStateFields(state, surface) {
   const errorCount    = state.errorCount    ?? state.todaysErrorCount ?? 0;
   const systemStatus  = state.systemStatus  || null;
   return { date, surface, applyNow, whatsNew, queueCount, trackedCount, evaluatedToday,
-           outreachDue, runwayState, runwayAlert, newRoles, topRole, todaysFocus, density,
+           outreachDue, newRoles, topRole, todaysFocus, density,
            tonightsApply, todaysResult, todaysMovements, errorCount, systemStatus };
 }
 
 // ── Build the hero event for F-3 subject-line generation ──────────────────
 function buildHeroEvent(state, surface) {
   const s = extractStateFields(state, surface);
-  // Map runwayState to F-3's expected value set (healthy/stretched/critical/past-floor)
-  // The morning script uses 'healthy'|'stretched'|'critical'; F-3 also accepts 'past-floor'
-  // which is equivalent to 'critical' in the morning script's vocabulary.
-  let mappedRunway = s.runwayState;
-  if (mappedRunway === 'critical') mappedRunway = 'past-floor';
-
   const heroEvent = {
     surface,
     date: s.date,
     queueDepth: s.queueCount,
-    runwayState: mappedRunway,
     fallbackTriggered: state.fallbackTriggered === true,
   };
 
@@ -310,8 +301,6 @@ function pickForecast(surface, state) {
   const ctx = {
     queue: { depth: state.queueCount },
     outreach: { behind_weekly_target: (state.density?.velocity?.touches_last_7d ?? 0) < 10 },
-    runway: { tier: state.runwayState === 'critical' ? 'red' : state.runwayState === 'stretched' ? 'amber' : 'green',
-              weeks: parseInt(process.env.RUNWAY_WEEKS || '12') },
     recent: { reply_landed_within_days: 999 },
     interview: { scheduled: false },
     pipeline: { errors_present: state.errorCount > 0,
@@ -664,36 +653,6 @@ function renderFocusPullquote(state, palette) {
 </div>`.trim();
 }
 
-// ── Render: runway alert ──────────────────────────────────────────────────
-function renderRunwayAlertEditorial(state, surface, palette) {
-  const d = state.density;
-  if (!d || !d.ok) {
-    return `<div style="margin:6px 0;padding:8px 0 8px 18px;border-left:3px solid ${palette.rule_strong};color:${palette.ink_3};font-family:'Fraunces',Georgia,serif;font-style:italic;font-size:14px">Runway data unavailable &middot; outreach tracker may be offline.</div>`;
-  }
-  const { health, runway_alert, contacts, velocity, runway_weeks } = d;
-  const headlineMap = {
-    healthy:   'The runway holds.',
-    stretched: 'The runway tightens.',
-    critical:  'The runway is past floor.',
-  };
-  const headline = headlineMap[health] || `The runway sits at ${health}.`;
-  const accentColor = health === 'critical' ? palette.negative : health === 'stretched' ? palette.accent : palette.positive;
-
-  return `
-<div style="margin:6px 0;padding:8px 0 8px 18px;border-left:3px solid ${accentColor}">
-  <div class="editorial-grotesk" style="font-family:'Inter',sans-serif;font-size:9px;font-weight:700;letter-spacing:0.20em;text-transform:uppercase;color:${accentColor};margin-bottom:6px">Runway &middot; ${runway_weeks}-week window</div>
-  <p style="margin:0 0 4px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:600;font-size:16px;line-height:1.3;color:${palette.ink}">${escapeHtml(headline)}</p>
-  <p style="margin:0 0 6px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:13px;line-height:1.4;color:${palette.ink_2}">${escapeHtml(runway_alert.replace(/^[^\w]+/, ''))}</p>
-  <p style="margin:0;font-family:'JetBrains Mono','SF Mono',monospace;font-variant-numeric:tabular-nums;font-size:11px;color:${palette.ink_3}">
-    <span style="color:${palette.ink_2}">${contacts.active}</span> active &middot;
-    <span style="color:${palette.ink_2}">${contacts.responded}</span> replied (${Math.round(contacts.response_rate * 100)}%) &middot;
-    <span style="color:${palette.ink_2}">${velocity.touches_last_7d}</span>/7d &middot;
-    <span style="color:${palette.ink_2}">${velocity.touches_last_30d}</span>/30d &middot;
-    last: <span style="color:${palette.ink_2}">${velocity.days_since_last_touch != null ? velocity.days_since_last_touch + 'd' : 'n/a'}</span>
-  </p>
-</div>`.trim();
-}
-
 // ── Render: system status (evening only) ─────────────────────────────────
 function renderSystemStatus(state, palette) {
   // Default 6 rows. Caller can pass state.systemStatus as an array of
@@ -969,17 +928,6 @@ function buildPalette(surface) {
   };
 }
 
-// ── KPI: runway label + color ─────────────────────────────────────────────
-function kpiRunway(state, palette) {
-  const d = state.density;
-  const weeks = d?.runway_weeks ?? parseInt(process.env.RUNWAY_WEEKS || '12');
-  const health = state.runwayState;
-  const color = health === 'critical' ? palette.negative
-              : health === 'stretched' ? palette.accent
-              : palette.positive;
-  return { label: `${weeks}w`, color };
-}
-
 // ── Image attachment helper ───────────────────────────────────────────────
 function buildImageAttachment(image) {
   if (!image || !image.path) return null;
@@ -1144,8 +1092,6 @@ if (isMain) {
       trackedCount: 1200,
       evaluatedToday: 3,
       outreachDue: 2,
-      runwayState: 'stretched',
-      runwayAlert: true,
       newRoles: 1,
       todaysFocus: 'Tonight, ship the OpenAI FDE pack — it\'s the highest-leverage move.',
       applyNow: [
@@ -1155,8 +1101,7 @@ if (isMain) {
       ],
       whatsNew: [],
       density: {
-        ok: true, runway_weeks: 12, health: 'stretched',
-        runway_alert: 'Cushion shrinking — add 2 more active conversations and 6 more touches this week.',
+        ok: true,
         contacts: { total: 200, active: 3, responded: 1, dead: 100, response_rate: 0.05 },
         velocity: { touches_last_7d: 4, touches_last_30d: 18, days_since_last_touch: 2 },
       },

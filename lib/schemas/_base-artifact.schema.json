@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://careers-ops.com/schemas/_base-artifact",
+  "title": "Base Artifact",
+  "description": "Shared fields present in every apply-pack artifact .json file",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Semver of this artifact schema",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "agent_name": {
+      "type": "string",
+      "description": "Name of the agent that produced this artifact"
+    },
+    "slug": {
+      "type": "string",
+      "description": "Apply-pack directory slug, e.g. 2373-workos-applied-ai-engineer"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of generation"
+    },
+    "company": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "role": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "agent_name",
+    "slug",
+    "generated_at"
+  ]
+}

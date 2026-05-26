@@ -502,6 +502,27 @@ export async function runCoverLetter(input) {
   // Mirror to secondary path
   writeFileSync(join(outDirSecondary, artifactName), markdown, 'utf-8');
 
+  // Write schema-typed JSON to canonical apply-pack path (L6 migration)
+  const clPackSlug = `${rowPadded}-${companySlug}-${roleSlug}`;
+  const clPackDir = join(ROOT, 'apply-pack', clPackSlug);
+  mkdirSync(clPackDir, { recursive: true });
+  const clBody = parsed.paragraphs.map(p => p.text).join('\n\n');
+  writeFileSync(join(clPackDir, 'cover-letter.json'), JSON.stringify({
+    schema_version: '1.0.0',
+    agent_name: 'cover-letter',
+    slug: clPackSlug,
+    generated_at: new Date().toISOString(),
+    company,
+    role,
+    body: clBody,
+    word_count: clBody.split(/\s+/).filter(Boolean).length,
+    short_pitch: null,
+    notes_for_candidate: null,
+    ai_detection_score: null,
+    risk_band: null,
+    warnings: parsed.warnings || [],
+  }, null, 2) + '\n', 'utf-8');
+
   // ── 7. Humanize-check (prose sections only — skip HUMAN markers) ────────
 
   const proseSections = parsed.paragraphs

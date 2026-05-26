@@ -22657,17 +22657,28 @@ async function _openApplyClipboardModal(num, applyHref) {
       throw new Error('manifest response missing slug');
     }
     var slug = mdata.slug;
-    var hasFormFields = Array.isArray(mdata.files) && mdata.files.some(function (f) { return f.rel === 'form-fields.md'; });
+    var hasFormFieldsJson = Array.isArray(mdata.files) && mdata.files.some(function (f) { return f.rel === 'form-fields.json'; });
+    var hasFormFieldsMd = Array.isArray(mdata.files) && mdata.files.some(function (f) { return f.rel === 'form-fields.md'; });
+    var hasFormFields = hasFormFieldsJson || hasFormFieldsMd;
     if (!hasFormFields) {
       _renderApplyClipboardEmptyState(modal, num, slug, applyHref, backdrop, null);
       return;
     }
-    var fres = await fetch('/api/artifact?slug=' + encodeURIComponent(slug) + '&file=' + encodeURIComponent('form-fields.md'), { cache: 'no-store' });
-    if (!fres.ok) {
-      throw new Error('form-fields.md HTTP ' + fres.status);
+    // L6 JSON-first: try schema-typed form-fields.json; fall back to .md.
+    var jsonData = null;
+    if (hasFormFieldsJson) {
+      try {
+        var jres = await fetch('/api/artifact?slug=' + encodeURIComponent(slug) + '&file=' + encodeURIComponent('form-fields.json'), { cache: 'no-store' });
+        if (jres.ok) { jsonData = await jres.json(); }
+      } catch (e) { jsonData = null; }
     }
-    var formFieldsText = await fres.text();
-    _renderApplyClipboardModal(modal, formFieldsText, slug, applyHref, backdrop);
+    var formFieldsText = '';
+    if (!jsonData && hasFormFieldsMd) {
+      var fres = await fetch('/api/artifact?slug=' + encodeURIComponent(slug) + '&file=' + encodeURIComponent('form-fields.md'), { cache: 'no-store' });
+      if (!fres.ok) { throw new Error('form-fields.md HTTP ' + fres.status); }
+      formFieldsText = await fres.text();
+    }
+    _renderApplyClipboardModal(modal, formFieldsText, slug, applyHref, backdrop, jsonData);
   } catch (err) {
     var msg = String(err && err.message ? err.message : err);
     var html = '<div style="padding:24px"><h2 style="margin:0 0 10px;font-size:15px">Couldn' + String.fromCharCode(39) + 't stage form fields</h2>';
@@ -22837,31 +22848,41 @@ async function _openSkipModal(num, company, role) {
 }
 window._openSkipModal = _openSkipModal;
 
-function _renderApplyClipboardModal(modal, formFieldsText, slug, applyHref, backdrop) {
+function _renderApplyClipboardModal(modal, formFieldsText, slug, applyHref, backdrop, jsonData) {
   function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
   // Parse simple H2 sections from form-fields.md.
   // Each section: "## Title" followed by paragraphs. Lines before the
   // first H2 are skipped (title/preamble). "## Notes" is filtered out
   // since it's internal-only.
   var NL = String.fromCharCode(10);
-  var lines = String(formFieldsText).split(NL);
   var sections = [];
-  var current = null;
-  for (var i = 0; i < lines.length; i++) {
-    var line = lines[i];
-    if (line.indexOf('## ') === 0) {
-      if (current) sections.push(current);
-      var title = line.replace(/^##\\s*/, '').replace(/^"|"$/g, '').trim();
-      current = { title: title, lines: [] };
-    } else if (current) {
-      current.lines.push(line);
+  var riskBand = null;
+  // L6 JSON-first: if jsonData has schema-typed sections, use them directly.
+  if (jsonData && Array.isArray(jsonData.sections) && jsonData.sections.length > 0) {
+    sections = jsonData.sections.map(function(s, idx) {
+      return { title: s.title || ('Field ' + (idx + 1)), lines: [], _ans: s.answer_body || '' };
+    });
+    riskBand = jsonData.sections.map(function(s) { return s.risk_band || 'edit'; });
+  } else {
+    // Legacy MD path: parse H2 sections from form-fields.md text.
+    var lines = String(formFieldsText).split(NL);
+    var current = null;
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (line.indexOf('## ') === 0) {
+        if (current) sections.push(current);
+        var title = line.replace(/^##\\s*/, '').replace(/^"|"$/g, '').trim();
+        current = { title: title, lines: [] };
+      } else if (current) {
+        current.lines.push(line);
+      }
     }
-  }
-  if (current) sections.push(current);
-  sections = sections.filter(function (s) { return s.title.toLowerCase() !== 'notes'; });
-  if (sections.length === 0) {
-    _renderApplyClipboardEmptyState(modal, null, slug, applyHref, backdrop, 'form-fields.md exists but has no parseable H2 sections.');
-    return;
+    if (current) sections.push(current);
+    sections = sections.filter(function (s) { return s.title.toLowerCase() !== 'notes'; });
+    if (sections.length === 0) {
+      _renderApplyClipboardEmptyState(modal, null, slug, applyHref, backdrop, 'form-fields.md exists but has no parseable H2 sections.');
+      return;
+    }
   }
   // Helper to normalize a section body (strip surrounding horizontal rules).
   function _bodyOf(sec) {
@@ -22873,7 +22894,10 @@ function _renderApplyClipboardModal(modal, formFieldsText, slug, applyHref, back
   var html = '<div style="padding:18px 24px 14px;border-bottom:1px solid var(--border);flex-shrink:0">';
   html += '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">';
   html += '<div><h2 style="margin:0;font-size:15px;font-weight:600;color:var(--text)">Apply Now ' + String.fromCharCode(8212) + ' staged form fields</h2>';
-  html += '<p style="margin:4px 0 0;font-size:12px;color:var(--text-3);line-height:1.5">Copy each answer below into the corresponding apply-form field. Or copy everything at once, then open the form.</p>';
+  var _subhd = riskBand
+    ? 'Copy each answer into the apply-form field. Green border = send as-is, amber = edit first, red = review carefully.'
+    : 'Copy each answer below into the corresponding apply-form field. Or copy everything at once, then open the form.';
+  html += '<p style="margin:4px 0 0;font-size:12px;color:var(--text-3);line-height:1.5">' + _subhd + '</p>';
   html += '<p style="margin:6px 0 0;font-size:11px;color:var(--text-4)">Pack: <code style="font-family:ui-monospace,monospace;background:var(--surface-2);padding:1px 5px;border-radius:3px">' + _esc(slug) + '</code></p></div>';
   html += '<button type="button" id="apply-clipboard-close" aria-label="Close" style="background:transparent;border:none;color:var(--text-3);font-size:20px;cursor:pointer;padding:0 4px;line-height:1">' + String.fromCharCode(215) + '</button>';
   html += '</div></div>';
@@ -22882,7 +22906,7 @@ function _renderApplyClipboardModal(modal, formFieldsText, slug, applyHref, back
   // rendered HTML's textContent, which would flatten tables and lose
   // list structure). The rendered body lives in the DOM as HTML for
   // human reading; the clipboard payload comes from rawBodies[idx].
-  var rawBodies = sections.map(_bodyOf);
+  var rawBodies = riskBand ? sections.map(function(s) { return s._ans || ''; }) : sections.map(_bodyOf);
   // Markdown rendering goes through window._renderMd, the canonical client-side
   // markdown helper injected after minification (see scripts/build-dashboard.mjs
   // marked-injection step + AGENTS.md § Bug class: client-side-dependency-
@@ -22896,12 +22920,27 @@ function _renderApplyClipboardModal(modal, formFieldsText, slug, applyHref, back
   for (var j = 0; j < sections.length; j++) {
     var sec = sections[j];
     var bodyText = rawBodies[j];
+    var _bandLbl = '';
+    var _bandBdr = '';
+    if (riskBand) {
+      var _rb = riskBand[j] || 'edit';
+      if (_rb === 'warn') {
+        _bandLbl = '<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(220,38,38,0.12);color:#dc2626;font-weight:600;margin-left:8px">&#9888; review</span>';
+        _bandBdr = ';border-left:3px solid #dc2626';
+      } else if (_rb === 'asis') {
+        _bandLbl = '<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(22,163,74,0.12);color:var(--green-fg,#16a34a);font-weight:600;margin-left:8px">&#10003; as-is</span>';
+        _bandBdr = ';border-left:3px solid var(--green-fg,#16a34a)';
+      } else {
+        _bandLbl = '<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(217,119,6,0.12);color:#d97706;font-weight:600;margin-left:8px">&#9998; edit</span>';
+        _bandBdr = ';border-left:3px solid #d97706';
+      }
+    }
     html += '<div class="apply-clipboard-section" style="border-bottom:1px solid var(--border);padding:14px 0" data-section-idx="' + j + '">';
     html += '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:8px">';
-    html += '<div style="font-size:13px;font-weight:600;color:var(--text);line-height:1.4;flex:1">' + _esc(sec.title) + '</div>';
+    html += '<div style="display:flex;align-items:center;flex:1;min-width:0"><span style="font-size:13px;font-weight:600;color:var(--text);line-height:1.4">' + _esc(sec.title) + '</span>' + _bandLbl + '</div>';
     html += '<button type="button" class="apply-clipboard-copy-btn" data-section-idx="' + j + '" style="flex-shrink:0;padding:4px 10px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);border-radius:4px;cursor:pointer;font-size:11px;font-weight:500">' + String.fromCharCode(0x2398) + ' Copy</button>';
     html += '</div>';
-    html += '<div class="apply-clipboard-body markdown-body" style="margin:0;padding:10px 14px;background:var(--surface-2,#0f1118);border-radius:4px;border:1px solid var(--border-2,var(--border));overflow-x:auto">' + window._renderMd(bodyText) + '</div>';
+    html += '<div class="apply-clipboard-body markdown-body" style="margin:0;padding:10px 14px;background:var(--surface-2,#0f1118);border-radius:4px;border:1px solid var(--border-2,var(--border));overflow-x:auto' + _bandBdr + '">' + window._renderMd(bodyText) + '</div>';
     html += '</div>';
   }
   html += '</div>';
@@ -22944,8 +22983,8 @@ function _renderApplyClipboardModal(modal, formFieldsText, slug, applyHref, back
   var copyAllBtn = modal.querySelector('#apply-clipboard-copy-all');
   if (copyAllBtn) {
     copyAllBtn.addEventListener('click', async function () {
-      var allText = sections.map(function (s) {
-        return s.title + NL + NL + _bodyOf(s);
+      var allText = sections.map(function (s, i) {
+        return (s.title || '') + NL + NL + (riskBand ? (rawBodies[i] || '') : _bodyOf(s));
       }).join(NL + NL + '---' + NL + NL);
       try {
         await navigator.clipboard.writeText(allText);

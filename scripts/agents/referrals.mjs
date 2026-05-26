@@ -337,6 +337,39 @@ export async function runReferrals(input) {
   const path = join(outDir, 'referrals.md');
   writeFileSync(path, buildMarkdown(parsed, company, role), 'utf-8');
 
+  // Write schema-typed JSON to canonical apply-pack path (L6 migration)
+  const rrPackSlug = `${padded}-${slugify(company)}-${slugify(role)}`;
+  const rrPackDir = join(ROOT, 'apply-pack', rrPackSlug);
+  mkdirSync(rrPackDir, { recursive: true });
+  const rrOutreachDrafts = (parsed.warm_paths || []).map(w => ({
+    to: w.contact_name,
+    channel: w.send_channel || null,
+    subject: null,
+    body: w.draft_message,
+    notes: w.connection_anchor || null,
+  }));
+  if (parsed.cold_outreach_fallback) {
+    rrOutreachDrafts.push({ to: 'Cold Outreach', channel: 'linkedin', subject: null, body: parsed.cold_outreach_fallback, notes: 'Auto-generated cold outreach — no warm path found' });
+  }
+  writeFileSync(join(rrPackDir, 'referrals.json'), JSON.stringify({
+    schema_version: '1.0.0',
+    agent_name: 'referrals',
+    slug: rrPackSlug,
+    generated_at: new Date().toISOString(),
+    company,
+    role,
+    warm_paths: (parsed.warm_paths || []).map(w => ({
+      name: w.contact_name,
+      connection_type: w.connection_anchor || null,
+      company_role: w.contact_role_at_company || null,
+      last_contact: null,
+      ask: w.draft_message || null,
+    })),
+    outreach_drafts: rrOutreachDrafts,
+    strategy_notes: parsed.intro || null,
+    warnings: parsed.warnings || [],
+  }, null, 2) + '\n', 'utf-8');
+
   // PR-02: voice-rules-gate Layer 2 post-process on the rendered markdown.
   let voiceGate = null;
   try {

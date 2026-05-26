@@ -628,6 +628,27 @@ export async function runCvTailor(input) {
   const markdown = buildMarkdownArtifact(parsed, company, role);
   writeFileSync(artifactPath, markdown, 'utf-8');
 
+  // Write schema-typed JSON to canonical apply-pack path (L6 migration)
+  const cvPackSlug = `${rowPadded}-${companySlug}-${roleSlug}`;
+  const cvPackDir = join(ROOT, 'apply-pack', cvPackSlug);
+  mkdirSync(cvPackDir, { recursive: true });
+  writeFileSync(join(cvPackDir, 'cv-tailored.json'), JSON.stringify({
+    schema_version: '1.0.0',
+    agent_name: 'cv-tailor',
+    slug: cvPackSlug,
+    generated_at: new Date().toISOString(),
+    company,
+    role,
+    highlights: parsed.highlights || [],
+    tailored_bullets: (parsed.tailored_bullets || []).map(b => ({
+      text: b.text,
+      cv_citation: b.cv_ref || null,
+      jd_keyword: null,
+    })),
+    summary: parsed.summary || null,
+    warnings: parsed.warnings || [],
+  }, null, 2) + '\n', 'utf-8');
+
   /* ---------------------------------------------------------------------- */
   /* 7. Run humanize-check (bullets only — summary is diagnostic metadata)  */
   /* ---------------------------------------------------------------------- */

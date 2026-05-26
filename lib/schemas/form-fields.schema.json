@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://careers-ops.com/schemas/form-fields",
+  "title": "Form Fields Artifact",
+  "description": "Schema-typed form-fields artifact emitted to apply-pack/<slug>/form-fields.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "agent_name": {
+      "type": "string",
+      "const": "form-fields"
+    },
+    "slug": {
+      "type": "string"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "company": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "role": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sections": {
+      "type": "array",
+      "description": "One entry per application form question/section",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "risk_band"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "URL-safe kebab-case identifier for this section"
+          },
+          "title": {
+            "type": "string",
+            "description": "The question or section label shown to the user"
+          },
+          "risk_band": {
+            "type": "string",
+            "enum": [
+              "warn",
+              "edit",
+              "asis"
+            ],
+            "description": "\u26a0\ufe0f warn = AI-detection risk, human must rewrite; \ud83d\udfe1 edit = light edits needed; \ud83d\udfe2 asis = use as-is"
+          },
+          "meta": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "One-line explanation of why this risk band was assigned"
+          },
+          "scaffold_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Label for the scaffold block (e.g. 'Scaffold:')"
+          },
+          "scaffold_body": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Scaffold/template text (markdown) for the human to fill in"
+          },
+          "answer_body": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The drafted answer body (markdown). Null when only a scaffold is provided."
+          },
+          "trailing_prose": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Any additional prose that follows the answer (e.g. notes, caveats)"
+          }
+        }
+      }
+    },
+    "risk_legend": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Summary counts of sections per risk band",
+      "additionalProperties": false,
+      "properties": {
+        "warn": {
+          "type": "integer"
+        },
+        "edit": {
+          "type": "integer"
+        },
+        "asis": {
+          "type": "integer"
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Agent-generated warnings (e.g. unanswered questions, low-confidence sections)"
+    }
+  },
+  "required": [
+    "schema_version",
+    "agent_name",
+    "slug",
+    "generated_at",
+    "sections"
+  ]
+}

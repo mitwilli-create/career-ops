@@ -386,6 +386,28 @@ export async function runLinkedinDm(input) {
   writeFileSync(artifactPath, markdown, 'utf-8');
   writeFileSync(join(outDirSecondary, 'linkedin-dm.md'), markdown, 'utf-8');
 
+  // Write schema-typed JSON to canonical apply-pack path (L6 migration)
+  const ldmPackSlug = `${rowPadded}-${companySlug}-${roleSlug}`;
+  const ldmPackDir = join(ROOT, 'apply-pack', ldmPackSlug);
+  mkdirSync(ldmPackDir, { recursive: true });
+  writeFileSync(join(ldmPackDir, 'linkedin-dm.json'), JSON.stringify({
+    schema_version: '1.0.0',
+    agent_name: 'linkedin-dm',
+    slug: ldmPackSlug,
+    generated_at: new Date().toISOString(),
+    company,
+    role,
+    variants: parsed.messages.map(m => ({
+      id: m.variant || 'variant-a',
+      label: null,
+      body: m.text,
+      char_count: m.char_count || m.text.length,
+      tone: m.variant || null,
+    })),
+    target_contacts: null,
+    warnings: parsed.warnings || [],
+  }, null, 2) + '\n', 'utf-8');
+
   // Decisions log (O9)
   const decisionsLog = buildDecisionsLog(parsed, company, role, modelUsed, tokensUsed);
   writeFileSync(join(outDirSecondary, 'decisions.md'), decisionsLog, 'utf-8');

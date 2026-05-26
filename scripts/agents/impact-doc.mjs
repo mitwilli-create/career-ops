@@ -277,6 +277,29 @@ export async function runImpactDoc(input) {
   const path = join(outDir, 'impact-doc.md');
   writeFileSync(path, buildMarkdown(parsed), 'utf-8');
 
+  // Write schema-typed JSON to canonical apply-pack path (L6 migration)
+  const idPackSlug = `${padded}-${slugify(company)}-${slugify(role)}`;
+  const idPackDir = join(ROOT, 'apply-pack', idPackSlug);
+  mkdirSync(idPackDir, { recursive: true });
+  writeFileSync(join(idPackDir, 'impact-doc.json'), JSON.stringify({
+    schema_version: '1.0.0',
+    agent_name: 'impact-doc',
+    slug: idPackSlug,
+    generated_at: new Date().toISOString(),
+    company,
+    role,
+    intro_prose: parsed.opening_paragraph || null,
+    sections: (parsed.wedges || []).map((w, i) => ({
+      id: `wedge-${i + 1}`,
+      title: w.wedge_title,
+      problem: w.problem || null,
+      what_mitchell_does: w.what_mitchell_does || null,
+      proof_points: w.citation ? [w.citation] : [],
+    })),
+    closing_prose: parsed.closing_paragraph || null,
+    warnings: parsed.warnings || [],
+  }, null, 2) + '\n', 'utf-8');
+
   // PR-02: voice-rules-gate Layer 2 post-process on the rendered markdown.
   let voiceGate = null;
   try {

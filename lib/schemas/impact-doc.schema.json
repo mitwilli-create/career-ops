@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://careers-ops.com/schemas/impact-doc",
+  "title": "Impact Doc Artifact",
+  "description": "Schema-typed impact-doc artifact emitted to apply-pack/<slug>/impact-doc.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "agent_name": {
+      "type": "string",
+      "const": "impact-doc"
+    },
+    "slug": {
+      "type": "string"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "company": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "role": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "intro_prose": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Opening framing paragraph before the wedge sections"
+    },
+    "sections": {
+      "type": "array",
+      "description": "The three (or more) wedge/impact sections",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Kebab-case identifier, e.g. 'wedge-1'"
+          },
+          "title": {
+            "type": "string",
+            "description": "Section heading"
+          },
+          "problem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The business/product problem this section addresses"
+          },
+          "what_mitchell_does": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Mitchell's specific proposed contribution or past equivalent work"
+          },
+          "proof_points": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Supporting evidence bullets"
+          }
+        }
+      }
+    },
+    "closing_prose": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Optional closing paragraph"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "agent_name",
+    "slug",
+    "generated_at",
+    "sections"
+  ]
+}

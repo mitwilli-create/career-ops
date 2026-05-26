@@ -383,6 +383,26 @@ export async function runWhyStatement(input) {
   writeFileSync(artifactPath, markdown, 'utf-8');
   writeFileSync(join(outDirSecondary, 'why-statement.md'), markdown, 'utf-8');
 
+  // Write schema-typed JSON to canonical apply-pack path (L6 migration)
+  const wsPackSlug = `${rowPadded}-${companySlug}-${roleSlug}`;
+  const wsPackDir = join(ROOT, 'apply-pack', wsPackSlug);
+  mkdirSync(wsPackDir, { recursive: true });
+  writeFileSync(join(wsPackDir, 'why-statement.json'), JSON.stringify({
+    schema_version: '1.0.0',
+    agent_name: 'why-statement',
+    slug: wsPackSlug,
+    generated_at: new Date().toISOString(),
+    company,
+    role,
+    statement: parsed.statement,
+    anchors: (parsed.anchors || []).map(a => ({
+      corpus_ref: a.corpus_ref,
+      claim: a.claim,
+    })),
+    short_version: null,
+    warnings: parsed.warnings || [],
+  }, null, 2) + '\n', 'utf-8');
+
   // ── 7. Humanize-check ───────────────────────────────────────────────────
 
   const humanize = runHumanizeCheckText(parsed.statement);

@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://careers-ops.com/schemas/cv-tailored",
+  "title": "CV Tailored Artifact",
+  "description": "Schema-typed cv-tailored artifact emitted to apply-pack/<slug>/cv-tailored.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "agent_name": {
+      "type": "string",
+      "const": "cv-tailor"
+    },
+    "slug": {
+      "type": "string"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "company": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "role": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "highlights": {
+      "type": "array",
+      "description": "Top 3-5 bullet points for the Highlights box at the top of the tailored CV",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
+    "tailored_bullets": {
+      "type": "array",
+      "description": "Role-experience bullets with citations back to cv.md source lines",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The tailored bullet text"
+          },
+          "cv_citation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Reference to the source line in cv.md, e.g. 'cv.md:142'"
+          },
+          "jd_keyword": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "JD keyword this bullet was tailored to surface"
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Tailored professional summary / headline prose"
+    },
+    "keyword_coverage": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "matched": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "missing": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "score_pct": {
+          "type": "number"
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "agent_name",
+    "slug",
+    "generated_at",
+    "highlights",
+    "tailored_bullets"
+  ]
+}

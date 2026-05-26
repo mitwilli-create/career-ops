@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://careers-ops.com/schemas/cover-letter",
+  "title": "Cover Letter Artifact",
+  "description": "Schema-typed cover-letter artifact emitted to apply-pack/<slug>/cover-letter.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "agent_name": {
+      "type": "string",
+      "const": "cover-letter"
+    },
+    "slug": {
+      "type": "string"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "company": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "role": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "body": {
+      "type": "string",
+      "description": "Full cover letter body as plain prose (markdown). No greeting/sign-off included \u2014 those are in their own fields."
+    },
+    "greeting": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Opening greeting line, e.g. 'Dear Hiring Team,'"
+    },
+    "sign_off": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Closing sign-off, e.g. 'Best, Mitchell'"
+    },
+    "word_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Word count of the body field"
+    },
+    "short_pitch": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "1-2 sentence elevator pitch usable in email subject or LinkedIn message"
+    },
+    "notes_for_candidate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Agent notes about editing suggestions or risk flags (not shown to employer)"
+    },
+    "ai_detection_score": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Pangram / GPTZero AI detection score (0-1, lower = more human-like). Null if not checked.",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "risk_band": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "warn",
+        "edit",
+        "asis",
+        null
+      ],
+      "description": "Overall AI-detection risk for the whole letter"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "agent_name",
+    "slug",
+    "generated_at",
+    "body"
+  ]
+}

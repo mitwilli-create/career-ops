@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://careers-ops.com/schemas/linkedin-dm",
+  "title": "LinkedIn DM Artifact",
+  "description": "Schema-typed linkedin-dm artifact emitted to apply-pack/<slug>/linkedin-dm.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "agent_name": {
+      "type": "string",
+      "const": "linkedin-dm"
+    },
+    "slug": {
+      "type": "string"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "company": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "role": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "variants": {
+      "type": "array",
+      "description": "Multiple message variants (different tones, lengths, angles)",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "body"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Identifier, e.g. 'variant-a', 'short', 'warm'"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Human-readable label for this variant"
+          },
+          "body": {
+            "type": "string",
+            "description": "The full message text"
+          },
+          "char_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Character count of the body"
+          },
+          "tone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Tone descriptor, e.g. 'direct', 'warm', 'concise'"
+          }
+        }
+      }
+    },
+    "target_contacts": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "description": "Suggested contacts to send this DM to (name + role)",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "linkedin_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    "meta": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Optional metadata about strategy, timing, or personalization hooks",
+      "additionalProperties": true
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "agent_name",
+    "slug",
+    "generated_at",
+    "variants"
+  ]
+}

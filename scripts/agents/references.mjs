@@ -242,6 +242,34 @@ export async function runReferences(input) {
   const path = join(outDir, 'references.md');
   writeFileSync(path, buildMarkdown(parsed, company, role), 'utf-8');
 
+  // Write schema-typed JSON to canonical apply-pack path (L6 migration)
+  const refPackSlug = `${padded}-${slugify(company)}-${slugify(role)}`;
+  const refPackDir = join(ROOT, 'apply-pack', refPackSlug);
+  mkdirSync(refPackDir, { recursive: true });
+  writeFileSync(join(refPackDir, 'references.json'), JSON.stringify({
+    schema_version: '1.0.0',
+    agent_name: 'references',
+    slug: refPackSlug,
+    generated_at: new Date().toISOString(),
+    company,
+    role,
+    framing: parsed.intro || null,
+    ordering_rationale: null,
+    references: (parsed.references || []).map((r, i) => ({
+      rank: i + 1,
+      name: r.name_placeholder,
+      role_at_org: r.descriptive_placeholder || null,
+      organization: null,
+      dates: null,
+      contact_method: r.suggested_channel || null,
+      cv_citation: r.citation || null,
+      jd_priority_mapping: r.why_this_reference || null,
+      can_substantiate: r.sample_testimonial ? [r.sample_testimonial] : null,
+      briefing_instruction: null,
+    })),
+    warnings: parsed.warnings || [],
+  }, null, 2) + '\n', 'utf-8');
+
   // PR-02: voice-rules-gate Layer 2 post-process on the rendered markdown.
   let voiceGate = null;
   try {

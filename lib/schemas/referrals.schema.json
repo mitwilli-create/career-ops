@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://careers-ops.com/schemas/referrals",
+  "title": "Referrals Artifact",
+  "description": "Schema-typed referrals artifact emitted to apply-pack/<slug>/referrals.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "agent_name": {
+      "type": "string",
+      "const": "referrals"
+    },
+    "slug": {
+      "type": "string"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "company": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "role": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "warm_paths": {
+      "type": "array",
+      "description": "Existing relationships that could provide referrals",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "connection_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "How they're connected, e.g. 'former colleague', 'LinkedIn 1st'"
+          },
+          "company_role": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_contact": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ask": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What to ask them for"
+          }
+        }
+      }
+    },
+    "outreach_drafts": {
+      "type": "array",
+      "description": "Drafted outreach messages for referral requests",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "to",
+          "body"
+        ],
+        "properties": {
+          "to": {
+            "type": "string"
+          },
+          "channel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "e.g. 'LinkedIn DM', 'email', 'text'"
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "body": {
+            "type": "string"
+          },
+          "notes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "strategy_notes": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Overall referral strategy narrative"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "agent_name",
+    "slug",
+    "generated_at",
+    "warm_paths",
+    "outreach_drafts"
+  ]
+}

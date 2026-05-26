@@ -443,6 +443,26 @@ export async function runFormFields(input) {
   writeFileSync(jsonPath, jsonPayload, 'utf-8');
   writeFileSync(join(outDirSecondary, 'form-fields.json'), jsonPayload, 'utf-8');
 
+  // Write schema-typed JSON to canonical apply-pack path (L6 migration)
+  const canonicalPackDir = join(ROOT, 'apply-pack', `${rowPadded}-${companySlug}-${roleSlug}`);
+  mkdirSync(canonicalPackDir, { recursive: true });
+  writeFileSync(join(canonicalPackDir, 'form-fields.json'), JSON.stringify({
+    schema_version: '1.0.0',
+    agent_name: 'form-fields',
+    slug: `${rowPadded}-${companySlug}-${roleSlug}`,
+    generated_at: new Date().toISOString(),
+    company,
+    role,
+    sections: parsed.answers.map((ans, i) => ({
+      id: `q-${i + 1}`,
+      title: ans.question,
+      risk_band: 'edit',
+      scaffold_body: null,
+      answer_body: ans.answer,
+    })),
+    warnings: parsed.warnings || [],
+  }, null, 2) + '\n', 'utf-8');
+
   // Decisions log (O9)
   const decisionsLog = buildDecisionsLog(parsed, company, role, modelUsed, tokensUsed);
   writeFileSync(join(outDirSecondary, 'decisions.md'), decisionsLog, 'utf-8');

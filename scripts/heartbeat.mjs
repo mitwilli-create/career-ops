@@ -42,17 +42,8 @@ import { renderTpgmHeartbeatSection } from '../lib/tpgm-heartbeat-section.mjs';
 import { poolMap } from '../lib/fetch-utils.mjs';
 import { buildSummary as buildOutreachSummary, urgency as outreachUrgency, daysSinceLastTouch as outreachDaysSince, touchCount as outreachTouchCount, listContacts as listOutreachContacts } from '../lib/outreach-tracker.mjs';
 import { buildOutreachMailto } from '../lib/mailto-helpers.mjs';
-// Tier 5 system-status banner (calibration brief 2026-05-16) — surfaces which
-// Tier 5 features are active in the daily heartbeat. Runway alert wired
-// 2026-05-17 — inline compute below (mirrors dashboard-server.mjs's
-// computeRecruiterPipelineDensity so heartbeat doesn't depend on the
-// dashboard server being running).
-// Note: `renderRunwayAlert` dropped from this import 2026-05-25 — the
-// runway-alert email widget was retired in the broader runway-coupling
-// sweep (lib/heartbeat-system-banner.mjs no longer exports it). The
-// local `renderRunwayAlertTiered` helper + its call-site below are
-// out of scope for this PR (heartbeat.mjs was handled by PR #222);
-// follow-up cleanup will retire them separately.
+// Tier 5 system-status banner (calibration brief 2026-05-16).
+// Runway-alert widget retired 2026-05-25 (bug-2026-05-25-225, PR #222).
 import { renderSystemBanner, renderDiscardPatternSection, renderCdpAuthHealthSection, renderPolishSummarySection, renderCronHealthBanner } from '../lib/heartbeat-system-banner.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -69,50 +60,6 @@ const TOKENS = JSON.parse(readFileSync(
   new URL('../lib/heartbeat-tokens.json', import.meta.url),
   'utf-8'
 ));
-
-// Inline pipeline-density compute for heartbeat (decoupled from the live
-// dashboard server). Matches the shape renderRunwayAlert expects from
-// dashboard-server.mjs's computeRecruiterPipelineDensity.
-function computeRunwayDensityForHeartbeat() {
-  let contacts = [];
-  try { contacts = listOutreachContacts(); } catch { return { ok: false, error: 'outreach tracker unavailable' }; }
-  const now = Date.now();
-  const sevenDaysAgo = now - 7 * 86400000;
-  const thirtyDaysAgo = now - 30 * 86400000;
-  let active = 0, responded = 0, dead = 0, total = contacts.length;
-  let touches7d = 0, touches30d = 0, lastTouchTs = 0;
-  for (const c of contacts) {
-    if (c.status === 'dead') { dead++; continue; }
-    if (c.status === 'awaiting_reply' || c.status === 'warm' || c.status === 'responded') active++;
-    if (c.status === 'responded') responded++;
-    for (const t of (c.touches || [])) {
-      const ts = Date.parse(t.ts);
-      if (!isFinite(ts)) continue;
-      if (ts >= sevenDaysAgo) touches7d++;
-      if (ts >= thirtyDaysAgo) touches30d++;
-      if (ts > lastTouchTs) lastTouchTs = ts;
-    }
-  }
-  const responseRate = total > 0 ? Math.round((responded / total) * 100) / 100 : 0;
-  const runwayWeeks = parseInt(process.env.RUNWAY_WEEKS || '12');
-  let health, runway_alert;
-  if (active >= 5 && touches7d >= 10) {
-    health = 'healthy';
-    runway_alert = `✅ Cushion holding — pipeline on track for ${runwayWeeks}-week runway.`;
-  } else if (active >= 3 || touches7d >= 5) {
-    health = 'stretched';
-    runway_alert = `⚠️ Cushion shrinking — add ${Math.max(0, 5 - active)} more active conversations and ${Math.max(0, 10 - touches7d)} more touches this week to stay on track for ${runwayWeeks} weeks.`;
-  } else {
-    health = 'critical';
-    runway_alert = `🚨 Past your runway floor — push outreach to 10+ touches/week right now. The ${runwayWeeks}-week window is at risk.`;
-  }
-  return {
-    ok: true, runway_weeks: runwayWeeks, health, runway_alert,
-    contacts: { total, active, responded, dead, response_rate: responseRate },
-    velocity: { touches_last_7d: touches7d, touches_last_30d: touches30d,
-                days_since_last_touch: lastTouchTs ? Math.round((now - lastTouchTs) / 86400000) : null },
-  };
-}
 
 const ROOT = process.cwd();
 const args = process.argv.slice(2);
@@ -297,73 +244,6 @@ function renderContentHtml(markdownBody) {
   return styled;
 }
 
-// ── Wave D: Severity-tiered runway alert (H4) ────────────────────────────────
-// Replaces the binary pink banner with 3 tiers: approaching / at / past
-// threshold. Reads the same `density` object as renderRunwayAlert but
-// renders a tiered visual. color tokens are inline hex (no CSS vars — Gmail).
-//
-// Phase A · A4 · HIGH-2 (2026-05-19) — the 2px red/amber border now fires
-// ONLY when state transitioned from healthy → stretched/critical in the last
-// 24h. On unchanged or healthy state, the panel renders with a quiet 1px
-// neutral border so a stable runway state does not compete with TONIGHT'S
-// APPLY for attention.
-function readPriorRunwayHealth() {
-  try {
-    const y = new Date(TARGET_DATE + 'T12:00:00');
-    y.setDate(y.getDate() - 1);
-    const yDateStr = y.toISOString().slice(0, 10);
-    const yPath = join(ROOT, `data/heartbeat-archive/heartbeat-${yDateStr}.html`);
-    if (!existsSync(yPath)) return null;
-    const text = readFileSync(yPath, 'utf-8');
-    if (text.includes('Past runway floor')) return 'critical';
-    if (text.includes('Cushion shrinking')) return 'stretched';
-    if (text.includes('On track')) return 'healthy';
-    return null;
-  } catch { return null; }
-}
-
-function renderRunwayAlertTiered(density) {
-  if (!density || !density.ok) {
-    return `<div class="runway-unavailable" style="margin:12px 0;padding:10px;background:${BRAND.amberBg};border:1px solid rgba(168,123,72,0.35);border-radius:6px;color:${BRAND.amber};font-size:12px">Runway alert: pipeline-density data unavailable.</div>`;
-  }
-  const { health, runway_alert, contacts, velocity, runway_weeks } = density;
-  // Phase C — dark-mode runway tiers. Same semantic mapping (green/amber/red),
-  // dark-palette equivalents from BRAND so the panel sits on dark body cleanly.
-  const tiers = {
-    healthy:   { bg: BRAND.greenBg, border: BRAND.greenBorder, fg: BRAND.greenFg, icon: '🟢', label: 'On track',        aria: 'Green circle: on track' },
-    stretched: { bg: BRAND.amberBg, border: 'rgba(168,123,72,0.45)', fg: BRAND.amber, icon: '🟡', label: 'Cushion shrinking', aria: 'Yellow circle: cushion shrinking' },
-    critical:  { bg: BRAND.redBg,   border: 'rgba(220,38,38,0.45)',  fg: BRAND.red,   icon: '🔴', label: 'Past runway floor', aria: 'Red circle: past runway floor' },
-  };
-  const t = tiers[health] || tiers.stretched;
-
-  const priorHealth = readPriorRunwayHealth();
-  const escalated = priorHealth === 'healthy' && (health === 'stretched' || health === 'critical');
-  const quietPanel = !escalated;
-
-  const bg = quietPanel ? BRAND.surface : t.bg;
-  const borderColor = quietPanel ? BRAND.border : t.border;
-  const borderWidth = quietPanel ? '1px' : '2px';
-  const fg = quietPanel ? BRAND.text3 : t.fg;
-  const valueFg = quietPanel ? BRAND.text2 : t.fg;
-
-  const actionLink = (health === 'critical' && !quietPanel)
-    ? ` <a href="${DASHBOARD_PUBLIC_URL}/?focus=outreach" style="color:${t.fg};font-size:11px;text-decoration:underline">→ action</a>`
-    : '';
-  return `
-<div class="runway-card" style="margin:14px 0;padding:12px 14px;background:${bg};border:${borderWidth} solid ${borderColor};border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
-  <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${fg};margin-bottom:6px">
-    <span role="img" aria-label="${t.aria}">${t.icon}</span> Runway — ${runway_weeks}-week window · <strong>${t.label}</strong>${actionLink}
-  </div>
-  <div style="font-size:13px;color:${valueFg};font-weight:${health === 'critical' && !quietPanel ? 700 : 600};margin-bottom:8px;line-height:1.4">${runway_alert}</div>
-  <div style="display:flex;gap:18px;flex-wrap:wrap;font-size:11.5px;color:${BRAND.text2}">
-    <span><strong>${contacts.active}</strong> active</span>
-    <span><strong>${contacts.responded}</strong> replied (${Math.round(contacts.response_rate*100)}%)</span>
-    <span><strong>${velocity.touches_last_7d}</strong>/7d</span>
-    <span><strong>${velocity.touches_last_30d}</strong>/30d</span>
-    <span>last: <strong>${velocity.days_since_last_touch != null ? velocity.days_since_last_touch + 'd' : 'n/a'}</strong></span>
-  </div>
-</div>`.trim();
-}
 
 // ── Wave D: Signal Pulse section (new section) ───────────────────────────────
 // Reads data/company-pulse/*.json and surfaces the top 5 deltas in last 24h.
@@ -778,9 +658,7 @@ async function renderHtmlEmail(markdownBody, meta = {}) {
   const kpiEvalBadge     = deltaBadge(evaluatedToday, yday?.evaluatedToday, { invert: false });
   const kpiTrackedBadge  = deltaBadge(trackedCount,   yday?.trackedCount,   { invert: false });
 
-  // H4 — runway alert retired 2026-05-25 (bug-2026-05-25-225). Functions
-  // computeRunwayDensityForHeartbeat + renderRunwayAlertTiered retained below
-  // for reference; call-site removed.
+  // H4 — runway alert retired 2026-05-25 (bug-2026-05-25-225 + dead-code sweep 2026-05-26).
 
   // Tier 5 system-status banner (calibration brief 2026-05-16)
   // Phase A · A3 · HIGH-1 (2026-05-19) — banner now renders as a one-liner with

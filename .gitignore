@@ -482,3 +482,7 @@ data/career-ops-health-spend.jsonl
 # Closeout reports — personal pipeline data
 data/closeout-*.md
 data/closeout-*.json
+
+# Deployment reports — personal pipeline data (per /deploy-verify Q8 locked decision)
+data/deployment-report-*.md
+data/deployment-inventory-*.md

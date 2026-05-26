@@ -4496,6 +4496,26 @@ async function build() {
       }
     }
   } catch { /* default to — */ }
+
+  // Regression modal data — baked at build time for openRegressionModal().
+  // Includes the full top_15 findings array so the client can render the
+  // detailed modal without a runtime API call.
+  let _regressionModalData = { severity_tally: { CRIT: 0, HIGH: 0, MED: 0, LOW: 0 }, top_15: [], canary_pass: 0, canary_total: 0, date: '', decision_doc_path: '' };
+  try {
+    const _rgp2 = join(ROOT, 'data/dashboard-panels/regression-guard.json');
+    if (existsSync(_rgp2)) {
+      const _r2 = JSON.parse(readFileSync(_rgp2, 'utf-8'));
+      _regressionModalData = {
+        severity_tally: _r2.severity_tally || { CRIT: 0, HIGH: 0, MED: 0, LOW: 0 },
+        top_15: (_r2.top_15 || []).slice(0, 15),
+        canary_pass: _r2.canary_pass || 0,
+        canary_total: _r2.canary_total || 0,
+        date: _r2.date || '',
+        decision_doc_path: _r2.decision_doc_path || '',
+      };
+    }
+  } catch { /* leave defaults */ }
+
   // P4.33 (2026-05-20) — initial dispatch chip baked at build time so first
   // paint reflects pipeline-process-state.json. Runtime updates via
   // _renderBatchData (every 30s via /api/batch-live). Surfaces process-all
@@ -11225,9 +11245,15 @@ async function build() {
     z-index: 2399;
     opacity: 0; pointer-events: none;
     transition: opacity .22s ease-out;
-    display: none;
+    /* display:none replaced by opacity+pointer-events so backdrop is
+       click-active at ALL widths (closes drawer on click-outside). */
   }
-  #right-rail-backdrop.visible { opacity: 1; pointer-events: auto; }
+  #right-rail-backdrop.visible { opacity: 1; pointer-events: auto; display: block; }
+  @media (min-width: 1280px) {
+    /* Desktop: very subtle scrim — just enough to capture click-outside
+       without dimming the main content panel visually. */
+    #right-rail-backdrop { background: rgba(0,0,0,.06); }
+  }
   .drawer-header {
     flex-shrink: 0;
     padding: 14px 16px 12px;
@@ -11885,7 +11911,7 @@ async function build() {
      backdrop). No body padding shift — drawer floats over the table. */
   @media (min-width: 721px) and (max-width: 1279px) {
     #right-rail-drawer { display: flex; width: min(560px, 92vw); }
-    #right-rail-backdrop.visible { display: block; }
+    /* display:block on .visible now set globally above — no dupe needed here */
   }
   /* Inside the drawer (any width), the side-by-side detail-grid would
      squeeze each col below 200px — single-column reads much better. */
@@ -13343,7 +13369,7 @@ async function build() {
       <span id="pipeline-freshness-chip" class="pipeline-freshness-chip fresh" title="Time since last badge refresh — click for pipeline health detail" onclick="openPipelineHealthModal()" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openPipelineHealthModal();}">badges · just now</span>
       <span id="pipeline-health-chip" class="${initialHealthChip.cls}" title="${htmlEscape(initialHealthChip.title)} — click to view full status" onclick="openPipelineHealthModal()">${htmlEscape(initialHealthChip.label)}</span>
       <span id="pipeline-dispatch-chip" class="${initialDispatchChip.cls}" title="${htmlEscape(initialDispatchChip.title)}" onclick="openBatchStatusModal()">${htmlEscape(initialDispatchChip.label)}</span>
-      <span id="regression-guard-chip" class="${initialRegressionChip.cls}" title="${htmlEscape(initialRegressionChip.title)}" onclick="openPipelineHealthModal()">${htmlEscape(initialRegressionChip.label)}</span>
+      <span id="regression-guard-chip" class="${initialRegressionChip.cls}" title="${htmlEscape(initialRegressionChip.title)}" onclick="openRegressionModal()">${htmlEscape(initialRegressionChip.label)}</span>
     </div>
     <!-- Recruiter pipeline-density widget retired 2026-05-25
          (stale-coupling sweep — see AGENTS.md). Was tied to the runway-density
@@ -14321,6 +14347,10 @@ async function build() {
   // (e.g., context-notes, strategy-ceiling drawers) without extra API calls.
   // Never mutate from client side — read-only snapshot.
   window.__CACHE_AGE_MAP__ = ${_cacheAgeMapJson};
+  // Regression-guard modal data (2026-05-26) — baked at build time so the
+  // regression chip opens an instant, offline-capable detail modal with
+  // actionable resolution steps. Client: openRegressionModal().
+  window.__REGRESSION_GUARD_DATA__ = ${JSON.stringify(_regressionModalData)};
   </script>
 
   ${applyNow.length > 0 ? `
@@ -29156,6 +29186,229 @@ document.addEventListener('keydown', function (e) {
   const bd = document.getElementById('ph-modal-backdrop');
   if (bd) { e.stopPropagation(); bd.remove(); }
 }, true);
+
+// ── Regression-guard detail modal (2026-05-26) ───────────────────────────
+// Opens when the regression chip is clicked. Shows the full finding list
+// from window.__REGRESSION_GUARD_DATA__ (baked at build time from
+// data/dashboard-panels/regression-guard.json) with plain-English
+// explanations and actionable resolve steps per finding.
+//
+// Outer-template rule: no backticks, no single-backslash escape sequences,
+// all special chars via String.fromCharCode(). Pure string concat only.
+function openRegressionModal() {
+  var oldBd = document.getElementById('rg-modal-backdrop');
+  if (oldBd) { oldBd.remove(); return; }
+
+  var d = window.__REGRESSION_GUARD_DATA__ || {};
+  var tally = d.severity_tally || { CRIT: 0, HIGH: 0, MED: 0, LOW: 0 };
+  var findings = d.top_15 || [];
+  var canaryPass = d.canary_pass || 0;
+  var canaryTotal = d.canary_total || 0;
+  var dateStr = d.date || 'not yet run';
+  var docPath = d.decision_doc_path || '';
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  var CHK = String.fromCharCode(0x2713);
+  var X = String.fromCharCode(0x2715);
+  var WARN = String.fromCharCode(0x26a0);
+  var BULLET = String.fromCharCode(0x2022);
+  var ELLIPSIS = String.fromCharCode(0x2026);
+  var NL = String.fromCharCode(10);
+
+  // Build severity summary bar
+  var critHtml = tally.CRIT > 0
+    ? '<span style="color:#dc2626;font-weight:700">' + tally.CRIT + ' CRIT</span> '
+    : '';
+  var highHtml = tally.HIGH > 0
+    ? '<span style="color:#d97706;font-weight:700">' + tally.HIGH + ' HIGH</span> '
+    : '';
+  var medHtml = tally.MED > 0
+    ? '<span style="color:#6366f1;font-weight:600">' + tally.MED + ' MED</span> '
+    : '';
+  var lowHtml = tally.LOW > 0
+    ? '<span style="color:var(--text-3)">' + tally.LOW + ' LOW</span>'
+    : '';
+  var allZero = (tally.CRIT + tally.HIGH + tally.MED + tally.LOW) === 0;
+  var tallyHtml = allZero
+    ? '<span style="color:var(--green-fg,#16a34a);font-weight:600">' + CHK + ' 0 findings</span>'
+    : critHtml + highHtml + medHtml + lowHtml;
+
+  var canaryHtml = canaryTotal === 0
+    ? '<span style="color:var(--text-3);font-size:11.5px">Canary: not configured</span>'
+    : (canaryPass === canaryTotal
+        ? '<span style="color:var(--green-fg,#16a34a);font-size:11.5px">' + CHK + ' Canary ' + canaryPass + '/' + canaryTotal + '</span>'
+        : '<span style="color:#dc2626;font-size:11.5px">' + WARN + ' Canary ' + canaryPass + '/' + canaryTotal + ' — detection pipeline may be degraded</span>');
+
+  // Per-severity styling
+  function sevStyle(sev) {
+    if (sev === 'CRIT') return 'color:#dc2626;font-weight:700;font-size:10.5px;background:rgba(220,38,38,.12);border:1px solid rgba(220,38,38,.3);border-radius:4px;padding:1px 5px';
+    if (sev === 'HIGH') return 'color:#d97706;font-weight:700;font-size:10.5px;background:rgba(217,119,6,.1);border:1px solid rgba(217,119,6,.3);border-radius:4px;padding:1px 5px';
+    if (sev === 'MED') return 'color:#6366f1;font-size:10.5px;background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.3);border-radius:4px;padding:1px 5px';
+    return 'color:var(--text-3);font-size:10.5px;border:1px solid var(--border);border-radius:4px;padding:1px 5px';
+  }
+
+  // Human-readable explanation + resolution steps per finding subtype
+  function findingDetail(f) {
+    var sub = (f.subtype || '').toLowerCase();
+    var isKnownFp = sub === 'outer-template-unescape-suspect' || sub === 'outer-template-unescape-loose';
+
+    if (isKnownFp) {
+      return {
+        why: 'Regression guard flagged a potential single-backslash regex inside ' +
+             'the outer backtick template in build-dashboard.mjs. Pattern A fires ' +
+             'when a regex-looking token appears near inline JS context markers.',
+        status: 'ACCEPTED-CARRYFORWARD (known false positive — these are skill payload ' +
+                'object literals / subhead labels, NOT executable regex code. The build ' +
+                'lint confirms no actual escape bugs at these lines.)',
+        steps: [
+          'Verify: grep -n "' + esc(f.file || '') + '" for line ' + esc(f.line || '') + ' and confirm the context is not executable regex inside a client-side function.',
+          'If confirmed FP: no action needed — the detection doc already marks these ACCEPTED-CARRYFORWARD.',
+          'If it IS a real escape bug: fix by doubling the backslash (\\\\n not \\n) or using String.fromCharCode(10).',
+          'Re-run regression guard (node scripts/agents/regression-guard.mjs --seed-baselines) to re-anchor baselines after any real fix.',
+        ],
+        isFp: true,
+      };
+    }
+
+    // Generic resolution guidance
+    return {
+      why: f.summary || 'See the decision doc for context.',
+      status: 'OPEN — review required.',
+      steps: [
+        'Read the decision doc at ' + (docPath || '.claude/audit/<date>/regression-report.md') + ' for full context.',
+        'If the finding is a false positive: add a ACCEPTED-CARRYFORWARD note in the doc and re-run --seed-baselines.',
+        'If it is a real regression: fix the underlying code and commit; re-run regression guard to verify.',
+      ],
+      isFp: false,
+    };
+  }
+
+  // Build findings HTML
+  var findingsHtml = '';
+  if (findings.length === 0) {
+    findingsHtml = '<div style="color:var(--text-3);text-align:center;padding:24px 0;font-size:13px">' + CHK + ' No findings logged yet</div>';
+  } else {
+    var shown = ['CRIT', 'HIGH', 'MED', 'LOW'].reduce(function (arr, sev) {
+      return arr.concat(findings.filter(function (f) { return f.severity === sev; }));
+    }, []);
+    shown.forEach(function (f, idx) {
+      var detail = findingDetail(f);
+      var stepsList = detail.steps.map(function (s) {
+        return '<li style="margin-bottom:4px">' + esc(s) + '</li>';
+      }).join('');
+
+      var fpBadge = detail.isFp
+        ? ' <span style="font-size:10px;background:rgba(22,163,74,.12);color:var(--green-fg,#16a34a);border:1px solid rgba(22,163,74,.3);border-radius:3px;padding:1px 5px;margin-left:4px">known FP</span>'
+        : '';
+
+      findingsHtml += '<div style="border:1px solid var(--border);border-radius:6px;padding:12px 14px;margin-bottom:10px' + (detail.isFp ? ';opacity:0.8' : '') + '">';
+      findingsHtml += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
+      findingsHtml += '<span style="' + sevStyle(f.severity) + '">' + esc(f.severity) + '</span>';
+      findingsHtml += '<span style="font-size:11.5px;color:var(--text-2);font-family:monospace">' + esc(f.file || '') + (f.line ? ':' + esc(f.line) : '') + '</span>';
+      findingsHtml += fpBadge;
+      findingsHtml += '</div>';
+      findingsHtml += '<div style="font-size:12.5px;color:var(--fg,#fafafa);margin-bottom:6px">' + esc(f.summary || f.subtype || 'Unknown finding') + '</div>';
+      findingsHtml += '<div style="font-size:11.5px;color:var(--text-3);margin-bottom:8px"><strong>Why:</strong> ' + esc(detail.why) + '</div>';
+      findingsHtml += '<div style="font-size:11px;color:var(--text-3);margin-bottom:8px">' +
+        '<span style="font-weight:600">Status:</span> ' + esc(detail.status) + '</div>';
+      findingsHtml += '<details style="font-size:11.5px">' +
+        '<summary style="cursor:pointer;color:var(--text-2);font-weight:600;list-style:none">' +
+        String.fromCharCode(0x25b8) + ' Resolution steps</summary>' +
+        '<ol style="margin:6px 0 0 16px;padding:0;color:var(--text-2)">' + stepsList + '</ol>' +
+        '</details>';
+      findingsHtml += '</div>';
+    });
+  }
+
+  // Doc path block
+  var docBlock = docPath
+    ? '<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);font-size:11.5px;color:var(--text-3)">' +
+      'Decision doc: <code style="font-size:11px">' + esc(docPath) + '</code> ' +
+      String.fromCharCode(0x2014) + ' run <code>open ' + esc(docPath) + '</code> in terminal to review.' +
+      '</div>'
+    : '';
+
+  // Re-run command block
+  var rerunBlock = '<div style="margin-top:10px;padding:10px 12px;background:var(--surface-2,#0f1117);border:1px solid var(--border);border-radius:6px;font-size:11.5px;color:var(--text-2)">' +
+    '<strong>Re-run regression guard:</strong><br>' +
+    '<code style="font-size:11px;color:var(--green-fg,#16a34a)">node scripts/agents/regression-guard.mjs --scheduled</code>' +
+    '</div>';
+
+  // Assemble modal content
+  var bodyHtml =
+    '<div style="padding:10px 18px 6px;font-size:12.5px">' +
+      '<div style="display:flex;align-items:center;gap:14px;margin-bottom:12px">' +
+        '<div>' + tallyHtml + '</div>' +
+        '<div>' + canaryHtml + '</div>' +
+        '<div style="font-size:11px;color:var(--text-3);margin-left:auto">as of ' + esc(dateStr) + '</div>' +
+      '</div>' +
+      findingsHtml +
+      docBlock +
+      rerunBlock +
+    '</div>';
+
+  // Build DOM
+  var bd = document.createElement('div');
+  bd.id = 'rg-modal-backdrop';
+  bd.setAttribute('role', 'dialog');
+  bd.setAttribute('aria-modal', 'true');
+  bd.setAttribute('aria-label', 'Regression guard findings');
+  bd.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:40px 20px;overflow:auto';
+  bd.onclick = function (e) { if (e.target === bd) bd.remove(); };
+
+  var md = document.createElement('div');
+  md.style.cssText = 'background:var(--bg,#06070d);border:1px solid var(--border,#2d2f3a);border-radius:10px;max-width:640px;width:100%;color:var(--fg,#fafafa);box-shadow:0 16px 56px rgba(0,0,0,.5);font-size:13px;line-height:1.55;flex-shrink:0';
+
+  md.innerHTML =
+    '<div style="padding:14px 18px;border-bottom:1px solid var(--border,#2d2f3a);display:flex;justify-content:space-between;align-items:center">' +
+      '<div>' +
+        '<strong style="font-size:14px">Regression guard findings</strong>' +
+        '<div style="font-size:11.5px;color:var(--text-3,#64748b);margin-top:2px">Click a finding to expand resolution steps</div>' +
+      '</div>' +
+      '<button type="button" aria-label="Close" onclick="var el=document.getElementById(\\'rg-modal-backdrop\\');if(el)el.remove();" style="background:none;border:none;color:var(--text-3,#64748b);font-size:18px;cursor:pointer;padding:0 4px">' + X + '</button>' +
+    '</div>' +
+    bodyHtml;
+
+  bd.appendChild(md);
+  document.body.appendChild(bd);
+
+  function _rgEscHandler(e) {
+    if (e.key !== 'Escape') return;
+    var el = document.getElementById('rg-modal-backdrop');
+    if (el) { e.stopPropagation(); el.remove(); }
+    document.removeEventListener('keydown', _rgEscHandler, true);
+  }
+  document.addEventListener('keydown', _rgEscHandler, true);
+}
+window.openRegressionModal = openRegressionModal;
+
+// ── Site-wide click-outside safety net (2026-05-26) ─────────────────────
+// Belt-and-suspenders global handler for dynamically-created modal backdrops.
+// Complements per-modal handlers. Fires when the backdrop element itself is
+// the direct click target (not any child). Handles: ph-modal-backdrop,
+// rg-modal-backdrop, and any intel-popout-backdrop-* elements.
+// Static modals (batch-status-backdrop etc.) have their own onclick attributes
+// and are not affected by this handler.
+document.addEventListener('click', function (e) {
+  var el = e.target;
+  if (!el || !el.id) return;
+  var id = el.id;
+  if (id === 'ph-modal-backdrop' || id === 'rg-modal-backdrop') {
+    el.remove();
+    return;
+  }
+  if (id.indexOf('intel-popout-backdrop-') === 0) {
+    el.remove();
+    return;
+  }
+  if (id === 'polish-picker-backdrop') {
+    el.remove();
+    return;
+  }
+});
 
 // Recruiter pipeline-density widget + runway-detail modal retired 2026-05-25
 // (stale-coupling sweep — see AGENTS.md § stale-coupling-after-primitive-removal).

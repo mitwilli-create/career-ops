@@ -15,8 +15,30 @@
 # without re-creating the file. Install both hooks together via
 # scripts/install-hooks.sh.
 #
-# Currently a no-op — exits 0 unconditionally.
+# Concurrent-instance branch-swap guard (added 2026-05-26, bug-2026-05-25-021)
+# Detects when a staged commit message (if pre-filled via COMMIT_EDITMSG) references
+# a branch name that differs from the current HEAD branch.
+# This is a WARN-only hook — it prints and continues; it does not block commits.
 
 set -euo pipefail
+
+# --- Branch-swap detection ---
+CURRENT_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "HEAD_DETACHED")
+
+# If a COMMIT_EDITMSG exists and contains a branch name hint (feat/... or fix/...),
+# check it matches HEAD. Agents often write the target branch into the commit message body.
+EDITMSG=".git/COMMIT_EDITMSG"
+if [[ -f "$EDITMSG" && "$CURRENT_BRANCH" != "HEAD_DETACHED" ]]; then
+  # Look for "branch: feat/..." or "head: feat/..." patterns in the message
+  MENTIONED=$(grep -oE '\b(feat|fix|chore|docs|refactor|test)/[A-Za-z0-9_-]+' "$EDITMSG" 2>/dev/null | head -1 || true)
+  if [[ -n "$MENTIONED" && "$MENTIONED" != "$CURRENT_BRANCH" ]]; then
+    echo "⚠️  pre-commit branch-swap warning:" >&2
+    echo "   Commit message references branch: $MENTIONED" >&2
+    echo "   Current HEAD branch:              $CURRENT_BRANCH" >&2
+    echo "   If you're a concurrent Claude instance, verify you're on the right branch." >&2
+    echo "   Continuing commit (this is warn-only)." >&2
+    echo "" >&2
+  fi
+fi
 
 exit 0

@@ -134,6 +134,7 @@ const REPORTS_DIR = join(ROOT, 'reports');
 const HEARTBEAT_GLOB = (date) => join(ROOT, `data/heartbeat-${date}.md`);
 const OVERPAY_CURRENT_PATH = join(ROOT, 'data/overpay-signals/CURRENT.md');
 const ROLE_ENRICHMENT_DIR = join(ROOT, 'data/role-enrichment');
+const TEAM_HEALTH_DIR = join(ROOT, 'data/team-health');
 const PROFILE_YML_PATH = join(ROOT, 'config/profile.yml');
 const CV_PATH = join(ROOT, 'cv.md');
 const OUTREACH_TEMPLATES_PATH = join(ROOT, 'data/outreach-templates.md');
@@ -1330,6 +1331,30 @@ function renderConfidenceBadge(confidence, source) {
   return `<span class="rec-conf-badge ${meta.cls}" title="${htmlEscape(meta.tip + srcHint)}" aria-label="${htmlEscape(meta.label + ': ' + meta.tip)}" role="img"><span class="rec-conf-dot" aria-hidden="true"></span>${htmlEscape(c)}</span>`;
 }
 
+// Resolve the team-health/<slug>.json path for a company name, if any exists
+// on disk. The Health badge reads role-enrichment, but team-health holds
+// adjacent narrative data (what_we_know / what_we_uncertain / what_to_ask_in_screen)
+// that drives the team-health popout. When role-enrichment is absent but
+// team-health exists, the empty-state hint should surface this — otherwise
+// users see "—" + a generic tooltip with no clue that adjacent data exists.
+// (Mental-model gap surfaced 2026-05-27 — see AGENTS.md § bug-class:
+// sentinel-string-treated-as-truthy-by-gating-predicate sibling note.)
+function _teamHealthSlugForCompany(company) {
+  try {
+    if (!company || !existsSync(TEAM_HEALTH_DIR)) return null;
+    // Same slug derivation as lib/team-health-synthesis.mjs:
+    // lowercase, alphanumerics+hyphens, common-word strip.
+    const slug = String(company).toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    if (slug && existsSync(join(TEAM_HEALTH_DIR, `${slug}.json`))) return slug;
+    // Fallback: try collapsing hyphens (e.g. "work-os" → "workos").
+    const collapsed = slug.replace(/-/g, '');
+    if (collapsed && collapsed !== slug && existsSync(join(TEAM_HEALTH_DIR, `${collapsed}.json`))) return collapsed;
+    return null;
+  } catch (_) { return null; }
+}
+
 // Benefits cell: shows a single primary signal (toxicity grade or "—") with
 // a popover that expands to the full breakdown (401k, healthcare, sentiment,
 // mental health, etc.). Empty when no data/role-enrichment/{slug}.json exists.
@@ -1340,11 +1365,22 @@ function renderBenefitsCell(company, role) {
     // benefits data yet" — accurate but uninformative. Tell the user what
     // would put it there, in plain language. The command moves to the
     // popover detail.
-    const emptyTip = 'No team-health or benefits data for this role yet — usually fills in after a role-enrichment pass.';
+    //
+    // 2026-05-27: extended empty-state to mention adjacent team-health/<slug>.json
+    // when that file exists on disk. Closes the mental-model gap where Mitchell
+    // saw team-health files present + assumed the Health badge should be
+    // populated. The badge reads role-enrichment (numeric grade); team-health
+    // holds narrative qualitative reports surfaced via a separate popout.
+    const teamHealthSlug = _teamHealthSlugForCompany(company);
+    const emptyTip = teamHealthSlug
+      ? `No role-enrichment grade yet — team-health narrative IS available for ${company}. Click for the popout link.`
+      : 'No team-health or benefits data for this role yet — usually fills in after a role-enrichment pass.';
     const detail = JSON.stringify({
       kind: 'benefits', empty: true,
       hint: emptyTip,
       populateCmd: 'node scripts/enrich-roles.mjs --top=5',
+      team_health_slug: teamHealthSlug || null,
+      team_health_company: teamHealthSlug ? company : null,
     });
     return `<span class="benefits-chip benefits-chip-empty pill-popover-trigger" aria-label="${htmlEscape(emptyTip)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">—</span>`;
   }
@@ -1389,7 +1425,18 @@ function renderPeopleCell(company, role) {
   const network = _networkAtCompanySafe(company);
   const has1st = network && network.firstDegreeCount > 0;
   const has2nd = network && network.secondDegreeCount > 0;
-  const has_research = !!(people && (people.likely_recruiter?.name || people.likely_hiring_manager?.name));
+  // BUG-CLASS: sentinel-string-treated-as-truthy-by-gating-predicate (2026-05-27).
+  // `'unknown'` is the placeholder role-enrichment writes when researched-but-
+  // not-found. The rest of this function correctly treats `'unknown'` as absent
+  // (lines below: `name && name !== 'unknown' ? '👤' : ''`). The gating predicate
+  // MUST apply the same sentinel filter — otherwise the empty-state branch is
+  // skipped and the populated branch renders a meaningless `?` chip with an
+  // empty tooltip. See AGENTS.md § Bug class: sentinel-string-treated-as-truthy-
+  // by-gating-predicate. Repro: row 2342 (Baseten) + row 2373 (WorkOS) had
+  // recruiter+HM both 'unknown' + no network → rendered `?` instead of `—`.
+  const _recName = people?.likely_recruiter?.name;
+  const _hmName  = people?.likely_hiring_manager?.name;
+  const has_research = !!((_recName && _recName !== 'unknown') || (_hmName && _hmName !== 'unknown'));
   // Empty state requires NO research AND NO network signal.
   if (!has_research && !has1st && !has2nd) {
     // BRAVO 2026-05-19 (content sweep): tooltip used to read "No people
@@ -30966,6 +31013,20 @@ function openPillPopover(el) {
   pop.setAttribute('aria-hidden', 'false');
   _positionFloater(pop, el);
   _pillActiveEl = el;
+  // 2026-05-27: wire the team-health-narrative link in the empty Health-badge
+  // popover. Uses data-* attributes set by _renderPillPopover (benefits empty
+  // branch) to avoid quote-escaping pain inside the outer template literal.
+  var thLink = pop.querySelector('.pill-popover-team-health-link');
+  if (thLink && window._openTeamHealthPopout) {
+    thLink.addEventListener('click', function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      var slug = thLink.getAttribute('data-team-health-slug') || '';
+      var co = thLink.getAttribute('data-team-health-company') || '';
+      closePillPopover();
+      window._openTeamHealthPopout(slug, co);
+    });
+  }
   _pillOutsideHandler = (evt) => {
     if (evt.target.closest('#pill-popover')) return;
     if (evt.target === el || el.contains(evt.target)) return;
@@ -31122,10 +31183,27 @@ function _renderPillPopover(d) {
       // BRAVO 2026-05-19 (content sweep): name what this popover would show
       // when populated + explain when it auto-fills. PR-08 (2026-05-25): drop
       // the CLI-hint footer; the role-enrichment pass runs nightly.
+      // 2026-05-27: when team-health/<slug>.json exists, surface a link to the
+      // team-health popout — closes the data-source-mismatch mental-model gap.
+      // Use data-* attributes + event delegation to avoid quote-escaping pain
+      // inside the outer template literal (see AGENTS.md § outer-template-unescape).
+      var thLink = '';
+      if (d.team_health_slug && d.team_health_company) {
+        var thSlug = String(d.team_health_slug).replace(/[^a-z0-9\\-]/gi, '');
+        thLink = '<div class="pill-popover-meta" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--surface-2,#1a1a2e)">'
+          + 'Adjacent: <a href="#" class="pill-popover-team-health-link" '
+          + 'data-team-health-slug="' + esc(thSlug) + '" '
+          + 'data-team-health-company="' + esc(d.team_health_company) + '" '
+          + 'style="color:var(--accent,#10b981);font-weight:500">'
+          + 'Open team-health narrative for ' + esc(d.team_health_company) + ' →</a>'
+          + '<div style="font-size:10.5px;color:var(--text-4);margin-top:4px">Team-health holds qualitative reports (what we know / uncertain / questions to ask). Distinct from the role-enrichment numeric grade.</div>'
+          + '</div>';
+      }
       return '<div class="pill-popover-kind">Benefits + Team Health</div>'
         + '<h4 class="pill-popover-headline">Not researched for this company yet</h4>'
         + '<div class="pill-popover-body pill-popover-empty">' + esc(d.hint || '') + ' Once populated, this shows the team-health grade (Glassdoor / Blind / Reddit sentiment, 1=healthy → 5=avoid), benefits summary (401k match, healthcare, parental leave), and biweekly take-home math.</div>'
-        + '<div class="pill-popover-meta">Auto-fills in the next role-enrichment pass.</div>';
+        + '<div class="pill-popover-meta">Auto-fills in the next role-enrichment pass.</div>'
+        + thLink;
     }
     const b = d.benefits || {};
     const s = d.sentiment || {};

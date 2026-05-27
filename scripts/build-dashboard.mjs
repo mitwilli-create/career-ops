@@ -27882,7 +27882,10 @@ function _renderCapWarning(action, p) {
            + 'raise <code>MONTHLY_BUDGET_USD</code>, or force-override below.';
   }
 
-  // AAA-2: Force-override separated from heartbeat checkbox; destructive styling + explicit spend amount
+  // AAA-2: Force-override separated from heartbeat checkbox; destructive styling + explicit spend amount.
+  // 2026-05-26: post-fix copy — force-override now propagates through every gate
+  // (per-run, monthly, and the batch-runner internal guard at the deepest layer).
+  // See AGENTS.md bug-class: force-override-not-propagated-to-internal-guard.
   return ''
     + '<div class="pipeline-cap-warning">'
     +   '<div class="pipeline-cap-warning-title">⚠️ ' + title + '</div>'
@@ -27890,7 +27893,10 @@ function _renderCapWarning(action, p) {
     +   '<label class="pipeline-force-override" for="pipeline-force-override"'
     +     ' style="margin-top:10px;border-top:1px solid rgba(239,68,68,0.3);padding-top:10px;display:flex;align-items:flex-start;gap:8px;cursor:pointer">'
     +     '<input type="checkbox" id="pipeline-force-override" onchange="_onForceOverrideToggle()" style="margin-top:2px;accent-color:#ef4444">'
-    +     '<span style="color:#f87171;font-weight:600">I accept the cost. Force-run $' + slice.total_cost_usd.toFixed(2) + ' anyway.</span>'
+    +     '<span style="display:flex;flex-direction:column;gap:2px">'
+    +       '<span style="color:#f87171;font-weight:600">I accept the cost. Force-run $' + slice.total_cost_usd.toFixed(2) + ' anyway.</span>'
+    +       '<span style="color:#f87171;opacity:0.7;font-size:10px;font-weight:400">Bypasses per-run + monthly caps end-to-end (incl. batch-runner internal guard).</span>'
+    +     '</span>'
     +   '</label>'
     + '</div>';
 }
@@ -28684,6 +28690,8 @@ function _renderScopedCapWarning(reason, scopedCost, capUsd, p) {
   // The bug surfaced whenever a user selected enough companies in Phase B to
   // cross either PER_RUN_CAP_PROCESS_ALL_USD or the monthly budget — the
   // cap-warning panel went silently blank instead of rendering the warning.
+  // 2026-05-26: post-fix copy — same propagation note as _renderCapWarning.
+  // See AGENTS.md bug-class: force-override-not-propagated-to-internal-guard.
   return ''
     + '<div class="pipeline-cap-warning">'
     +   '<div class="pipeline-cap-warning-title">⚠️ ' + title + '</div>'
@@ -28691,7 +28699,10 @@ function _renderScopedCapWarning(reason, scopedCost, capUsd, p) {
     +   '<label class="pipeline-force-override" for="pipeline-force-override"'
     +     ' style="margin-top:10px;border-top:1px solid rgba(239,68,68,0.3);padding-top:10px;display:flex;align-items:flex-start;gap:8px;cursor:pointer">'
     +     '<input type="checkbox" id="pipeline-force-override" onchange="_onForceOverrideToggle()" style="margin-top:2px;accent-color:#ef4444">'
-    +     '<span style="color:#f87171;font-weight:600">I accept the cost. Force-run $' + scopedCost.toFixed(2) + ' anyway.</span>'
+    +     '<span style="display:flex;flex-direction:column;gap:2px">'
+    +       '<span style="color:#f87171;font-weight:600">I accept the cost. Force-run $' + scopedCost.toFixed(2) + ' anyway.</span>'
+    +       '<span style="color:#f87171;opacity:0.7;font-size:10px;font-weight:400">Bypasses per-run + monthly caps end-to-end (incl. batch-runner internal guard).</span>'
+    +     '</span>'
     +   '</label>'
     + '</div>';
 }

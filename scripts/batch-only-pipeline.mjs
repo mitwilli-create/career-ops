@@ -44,6 +44,12 @@ const ARGS = Object.fromEntries(
 );
 const SEND_EMAIL  = !!ARGS['send-email'];
 const DRY_RUN     = !!ARGS['dry-run'];
+// 2026-05-26 — propagate cap-override into batch-runner-batches.mjs. Before
+// this fix, dashboard-server.mjs passed --cap-override here but it was dropped
+// at the runScript call, so the deepest MONTHLY_BUDGET_USD guard ignored the
+// user's force-override checkbox. See AGENTS.md bug-class:
+// force-override-not-propagated-to-internal-guard.
+const CAP_OVERRIDE = !!ARGS['cap-override'];
 const JOB_ID      = ARGS['job-id'] || ('batch-' + Date.now().toString(36) + '-' + randomBytes(3).toString('hex'));
 const LOG_PATH    = `/tmp/batch-only-${JOB_ID}.log`;
 
@@ -97,7 +103,11 @@ async function phaseBatch() {
   updateJob({ phase: 'batch', phase_started_at: new Date().toISOString() });
   log('━━━ Phase 1/4: BATCH EVAL ━━━');
   if (DRY_RUN) { log('(dry-run) skipping batch'); return { ok: true }; }
-  const code = await runScript('batch-runner-batches.mjs', ['run']);
+  // 2026-05-26 — forward --cap-override so batch-runner's internal
+  // MONTHLY_BUDGET_USD guard respects the dashboard force-override checkbox.
+  const batchArgs = ['run'];
+  if (CAP_OVERRIDE) batchArgs.push('--cap-override');
+  const code = await runScript('batch-runner-batches.mjs', batchArgs);
   if (code !== 0) {
     log(`✗ batch run failed (exit ${code})`);
     return { ok: false };

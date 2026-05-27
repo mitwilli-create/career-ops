@@ -43,6 +43,12 @@ const ARGS = Object.fromEntries(
 );
 const SEND_EMAIL = !!ARGS['send-email'];
 const DRY_RUN = !!ARGS['dry-run'];
+// 2026-05-26 — propagate cap-override into batch-runner-batches.mjs (per
+// batch round). Before this fix, dashboard-server.mjs passed --cap-override
+// here but phaseBatch dropped it when building batchArgs, so the deepest
+// MONTHLY_BUDGET_USD guard ignored the dashboard's force-override checkbox.
+// See AGENTS.md bug-class: force-override-not-propagated-to-internal-guard.
+const CAP_OVERRIDE = !!ARGS['cap-override'];
 const JOB_ID = ARGS['job-id'] || ('proc-' + Date.now().toString(36) + '-' + randomBytes(3).toString('hex'));
 const LOG_PATH = `/tmp/process-all-${JOB_ID}.log`;
 
@@ -317,7 +323,10 @@ async function phaseBatch() {
     // 2026-05-20 — pass tier's eval model to batch-runner-batches.mjs
     // (which already accepts --model). Tier 1+2 use Sonnet (default);
     // Tier 3 uses Opus for the A-G report writing.
+    // 2026-05-26 — forward --cap-override so batch-runner's internal
+    // MONTHLY_BUDGET_USD guard respects the dashboard force-override checkbox.
     const batchArgs = ['run', `--limit=${PER_ROUND_LIMIT}`, `--model=${TIER_OBJ.eval_model}`, ...SCOPED_ARGS];
+    if (CAP_OVERRIDE) batchArgs.push('--cap-override');
     const code = await runScript('batch-runner-batches.mjs', batchArgs);
     if (code !== 0) {
       log(`✗ batch round ${round} failed (exit ${code})`);

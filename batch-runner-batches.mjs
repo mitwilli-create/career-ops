@@ -49,6 +49,12 @@ const LIMIT   = parseInt(ARGS.limit   ?? '100');
 const TIERS   = (ARGS.tier ?? '1,2,3').split(',').map(Number);
 const MODEL   = ARGS.model ?? SONNET;
 const DRY_RUN = ARGS['dry-run'] === true || ARGS['dry-run'] === 'true';
+// 2026-05-26 — when the dashboard's force-override checkbox is checked, the
+// server passes --cap-override down through batch-only-pipeline.mjs +
+// process-all-pipeline.mjs into this script. When set, runBudgetGuard() logs
+// WARN and continues instead of aborting at the deepest gate. See
+// AGENTS.md bug-class: force-override-not-propagated-to-internal-guard.
+const CAP_OVERRIDE = ARGS['cap-override'] === true || ARGS['cap-override'] === 'true';
 const LIVENESS_TIMEOUT_MS = 10_000;
 
 // ── Paths ─────────────────────────────────────────────────────────
@@ -103,6 +109,45 @@ Then re-run this script.
     process.exit(1);
   }
   return key;
+}
+
+// ── Budget guard ───────────────────────────────────────────────────
+// 2026-05-26 — hoisted from inside phaseSubmit (was at the very last step
+// after 80 JD fetches + payload build wasted ~$0.50-1.00 of Playwright work
+// on a guard-failed run). Now runs PRE-FLIGHT in phaseSubmit before any
+// expensive work.
+//
+// When --cap-override is set (dashboard force-override checkbox propagated
+// through batch-only-pipeline.mjs / process-all-pipeline.mjs), the guard
+// logs WARN and returns instead of aborting. See AGENTS.md bug-class:
+// force-override-not-propagated-to-internal-guard.
+function runBudgetGuard({ capOverride = false } = {}) {
+  const MONTHLY_BUDGET = parseFloat(process.env.MONTHLY_BUDGET_USD ?? '0');
+  if (MONTHLY_BUDGET <= 0) return; // guard disabled
+
+  const COST_LOG = join(ROOT, 'data', 'cost-log.tsv');
+  if (!existsSync(COST_LOG)) return; // no cost data yet; can't enforce
+
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 30);
+  let spent = 0;
+  for (const line of readFileSync(COST_LOG, 'utf8').split('\n').slice(1)) {
+    if (!line.trim()) continue;
+    const cols = line.split('\t');
+    if (new Date(cols[0]) >= cutoff) spent += parseFloat(cols[7]) || 0;
+  }
+
+  if (spent >= MONTHLY_BUDGET) {
+    if (capOverride) {
+      console.warn(`\n⚠️  Budget guard bypassed via --cap-override: $${spent.toFixed(2)} spent (limit $${MONTHLY_BUDGET.toFixed(2)}/mo) — proceeding.`);
+      return;
+    }
+    console.error(`\n⛔ Budget guard: $${spent.toFixed(2)} spent (limit $${MONTHLY_BUDGET.toFixed(2)}/mo) — aborting batch submission.`);
+    console.error(`   Unset MONTHLY_BUDGET_USD or raise the limit to proceed.`);
+    console.error(`   Or check the dashboard's force-override checkbox (passes --cap-override).`);
+    process.exit(1);
+  }
+  console.log(`[budget] $${spent.toFixed(2)} / $${MONTHLY_BUDGET.toFixed(2)} spent this month${capOverride ? ' (cap-override armed but under limit)' : ''}`);
 }
 
 // ── Anthropic Batches API calls ───────────────────────────────────
@@ -552,6 +597,14 @@ async function phaseSubmit(apiKey) {
     return;
   }
 
+  // Pre-flight budget guard. Fires BEFORE the JD fetch loop so a guard-failed
+  // run doesn't waste $0.50-1.00 of Playwright work on dead postings. Skipped
+  // on --dry-run (no spend). When --cap-override is set, the guard inside
+  // runBudgetGuard() logs WARN and returns instead of aborting.
+  if (!DRY_RUN) {
+    runBudgetGuard({ capOverride: CAP_OVERRIDE });
+  }
+
   console.log(`\nBuilding batch for ${items.length} items (model: ${MODEL})...\n`);
 
   const cvText      = readCv();
@@ -704,28 +757,10 @@ async function phaseSubmit(apiKey) {
     return;
   }
 
-  // Budget guard — abort if rolling 30-day spend exceeds MONTHLY_BUDGET_USD
-  const MONTHLY_BUDGET = parseFloat(process.env.MONTHLY_BUDGET_USD ?? '0');
-  if (MONTHLY_BUDGET > 0) {
-    const COST_LOG = join(ROOT, 'data', 'cost-log.tsv');
-    if (existsSync(COST_LOG)) {
-      const cutoff = new Date();
-      cutoff.setDate(cutoff.getDate() - 30);
-      let spent = 0;
-      for (const line of readFileSync(COST_LOG, 'utf8').split('\n').slice(1)) {
-        if (!line.trim()) continue;
-        const cols = line.split('\t');
-        if (new Date(cols[0]) >= cutoff) spent += parseFloat(cols[7]) || 0;
-      }
-      if (spent >= MONTHLY_BUDGET) {
-        console.error(`\n⛔ Budget guard: $${spent.toFixed(2)} spent (limit $${MONTHLY_BUDGET.toFixed(2)}/mo) — aborting batch submission.`);
-        console.error(`   Unset MONTHLY_BUDGET_USD or raise the limit to proceed.`);
-        process.exit(1);
-      }
-      console.log(`[budget] $${spent.toFixed(2)} / $${MONTHLY_BUDGET.toFixed(2)} spent this month`);
-    }
-  }
-
+  // Budget guard runs PRE-FLIGHT now (see runBudgetGuard + earlier call site in
+  // this function). The post-fetch duplicate that lived here was the load-bearing
+  // gate before 2026-05-26 — its abort cost ~$0.50-1.00 of wasted Playwright
+  // work per guard-failed run.
   console.log(`\nSubmitting to Batches API…`);
   const batch = await apiCall('POST', '/messages/batches', { requests: apiRequests }, apiKey);
 

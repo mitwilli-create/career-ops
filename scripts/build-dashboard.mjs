@@ -16336,13 +16336,34 @@ function openRightRailForDetail(idx, detailRow) {
         // Audit Tier 3 #13 (2026-05-20): split gate chips. PASSED chips
         // render ABOVE the "Why N.N?" disclosure — always visible. FAILED
         // + soft gaps stay inside the collapsible.
+        // PR #3 H-chip click popout (2026-05-26): every H-chip is now
+        // clickable — opens a small popout with gate definition + your data
+        // + alignment + next action + hyperlinks. Soft gaps remain
+        // non-clickable since they don't have a discrete H-id.
+        //
+        // Note on quoting: this chip-render code lives inside the outer
+        // build-dashboard template literal that becomes the inline script
+        // block — so single-backslash quote escapes get unescaped before
+        // write (outer-template-unescape bug class — see AGENTS.md). Use
+        // String.fromCharCode(39) for any single quote that needs to
+        // survive the outer template's emit step.
+        var SQ_chip = String.fromCharCode(39);
+        var _chipOnclick = function(g) {
+          return 'event.stopPropagation();window._openHChipPopout && window._openHChipPopout(' + SQ_chip + g + SQ_chip + ',' + num + ',this)';
+        };
         var _passedChips = '';
         if (_ps5.gatesPassed && _ps5.gatesPassed.length) {
-          _passedChips = _ps5.gatesPassed.map(function(g) { return '<span class="why-chip why-chip-pass" title="JD must-have you cleanly hit">✅ ' + g + '</span>'; }).join('');
+          _passedChips = _ps5.gatesPassed.map(function(g) {
+            var oc = _chipOnclick(g);
+            return '<span class="why-chip why-chip-pass" role="button" tabindex="0" style="cursor:pointer" title="' + g + ' cleanly hit — click for the alignment details" onclick="' + oc + '">✅ ' + g + '</span>';
+          }).join('');
         }
         var _gateChips = '';
         if (_ps5.gatesFailed && _ps5.gatesFailed.length) {
-          _gateChips += _ps5.gatesFailed.map(function(g) { return '<span class="why-chip why-chip-fail" title="JD must-have your CV does not cleanly hit">⚠️ ' + g + '</span>'; }).join('');
+          _gateChips += _ps5.gatesFailed.map(function(g) {
+            var oc = _chipOnclick(g);
+            return '<span class="why-chip why-chip-fail" role="button" tabindex="0" style="cursor:pointer" title="' + g + ' fired — click for the rationale + your next move" onclick="' + oc + '">⚠️ ' + g + '</span>';
+          }).join('');
         }
         if (_ps5.softGaps && _ps5.softGaps.length) {
           _gateChips += _ps5.softGaps.slice(0, 3).map(function(g) { return '<span class="why-chip why-chip-soft" title="Soft gap — addressable in your cover letter or interview">⚠ ' + g.slice(0, 40) + '</span>'; }).join('');
@@ -24004,6 +24025,97 @@ function _openTeamHealthPopout(companySlug, companyName) {
   });
 }
 window._openTeamHealthPopout = _openTeamHealthPopout;
+
+// PR #3 H-chip click popout (2026-05-26). Small focused popout anchored
+// near the clicked chip with click-outside dismiss. Pulls content from
+// the /api/gate-info/<gateId>/<rowId> endpoint which renders the gate
+// definition + your data + alignment + next action + hyperlinks. Reuses
+// the dashboard's existing dark-theme CSS tokens — no new styles needed.
+function _openHChipPopout(gateId, rowId, anchorEl) {
+  if (!gateId || rowId === undefined || rowId === null) return;
+  // Dismiss any existing H-chip popout first.
+  var existing = document.getElementById('h-chip-popout');
+  if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+  var existingBackdrop = document.getElementById('h-chip-popout-backdrop');
+  if (existingBackdrop && existingBackdrop.parentNode) existingBackdrop.parentNode.removeChild(existingBackdrop);
+
+  // Backdrop catches click-outside-to-dismiss without blocking the drawer
+  // underneath visually (transparent).
+  var backdrop = document.createElement('div');
+  backdrop.id = 'h-chip-popout-backdrop';
+  backdrop.style.cssText = 'position:fixed;inset:0;z-index:9998;background:transparent;cursor:default';
+  backdrop.addEventListener('click', function() {
+    if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+    var pop = document.getElementById('h-chip-popout');
+    if (pop && pop.parentNode) pop.parentNode.removeChild(pop);
+  });
+  document.body.appendChild(backdrop);
+
+  // Popout container.
+  var pop = document.createElement('div');
+  pop.id = 'h-chip-popout';
+  pop.setAttribute('role', 'dialog');
+  pop.setAttribute('aria-label', gateId + ' gate detail');
+  // Position relative to viewport — anchored under the chip when possible,
+  // falls back to centered top-of-viewport.
+  var anchor = anchorEl && anchorEl.getBoundingClientRect ? anchorEl.getBoundingClientRect() : null;
+  var top = 80;
+  var left = window.innerWidth / 2 - 220;
+  if (anchor) {
+    top = anchor.bottom + 8;
+    left = Math.max(12, Math.min(anchor.left, window.innerWidth - 460));
+    // Flip above if too close to bottom
+    if (top + 480 > window.innerHeight && anchor.top > 200) {
+      top = Math.max(20, anchor.top - 480);
+    }
+  }
+  pop.style.cssText = 'position:fixed;top:' + top + 'px;left:' + left + 'px;z-index:9999;width:440px;max-width:calc(100vw - 24px);max-height:calc(100vh - 100px);overflow-y:auto;background:var(--surface,#11131c);border:1px solid var(--border,#232737);border-radius:10px;box-shadow:0 16px 48px rgba(0,0,0,.5);color:var(--text,#e4e4e7)';
+  pop.innerHTML = '<div style="padding:12px 14px;font-size:11.5px;color:var(--text-3)">Loading ' + gateId + ' detail…</div>';
+
+  // Close X in upper-right
+  var closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.setAttribute('aria-label', 'Close');
+  closeBtn.style.cssText = 'position:absolute;top:8px;right:8px;background:none;border:none;color:var(--text-3);font-size:16px;cursor:pointer;padding:2px 6px;border-radius:4px;z-index:2';
+  closeBtn.textContent = '✕';
+  closeBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    if (pop.parentNode) pop.parentNode.removeChild(pop);
+    if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+  });
+  pop.appendChild(closeBtn);
+
+  document.body.appendChild(pop);
+
+  // Esc to dismiss.
+  var escHandler = function(e) {
+    if (e.key === 'Escape') {
+      if (pop.parentNode) pop.parentNode.removeChild(pop);
+      if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+      document.removeEventListener('keydown', escHandler);
+    }
+  };
+  document.addEventListener('keydown', escHandler);
+
+  // Fetch content.
+  fetch('/api/gate-info/' + encodeURIComponent(gateId) + '/' + encodeURIComponent(rowId), {
+    signal: AbortSignal.timeout(8000),
+  }).then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(data) {
+      if (!data || !data.ok || !data.html) {
+        pop.innerHTML = '<div style="padding:14px 16px;font-size:12.5px;color:var(--text-3)">Could not load gate detail for ' + gateId + '.</div>';
+        pop.appendChild(closeBtn);
+        return;
+      }
+      pop.innerHTML = data.html;
+      pop.appendChild(closeBtn);
+    })
+    .catch(function() {
+      pop.innerHTML = '<div style="padding:14px 16px;font-size:12.5px;color:var(--text-3)">Could not load gate detail for ' + gateId + '.</div>';
+      pop.appendChild(closeBtn);
+    });
+}
+window._openHChipPopout = _openHChipPopout;
 
 function _openInterviewLikelihoodPopout(num, slug) {
   _openIntelPopoutModal({

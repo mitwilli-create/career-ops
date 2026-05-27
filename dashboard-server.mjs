@@ -7839,6 +7839,29 @@ const server = createServer((req, res) => {
     return;
   }
 
+  // ── 2b. GET /api/gate-info/{gateId}/{rowId} ────────────────────────────────
+  // PR #3 H-chip click popout (2026-05-26): returns the small-popout HTML
+  // for a single H-gate at a single row — gate definition, your verdict +
+  // rationale, alignment narrative, recommended action, and hyperlinks to
+  // anticipated next-clicks. Drives the click-into-H-chip UI surface.
+  const gateInfoMatch = url.match(/^\/api\/gate-info\/([^/]+)\/([^/]+)$/);
+  if (gateInfoMatch) {
+    (async () => {
+      try {
+        const { getGateInfo, renderGateInfoCard } = await import(join(ROOT, 'lib/decision-provenance.mjs'));
+        const gateId = decodeURIComponent(gateInfoMatch[1]);
+        const rowId  = decodeURIComponent(gateInfoMatch[2]);
+        const info = getGateInfo(rowId, gateId);
+        const html = renderGateInfoCard(info);
+        return json({ ok: true, gateId, rowId, html, info });
+      } catch (err) {
+        _d25Log(`[gate-info] ${err.message}`);
+        return json({ ok: false, error: err.message }, 500);
+      }
+    })();
+    return;
+  }
+
   // ── 3. GET /api/drill/percentage/{rowId}/{key} ─────────────────────────────
   // Returns rendered strategy card HTML via lib/strategy-ceiling.mjs.
   //

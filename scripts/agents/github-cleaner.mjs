@@ -318,6 +318,7 @@ export async function runGithubCleaner(opts = {}) {
 
       if (gateResult.pass) {
         const artifactPath = join(runDir, 'artifacts', `${rec.scope}-${rec.target}-${rec.recommendation}.md`);
+        mkdirSync(dirname(artifactPath), { recursive: true });
         writeFileSync(artifactPath, artifact.content, 'utf-8');
         phaseResults.gated_pass.push({ rec, artifactPath });
         emit({ phase: 'phase5', step: 'implement_start', target: rec.target });
@@ -330,6 +331,7 @@ export async function runGithubCleaner(opts = {}) {
         emit({ phase: 'phase5', step: 'implement_done', target: rec.target, ok: implResult.ok, action: implResult.action });
       } else {
         const draftPath = join(runDir, 'drafts', `${rec.scope}-${rec.target}-${rec.recommendation}.md`);
+        mkdirSync(dirname(draftPath), { recursive: true });
         writeFileSync(draftPath, artifact.content, 'utf-8');
         phaseResults.gated_fail_drafts.push({ rec, draftPath, gateResult });
         emit({ phase: 'phase4', step: 'gate_skip', target: rec.target, cycles: MAX_GATE_CYCLES });

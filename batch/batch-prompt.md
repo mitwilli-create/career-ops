@@ -30,14 +30,14 @@ You are a job offer evaluation worker for the candidate (read name from config/p
 
 Types of patterns these files may include:
 - **Block caps** — e.g.: "cap Block A at 3.0/5 if title contains 'Lead'/'Head'/'Principal'"
-- **Recommendation overrides** — e.g.: "force SKIP if comp ceiling below $120K" or "force SKIP if role_shape signals broad ownership"
+- **Recommendation overrides** — e.g.: "force Discarded if comp ceiling below $120K" or "force Discarded if role_shape signals broad ownership"
 - **Per-dimension scoring** — e.g.: "Remote: full credit on remote-first; score 2.0 on full on-site outside [region]"
 - **Adaptive framing by archetype** — mappings between detected archetypes and proof points to prioritize
 
 Application during A-G evaluation:
 - **Block A:** apply role-shape caps BEFORE calculating the block score
 - **Blocks B-D:** apply adaptive framing by archetype and dimension scoring rules (location, comp, etc.)
-- **Block F:** apply recommendation overrides (forced SKIP, etc.) — `_profile.md` can convert a technically high score into a SKIP based on shape or comp
+- **Block F:** apply recommendation overrides (forced Discarded, etc.) — `_profile.md` can convert a technically high score into a Discarded outcome based on shape or comp
 
 **On conflict, `_profile.md` rules override `_shared.md` defaults.** This is intentional: `_profile.md` is the user's customization layer.
 
@@ -347,7 +347,9 @@ TSV format (single line, no header, 9 tab-separated columns):
 
 **IMPORTANT:** TSV order has status BEFORE score (col 5→status, col 6→score). In applications.md the order is reversed (col 5→score, col 6→status). merge-tracker.mjs handles the conversion.
 
-**Valid canonical states:** `Evaluated`, `Applied`, `Responded`, `Interview`, `Offer`, `Rejected`, `Discarded`, `SKIP`
+**Valid canonical states:** `Evaluated`, `Applied`, `Responded`, `Interview`, `Offer`, `Rejected`, `Discarded`
+
+(SKIP was deprecated 2026-05-26 and merged into Discarded — see `templates/states.yml`. Legacy SKIP / no_aplicar / monitor are still valid input aliases that the merge-tracker converts to Discarded automatically.)
 
 Where `{next_num}` is calculated by reading the last line of `data/applications.md`.
 

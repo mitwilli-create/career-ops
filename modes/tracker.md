@@ -7,7 +7,9 @@ Read and display `data/applications.md`.
 | # | Date | Company | Role | Score | Status | PDF | Report |
 ```
 
-Possible states: `Evaluated` → `Applied` → `Responded` → `Contact` → `Interview` → `Offer` / `Rejected` / `Discarded` / `SKIP`
+Possible states: `Evaluated` → `Applied` → `Responded` → `Contact` → `Interview` → `Offer` / `Rejected` / `Discarded`
+
+(SKIP was merged into Discarded on 2026-05-26 — see templates/states.yml. Legacy SKIP / no_aplicar / monitor remain as aliases that flow into Discarded.)
 
 - `Applied` = candidate submitted their application
 - `Responded` = a recruiter/company reached out and the candidate replied (inbound)

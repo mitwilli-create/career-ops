@@ -16515,8 +16515,8 @@ function openRightRailForDetail(idx, detailRow) {
     // on Confirm. Confirm button color follows the chosen radio (green for
     // today / red for permanent).
     const skipBtnHtml = num
-      ? '<button type="button" class="drawer-btn-skip" data-drawer-action="skip" data-drill="drawer-action:skip:' + num + '" title="Skip this row — choose Today only or Permanently in the next dialog">Skip this row</button>'
-      : '<button type="button" class="drawer-btn-skip" data-drill="drawer-action:skip:" disabled title="No row number — needs a tracker row">Skip this row</button>';
+      ? '<button type="button" class="drawer-btn-skip" data-drawer-action="skip" data-drill="drawer-action:skip:' + num + '" title="Discard role — choose Today only or Permanently in the next dialog">Discard Role</button>'
+      : '<button type="button" class="drawer-btn-skip" data-drill="drawer-action:skip:" disabled title="No row number — needs a tracker row">Discard Role</button>';
     actionsEl.innerHTML = applyBtnHtml + materialsBtnHtml + polishBtnHtml + dispatchBtnHtml + skipBtnHtml;
     // Wire actions after innerHTML — keeps the HTML-as-string clean of
     // nested-quote escaping and lets us close the rail in one place.
@@ -22764,14 +22764,14 @@ async function _openSkipModal(num, company, role) {
   backdrop.id = 'skip-modal-backdrop';
   backdrop.setAttribute('role', 'dialog');
   backdrop.setAttribute('aria-modal', 'true');
-  backdrop.setAttribute('aria-label', 'Skip this row');
+  backdrop.setAttribute('aria-label', 'Discard role');
   const subTitle = company
     ? _esc(company) + (role ? ' — ' + _esc(role) : '') + '  ·  row #' + _esc(String(num))
     : 'row #' + _esc(String(num));
   const tagsHint = 'comp / geography / culture / skill-gap / ethics / stage / velocity / role-shape / fit / other';
   const html =
     '<div id="skip-modal">' +
-      '<h2>Skip this row</h2>' +
+      '<h2>Discard Role</h2>' +
       '<p class="skip-modal-sub">' + subTitle + '</p>' +
       '<label class="skip-mode-row is-selected" data-mode="today">' +
         '<input type="radio" name="skip-mode" value="today" checked>' +

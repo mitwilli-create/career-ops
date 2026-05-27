@@ -45,12 +45,13 @@ states:
 
   - id: discarded
     label: Discarded
-    aliases: [descartado, descartada, cerrada, cancelada]
-    description: Discarded by candidate or offer closed
+    # 2026-05-26 (PR #2 of the popout / discard / H-chip sweep) — SKIP
+    # state deprecated and merged into Discarded. Both meant "candidate
+    # decided not to apply" — keeping two distinct states added cognitive
+    # load + UI surface area for no semantic gain. Existing SKIP rows in
+    # data/applications.md were migrated in-place; legacy aliases retained
+    # below so any historical writer / downstream consumer still emitting
+    # SKIP / no_aplicar / monitor flows into Discarded cleanly.
+    aliases: [descartado, descartada, cerrada, cancelada, skip, no_aplicar, no aplicar, monitor]
+    description: Discarded by candidate, doesn't fit, or offer closed
     dashboard_group: discarded
-
-  - id: skip
-    label: SKIP
-    aliases: [no_aplicar, no aplicar, skip, monitor]
-    description: Doesn't fit, don't apply
-    dashboard_group: skip

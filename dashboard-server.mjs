@@ -8829,6 +8829,45 @@ async function generatePack(){
       catch (_) { return json({ ok: false, error: 'invalid JSON body' }, 400); }
       const row = parsed.row;
       if (!row || !/^\d+$/.test(String(row))) return json({ ok: false, error: 'row (numeric) required' }, 400);
+
+      // 2026-05-27 — Pre-check: refuse polish on packs with no .md sources.
+      // Without this, the polish loop produces a misleading REJECTED summary
+      // with 5+ skipped artifacts because there's nothing to polish. The fix
+      // is to surface the upstream gap (no pack built yet) instead of spending
+      // money on a no-op polish run. Bypass via { force: true } if the caller
+      // really wants to polish whatever's there. AGENTS.md bug-class:
+      // polish-with-no-md-sources-produces-misleading-REJECTED.
+      const POLISH_ARTIFACT_FILES = ['cv-tailored.md', 'tailored-cv.md', 'cover-letter.md', 'form-fields.md', 'impact-doc.md', 'references.md', 'referrals.md'];
+      const padded = String(row).padStart(3, '0') + '-';
+      let resolvedPackDir = null;
+      for (const base of [join(ROOT, 'apply-pack'), join(ROOT, 'data', 'apply-packs')]) {
+        if (!existsSync(base)) continue;
+        try {
+          const hit = readdirSync(base).find(n => n.startsWith(padded));
+          if (hit) { resolvedPackDir = join(base, hit); break; }
+        } catch (_) {}
+      }
+      if (!resolvedPackDir) {
+        return json({
+          ok: false,
+          error: `No apply-pack found for row ${row}. Click "Build Pack" first to generate the pack scaffolding.`,
+          code: 'no-pack',
+          row,
+        }, 404);
+      }
+      const presentSources = POLISH_ARTIFACT_FILES.filter(f => existsSync(join(resolvedPackDir, f)));
+      if (presentSources.length < 2 && parsed.force !== true) {
+        return json({
+          ok: false,
+          error: `Only ${presentSources.length} of 6 artifacts have .md sources in ${resolvedPackDir.replace(ROOT + '/', '')}. Click "Build Pack" first to generate scaffolding before polishing.`,
+          code: 'no-md-sources',
+          row,
+          pack_dir: resolvedPackDir.replace(ROOT + '/', ''),
+          sources_present: presentSources,
+          sources_expected: POLISH_ARTIFACT_FILES,
+        }, 409);
+      }
+
       const args = [join(ROOT, 'scripts/agents/apply-pack-polish.mjs'), '--row', String(row)];
       if (Array.isArray(parsed.artifacts) && parsed.artifacts.length) {
         args.push('--artifacts', parsed.artifacts.filter(a => /^[a-z]+$/.test(a)).join(','));

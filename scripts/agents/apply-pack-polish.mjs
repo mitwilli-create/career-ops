@@ -20,7 +20,7 @@
  *     --cost-cap 500 \
  *     [--no-cache]
  *
- * Defaults: all 6 artifacts, target 0.99, $500 cap (quality-first).
+ * Defaults: all 6 artifacts, target 0.85 (lowered 2026-05-27), $500 cap.
  * Honors POLISH_COST_CAP_USD env override.
  *
  * Emits NDJSON progress to stderr (one line per phase/round) so the
@@ -207,7 +207,7 @@ async function generateIfMissing({ kind, packSlug, dataDir, packInfo, hmIntel, j
  * @param {number|string} [opts.row] — row id (preferred)
  * @param {string} [opts.slugFragment] — fallback when row is unknown
  * @param {string[]} [opts.artifacts] — short keys: cv, cover, form, impact, refs, referrals
- * @param {number} [opts.targetConfidence=0.99]
+ * @param {number} [opts.targetConfidence=0.85]
  * @param {number} [opts.costCap=500]
  * @param {boolean} [opts.noCache=false]
  * @param {number} [opts.maxRoundsPerArtifact=6]
@@ -216,7 +216,9 @@ async function generateIfMissing({ kind, packSlug, dataDir, packInfo, hmIntel, j
 export async function runPolishPack(opts = {}) {
   const t0 = Date.now();
   const artifacts = (opts.artifacts && opts.artifacts.length) ? opts.artifacts : DEFAULT_ARTIFACTS;
-  const target = opts.targetConfidence ?? 0.99;
+  // 2026-05-27 — default lowered 0.99 → 0.85 (achievable). See lib/polish-loop.mjs
+  // DEFAULT_TARGET comment for empirical rationale. Override via --target-confidence.
+  const target = opts.targetConfidence ?? 0.85;
   const envCap = Number(process.env.POLISH_COST_CAP_USD);
   const costCap = Number.isFinite(opts.costCap) ? opts.costCap : (Number.isFinite(envCap) ? envCap : 500);
   const noCache = opts.noCache === true;
@@ -641,14 +643,16 @@ async function cliMain() {
   function flag(f) { return args.includes(f); }
 
   if (flag('--help') || flag('-h')) {
-    process.stdout.write(`Usage: node scripts/agents/apply-pack-polish.mjs --row <N> [--artifacts cv,cover,form,impact,refs,referrals] [--target-confidence 0.99] [--cost-cap 500] [--max-rounds 6] [--cost-warn-usd 5] [--no-cache] [--no-early-abandon] [--early-abandon-after 3] [--early-abandon-max-confidence 0.50] [--early-abandon-min-delta 0.05]\n`);
+    process.stdout.write(`Usage: node scripts/agents/apply-pack-polish.mjs --row <N> [--artifacts cv,cover,form,impact,refs,referrals] [--target-confidence 0.85] [--cost-cap 500] [--max-rounds 6] [--cost-warn-usd 5] [--no-cache] [--no-early-abandon] [--early-abandon-after 3] [--early-abandon-max-confidence 0.50] [--early-abandon-min-delta 0.05]\n`);
     process.exit(0);
   }
 
   const row = arg('--row', null);
   const slugFragment = arg('--slug', null);
   const artifactsArg = arg('--artifacts', '');
-  const targetConfidence = Number(arg('--target-confidence', '0.99'));
+  // 2026-05-27 — CLI default lowered 0.99 → 0.85 (achievable). See lib/polish-loop.mjs
+  // DEFAULT_TARGET for empirical rationale.
+  const targetConfidence = Number(arg('--target-confidence', '0.85'));
   const costCap = Number(arg('--cost-cap', '500'));
   const noCache = flag('--no-cache');
   const artifacts = artifactsArg ? artifactsArg.split(',').map(s => s.trim()).filter(Boolean) : DEFAULT_ARTIFACTS;

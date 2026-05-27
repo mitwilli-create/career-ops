@@ -67,10 +67,16 @@ const { resolveTier, PREGEN_FLOOR, POLISH_FLOOR } = await import('../lib/process
 const TIER_OBJ = resolveTier(ARGS.tier);
 const TIER = String(TIER_OBJ.id);
 const IS_TIER5 = TIER_OBJ.id >= 2;  // legacy alias — anything 2+ used to be "Tier-5"
-// 2026-05-20 — Two-floor auto-escalation. Pregen is cheap ($2.50/row) so it
-// fires on every ≥4.0 row. Polish is expensive ($60/pack) so it only fires
-// on ≥4.5 — invest the big spend in proven-winner cream, not the borderline
-// 4.0-4.4 band.
+// 2026-05-27 — Polish + pregen REMOVED from Process All orchestrator (Mitchell's
+// directive: "polish should not be a part of the process all or run batch functions").
+// Separation of concerns — Process All handles pipeline drainage (triage → batch →
+// merge → rebuild → email); per-pack refinement (apply-pack pregen + polish) is
+// manual-trigger only via /api/polish + /api/build-pack-stage + the row-drawer
+// Polish/Build-Pack buttons. The functions phasePolish + phasePregen are deleted
+// from main(); apply-pack-polish.mjs + scripts/build-apply-packs.mjs stay reachable
+// as standalone scripts. See AGENTS.md bug-class: polish-no-timeout-causes-process-all-stall.
+// PREGEN_FLOOR / POLISH_FLOOR imports remain only for backward-compat with any
+// downstream consumer that imports this module's constants.
 const HIGH_CONFIDENCE_PREGEN_FLOOR = parseFloat(process.env.HIGH_CONFIDENCE_PREGEN_FLOOR || String(PREGEN_FLOOR));
 const POLISH_FLOOR_SCORE = parseFloat(process.env.POLISH_FLOOR_SCORE || String(POLISH_FLOOR));
 
@@ -201,6 +207,7 @@ function runScript(name, args = [], env = {}) {
     });
   });
 }
+
 
 // ── Phase wrappers ────────────────────────────────────────────────────────
 async function phaseTriage() {
@@ -374,112 +381,14 @@ async function phaseBatch() {
   return { ok: true };
 }
 
-// α ALPHA 2026-05-19 — optional polish stage between batch and pack zip.
-// Gated by POLISH_PACK_ENABLED env var so this stage is OPT-IN.
-// Reads the apply-now-queue, scans for top-N rows whose pack has artifacts
-// but no polish-summary.json (or one >3d old), runs apply-pack-polish on each.
-// Soft-fail: a polish failure does NOT block the rest of the pipeline.
-//
-// α Run-Batch eval 2026-05-19 — additions:
-//   1. Honors POLISH_TOP_N_PER_RUN (default 5) so the dashboard preview slug-count
-//      matches the actual policy.
-//   2. Passes --cost-cap from POLISH_PER_PACK_COST_CAP_USD (default $120) so the
-//      polish agent's $500 spec ceiling can't silently blow $2500 across 5 rows.
-//   3. Includes 'Applied' and 'Interview' rows (not just 'Evaluated') — Mitchell
-//      benefits from polished interview-prep + post-applied materials too.
-//   4. Aggregates polished/failed/skipped + cumulative cost into the job state
-//      object so dashboard SSE bars can render real counts.
-async function phasePolish() {
-  // 2026-05-20 — Auto-escalation rule: polish ALWAYS runs on ≥4.0 rows
-  // post-eval (the "premium treatment for anything that passes triage and
-  // proves itself with a ≥4.0 score" contract). The POLISH_PACK_ENABLED
-  // env var is retained as a kill-switch — set to '0' to explicitly
-  // disable polish for a run. Default is now ON.
-  const killSwitch = String(process.env.POLISH_PACK_ENABLED || '').trim() === '0';
-  if (killSwitch) {
-    log('━━━ Phase 2.6/4: POLISH PACKS ━━━ (skipped — POLISH_PACK_ENABLED=0 kill-switch)');
-    return { ok: true, skipped: true };
-  }
-  if (!TIER_OBJ.auto_polish_on_high_score) {
-    log(`━━━ Phase 2.6/4: POLISH PACKS ━━━ (skipped — tier ${TIER_OBJ.id} disables auto-polish)`);
-    return { ok: true, skipped: true };
-  }
-  updateJob({ phase: 'polish', phase_started_at: new Date().toISOString() });
-  log('━━━ Phase 2.6/4: POLISH PACKS ━━━');
-  if (DRY_RUN) { log('(dry-run) skipping polish'); return { ok: true, skipped: true }; }
-
-  // Find rows that have at least one outbound artifact + no recent polish-summary
-  const apqPath = join(ROOT, 'data/apply-now-queue.json');
-  if (!existsSync(apqPath)) {
-    log('  no apply-now-queue.json — skipping');
-    return { ok: true };
-  }
-  let apq;
-  try { apq = JSON.parse(readFileSync(apqPath, 'utf-8')); } catch (_) { return { ok: true }; }
-  // Clamp to sane bounds — topN: 1-20 (above 20 is almost certainly a typo since the
-  // cost would explode), costCap: $10-$500 (matches polish agent's spec range).
-  const rawTopN  = parseInt(process.env.POLISH_TOP_N_PER_RUN || '5', 10);
-  const topN     = Number.isFinite(rawTopN) && rawTopN > 0 ? Math.min(rawTopN, 20) : 5;
-  const rawCap   = parseFloat(process.env.POLISH_PER_PACK_COST_CAP_USD || '120');
-  const costCap  = String(Number.isFinite(rawCap) && rawCap > 0 ? Math.min(Math.max(rawCap, 10), 500) : 120);
-  // Polish applies to Evaluated (pre-application materials), Applied (waiting-for-recruiter
-  // tightening), and Interview (closing-stage materials). All three states ship downstream
-  // artifacts that benefit from the loop.
-  // 2026-05-20 — Polish only fires on ≥POLISH_FLOOR_SCORE (default 4.5) rows.
-  // The original Tier-5 rule polished every Apply-Now-statused row; that was
-  // expensive ($60/pack × 17 rows = $1,000+ per run) and disproportionate to
-  // the marginal-quality lift. Now: only invest in cream-of-the-crop.
-  const polishStatuses = new Set(['Evaluated', 'Applied', 'Interview']);
-  const ranked = (apq.ranked || [])
-    .filter(r => r && r.num && polishStatuses.has(r.status))
-    .filter(r => {
-      const s = parseFloat(r.eval_score ?? r.score ?? 0);
-      return Number.isFinite(s) && s >= POLISH_FLOOR_SCORE;
-    })
-    .slice(0, topN);
-
-  let polished = 0;
-  let failed = 0;
-  let skipped = 0;
-  // Surface running totals at top-level (dashboard SSE bar reads polish_progress.*
-  // since phases.polish only commits at the end of main()). Helper makes sure every
-  // path through the loop — skipped, polished, failed — emits live progress.
-  const writeProgress = () => updateJob({
-    polish_progress: { polished, failed, skipped, total: ranked.length, cap_per_pack_usd: Number(costCap) },
-  });
-  for (const r of ranked) {
-    const slug = `${String(r.num).padStart(3, '0')}-${String(r.company || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${String(r.role || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
-    const polishSummary = join(ROOT, 'data', 'apply-packs', slug, 'polish-summary.json');
-    if (existsSync(polishSummary)) {
-      const ageMs = Date.now() - statSync(polishSummary).mtimeMs;
-      if (ageMs < 3 * 24 * 60 * 60 * 1000) {
-        log(`  ↪ row ${r.num} polish-summary fresh (<3d) — skipping`);
-        skipped++;
-        writeProgress();
-        continue;
-      }
-    }
-    log(`  → polishing row ${r.num} (${r.company} — ${r.role}) [cap $${costCap}]`);
-    const code = await runScript('scripts/agents/apply-pack-polish.mjs', ['--row', String(r.num), '--cost-cap', String(costCap)]);
-    if (code === 0) {
-      polished++;
-      log(`  ✓ row ${r.num} polish ok`);
-      // α Run-Batch eval 2026-05-19: now also run preflight-pack against the slug so
-      // gate 6 (polish-summary.final_recommendation === 'APPROVED') is enforced. The
-      // result is PREFLIGHT.md on disk — non-fatal here (we don't gate the rest of the
-      // pipeline), but the visible NEEDS_HUMAN / FAIL on the dashboard gives Mitchell
-      // a reason not to ship a pack that didn't converge.
-      const pfCode = await runScript('scripts/preflight-pack.mjs', ['--slug', slug]);
-      log(`  ↪ preflight row ${r.num} exit=${pfCode} (0=PASS, 1=CAUTION, 2=FAIL)`);
-    } else {
-      failed++;
-      log(`  ⚠ row ${r.num} polish failed (exit ${code}) — continuing`);
-    }
-    writeProgress();
-  }
-  log(`  polish stage done: ${polished} polished, ${failed} failed, ${skipped} skipped (cap=$${costCap}/pack, topN=${topN})`);
-  return { ok: true, polished, failed, skipped, cost_cap_per_pack_usd: Number(costCap), top_n: topN };
-}
+// 2026-05-27 — phasePolish REMOVED from Process All orchestrator (Mitchell's
+// directive). Polish remains reachable as a manual surface via:
+//   - POST /api/polish (dashboard-server.mjs)
+//   - scripts/agents/apply-pack-polish.mjs (CLI standalone)
+//   - Row drawer "Polish" button (per-pack on-demand)
+// Architecture rationale: pack refinement (polish) and pipeline drainage
+// (Process All) change for different reasons; coupling them caused stalls.
+// See AGENTS.md bug-class: polish-no-timeout-causes-process-all-stall.
 
 async function phaseMergeTracker() {
   updateJob({ phase: 'merge', phase_started_at: new Date().toISOString() });
@@ -494,32 +403,13 @@ async function phaseMergeTracker() {
   return { ok: true };
 }
 
-// Tier-5 only — pre-generate apply-packs for high-confidence rows that just landed.
-// build-apply-packs.mjs reads applications.md, picks top-N by score (floor=4.0 hardcoded in that script),
-// and generates the full pack directory (cover-letter, form-fields, interview-prep, ATS check, etc.).
-// We cap N at TIER5_PREGEN_TOP_N (default 10) so a single run can't auto-generate 50 packs.
-async function phasePregen() {
-  // 2026-05-20 — Auto-escalation rule: apply-pack pregen ALWAYS runs on
-  // ≥AUTO_ESCALATE_FLOOR (4.0) rows post-eval. Was previously gated to
-  // Tier-5 only with a top-10 cap; now caps at TIER5_PREGEN_TOP_N (default
-  // raised from 10 → 50 since the floor is now ≥4.0 not ≥4.5).
-  if (!TIER_OBJ.auto_pregen_on_high_score) {
-    log(`━━━ Phase 2.75/4: APPLY-PACK PREGEN ━━━ (skipped — tier ${TIER_OBJ.id} disables auto-pregen)`);
-    return { ok: true, skipped: true };
-  }
-  updateJob({ phase: 'pregen', phase_started_at: new Date().toISOString() });
-  const topN = Math.max(1, Math.min(50, parseInt(process.env.TIER5_PREGEN_TOP_N || '50', 10)));
-  log(`━━━ Phase 2.75/4: APPLY-PACK PREGEN — top ${topN} rows ≥${HIGH_CONFIDENCE_PREGEN_FLOOR} (auto-escalation, tier ${TIER_OBJ.id}) ━━━`);
-  if (DRY_RUN) { log('(dry-run) skipping pregen'); return { ok: true, generated: 0 }; }
-  const code = await runScript('scripts/build-apply-packs.mjs', [`--top=${topN}`, '--include-todays-top']);
-  if (code !== 0) {
-    log(`⚠ apply-pack pregen exited ${code} — continuing (soft-fail per phasePolish convention)`);
-    return { ok: true, generated: 0, exit_code: code };
-  }
-  log(`✓ apply-pack pregen complete (top ${topN})`);
-  updateJob({ pregen_top_n: topN });
-  return { ok: true, top_n: topN };
-}
+// 2026-05-27 — phasePregen REMOVED from Process All orchestrator (Mitchell's
+// directive). Apply-pack pregen remains reachable as a manual surface via:
+//   - POST /api/build-pack-stage (dashboard-server.mjs)
+//   - scripts/build-apply-packs.mjs (CLI standalone)
+//   - Row drawer "Build Pack" button (per-pack on-demand)
+// Pregen also stops being the auto-trigger for Council/Researcher/Dealbreaker
+// agents — those now only fire when invoked from a user-initiated pack build.
 
 async function phaseRebuild() {
   updateJob({ phase: 'rebuild', phase_started_at: new Date().toISOString() });
@@ -595,17 +485,11 @@ async function main() {
     updateJob({ status: 'failed', failed_at: new Date().toISOString(), failure_phase: 'batch' });
     process.exit(2);
   }
-  // α ALPHA 2026-05-19 — opt-in polish stage (POLISH_PACK_ENABLED=1)
-  _setHeartbeatPhase('polish');
-  phases.polish = await phasePolish();
-  if (!phases.polish.ok) {
-    // Soft-fail: log and continue. Polish failures shouldn't block the rest.
-    log('⚠️  polish phase reported failure — continuing pipeline');
-  }
-  // Tier-5 only — apply-pack pregen for top-N high-confidence rows.
-  // Soft-fail: pregen failure does not block merge/rebuild.
-  _setHeartbeatPhase('pregen');
-  phases.pregen = await phasePregen();
+  // 2026-05-27 — phasePolish + phasePregen removed from Process All orchestrator
+  // per Mitchell's directive (separation of concerns: pipeline drainage vs
+  // pack refinement). Polish stays reachable via /api/polish + row-drawer
+  // Polish button; pregen via /api/build-pack-stage + Build Pack button.
+  // See AGENTS.md bug-class: polish-no-timeout-causes-process-all-stall.
   _setHeartbeatPhase('merge');
   phases.merge   = await phaseMergeTracker();
   if (!phases.merge.ok) {

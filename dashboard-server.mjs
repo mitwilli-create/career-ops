@@ -862,6 +862,43 @@ function getSpendSinceIso(startedAtIso) {
   return total;
 }
 
+// 2026-05-27 — Most-recent completed Process All delta. Surfaced in the cost
+// modal as "Last run drained 33 from pipeline (1968 → 1935)" so the queue
+// counters show fluctuation across runs even when the absolute pending count
+// only drops 1-2% per run (33 of 1968 = imperceptible without context).
+// AGENTS.md bug-class: queue-counter-fluctuation-imperceptible-without-delta.
+function _computeLastRunDelta() {
+  try {
+    const fp = join(ROOT, 'data/pipeline-process-state.json');
+    if (!existsSync(fp)) return null;
+    const ps = JSON.parse(readFileSync(fp, 'utf-8'));
+    const jobs = Object.values(ps.jobs || {})
+      .filter(j => j && j.type === 'process-all' && (j.status === 'completed' || j.status === 'cancelled'))
+      .sort((a, b) => {
+        const ta = Date.parse(a.finished_at || a.cancelled_at || a.updated_at || '') || 0;
+        const tb = Date.parse(b.finished_at || b.cancelled_at || b.updated_at || '') || 0;
+        return tb - ta;
+      });
+    if (jobs.length === 0) return null;
+    const j = jobs[0];
+    const pendingBefore = j.triage_pipeline_before || j.pending_before || 0;
+    const pendingAfter = j.triage_pipeline_after != null ? j.triage_pipeline_after : (j.pending_after != null ? j.pending_after : pendingBefore);
+    return {
+      jobId: j.jobId,
+      status: j.status,
+      finished_at: j.finished_at || j.cancelled_at || j.updated_at,
+      pipeline_before: pendingBefore,
+      pipeline_after: pendingAfter,
+      drained: Math.max(0, pendingBefore - pendingAfter),
+      advanced: j.triage_advanced || 0,
+      skipped: j.triage_skipped || 0,
+      processed: j.triage_processed || j.processed || 0,
+      batch_drained: j.batch_items_drained || 0,
+      published: j.published_count || 0,
+    };
+  } catch (_) { return null; }
+}
+
 function buildPipelinePreview() {
   const pending = countPipelinePending();
   const queued  = countTriageAdvanceQueued();
@@ -928,12 +965,18 @@ function buildPipelinePreview() {
   const rbDetectionPacks   = Math.round(queuedPublishCount * PACK_BUILD_OPT_IN_RATE);
   const rbDetectionCost    = rbDetectionPacks * COST_PER_AI_DETECTION_PACK;
 
-  // ── Full totals (stages + enrichment + polish + detection) ───────────────
-  // Polish is included only when POLISH_PACK_ENABLED=1 (α gate).
-  // Detection is post-publish + user-triggered, included at the
-  // PACK_BUILD_OPT_IN_RATE rate (δ gate).
-  const processAllCost = triageCost + processCost + paAgentTotal + paPolishCost + paDetectionCost;
-  const runBatchCost   = rbProcessCost + rbAgentTotal + rbPolishCost + rbDetectionCost;
+  // 2026-05-27 — Hard separation. Process All / Run Batch totals = pipeline
+  // drainage cost only (triage + batch). Per-pack enrichment (council /
+  // researcher / dealbreaker / polish / pregen / detection) moves to a
+  // separate `post_publish_opt_in` object — those costs fire ONLY when the
+  // user clicks Build Pack / Polish on a row, not during Process All itself.
+  // Per Mitchell's directive: polish + pregen are removed from these flows.
+  const processAllCost = triageCost + processCost;
+  const runBatchCost   = rbProcessCost;
+  // Per-pack potential cost surfaced separately (clarity, not hidden):
+  const postPublishPerRowMaxUsd = COST_PER_COMPANY_COUNCIL + COST_PER_RESEARCHER_CALL
+                                + COST_PER_DEALBREAKER_CALL + COST_PER_APPLY_PACK_PREGEN
+                                + COST_PER_POLISH_PACK_USD + COST_PER_AI_DETECTION_PACK;
 
   // ── Tier 5 estimates (post-Phase-3, upgrade planning) ────────────────────
   const tier5UniqueCompaniesEstimate = Math.max(1, Math.round(batchEvalCount * 0.60));
@@ -987,40 +1030,15 @@ function buildPipelinePreview() {
           threshold_conditional: true,
         },
       },
-      // ── Agent enrichment (for published items only) ───────────────────────
+      // 2026-05-27 — agent_enrichment field RETAINED for backward compat but
+      // ZEROED. The post_publish_opt_in block at top level is the source of
+      // truth for per-pack agent costs going forward. Renderers should prefer
+      // the top-level field; this stub keeps legacy code paths from crashing.
       agent_enrichment: {
-        council: {
-          count: paCouncilCount, cost_usd: r2(paCouncilCost),
-          model: '4-LLM consensus', cache_hit_rate: COMPANY_CACHE_HIT_RATE,
-          notes: 'company intel — per unique company, ' + Math.round(COMPANY_CACHE_HIT_RATE * 100) + '% cache hit rate',
-        },
-        researcher: {
-          count: paResearcherCount, cost_usd: r2(paResearcherCost),
-          model: 'opus + 4 LLMs',
-          notes: 'HM + comp intel — ' + Math.round(RESEARCHER_ENRICHMENT_RATE * 100) + '% of published roles lack cached intel',
-        },
-        dealbreaker: {
-          count: paResearcherCount, cost_usd: r2(paDealBreakerCost),
-          model: 'sonnet adjudicator',
-          notes: 'adjudicates researcher report — runs when researcher runs',
-        },
-        // α Run-Batch eval 2026-05-19: only surfaced when POLISH_PACK_ENABLED=1.
-        // Process All's phasePolish targets top-N Evaluated rows; each pack runs
-        // 3-Haiku-critics / Sonnet author / Opus adjudicator / adversarial sweep
-        // until ≥0.99 confidence — typical $12, cap $120 (env-tunable).
-        // (Earlier "typical $60" comment was calibrated against pre-bugfix-8e83ffa
-        //  trace data — see data/cost-trace-bug-postmortem-2026-05-22.md.)
-        polish: {
-          count: paPolishCount,
-          cost_usd: r2(paPolishCost),
-          model: 'Haiku x3 + Sonnet + Opus + adversarial',
-          enabled: polishEnabled,
-          per_pack_typical_usd: COST_PER_POLISH_PACK_USD,
-          per_pack_cap_usd: POLISH_PER_PACK_COST_CAP_USD,
-          notes: polishEnabled
-            ? 'top-' + POLISH_TOP_N_PER_RUN + ' Evaluated rows polished to ≥0.99 confidence (POLISH_PACK_ENABLED=1)'
-            : 'OFF — set POLISH_PACK_ENABLED=1 to engage',
-        },
+        council:     { count: 0, cost_usd: 0, model: 'see post_publish_opt_in', notes: 'manual-only (post-publish)' },
+        researcher:  { count: 0, cost_usd: 0, model: 'see post_publish_opt_in', notes: 'manual-only (post-publish)' },
+        dealbreaker: { count: 0, cost_usd: 0, model: 'see post_publish_opt_in', notes: 'manual-only (post-publish)' },
+        polish:      { count: 0, cost_usd: 0, model: 'see post_publish_opt_in', notes: 'manual-only (row drawer)' },
       },
       // ── δ DELTA Run-Batch 2026-05-19 — AI-detection (post-publish, opt-in) ──
       // Fires only when user clicks "Build pack" on a row drawer.
@@ -1171,6 +1189,28 @@ function buildPipelinePreview() {
     // Rendered in the cost-decomp modal as "calibrated from N runs · confidence ±X%"
     // so a numeric value never appears without a citation + confidence band.
     calibration_provenance: COST_CALIBRATION_PROVENANCE,
+    // 2026-05-27 — most-recent completed Process All delta. Powers the
+    // "Last run drained N from pipeline (X → Y)" chip in the modal so the
+    // queue counters show visible fluctuation across runs.
+    last_run_delta: _computeLastRunDelta(),
+    // 2026-05-27 — Per-pack agent enrichment costs (council / researcher /
+    // dealbreaker / polish / pregen / detection). Each fires ONLY when the
+    // user clicks Build Pack or Polish on a row — NOT during Process All or
+    // Run Batch. Renderers should treat this as informational ("here's what
+    // you'd pay PER PACK if you build one"), not as part of the Process All
+    // total. Costs shown are PER-INVOCATION; the modal's "Post-publish opt-in"
+    // section multiplies them by expected pack-build count for context.
+    post_publish_opt_in: {
+      label: 'Post-publish opt-in (per pack, when you click Build Pack / Polish)',
+      runs_when: 'User-initiated only — never during Process All or Run Batch.',
+      council:     { per_invocation_usd: COST_PER_COMPANY_COUNCIL,     model: '4-LLM consensus',     notes: 'Company intel — fires when pack build hits an uncached company.' },
+      researcher:  { per_invocation_usd: COST_PER_RESEARCHER_CALL,     model: 'opus + 4 LLMs',       notes: 'HM + comp intel — fires when pack build hits an uncached role.' },
+      dealbreaker: { per_invocation_usd: COST_PER_DEALBREAKER_CALL,    model: 'sonnet adjudicator',  notes: 'Adjudicates researcher output — runs when researcher runs.' },
+      pregen:      { per_invocation_usd: COST_PER_APPLY_PACK_PREGEN,   model: 'cv-tailor + agents',  notes: 'Apply-pack scaffolding (cv-tailored / cover-letter / form-fields / etc.).' },
+      polish:      { per_invocation_usd: COST_PER_POLISH_PACK_USD,     per_pack_cap_usd: POLISH_PER_PACK_COST_CAP_USD, model: 'Haiku×3 + Sonnet + Opus + adversarial', notes: 'Per-artifact polish loop to ≥0.99 confidence. Manual-trigger via row-drawer Polish button or POST /api/polish.' },
+      ai_detection:{ per_invocation_usd: COST_PER_AI_DETECTION_PACK,   model: 'GPTZero + Originality + Pangram', notes: 'Multi-detector ensemble run on each generated artifact.' },
+      per_pack_max_usd: r2(postPublishPerRowMaxUsd),
+    },
   };
 }
 
@@ -2391,6 +2431,67 @@ function batchLive() {
     } catch (_) {}
   }
 
+  // 2026-05-27 — last_run_complete pushes a terminal "all done" / "cancelled"
+  // signal through the SSE stream so the dashboard can fire a one-time toast
+  // confirming Process All finished. Fires when the most recent non-batch-only
+  // job is terminal (completed/cancelled/failed) AND within RUN_COMPLETE_FRESHNESS_MS.
+  // The dashboard dedupes per-jobId via localStorage so the same toast doesn't
+  // re-fire on reload. AGENTS.md bug-class: process-all-completion-not-surfaced.
+  let last_run_complete = null;
+  const RUN_COMPLETE_FRESHNESS_MS = 10 * 60 * 1000;
+  if (existsSync(pipelineStatePath)) {
+    try {
+      const ps = JSON.parse(readFileSync(pipelineStatePath, 'utf-8'));
+      const jobs = Object.values(ps.jobs || {})
+        .filter(j => j && j.type === 'process-all')
+        .sort((a, b) => {
+          const ta = Date.parse(a.updated_at || a.started_at || '') || 0;
+          const tb = Date.parse(b.updated_at || b.started_at || '') || 0;
+          return tb - ta;
+        });
+      for (const j of jobs) {
+        if (!j.status || (j.status !== 'completed' && j.status !== 'cancelled' && j.status !== 'failed')) continue;
+        const finishedTs = Date.parse(j.finished_at || j.cancelled_at || j.failed_at || j.updated_at || '') || 0;
+        if (!finishedTs) continue;
+        const ageMs = Date.now() - finishedTs;
+        if (ageMs > RUN_COMPLETE_FRESHNESS_MS) break;
+        const startTs = Date.parse(j.started_at || '') || 0;
+        const elapsedMs = Math.max(0, finishedTs - startTs);
+        const elapsedMin = Math.floor(elapsedMs / 60000);
+        const elapsedSec = Math.floor((elapsedMs % 60000) / 1000);
+        const elapsedStr = `${elapsedMin}m ${elapsedSec}s`;
+        const processed = j.processed != null ? j.processed : (j.triage_advanced || 0);
+        const pendingBefore = j.pending_before || j.triage_pipeline_before || 0;
+        const pendingAfter = j.pending_after != null ? j.pending_after : Math.max(0, pendingBefore - processed);
+        const published = j.published_count != null ? j.published_count : 0;
+        let summary;
+        if (j.status === 'completed') {
+          summary = `Processed ${processed} of ${pendingBefore} items in ${elapsedStr}. ${published} new ≥4.0 published.`;
+        } else if (j.status === 'cancelled') {
+          // 2026-05-27 — polish removed from orchestrator; summary stops referencing it.
+          summary = `Cancelled after ${elapsedStr}. Triage ${j.triage_advanced || 0}/${j.triage_pipeline_before || 0} advanced · batch ${j.batch_items_drained || 0} drained.`;
+        } else {
+          summary = `Failed at phase '${j.failure_phase || j.phase || 'unknown'}' after ${elapsedStr}.${j.error ? ' ' + String(j.error).slice(0, 200) : ''}`;
+        }
+        last_run_complete = {
+          jobId: j.jobId,
+          type: j.type,
+          status: j.status,
+          tier: j.tier,
+          finished_at: j.finished_at || j.cancelled_at || j.failed_at || j.updated_at,
+          started_at: j.started_at,
+          elapsed_str: elapsedStr,
+          summary,
+          processed,
+          pending_before: pendingBefore,
+          pending_after: pendingAfter,
+          published_count: published,
+        };
+        break;
+      }
+    } catch (_) { /* leave null */ }
+  }
+
   // Closure 08.4 (2026-05-22) — last_batch summary embedded in batchLive() so
   // the existing SSE stream pushes A7 chip updates without a separate poll.
   // Same logic as scripts/build-dashboard.mjs:loadLastBatchSummary() — keep
@@ -2405,6 +2506,9 @@ function batchLive() {
     // γ GAMMA: stale-state marker so the renderer can mute / de-emphasize.
     pipelineStateMeta,
     last_batch,
+    // 2026-05-27 — one-time terminal signal for Process All completion toast.
+    // null when no fresh terminal run; else { jobId, status, summary, ... }.
+    last_run_complete,
   };
 }
 

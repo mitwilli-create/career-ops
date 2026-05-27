@@ -26352,11 +26352,57 @@ function selectBatch(batchId) {
 
 let _batchInterval = null;
 
+// 2026-05-27 — Toast helper for Process All completion signal.
+// Per-jobId deduplicated via localStorage so the same toast doesn't re-fire
+// on page reload. Auto-dismisses after 30s; click-to-dismiss. Surfaces the
+// terminal "all done" / "cancelled" / "failed" signal Mitchell couldn't see
+// before — the sidebar chip just flipped to neutral with no celebration.
+// AGENTS.md bug-class: process-all-completion-not-surfaced.
+function _maybeShowProcessAllCompletionToast(lrc) {
+  if (!lrc || !lrc.jobId) return;
+  var seenKey = '_pa_toast_seen_' + lrc.jobId;
+  try { if (localStorage.getItem(seenKey)) return; } catch (_) {}
+  try { localStorage.setItem(seenKey, '1'); } catch (_) {}
+
+  function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+  var status = lrc.status || 'completed';
+  var glyph = status === 'completed' ? '✓' : (status === 'cancelled' ? '⊘' : '✗');
+  var tone = status === 'completed' ? '#2ea043' : (status === 'cancelled' ? '#d29922' : '#f85149');
+  var title = status === 'completed' ? 'Process All complete'
+            : status === 'cancelled' ? 'Process All cancelled'
+            : 'Process All failed';
+
+  var el = document.createElement('div');
+  el.className = 'process-all-completion-toast';
+  el.setAttribute('role', 'status');
+  el.style.cssText = 'position:fixed;top:24px;right:24px;max-width:520px;'
+    + 'background:rgba(13,17,23,0.97);border:1px solid ' + tone + ';'
+    + 'border-radius:8px;padding:14px 18px;color:rgba(255,255,255,0.92);'
+    + 'font-size:13px;line-height:1.5;z-index:99999;'
+    + 'box-shadow:0 8px 24px rgba(0,0,0,0.5);cursor:pointer';
+  el.innerHTML = '<div style="display:flex;align-items:flex-start;gap:10px">'
+    + '<div style="color:' + tone + ';font-size:20px;line-height:1;flex-shrink:0">' + glyph + '</div>'
+    + '<div style="flex:1;min-width:0">'
+    + '<div style="font-weight:600;color:' + tone + ';margin-bottom:4px">' + title + '</div>'
+    + '<div style="opacity:.88;word-wrap:break-word">' + _esc(lrc.summary || '') + '</div>'
+    + '<div style="opacity:.5;font-size:11px;margin-top:8px">click to dismiss · auto-clears in 30s</div>'
+    + '</div></div>';
+  el.addEventListener('click', function() { try { el.remove(); } catch (_) {} });
+  document.body.appendChild(el);
+  setTimeout(function() { try { el.remove(); } catch (_) {} }, 30000);
+}
+
 // Render batch data into the sidebar widget (shared by SSE + poll paths).
 // Supports two modes:
 //   - Multi-stage (data.pipelineStages present): shows per-stage progress bars
 //   - Legacy (aggregate only): shows single bar with counts
 function _renderBatchData(data) {
+  // 2026-05-27 — Process All completion toast. Deduplicated per-jobId via
+  // localStorage so a stale terminal jobId in last_run_complete doesn't
+  // re-fire the toast on every SSE tick. Wrapped in try/catch so render
+  // is never blocked by a toast-helper failure.
+  try { _maybeShowProcessAllCompletionToast(data && data.last_run_complete); } catch (_) {}
   // P4.33 (2026-05-20) — dispatch chip update.
   // Runs FIRST so the chip refreshes even when sidebar-batch widget is absent
   // (e.g., before the widget DOM has been wired by deferred render).
@@ -26411,11 +26457,11 @@ function _renderBatchData(data) {
         { key: 'polish',   label: 'Polish'   },
         { key: 'publish',  label: 'Publish'  },
       ];
-      stagesEl.innerHTML = stageList.filter(function(s) {
+      var stageHtml = stageList.filter(function(s) {
         if (!ph.stages[s.key]) return false;
-        // Hide 'polish' when its server-side gate-flag is set but the stage hasn't
-        // run/completed and there's no in-flight active state to render.
-        if (s.key === 'polish' && ph.stages.polish.gated && !ph.stages.polish.active && !ph.stages.polish.done && (ph.stages.polish.total || 0) === 0) return false;
+        // 2026-05-27 — polish stage removed from orchestrator. Hide it
+        // unconditionally if the server still emits the stage (legacy state).
+        if (s.key === 'polish') return false;
         return true;
       }).map(function(s) {
         var st    = ph.stages[s.key];
@@ -26445,6 +26491,11 @@ function _renderBatchData(data) {
           + '<span style="color:rgba(255,255,255,0.45);width:56px;flex-shrink:0">' + s.label + '</span>'
           + '<span style="color:' + txtClr + '">' + cnt + '</span></div>';
       }).join('');
+
+      // 2026-05-27 — polish removed from Process All orchestrator; no
+      // per-artifact polish progress line. If you re-add polish to the
+      // orchestrator later, restore this block via git history.
+      stagesEl.innerHTML = stageHtml;
       var phaseLbl = ph.current_phase || 'running';
       // γ GAMMA: append staleness chip so user sees a 6h-old failed job is NOT live.
       var staleChip = '';
@@ -27748,8 +27799,41 @@ function _renderPipelineModalBody(action, p) {
       + '</div>';
   }
 
+  // 2026-05-27 — Last-run delta chip. Surfaces "Last Process All drained N
+  // from pipeline (X → Y)" so queue counters show visible fluctuation across
+  // runs. The absolute pipeline count drops only 1-2% per run, making raw
+  // before/after imperceptible — the explicit drain count IS the signal.
+  // AGENTS.md bug-class: queue-counter-fluctuation-imperceptible-without-delta.
+  var deltaChip = '';
+  if (p && p.last_run_delta) {
+    var lrd = p.last_run_delta;
+    var sinceLabel = (function() {
+      try {
+        var ageMs = Date.now() - new Date(lrd.finished_at).getTime();
+        var m = Math.round(ageMs / 60000);
+        if (m < 1) return 'just now';
+        if (m < 60) return m + 'm ago';
+        var h = Math.round(m / 60);
+        if (h < 24) return h + 'h ago';
+        return Math.round(h / 24) + 'd ago';
+      } catch (_) { return 'recently'; }
+    })();
+    var statusGlyph = lrd.status === 'completed' ? '✓' : '⊘';
+    var statusTone  = lrd.status === 'completed' ? '#2ea043' : '#d29922';
+    deltaChip = '<div class="pipeline-modal-section" style="background:rgba(46,160,67,0.06);border-left:3px solid ' + statusTone + ';padding:8px 12px;margin-bottom:12px">'
+      + '<div style="font-size:11px;color:rgba(255,255,255,0.55);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px">Last Process All · ' + sinceLabel + '</div>'
+      + '<div style="font-size:13px;color:rgba(255,255,255,0.85)">'
+      + '<span style="color:' + statusTone + ';font-weight:600">' + statusGlyph + ' ' + lrd.status + '</span> · drained '
+      + '<strong>' + (lrd.drained || 0) + '</strong> from pipeline ('
+      + (lrd.pipeline_before || 0) + ' → ' + (lrd.pipeline_after || 0) + ') · '
+      + (lrd.advanced || 0) + ' advanced · ' + (lrd.batch_drained || 0) + ' batch-eval'
+      + (lrd.published ? ' · ' + lrd.published + ' new ≥4.0 published' : '')
+      + '</div>'
+      + '</div>';
+  }
+
   // ── Cost breakdown ────────────────────────────────────────────────────────
-  var breakdown = '';
+  var breakdown = deltaChip;
   if (est.stages) {
     var stgs = est.stages;
     var ae   = est.agent_enrichment;
@@ -27799,94 +27883,58 @@ function _renderPipelineModalBody(action, p) {
         + conf + sampleTxt + bandTxt
         + '</span>';
     }
+    // 2026-05-27 — Hard separation: agent_enrichment block in process_all is
+    // now ZEROED (all per-pack agents are manual-only). Skip rendering the
+    // legacy agentSection unless there's a non-zero cost (which there won't
+    // be in the new architecture). detectionSection also moves to opt-in.
+    var enrichmentTotal = ae ? ((ae.council.cost_usd || 0) + (ae.researcher.cost_usd || 0) + (ae.dealbreaker.cost_usd || 0) + ((ae.polish && ae.polish.cost_usd) || 0)) : 0;
     var agentSection = '';
-    if (ae) {
-      var enrichmentItems = [
-          { label: 'Council',     count: ae.council.count,     model: ae.council.model,     cost: ae.council.cost_usd,     note: Math.round((ae.council.cache_hit_rate || 0.5) * 100) + '% cached', provKey: 'company_cache_hit_rate' },
-          { label: 'Researcher',  count: ae.researcher.count,  model: ae.researcher.model,  cost: ae.researcher.cost_usd,  note: 'HM + comp intel',                                              provKey: 'researcher_cost' },
-          { label: 'Dealbreaker', count: ae.dealbreaker.count, model: ae.dealbreaker.model, cost: ae.dealbreaker.cost_usd, note: 'adjudicates researcher',                                       provKey: 'dealbreaker_cost' },
-      ];
-      // α Run-Batch eval 2026-05-19: surface the polish stage when present in the payload
-      // (server only includes the polish block on Process All previews — Run Batch doesn't run
-      // polish today). Cost reads 0 when POLISH_PACK_ENABLED is OFF, with an inline OFF/ON tag.
-      // Provenance key 'polish_typical_cost' renders a MED · N=1 · ±100% chip alongside.
-      if (ae.polish) {
-        var polishNote = ae.polish.enabled
-          ? 'top-' + ae.polish.count + ' Evaluated rows · ' + ae.polish.model
-          : 'OFF — set POLISH_PACK_ENABLED=1 to engage';
-        enrichmentItems.push({
-          label:    ae.polish.enabled ? 'Polish' : 'Polish <span style="opacity:0.45;font-size:9px;border:1px solid rgba(255,255,255,0.18);border-radius:3px;padding:0 4px;margin-left:4px">OFF</span>',
-          count:    ae.polish.count,
-          model:    ae.polish.model,
-          cost:     ae.polish.cost_usd,
-          note:     polishNote,
-          provKey:  'polish_typical_cost',
-          rawLabel: 'Polish',
-          isPolish: true,
-        });
-      }
-      var agentDetailRows = enrichmentItems.map(function(a) {
-          var unitCost = a.count > 0 ? (a.cost / a.count) : 0;
-          var unitStr  = unitCost >= 1 ? '$' + unitCost.toFixed(2) : (unitCost >= 0.10 ? '$' + unitCost.toFixed(2) : '$' + unitCost.toFixed(3));
-          var sub = ' <span style="opacity:0.45;font-size:10px">(' + a.count + ' &times; ' + unitStr + ' · ' + a.model + ' · ' + a.note + ')</span>';
-          var lblStyle = a.isPolish && !ae.polish.enabled ? ' style="padding-left:6px;opacity:0.55"' : ' style="padding-left:6px"';
-          return '<span class="pipeline-stat-label"' + lblStyle + '>' + a.label + sub + _confChip(a.provKey) + '</span>'
-               + '<span class="pipeline-stat-value pipeline-enrichment-cost">' + (a.cost > 0 ? '$' + a.cost.toFixed(2) : '<span class="muted">$0.00</span>') + '</span>';
-        }).join('');
-      // Footer line: surface that publish-rate is itself an estimate with N + band.
-      var publishProv = _confChip('publish_rate');
-      var publishProvLine = publishProv
-        ? '<div style="font-size:10px;opacity:0.55;margin-top:4px;padding-left:6px">'
-            + 'Publish rate ' + Math.round((prov.publish_rate ? prov.publish_rate.value : 0.22) * 100) + '%' + publishProv
-          + '</div>'
-        : '';
-      agentSection = '<div style="background:rgba(124,107,234,0.07);border-radius:6px;padding:8px 10px;margin-bottom:8px">'
-        + '<div style="font-weight:600;font-size:11px;margin-bottom:6px;opacity:0.9">'
-        +   'Agent enrichment <span style="font-weight:400;opacity:0.55;font-size:10px">(' + (est.stages ? est.stages.publish.count : 0) + ' published · score ≥ ' + thr + ')</span>'
-        + '</div>'
-        + '<div class="pipeline-stat-grid">' + agentDetailRows + '</div>'
-        + publishProvLine
-        + '</div>';
-    }
-
-    // δ DELTA Run-Batch 2026-05-19 — AI-detection (post-publish, opt-in) card.
-    // Detection fires only when user clicks "Build pack" on a row drawer.
-    // Surfaced here so the user knows the downstream cost they'll incur if
-    // they build packs after a Run Batch / Process All publishes rows.
-    // Style aligned with γ GAMMA's provenance-chip pattern (HIGH/MED/LOW
-    // confidence chips render via _confChip()) so the user can audit the
-    // cost line the same way as researcher/dealbreaker/publish_rate.
     var detectionSection = '';
-    var det = est.ai_detection;
-    if (det && det.packs > 0) {
-      var detUnitStr = '$' + (det.cost_per_pack_usd || 0).toFixed(2);
-      var detSub = ' <span style="opacity:0.45;font-size:10px">('
-        + det.packs + ' &times; ' + detUnitStr + '/pack · '
-        + (det.vendors || 'GPTZero + Originality.ai') + ' · '
-        + (det.notes || 'post-publish · opt-in')
-        + ')</span>';
-      detectionSection = '<div style="background:rgba(217,119,87,0.07);border-radius:6px;padding:8px 10px;margin-bottom:8px">'
-        + '<div style="font-weight:600;font-size:11px;margin-bottom:6px;opacity:0.9">'
-        +   'AI-detection gate <span style="font-weight:400;opacity:0.55;font-size:10px">(post-publish · user-triggered Build-pack only)</span>'
-        + '</div>'
-        + '<div class="pipeline-stat-grid">'
-        +   '<span class="pipeline-stat-label" style="padding-left:6px">Detection' + detSub + _confChip('ai_detection_cost') + '</span>'
-        +   '<span class="pipeline-stat-value pipeline-enrichment-cost">$' + (det.cost_usd || 0).toFixed(2) + '</span>'
-        + '</div>'
+    if (enrichmentTotal > 0) {
+      // Legacy fallback — only renders if server is on pre-2026-05-27 code.
+      agentSection = '<div style="background:rgba(124,107,234,0.07);border-radius:6px;padding:8px 10px;margin-bottom:8px;opacity:0.6">'
+        + '<div style="font-weight:600;font-size:11px;margin-bottom:6px">Legacy enrichment block (server pre-2026-05-27)</div>'
         + '</div>';
     }
 
-    // Core pipeline as secondary footnote (AAA-3: deterministic stages bundled)
-    var corePipelineSection = '<div style="opacity:0.65">'
-      + '<div style="font-size:10px;opacity:0.7;margin-bottom:4px">+ Core pipeline (deterministic stages)</div>'
+    // Core pipeline rendering (the deterministic stages — what Process All actually does)
+    var corePipelineSection = '<div style="background:rgba(46,160,67,0.06);border-radius:6px;padding:10px 12px;margin-bottom:8px">'
+      + '<div style="font-weight:600;font-size:11px;margin-bottom:6px;opacity:0.9">'
+      +   (isAll ? 'Process All — auto-fire pipeline' : 'Run Batch — auto-fire pipeline')
+      + '</div>'
       + '<div class="pipeline-stat-grid">' + stageRows + '</div>'
       + '</div>';
 
-    // δ DELTA Run-Batch 2026-05-19 — detection section between agent
-    // enrichment and core pipeline. Order: heaviest spend first (agents),
-    // then user-triggered downstream spend (detection), then deterministic
-    // bundled (core stages).
-    breakdown = agentSection + detectionSection + corePipelineSection;
+    // 2026-05-27 — Post-publish opt-in section. Per Mitchell's directive:
+    // council/researcher/dealbreaker/polish/pregen/ai-detection all fire ONLY
+    // when user clicks Build Pack or Polish on a row. Surfaced here so user
+    // sees the per-pack potential cost — but it's NOT included in the Process
+    // All total above.
+    var postPublishSection = '';
+    if (p.post_publish_opt_in) {
+      var ppo = p.post_publish_opt_in;
+      function _ppoRow(label, perInvocation, perUnit, sub) {
+        return '<span class="pipeline-stat-label" style="padding-left:6px">' + label
+             + ' <span style="opacity:0.45;font-size:10px">(' + sub + ')</span></span>'
+             + '<span class="pipeline-stat-value">$' + perInvocation.toFixed(2) + perUnit + '</span>';
+      }
+      var ppoRows = ''
+        + (ppo.pregen      ? _ppoRow('Apply-pack pregen', ppo.pregen.per_invocation_usd,      '/pack',     'cv-tailor / cover-letter / form-fields / linkedin-dm / impact-doc / references / referrals') : '')
+        + (ppo.council     ? _ppoRow('Council',           ppo.council.per_invocation_usd,     '/company',  '4-LLM consensus · per uncached company') : '')
+        + (ppo.researcher  ? _ppoRow('Researcher',        ppo.researcher.per_invocation_usd,  '/role',     'HM + comp intel · per uncached role') : '')
+        + (ppo.dealbreaker ? _ppoRow('Dealbreaker',       ppo.dealbreaker.per_invocation_usd, '/role',     'adjudicates researcher · runs with researcher') : '')
+        + (ppo.polish      ? '<span class="pipeline-stat-label" style="padding-left:6px">Polish <span style="opacity:0.45;font-size:10px">(Haiku×3 + Sonnet + Opus + adversarial · per-artifact loop to ≥0.99 confidence)</span></span>'
+                           + '<span class="pipeline-stat-value">$' + ppo.polish.per_invocation_usd.toFixed(2) + ' typ · $' + (ppo.polish.per_pack_cap_usd || 120).toFixed(0) + ' cap</span>' : '')
+        + (ppo.ai_detection? _ppoRow('AI-detection',      ppo.ai_detection.per_invocation_usd,'/pack',     'GPTZero + Originality + Pangram ensemble') : '');
+      postPublishSection = '<div style="background:rgba(74,158,255,0.06);border-left:3px solid #4a9eff;border-radius:6px;padding:10px 12px;margin-bottom:8px">'
+        + '<div style="font-weight:600;font-size:11px;margin-bottom:4px;opacity:0.9">Post-publish opt-in <span style="font-weight:400;opacity:0.55;font-size:10px">(' + (ppo.runs_when || 'user-triggered only') + ')</span></div>'
+        + '<div style="font-size:11px;opacity:0.78;margin-bottom:8px">Per-pack costs that fire ONLY when you click <strong>Build Pack</strong> or <strong>Polish</strong> on a row drawer — NOT during ' + (isAll ? 'Process All' : 'Run Batch') + '.</div>'
+        + '<div class="pipeline-stat-grid">' + ppoRows + '</div>'
+        + '<div style="font-size:10px;opacity:0.55;margin-top:6px">Theoretical max per pack if everything fires: <strong>$' + (ppo.per_pack_max_usd || 0).toFixed(2) + '</strong>. Typical pack: ~$3-10 (most rows hit pregen + 1-2 enrichment calls).</div>'
+        + '</div>';
+    }
+
+    breakdown = corePipelineSection + postPublishSection + agentSection + detectionSection;
   } else {
     // Legacy fallback
     breakdown = isAll
@@ -28234,12 +28282,12 @@ function _renderProcessAllPhaseA(pAgg, pCmp) {
   const tierPickerLine = (tEst && tEst[1] && tEst[2] && tEst[3])
     ? '<div id="pcp-tier-picker" style="margin-top:8px;padding:10px 12px;border:1px dashed rgba(255,255,255,0.18);border-radius:6px;font-size:12px">'
       + '<div style="font-weight:600;margin-bottom:6px">Quality tier '
-      +   '<span style="font-weight:400;opacity:0.65">(applies to triage + eval model; ≥4.0 rows auto-escalate to apply-pack pregen, ≥4.5 polish in every tier)</span>'
+      +   '<span style="font-weight:400;opacity:0.65">(triage + eval model only — polish + apply-pack pregen are manual-trigger, see "Post-publish opt-in" below)</span>'
       + '</div>'
       + '<label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer">'
       +   '<input type="radio" name="pcp-tier" value="1"' + _tierChecked(1) + ' onchange="_pcpUpdateTier(this.value)">'
       +   '<span>' + _tierStar(1) + '<strong>1 · Standard</strong> · Haiku triage + Sonnet eval · <strong>' + _fmtTierPrice(tEst[1].total_cost_usd) + '</strong>'
-      +     '<span style="opacity:0.6;font-size:11px"> · triage ' + _fmtTierPrice(tEst[1].breakdown && tEst[1].breakdown.triage_cost_usd) + ' + eval ' + _fmtTierPrice(tEst[1].breakdown && tEst[1].breakdown.eval_cost_usd) + ' + auto-escalate ' + _fmtTierPrice(tEst[1].breakdown ? ((tEst[1].breakdown.pregen_cost_usd || 0) + (tEst[1].breakdown.polish_cost_usd || 0)) : undefined) + '</span>' + _tierBadge(1) + '</span>'
+      +     '<span style="opacity:0.6;font-size:11px"> · triage ' + _fmtTierPrice(tEst[1].breakdown && tEst[1].breakdown.triage_cost_usd) + ' + eval ' + _fmtTierPrice(tEst[1].breakdown && tEst[1].breakdown.eval_cost_usd) + '</span>' + _tierBadge(1) + '</span>'
       + '</label>'
       + '<label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer">'
       +   '<input type="radio" name="pcp-tier" value="2"' + _tierChecked(2) + ' onchange="_pcpUpdateTier(this.value)">'
@@ -28278,11 +28326,71 @@ function _renderProcessAllPhaseA(pAgg, pCmp) {
     +   detectionLine
     +   drainAssurance
     +   '<div style="font-size:11px;opacity:0.55;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:6px;align-items:center">'
-    +     '<span>Per-company drilldown (council + apply-pack pregen): $' + allCompaniesCost.toFixed(2) + ' · uncheck rows below to reduce scope</span>'
+    +     '<span>Per-company breakdown shown below · uncheck rows to reduce scope</span>'
     +   '</div>'
     +   tierPickerLine
     + '</div>';
-  return headline + _renderPerCompanyPreview(pCmp);
+  // 2026-05-27 — Last-run delta chip. Surfaces "Last Process All drained N
+  // from pipeline (X → Y)" so queue counters show visible fluctuation across
+  // runs — the absolute pipeline count only drops 1-2% per run.
+  // AGENTS.md bug-class: queue-counter-fluctuation-imperceptible-without-delta.
+  var phaseAdeltaChip = '';
+  if (pAgg && pAgg.last_run_delta) {
+    var _lrd = pAgg.last_run_delta;
+    var _since = (function() {
+      try {
+        var ageMs = Date.now() - new Date(_lrd.finished_at).getTime();
+        var m = Math.round(ageMs / 60000);
+        if (m < 1) return 'just now';
+        if (m < 60) return m + 'm ago';
+        var h = Math.round(m / 60);
+        if (h < 24) return h + 'h ago';
+        return Math.round(h / 24) + 'd ago';
+      } catch (_) { return 'recently'; }
+    })();
+    var _glyph = _lrd.status === 'completed' ? '✓' : '⊘';
+    var _tone  = _lrd.status === 'completed' ? '#2ea043' : '#d29922';
+    phaseAdeltaChip = '<div style="background:rgba(46,160,67,0.06);border-left:3px solid ' + _tone + ';padding:8px 12px;margin:0 0 12px 0">'
+      + '<div style="font-size:11px;color:rgba(255,255,255,0.55);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px">Last Process All · ' + _since + '</div>'
+      + '<div style="font-size:13px;color:rgba(255,255,255,0.85)">'
+      + '<span style="color:' + _tone + ';font-weight:600">' + _glyph + ' ' + _lrd.status + '</span> · drained '
+      + '<strong>' + (_lrd.drained || 0) + '</strong> from pipeline ('
+      + (_lrd.pipeline_before || 0) + ' → ' + (_lrd.pipeline_after || 0) + ') · '
+      + (_lrd.advanced || 0) + ' advanced · ' + (_lrd.batch_drained || 0) + ' batch-eval'
+      + (_lrd.published ? ' · ' + _lrd.published + ' new ≥4.0 published' : '')
+      + '</div>'
+      + '</div>';
+  }
+
+  // 2026-05-27 — Post-publish opt-in section in Phase A. Per Mitchell's directive
+  // (Q2 — hard separation): council/researcher/dealbreaker/polish/pregen/detection
+  // moved out of Process All total into a clearly-labeled opt-in block. Surfaces
+  // the per-pack potential cost without hiding it.
+  var phaseApostPublishSection = '';
+  if (pAgg && pAgg.post_publish_opt_in) {
+    var _ppoA = pAgg.post_publish_opt_in;
+    function _ppoARow(label, perInvocation, perUnit, sub) {
+      return '<span class="pipeline-stat-label" style="padding-left:6px">' + label
+           + ' <span style="opacity:0.45;font-size:10px">(' + sub + ')</span></span>'
+           + '<span class="pipeline-stat-value">$' + perInvocation.toFixed(2) + perUnit + '</span>';
+    }
+    var _ppoARows = ''
+      + (_ppoA.pregen      ? _ppoARow('Apply-pack pregen', _ppoA.pregen.per_invocation_usd,      '/pack',    'cv-tailor / cover-letter / form-fields / linkedin-dm / impact-doc / references / referrals') : '')
+      + (_ppoA.council     ? _ppoARow('Council',           _ppoA.council.per_invocation_usd,     '/company', '4-LLM consensus · per uncached company') : '')
+      + (_ppoA.researcher  ? _ppoARow('Researcher',        _ppoA.researcher.per_invocation_usd,  '/role',    'HM + comp intel · per uncached role') : '')
+      + (_ppoA.dealbreaker ? _ppoARow('Dealbreaker',       _ppoA.dealbreaker.per_invocation_usd, '/role',    'adjudicates researcher · runs with researcher') : '')
+      + (_ppoA.polish      ? '<span class="pipeline-stat-label" style="padding-left:6px">Polish <span style="opacity:0.45;font-size:10px">(Haiku×3 + Sonnet + Opus + adversarial · per-artifact loop to ≥0.99 confidence)</span></span>'
+                           + '<span class="pipeline-stat-value">$' + _ppoA.polish.per_invocation_usd.toFixed(2) + ' typ · $' + (_ppoA.polish.per_pack_cap_usd || 120).toFixed(0) + ' cap</span>' : '')
+      + (_ppoA.ai_detection? _ppoARow('AI-detection',      _ppoA.ai_detection.per_invocation_usd,'/pack',    'GPTZero + Originality + Pangram ensemble') : '');
+    phaseApostPublishSection = '<div class="pipeline-modal-section" style="background:rgba(74,158,255,0.06);border-left:3px solid #4a9eff;padding:10px 12px;margin:0 0 12px 0">'
+      + '<div style="font-weight:600;font-size:11px;margin-bottom:4px;opacity:0.9">Post-publish opt-in <span style="font-weight:400;opacity:0.55;font-size:10px">(' + (_ppoA.runs_when || 'user-triggered only') + ')</span></div>'
+      + '<div style="font-size:11px;opacity:0.78;margin-bottom:8px">Per-pack costs that fire ONLY when you click <strong>Build Pack</strong> or <strong>Polish</strong> on a row drawer — NOT during Process All.</div>'
+      + '<div class="pipeline-stat-grid">' + _ppoARows + '</div>'
+      + '<div style="font-size:10px;opacity:0.55;margin-top:6px">Theoretical max per pack if everything fires: <strong>$' + (_ppoA.per_pack_max_usd || 0).toFixed(2) + '</strong>. Typical pack: ~$3-10 (most rows hit pregen + 1-2 enrichment calls).</div>'
+      + '</div>';
+  }
+
+  return phaseAdeltaChip + headline + phaseApostPublishSection + _renderPerCompanyPreview(pCmp);
 }
 
 function _renderPerCompanyPreview(pCmp) {

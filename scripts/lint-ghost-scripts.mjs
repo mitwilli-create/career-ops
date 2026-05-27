@@ -28,11 +28,10 @@ const ROOT = join(__filename, '..', '..');
 // canonical real path that supplants the ghost; surfaced in the lint failure
 // message so the operator knows what to edit it to.
 const KNOWN_GHOSTS = [
-  {
-    id: 'hiring-manager-research',
-    pattern: 'scripts/hiring-manager-research\\.mjs',
-    replacement: 'scripts/agents/intel-refresh.mjs --slots hm-intel',
-  },
+  // 2026-05-27 — hiring-manager-research removed: PR #296 (commit 473364b)
+  // built scripts/hiring-manager-research.mjs from scratch. Self-references
+  // in the file's own JSDoc + console.error messages were tripping this lint
+  // as if the file were missing. Re-add if a future refactor removes it.
 ];
 
 // Scope: every file under these roots is scanned (recursively). Files outside

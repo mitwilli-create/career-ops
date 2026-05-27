@@ -3434,6 +3434,40 @@ function loadCanonicalStatuses() {
 
 const CANONICAL_STATUSES = loadCanonicalStatuses();
 
+// 2026-05-26 — Coalesced dashboard rebuild trigger. Debounced 500ms so a
+// bulk status change collapses to one rebuild. Best-effort: spawn failures
+// log a warning but never block the caller. Closes the
+// write-without-rebuild-propagation-gap bug class — before this helper,
+// updateApplicationStatus correctly mutated data/applications.md +
+// apply-now-queue.json but did NOT trigger dashboard rebuild, so the
+// rendered HTML stayed stale until fswatch fired (60s debounce) or someone
+// ran `node scripts/build-dashboard.mjs` manually. Mitchell's
+// just-discarded rows kept appearing in Apply-Now until then.
+let _rebuildDebounceTimer = null;
+let _rebuildReasons = [];
+function _scheduleDashboardRebuild(reason) {
+  _rebuildReasons.push(reason);
+  if (_rebuildDebounceTimer) clearTimeout(_rebuildDebounceTimer);
+  _rebuildDebounceTimer = setTimeout(() => {
+    const reasonsSnap = _rebuildReasons.slice(0, 5);
+    const more = _rebuildReasons.length > 5 ? ` (+${_rebuildReasons.length - 5} more)` : '';
+    _rebuildReasons = [];
+    _rebuildDebounceTimer = null;
+    try {
+      const proc = _spawn('node', [join(ROOT, 'scripts/build-dashboard.mjs')], {
+        cwd: ROOT,
+        env: process.env,
+        stdio: 'ignore',
+        detached: true,
+      });
+      proc.unref();
+      console.log(`[rebuild] dashboard rebuild triggered (pid=${proc.pid}) reasons=[${reasonsSnap.join(', ')}]${more}`);
+    } catch (err) {
+      console.warn(`[rebuild] dashboard rebuild trigger failed: ${err.message} — fswatch will catch this on next debounce`);
+    }
+  }, 500);
+}
+
 function updateApplicationStatus({ num, status, note }) {
   if (num === undefined || num === null || Number.isNaN(parseInt(num, 10))) {
     return { ok: false, code: 400, error: 'num is required and must be an integer' };
@@ -3562,6 +3596,13 @@ function updateApplicationStatus({ num, status, note }) {
     } catch (_) {}
   }
 
+  // 2026-05-26 — Auto-trigger dashboard rebuild so the next page load
+  // reflects the new status without waiting for fswatch (60s) or a manual
+  // rebuild. Gated on actual status transition to avoid no-op spawns.
+  if (oldStatus !== canonical) {
+    _scheduleDashboardRebuild(`status:${targetNum}:${oldStatus}→${canonical}`);
+  }
+
   return { ok: true, row: updatedRow, queueUpdated };
 }
 
@@ -3660,6 +3701,11 @@ function updateApplicationStatusBulk({ nums, status }) {
         appendRowEvent(row.num, { ts, type: 'status', text: `${old} → ${canonical}` });
       } catch (_) {}
     }
+  }
+
+  // 2026-05-26 — Trigger one rebuild for the whole bulk batch (debounced).
+  if (updated.length > 0) {
+    _scheduleDashboardRebuild(`bulk:${updated.length}rows→${canonical}`);
   }
 
   return {
@@ -5694,6 +5740,41 @@ const server = createServer((req, res) => {
       } catch {}
     }
     return json({ ok: true, job, log_tail: tail });
+  }
+
+  // 2026-05-26 — Job-log full-content endpoint backing the "see log" hyperlink
+  // in the failed-toast (build-dashboard.mjs ~28730 → window._openJobLogModal).
+  // Returns the orchestrator log content with a 256KB tail cap. Two formats:
+  //   ?format=text → JSON { ok, job_id, log_size, log_content }
+  //   ?format=html → text/html chunk (styled <pre>) for direct innerHTML
+  // Path-traversal is impossible: log_path comes from state file (not user
+  // input), jobId is regex-validated, and content is _esc'd before HTML emit.
+  if (url === '/api/pipeline/job-log') {
+    const jobId = String(query.job_id || '');
+    const format = String(query.format || 'text');
+    if (!jobId) return json({ ok: false, error: 'missing job_id' }, 400);
+    if (!/^[a-z0-9-]+$/i.test(jobId)) return json({ ok: false, error: 'invalid job_id format' }, 400);
+    const state = loadPipelineProcessState();
+    const job = state.jobs?.[jobId];
+    if (!job) return json({ ok: false, error: 'job not found' }, 404);
+    if (!job.log_path) return json({ ok: false, error: 'job has no log_path recorded' }, 404);
+    if (!existsSync(job.log_path)) return json({ ok: false, error: 'log file no longer exists (was in /tmp, may have been cleaned)' }, 404);
+    const MAX = 256 * 1024;
+    try {
+      const stat = statSync(job.log_path);
+      const raw = readFileSync(job.log_path, 'utf-8');
+      const truncated = raw.length > MAX;
+      const content = truncated ? '... (truncated; showing last 256KB) ...\n' + raw.slice(-MAX) : raw;
+      if (format === 'html') {
+        const safe = content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.end('<pre style="white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:12px;line-height:1.4;color:#dbe4ff;background:#0d1117;padding:16px;margin:0;border-radius:0;max-height:560px;overflow:auto">' + safe + '</pre>');
+      }
+      return json({ ok: true, job_id: jobId, log_size: stat.size, truncated, log_content: content });
+    } catch (err) {
+      return json({ ok: false, error: 'log read failed: ' + err.message }, 500);
+    }
   }
 
   // 2026-05-19 Mitchell feedback — persistent progress bar across sessions.

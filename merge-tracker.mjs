@@ -388,6 +388,28 @@ for (const file of tsvFiles) {
     newLines.push(newLine);
     added++;
     console.log(`➕ Add #${entryNum}: ${addition.company} — ${addition.role} (${addition.score})`);
+
+    // 2026-05-26 — Push this new addition into existingApps so subsequent
+    // TSVs in the same batch can dedup against it. Closes the same-batch
+    // dedup gap: previously, two TSVs targeting the same company+role got
+    // inserted as separate rows because the second one only checked the
+    // on-disk applications.md state (not the in-memory additions
+    // accumulating during this loop). Canonical incident: 2026-05-26 rows
+    // #2539 + #2540 both inserted as "Anthropic / Applied AI Architect,
+    // Industries" because the Greenhouse-JD intake and the LinkedIn-mirror
+    // intake both became TSVs in the same merge run.
+    existingApps.push({
+      num: String(entryNum),
+      date: addition.date,
+      company: addition.company,
+      role: addition.role,
+      score: addition.score,
+      status: addition.status,
+      pdf: addition.pdf,
+      report: addition.report,
+      notes: addition.notes,
+      raw: newLine,
+    });
   }
 }
 

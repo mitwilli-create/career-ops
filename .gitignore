@@ -3,6 +3,7 @@ cv.md
 data/applications.md
 data/pipeline.md
 data/api-cost-audit-*.md
+data/ux-audit-*.md
 
 # regression-guard outputs (shipped 2026-05-23) — personal pipeline data
 # - decision doc has `[PERSONAL — DO NOT PUBLISH]` frontmatter
@@ -241,6 +242,13 @@ data/outreach-drafts/
 
 # Discard reasons — feeds back into triage prompt; personal data
 data/discard-reasons.jsonl
+
+# Discard-gate runtime artifacts (2026-05-26 — lib/discard-gate.mjs):
+# per-call audit log + Tier 3 spend ledger. Audit entries include URL +
+# company + role but NEVER include verbatim discard_reason (cross-fork-leak
+# guard). Still personal pipeline data — never commit.
+data/discard-gate-log.jsonl
+data/discard-gate-spend.jsonl
 
 # Composite toxicity score cache + Mitchell's tradeoff overrides (inventory
 # item #4, 2026-05-18). Cache regenerates on every dashboard build; overrides

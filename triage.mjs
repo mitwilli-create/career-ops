@@ -33,7 +33,7 @@ try {
 import { isCircuitOpen, withRetryBackoff, recordSuccess, recordFailure } from './lib/provider-client.mjs';
 import { HAIKU, SONNET } from './lib/models.mjs';
 import { readCached, poolMap } from './lib/fetch-utils.mjs';
-import { guessCompany, buildCompanyMatcher } from './lib/ats-utils.mjs';
+import { guessCompany, buildCompanyMatcher, extractRoleFromUrl } from './lib/ats-utils.mjs';
 import { checkUrl } from './lib/http-liveness.mjs';
 import { renderDiscardPatternBrief } from './lib/discard-pattern-injector.mjs';
 import { scoreZombie } from './lib/zombie-scorer.mjs';
@@ -380,6 +380,31 @@ let _discardBrief = '';
 try { _discardBrief = renderDiscardPatternBrief({ limit: 20, format: 'markdown' }) || ''; }
 catch (e) { console.warn(`[triage] discard-pattern brief unavailable: ${e.message}`); }
 
+// ── Per-URL prior-discard context (populated by discard-gate, read by LLM-routed scorers) ──
+// When the gate returns `advance-flagged`, the prior_match is stashed here so
+// quickScore / quickScoreGemini / quickScoreCouncil can inject a per-row brief
+// BEFORE the aggregate _discardBrief. Cleared by gc'd Map semantics — no leak.
+const _perUrlDiscardContext = new Map(); // url -> prior_match
+
+// Renders the 4-line per-row brief for injection into the triage prompt body.
+// Returns '' when no prior_match is recorded for this URL.
+function _renderPerUrlDiscardBrief(url) {
+  const prior = _perUrlDiscardContext.get(url);
+  if (!prior) return '';
+  const ts = prior.discard_ts || 'unknown';
+  const ageDays = prior.age_days ?? '?';
+  const reason = (prior.discard_reason || '').slice(0, 240);
+  const tag = prior.discard_tag || '(no tag)';
+  return [
+    '',
+    '## Per-row Prior Discard',
+    `This role was previously discarded by Mitchell on ${ts} (${ageDays} days ago) with reason:`,
+    `"${reason}" (auto-tagged: ${tag}).`,
+    'Score accordingly — do not advance unless this posting is materially distinct.',
+    '',
+  ].join('\n');
+}
+
 // ── Haiku quick-score with retry loop (max 3 attempts) ──────────
 async function quickScore(url, tier, jdSnippet) {
   // Cached read — triage-prompt.md is the same for every item in a session
@@ -388,6 +413,7 @@ async function quickScore(url, tier, jdSnippet) {
     .replace('{{URL}}', url)
     .replace('{{TIER}}', String(tier))
     .replace('{{JD_SNIPPET}}', (jdSnippet || '(page body unavailable — score based on URL/domain only)').slice(0, 3000))
+    + _renderPerUrlDiscardBrief(url)
     + _discardBrief;
 
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -415,19 +441,18 @@ async function quickScoreGemini(url, tier, jdSnippet) {
     const { GoogleGenerativeAI } = await import('@google/generative-ai');
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({
-      // 2026-05-17 — gemini-2.0-flash deprecated Feb 2026 (shuts down June 1
-      // 2026). gemini-3-flash-preview is the current Flash 3.x default per
-      // Mitchell's preference. gemini-2.5-flash kept as fallback alias.
-      // Gemini 3 uses thinking_level (minimal/low/medium/high) instead of
-      // thinkingConfig.thinkingBudget. For triage we want minimal: a number
-      // + 15-word reason needs zero internal reasoning overhead.
+      // 2026-05-26 — gemini-3-flash-preview at v1beta strict-rejects
+      // generation_config.thinking_level with HTTP 400 "Cannot find field".
+      // The prior comment claimed Google silently ignores unknown fields —
+      // it does not. Use thinkingConfig.thinkingBudget=0 alone to disable
+      // thinking overhead. Verified via the binary-search reproducer at
+      // data/_archive/gemini-repro-2026-05-26.mjs (T3 fails, T4 passes).
+      // lib/council.mjs:626 has a retry-on-reject defensive pattern this
+      // path doesn't yet share — port it if Gemini 3 strictness regresses.
       model: process.env.GEMINI_MODEL || 'gemini-3-flash-preview',
       generationConfig: {
         temperature: 0,
         maxOutputTokens: 250,
-        // Gemini 3 path: minimal thinking. Gemini 2.x path: thinkingBudget 0.
-        // We send BOTH — Google silently ignores whichever doesn't apply.
-        thinking_level: 'minimal',
         thinkingConfig: { thinkingBudget: 0 },
       },
     });
@@ -436,6 +461,7 @@ async function quickScoreGemini(url, tier, jdSnippet) {
       .replace('{{URL}}', url)
       .replace('{{TIER}}', String(tier))
       .replace('{{JD_SNIPPET}}', (jdSnippet || '').slice(0, 3000))
+      + _renderPerUrlDiscardBrief(url)
       + _discardBrief;
     const result = await model.generateContent([{ text: prompt }]);
     const raw = result.response.text().trim();
@@ -449,6 +475,53 @@ async function quickScoreGemini(url, tier, jdSnippet) {
 // TRIAGE_PROVIDER_PRIORITY env var controls order (default: local,anthropic,gemini)
 const PROVIDER_CHAIN = (process.env.TRIAGE_PROVIDER_PRIORITY || 'local,anthropic,gemini')
   .split(',').map(p => p.trim());
+
+// 2026-05-26 — Generic per-vendor triage helper for the xai/openai fallback
+// chain. Routes through lib/council.mjs (shared HTTP wrapper + retry +
+// cost-tracking) instead of duplicating per-vendor SDK logic. Used by the
+// `case 'xai'` and `case 'openai'` branches in quickScoreRouted below.
+async function quickScoreCouncil(url, tier, jdSnippet, modelKey) {
+  const { callCouncil } = await import('./lib/council.mjs');
+  const promptTemplate = readCached(TRIAGE_PROMPT) ?? readFileSync(TRIAGE_PROMPT, 'utf8');
+  const prompt = promptTemplate
+    .replace('{{URL}}', url)
+    .replace('{{TIER}}', String(tier))
+    .replace('{{JD_SNIPPET}}', (jdSnippet || '').slice(0, 3000))
+    + _renderPerUrlDiscardBrief(url)
+    + _discardBrief;
+  const r = await callCouncil({
+    prompt,
+    models: [modelKey],
+    opts: { timeoutMs: 60000, maxTokens: 250, temperature: 0 },
+  });
+  const out = r.results?.[0];
+  if (!out || out.error) throw new Error(`${modelKey}: ${out?.error || 'no response'}`);
+  const raw = (out.content || '').trim();
+  const parsed = parseTriageOutput(raw);
+  if (parsed.error) throw new Error(`${modelKey} parse failed: ${parsed.error}`);
+  return parsed;
+}
+
+// 2026-05-26 — Premium-tier override. When invoked with `--use-sonnet-jd`
+// (Tier 2/3 from lib/process-all-tiers.mjs), the local Ollama llama3.2:3b
+// model produces hallucinated canned responses (anchored to the system-prompt
+// CV context instead of evaluating each JD). See audit at
+// .claude/audit/process-all-tier-validation-fix-2026-05-26/notes.md.
+//
+// Mitchell's locked decision 2026-05-26: route premium-tier triage to
+// non-Anthropic models. Default chain is gemini → xai (Grok-4-fast-reasoning,
+// ~$3/1M tokens) so a transient Gemini outage doesn't hard-fail the whole
+// pipeline. OpenAI gpt-5 (~$20/1M) is wired but kept off the default chain
+// because cost would balloon ~6x if it became the primary fallback path —
+// opt in by setting TRIAGE_PROVIDER_PRIORITY_PREMIUM=gemini,xai,openai.
+// To re-add Anthropic (Mitchell currently over the monthly cap), set
+// TRIAGE_PROVIDER_PRIORITY_PREMIUM=gemini,xai,anthropic.
+const PROVIDER_CHAIN_PREMIUM = (process.env.TRIAGE_PROVIDER_PRIORITY_PREMIUM || 'gemini,xai')
+  .split(',').map(p => p.trim());
+const EFFECTIVE_PROVIDER_CHAIN = USE_SONNET_JD ? PROVIDER_CHAIN_PREMIUM : PROVIDER_CHAIN;
+if (USE_SONNET_JD) {
+  console.log(`[triage] premium-tier routing: skipping local (canned-rationale bug); chain = [${EFFECTIVE_PROVIDER_CHAIN.join(', ')}]`);
+}
 
 async function quickScoreRouted(url, tier, jdSnippet) {
   // 1. In-memory session cache — free, zero latency
@@ -465,7 +538,54 @@ async function quickScoreRouted(url, tier, jdSnippet) {
     return { score: persisted.score, archetype: persisted.archetype, decision: persisted.decision, reason: 'cached result' };
   }
 
-  for (const provider of PROVIDER_CHAIN) {
+  // 2.5 NEW: Discard-aware pre-triage gate (2026-05-26)
+  //
+  // Runs BEFORE any LLM call. Tier 1 (exact-match prior discard) + Tier 2
+  // (fuzzy similarity) are deterministic file reads — free. Tier 3 calls
+  // GPT-5 via callCouncil (~$0.02/call, budget-capped). Disabled by default
+  // via DISCARD_GATE_ENABLED=false (phased rollout per spec § 13).
+  //
+  // Three outcomes:
+  //   skip-exact / skip-gpt5 → synthesize a SKIP result, no LLM call, return
+  //   advance-flagged        → record per-URL prior_match for downstream
+  //                            prompt injection, proceed to provider chain
+  //   advance                → no-op, proceed normally
+  //
+  // Spec: .claude/audit/discard-gate-spec-2026-05-26/notes.md
+  if ((process.env.DISCARD_GATE_ENABLED ?? 'false').toLowerCase() !== 'false') {
+    try {
+      const { applyDiscardGate } = await import('./lib/discard-gate.mjs');
+      const gate = await applyDiscardGate({
+        url,
+        company: guessCompany(url),
+        role: extractRoleFromUrl(url, jdSnippet),
+        jdText: jdSnippet,
+        archetypes: [],
+      });
+      if (gate.verdict === 'skip-exact' || gate.verdict === 'skip-gpt5') {
+        const result = {
+          score: 0,
+          archetype: 'NO',
+          decision: 'SKIP',
+          reason: `discard-gate: ${gate.reason}`,
+          _discard_gate: gate,
+        };
+        _sessionCache.set(url, result);
+        saveUrlCacheEntry(url, result.score, result.decision, result.archetype);
+        console.log(`[discard-gate] ${gate.verdict.toUpperCase()} ${url.slice(0, 60)} — ${gate.reason}`);
+        return result;
+      }
+      if (gate.verdict === 'advance-flagged' && gate.prior_match) {
+        _perUrlDiscardContext.set(url, gate.prior_match);
+        console.log(`[discard-gate] ADVANCE-FLAGGED ${url.slice(0, 60)} — ${gate.reason}`);
+      }
+    } catch (err) {
+      console.warn(`[discard-gate] gate threw — failing open: ${(err && err.message || err).toString().slice(0, 80)}`);
+      // Fail-open: gate errors NEVER block triage. Triage proceeds normally.
+    }
+  }
+
+  for (const provider of EFFECTIVE_PROVIDER_CHAIN) {
     if (isCircuitOpen(provider)) continue;
     try {
       switch (provider) {
@@ -493,6 +613,21 @@ async function quickScoreRouted(url, tier, jdSnippet) {
         }
         case 'gemini': {
           const result = await quickScoreGemini(url, tier, jdSnippet);
+          _sessionCache.set(url, result);
+          saveUrlCacheEntry(url, result.score, result.decision, result.archetype);
+          return result;
+        }
+        // 2026-05-26 — Non-Anthropic fallback chain. Default
+        // PROVIDER_CHAIN_PREMIUM is 'gemini,xai'; openai is wired but
+        // opt-in via env (cost roughly 6x xai's blended $3/1M).
+        case 'xai': {
+          const result = await quickScoreCouncil(url, tier, jdSnippet, 'xai:grok-4-fast-reasoning');
+          _sessionCache.set(url, result);
+          saveUrlCacheEntry(url, result.score, result.decision, result.archetype);
+          return result;
+        }
+        case 'openai': {
+          const result = await quickScoreCouncil(url, tier, jdSnippet, 'openai:gpt-5');
           _sessionCache.set(url, result);
           saveUrlCacheEntry(url, result.score, result.decision, result.archetype);
           return result;

@@ -3921,7 +3921,7 @@ function renderRow(r, idx) {
              Closure 3.16 (2026-05-22): full-width horizontal bar per spec.
              Phase 4.2 (2026-05-23): label now honest — names the 7 slots
              /api/refresh-deep actually fires (--slots all). -->
-        <button type="button" class="dcard-btn" style="background:linear-gradient(180deg,#1f2a44,#162035);border-color:#3b4f7a;color:#dbe4ff;width:100%;display:block;padding:8px 14px;font-weight:600" onclick="invokeDeepRefresh(${htmlEscape(String(r.num||''))}, this);event.stopPropagation()" title="Phase 3 Layer-3 deep research: 7-slot nuclear sweep, $25–$50 per fire. Confirm modal will appear.">↻ Deep refresh — nuclear sweep (HM intel + toxicity + strategy + positioning + liveness + ATS detection + role enrichment)</button>
+        <button type="button" class="dcard-btn" style="background:linear-gradient(180deg,#1f2a44,#162035);border-color:#3b4f7a;color:#dbe4ff;width:100%;display:block;padding:8px 14px;font-weight:600" onclick="invokeDeepRefresh(${htmlEscape(String(r.num||''))}, this);event.stopPropagation()" title="Phase 3 Layer-3 deep research: 7-slot nuclear sweep — HM intel + toxicity + strategy + positioning + liveness + ATS detection + role enrichment. $25–$50 per fire. Confirm modal will appear.">↻ Deep Refresh</button>
       </div>
     </div>
   </td>
@@ -10527,6 +10527,25 @@ async function build() {
     font-size: 16px; line-height: 1; padding: 4px 6px;
   }
   .pipeline-toast-close:hover { color: var(--text); }
+  /* 2026-05-26 — Stop-run button. Confirms before SIGTERM. Hidden on terminal job state. */
+  .pipeline-toast-cancel {
+    display: block;
+    margin-top: 10px;
+    width: 100%;
+    background: rgba(220, 38, 38, 0.12);
+    color: #fca5a5;
+    border: 1px solid rgba(220, 38, 38, 0.45);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  .pipeline-toast-cancel:hover { background: rgba(220, 38, 38, 0.22); }
+  .pipeline-toast-cancel:disabled { opacity: 0.55; cursor: progress; }
+  body.dark .pipeline-toast-cancel { color: #fca5a5; border-color: rgba(248, 113, 113, 0.55); background: rgba(248, 113, 113, 0.10); }
+  body.dark .pipeline-toast-cancel:hover { background: rgba(248, 113, 113, 0.22); }
 
   /* ── Verify modal ────────────────────────────────────────────── */
   #verify-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 2000; backdrop-filter: blur(2px); }
@@ -13944,10 +13963,15 @@ async function build() {
 
   <!-- Pipeline job toast (in-flight progress indicator) -->
   <div id="pipeline-toast" role="status" aria-live="polite">
-    <button class="pipeline-toast-close" onclick="closePipelineToast()" aria-label="Dismiss">✕</button>
+    <button class="pipeline-toast-close" onclick="closePipelineToast()" aria-label="Dismiss toast (run keeps running)" title="Dismiss this toast. The run keeps running in the background — reopen via the pipeline-activity strip.">✕</button>
     <div class="pipeline-toast-title" id="pipeline-toast-title">Pipeline job running</div>
     <div class="pipeline-toast-phase" id="pipeline-toast-phase">Starting…</div>
     <div class="pipeline-toast-bar"><div class="pipeline-toast-bar-fill" id="pipeline-toast-fill"></div></div>
+    <button class="pipeline-toast-cancel" id="pipeline-toast-cancel" type="button"
+      onclick="cancelCurrentPipelineJob()" aria-label="Stop the run immediately"
+      title="Send SIGTERM to the orchestrator. Spend so far stays on the books; stops future stages from spending more. Cancelled batch jobs can be Resumed via the Run Batch button.">
+      ⏹ Stop run
+    </button>
   </div>
 
   <!-- Overnight summary card (#1): shown on mobile when new items appeared since last visit -->
@@ -23140,6 +23164,59 @@ async function _openCredentialsModal() {
 }
 window._openCredentialsModal = _openCredentialsModal;
 
+/* 2026-05-26 — Job-log modal backing the "see log" hyperlink in the failed-toast.
+ * Fetches /api/pipeline/job-log?job_id=...&format=html and renders the styled
+ * <pre> chunk inside a backdrop modal. Click-outside-to-close + Escape key.
+ * Server caps content at 256KB tail; no path-traversal surface (log_path is
+ * from state file, never user input).
+ */
+async function _openJobLogModal(jobId) {
+  const safeJobId = String(jobId || '').replace(/[^a-z0-9-]/gi, '');
+  if (!safeJobId) return;
+  const existing = document.getElementById('job-log-modal-backdrop');
+  if (existing) { existing.remove(); }
+  const backdrop = document.createElement('div');
+  backdrop.id = 'job-log-modal-backdrop';
+  backdrop.setAttribute('role', 'dialog');
+  backdrop.setAttribute('aria-modal', 'true');
+  backdrop.setAttribute('aria-label', 'Job log: ' + safeJobId);
+  backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:99999;padding:24px';
+  backdrop.addEventListener('click', function(e) {
+    if (e.target === backdrop) backdrop.remove();
+  });
+  const modal = document.createElement('div');
+  modal.style.cssText = 'background:var(--surface,#11131c);border:1px solid var(--border,#232737);border-radius:8px;max-width:1000px;width:100%;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;color:var(--text,#fafafa);font-family:inherit';
+  const header = document.createElement('div');
+  header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border,#232737);flex-shrink:0';
+  header.innerHTML = '<h2 style="margin:0;font-size:13px;font-family:ui-monospace,monospace;color:var(--text-2,#e4e4e7);font-weight:600">Job log &middot; ' + safeJobId + '</h2>' +
+    '<button type="button" id="job-log-modal-close" aria-label="Close" style="background:transparent;border:none;color:var(--text-3);font-size:18px;cursor:pointer;padding:4px 8px;line-height:1">' + String.fromCharCode(0x2715) + '</button>';
+  const body = document.createElement('div');
+  body.style.cssText = 'flex:1;overflow:hidden;display:flex';
+  body.innerHTML = '<div style="padding:24px;color:var(--text-3,#b8b8c0);font-size:13px">Loading log' + String.fromCharCode(8230) + '</div>';
+  modal.appendChild(header);
+  modal.appendChild(body);
+  backdrop.appendChild(modal);
+  document.body.appendChild(backdrop);
+  document.getElementById('job-log-modal-close').addEventListener('click', function() { backdrop.remove(); document.removeEventListener('keydown', escCloseHandler); });
+  function escCloseHandler(e) {
+    if (e.key === 'Escape') { backdrop.remove(); document.removeEventListener('keydown', escCloseHandler); }
+  }
+  document.addEventListener('keydown', escCloseHandler);
+  try {
+    const r = await fetch('/api/pipeline/job-log?job_id=' + encodeURIComponent(safeJobId) + '&format=html');
+    if (!r.ok) {
+      const errText = await r.text();
+      body.innerHTML = '<div style="padding:24px;color:var(--red-fg,#dc2626);font-size:13px">HTTP ' + r.status + ': ' + errText.slice(0, 240).replace(/</g, '&lt;') + '</div>';
+      return;
+    }
+    const html = await r.text();
+    body.innerHTML = html;
+  } catch (err) {
+    body.innerHTML = '<div style="padding:24px;color:var(--red-fg,#dc2626);font-size:13px">Failed to fetch log: ' + String(err.message || err).replace(/</g, '&lt;') + '</div>';
+  }
+}
+window._openJobLogModal = _openJobLogModal;
+
 /* Phase 5 (Closure 4+5+6, 2026-05-23) — Intel pop-out modals.
  *
  * Three full modal-backdrop pop-outs for the drawer intel chips:
@@ -28559,6 +28636,55 @@ function closePipelineToast() {
   _pipelineCurrentJob = null;
 }
 
+// 2026-05-26 — Cancel the run from the visible pipeline toast. Wires to the
+// existing /api/batch/cancel endpoint (which handles both batch + process-all
+// jobs via pid lookup in pipeline-process-state.json). Confirms before
+// firing because SIGTERM on a long-running orchestrator is hard to reverse.
+// Triggered by the new ⏹ Stop run button inside #pipeline-toast.
+async function cancelCurrentPipelineJob() {
+  if (!_pipelineCurrentJob || !_pipelineCurrentJob.jobId) {
+    if (window.toast) window.toast('No active job to cancel', 'info');
+    else alert('No active job to cancel');
+    return;
+  }
+  var jobId = _pipelineCurrentJob.jobId;
+  var typeLabel = _pipelineCurrentJob.type === 'process-all' ? 'Process All' : 'Run Batch';
+  var msg = 'Stop the running ' + typeLabel + ' (' + jobId + ')?' +
+            String.fromCharCode(10) + String.fromCharCode(10) +
+            'Sends SIGTERM to the orchestrator. Spend already incurred stays on the books; ' +
+            'stops future stages from spending more. ' +
+            (typeLabel === 'Run Batch' ? 'Resume via the Run Batch button after cancel completes.' :
+                                          'You can re-fire Process All after the cancel completes.');
+  if (!confirm(msg)) return;
+  var btn = document.getElementById('pipeline-toast-cancel');
+  if (btn) { btn.disabled = true; btn.textContent = '⏹ Stopping' + String.fromCharCode(8230); }
+  try {
+    var r = await fetch('/api/batch/cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jobId: jobId }),
+    });
+    var data = await r.json().catch(function() { return {}; });
+    if (!r.ok || !data.ok) {
+      throw new Error((data && data.error) || ('HTTP ' + r.status));
+    }
+    if (btn) {
+      if (data.exitState === 'already-finished' || data.exitState === 'process-already-gone') {
+        btn.textContent = '✓ Already stopped';
+      } else {
+        btn.textContent = '✓ Stop signal sent';
+      }
+    }
+    if (window.toast) window.toast('Cancel signal sent for ' + jobId, 'success');
+  } catch (err) {
+    if (btn) { btn.disabled = false; btn.textContent = '⏹ Stop run'; }
+    var emsg = (err && err.message) || 'cancel failed';
+    if (window.toast) window.toast('Cancel failed: ' + emsg, 'error');
+    else alert('Cancel failed: ' + emsg);
+  }
+}
+window.cancelCurrentPipelineJob = cancelCurrentPipelineJob;
+
 // On page load: check the server for any in-flight Process All / Run Batch
 // and restore the toast + poll so users entering the dashboard mid-run see
 // the status. Visible across sessions / browsers / devices.
@@ -28633,6 +28759,18 @@ function _updatePipelineToast(job, logTail) {
     && _pipelineLastProgressMs > 0
     && (_now - _pipelineLastProgressMs) > PIPELINE_STALL_THRESHOLD_MS;
   const info = phaseMap[job.phase] || phaseMap.queued;
+  // 2026-05-26 — Hide the ⏹ Stop run button once the job reaches a terminal
+  // state. Show it while the job is queued/running so the user can SIGTERM
+  // from the visible toast (not buried in the batch-status modal).
+  const cancelBtn = document.getElementById('pipeline-toast-cancel');
+  if (cancelBtn) {
+    const isTerminal = (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled');
+    cancelBtn.style.display = isTerminal ? 'none' : 'block';
+    // Reset disabled state if a prior cancel attempt failed and the run is still active
+    if (!isTerminal && cancelBtn.disabled && cancelBtn.textContent.indexOf('Stopping') < 0 && cancelBtn.textContent.indexOf('signal sent') < 0) {
+      cancelBtn.disabled = false;
+    }
+  }
   if (job.status === 'completed') {
     titleEl.textContent = '✅ ' + (job.type === 'process-all' ? 'Pipeline drained' : 'Batch eval complete');
     phaseEl.textContent = (job.processed != null ? job.processed + ' items processed' : 'Done') +
@@ -28642,7 +28780,23 @@ function _updatePipelineToast(job, logTail) {
     document.dispatchEvent(new CustomEvent('careerops:pipeline-job-complete', { detail: { job } }));
   } else if (job.status === 'failed') {
     titleEl.textContent = '❌ ' + (job.type === 'process-all' ? 'Process All failed' : 'Batch eval failed');
-    phaseEl.textContent = (job.failure_phase ? 'Failed at: ' + job.failure_phase : (job.error || 'Unknown error')) + ' (see log)';
+    // 2026-05-26 — Hyperlink the "see log" text to window._openJobLogModal.
+    // Mitchell's screenshot showed the prior plain-text "(see log)" wasn't
+    // clickable. Use innerHTML + DOM-built anchor + addEventListener (avoids
+    // inline-onclick escape hell). Failure-message is HTML-escaped; jobId is
+    // regex-stripped to [a-z0-9-] only before injection.
+    const _flFailMsg = job.failure_phase ? 'Failed at: ' + job.failure_phase : (job.error || 'Unknown error');
+    const _flSafeMsg = String(_flFailMsg).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const _flSafeJobId = String(job.jobId || job.job_id || '').replace(/[^a-z0-9-]/gi, '');
+    phaseEl.innerHTML = _flSafeMsg + ' (<a href="javascript:void(0)" data-job-log-id="' + _flSafeJobId + '" style="color:inherit;text-decoration:underline;cursor:pointer">see log</a>)';
+    const _flLink = phaseEl.querySelector('a[data-job-log-id]');
+    if (_flLink) {
+      _flLink.addEventListener('click', function(e) {
+        e.stopPropagation();
+        const id = _flLink.getAttribute('data-job-log-id');
+        if (id && typeof window._openJobLogModal === 'function') window._openJobLogModal(id);
+      });
+    }
     fillEl.style.width = info.pct + '%';
     fillEl.style.background = 'var(--red-fg, #dc2626)';
   } else {
@@ -32208,6 +32362,13 @@ async function optimisticStatusChange(rowId, newStatus) {
   // Find all status badges for this row (Apply-Now + All Evals may both show it)
   const rows = Array.from(document.querySelectorAll('tr.row[data-row-id="' + rowId + '"], tr.row[data-num="' + rowId + '"]'));
   if (!rows.length) return;
+  // 2026-05-26 — Rows transitioning to anything outside Evaluated/Responded
+  // should disappear from Apply-Now immediately. Server fires a debounced
+  // rebuild (~500ms) but the user sees stale rows in the interim. Hide them
+  // optimistically; restore on server failure via the catch block.
+  const APPLY_NOW_REQUIRED = ['evaluated', 'responded'];
+  const newStatusLower = String(newStatus).toLowerCase();
+  const willLeaveApplyNow = !APPLY_NOW_REQUIRED.includes(newStatusLower);
   const snapshots = rows.map(function(tr) {
     var badge = tr.querySelector('.status-pill, .badge[data-status]');
     return {
@@ -32216,20 +32377,45 @@ async function optimisticStatusChange(rowId, newStatus) {
       origText: badge ? badge.textContent : null,
       origClass: badge ? badge.className : null,
       origRowStatus: tr.dataset.status || null,
+      wasHidden: false,
     };
   });
-  // Optimistic DOM update
-  for (var s of snapshots) {
-    if (s.badge) {
-      s.badge.textContent = newStatus;
-      s.badge.classList.add('status-pill-pending');
-      if (s.tr) s.tr.dataset.status = newStatus.toLowerCase();
+  // Optimistic DOM update — badge text + (if leaving Apply-Now) hide the row
+  for (var sh of snapshots) {
+    if (sh.badge) {
+      sh.badge.textContent = newStatus;
+      sh.badge.classList.add('status-pill-pending');
+      if (sh.tr) sh.tr.dataset.status = newStatusLower;
+    }
+    if (willLeaveApplyNow && sh.tr) {
+      const rowIdAttr = sh.tr.getAttribute('data-row-id') || '';
+      if (/^apply-/.test(rowIdAttr)) {
+        sh.tr.style.display = 'none';
+        sh.wasHidden = true;
+      }
+    }
+  }
+  // Decrement the Refresh-stale badge if the discarded row was in the
+  // stale-rows window var. If count reaches 0, hide the Refresh-stale CTA
+  // so it doesn't dangle as a phantom-1-row.
+  if (willLeaveApplyNow && Array.isArray(window.__DEEP_REFRESH_STALE_ROWS__)) {
+    var beforeLen = window.__DEEP_REFRESH_STALE_ROWS__.length;
+    window.__DEEP_REFRESH_STALE_ROWS__ = window.__DEEP_REFRESH_STALE_ROWS__.filter(function(r) {
+      return String(r && r.num) !== String(rowId);
+    });
+    if (window.__DEEP_REFRESH_STALE_ROWS__.length !== beforeLen) {
+      var badge = document.querySelector('.refresh-stale-count');
+      if (badge) badge.textContent = String(window.__DEEP_REFRESH_STALE_ROWS__.length);
+      if (window.__DEEP_REFRESH_STALE_ROWS__.length === 0) {
+        var cta = document.getElementById('apply-now-refresh-stale');
+        if (cta) cta.style.display = 'none';
+      }
     }
   }
   if (window.toast) window.toast(rowId + ' → ' + newStatus, 'info');
   try {
     const payload = { rowId: rowId, field: 'status', value: newStatus };
-    if (newStatus.toLowerCase() === 'applied') {
+    if (newStatusLower === 'applied') {
       // D5: trigger funnel-completion markApplied payload
       payload._funnelApplied = true;
     }
@@ -32248,13 +32434,14 @@ async function optimisticStatusChange(rowId, newStatus) {
       if (s2.badge) s2.badge.classList.remove('status-pill-pending');
     }
   } catch (err) {
-    // Rollback
+    // Rollback: restore badge state AND row visibility for wasHidden snapshots
     for (var s3 of snapshots) {
       if (s3.badge) {
         s3.badge.textContent = s3.origText || '';
         s3.badge.className = s3.origClass || '';
         if (s3.tr && s3.origRowStatus) s3.tr.dataset.status = s3.origRowStatus;
       }
+      if (s3.wasHidden && s3.tr) s3.tr.style.display = '';
     }
     if (window.toast) window.toast('Status update failed — reverted', 'error');
   }
@@ -32546,6 +32733,13 @@ async function _drmStreamJob(jobId, streamUrl, rowEl, opts) {
       statusCell.textContent = text;
       if (color) statusCell.style.color = color;
     };
+    // 2026-05-26 — Track which of the 7 slots we've seen so the row's status
+    // cell can display [N/7] progression. Previously the cell only showed
+    // "phase NAME with PCT%" without any count of how many slots had
+    // completed — Mitchell couldn't tell if it was on slot 2 of 7 or slot 6.
+    const TOTAL_SLOTS = 7;
+    const _slotsSeen = new Set();
+    let _lastFinalSlot = null;
     let resolved = false;
     const finish = (result) => {
       if (resolved) return;
@@ -32564,10 +32758,14 @@ async function _drmStreamJob(jobId, streamUrl, rowEl, opts) {
       if (typeof opts.onProgress === 'function') {
         try { opts.onProgress(ev); } catch (_) {}
       }
-      const phase = ev.phase || ev.slot || ev.step || ev.stage || '';
+      const slot = ev.slot || '';
+      const phase = ev.phase || slot || ev.step || ev.stage || '';
+      const step = ev.step || '';
+      if (slot) _slotsSeen.add(slot);
+      if (slot && step === 'done') _lastFinalSlot = slot;
       const frac = (typeof ev.fraction === 'number') ? Math.round(ev.fraction * 100) : null;
       if (ev.status === 'done' || ev.exitCode === 0) {
-        setStatus('done', 'var(--green-fg)');
+        setStatus('✓ all ' + TOTAL_SLOTS + '/' + TOTAL_SLOTS + ' done', 'var(--green-fg)');
         if (rowEl) rowEl.classList.add('drm-row-fired');
         finish({ ok: true, jobId, finalEvent: ev });
         return;
@@ -32578,8 +32776,12 @@ async function _drmStreamJob(jobId, streamUrl, rowEl, opts) {
         return;
       }
       if (phase) {
-        const label = frac !== null ? phase + ' \xb7 ' + frac + '%' : phase;
-        setStatus(label.slice(0, 60), '');
+        const slotCount = _slotsSeen.size || 1;
+        const countTag = '[' + slotCount + '/' + TOTAL_SLOTS + '] ';
+        const label = frac !== null
+          ? countTag + phase + ' \xb7 ' + frac + '%'
+          : countTag + phase;
+        setStatus(label.slice(0, 80), '');
       }
     }
 
@@ -32851,7 +33053,28 @@ async function confirmDeepRefresh() {
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
-    if (statusMsg) statusMsg.textContent = 'All ' + checks.length + ' jobs complete: ' + okCount + ' succeeded, ' + errCount + ' failed. Rebuilding…';
+    // 2026-05-26 — Completion banner with green styling so Mitchell sees the
+    // "done" state at a glance instead of squinting at the small status text.
+    // Also covers the all-failed case (errCount === checks.length) — no reload
+    // fires but the banner explains why.
+    if (statusMsg) {
+      statusMsg.textContent = '';
+      const banner = document.createElement('div');
+      const allOk = errCount === 0;
+      const allFailed = okCount === 0;
+      banner.style.cssText = 'margin:6px 0;padding:10px 12px;border-radius:6px;font-weight:600;'
+        + (allOk
+            ? 'background:rgba(22,127,55,0.12);color:var(--green-fg,#1a7f37);border:1px solid rgba(22,127,55,0.3)'
+            : allFailed
+            ? 'background:rgba(185,28,28,0.12);color:#b91c1c;border:1px solid rgba(185,28,28,0.3)'
+            : 'background:rgba(180,109,9,0.12);color:#b46d09;border:1px solid rgba(180,109,9,0.3)');
+      banner.textContent = allOk
+        ? '✓ All ' + checks.length + ' jobs complete — rebuilding dashboard…'
+        : allFailed
+        ? '✗ All ' + checks.length + ' jobs failed — no rebuild fired'
+        : '⚠ ' + okCount + ' of ' + checks.length + ' jobs succeeded (' + errCount + ' failed) — rebuilding dashboard with partial results…';
+      statusMsg.appendChild(banner);
+    }
     if (okCount > 0) {
       _drmRebuildAndReload();
     }

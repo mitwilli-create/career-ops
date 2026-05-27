@@ -35,6 +35,9 @@ import { resolveDeepApplyUrl }                                     from '../lib/
 import { getIndustryGapRanking, renderIndustryGapTable }           from '../lib/industry-gap.mjs';
 import { assessTravelTradeoff, renderTravelChip }                  from '../lib/travel-cap.mjs';
 import { computeStrategyCeiling, renderStrategyCard }              from '../lib/strategy-ceiling.mjs';
+// PR-E Phase 2 (2026-05-27) — disk-derived intel-refresh status for the
+// partial-success badge state. See lib/intel-refresh-state.mjs.
+import { getRefreshStatus as _intelGetRefreshStatus, getSlotNames as _intelGetSlotNames } from '../lib/intel-refresh-state.mjs';
 import { renderEquitySlidersHtml }                                 from '../lib/equity-calculator.mjs';
 import { getDashboardSidebar, getDashboardSidebarInner }            from '../lib/dashboard-shell.mjs';
 import { loadAllPolishStatus }                                     from '../lib/polish-status-loader.mjs';
@@ -3150,16 +3153,29 @@ function _buildGapInterviewPrompt({ title, detail, severity, company, role, repo
 // status band aligned with lib/refresh-cache-registry.mjs:hardMaxTtlDays=14.
 // Used to (a) badge each apply-now row's action cell, (b) drive the
 // section-header "Refresh stale (N)" CTA + bulk modal.
-//   fresh   (<7d)
+//   fresh   (<7d, all 10 slots on disk)
 //   cooling (7-13d)
 //   stale   (>=14d — past hardMaxTtlDays)
 //   missing (no cache file — never deep-refreshed)
+//   partial (NEW, PR-E Phase 2 2026-05-27 — some slots on disk + some missing/failed)
+//
+// PR-E Phase 2 (2026-05-27): when the hm-intel mtime suggests 'fresh' but the
+// disk-derived multi-slot view says 'partial' (e.g., hm-intel + 5 others
+// present, 4 slots missing/failed), we DOWNGRADE the badge to 'partial' so
+// the chip honestly reflects that the deep refresh didn't finish all slots.
 function _computeIntelFreshness(r) {
   try {
     const cSlug = String(r.company || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     const rSlug = String(r.role    || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     const hmPath = join(ROOT, 'data', 'hm-intel', `${cSlug}-${rSlug}.json`);
     if (!existsSync(hmPath)) {
+      // Even with hm-intel missing, check multi-slot status — if OTHER slots
+      // are present (e.g., toxicity + positioning), surface 'partial' instead
+      // of bare 'missing'.
+      const multi = _safeIntelMultiSlot(r);
+      if (multi && multi.slots_done && multi.slots_done.length > 0) {
+        return { hasFile: false, ageDays: Infinity, status: 'partial', path: hmPath, multi };
+      }
       return { hasFile: false, ageDays: Infinity, status: 'missing', path: hmPath };
     }
     const st = statSync(hmPath);
@@ -3168,9 +3184,31 @@ function _computeIntelFreshness(r) {
     if (ageDays < 7)       status = 'fresh';
     else if (ageDays < 14) status = 'cooling';
     else                   status = 'stale';
+    // Downgrade fresh → partial when the multi-slot view says partial.
+    if (status === 'fresh') {
+      const multi = _safeIntelMultiSlot(r);
+      if (multi && multi.status === 'partial') {
+        status = 'partial';
+        return { hasFile: true, ageDays, status, path: hmPath, multi };
+      }
+    }
     return { hasFile: true, ageDays, status, path: hmPath };
   } catch (_) {
     return { hasFile: false, ageDays: Infinity, status: 'missing', path: null };
+  }
+}
+
+// PR-E Phase 2 (2026-05-27) — best-effort multi-slot status lookup, used by
+// _computeIntelFreshness to surface 'partial' state. Wrapped in try/catch
+// because we never want a disk-derive failure to break dashboard build.
+function _safeIntelMultiSlot(r) {
+  try {
+    if (!r || r.num == null) return null;
+    const rowId = Number(r.num);
+    if (!Number.isFinite(rowId)) return null;
+    return _intelGetRefreshStatus(rowId);
+  } catch (_) {
+    return null;
   }
 }
 
@@ -3728,16 +3766,33 @@ function renderRow(r, idx) {
       // 4-band status the per-row Deep Refresh button uses.
       try {
         const fr = _computeIntelFreshness(r);
-        const label = fr.status === 'missing'
-          ? 'never'
-          : fr.ageDays >= 1 ? Math.round(fr.ageDays) + 'd' : '<1d';
-        const tip = fr.status === 'stale'
+        // PR-E Phase 2 (2026-05-27) — 'partial' label uses N/10 ratio; other
+        // statuses use the existing time-based label (never / Nd old).
+        let label;
+        if (fr.status === 'partial' && fr.multi) {
+          const _done = fr.multi.slots_done?.length || 0;
+          const _total = (fr.multi.slots_done?.length || 0) + (fr.multi.slots_failed?.length || 0) + (fr.multi.slots_missing?.length || 0);
+          label = _done + '/' + (_total || 10);
+        } else {
+          label = fr.status === 'missing'
+            ? 'never'
+            : fr.ageDays >= 1 ? Math.round(fr.ageDays) + 'd' : '<1d';
+        }
+        let tip = fr.status === 'stale'
           ? 'hm-intel cache is past the 14d ceiling — click \u21bb in the action cell to deep-refresh'
           : fr.status === 'cooling'
             ? 'hm-intel cache is approaching the 14d ceiling'
             : fr.status === 'missing'
               ? 'no hm-intel cache for this row \u2014 click \u21bb to fire the first deep refresh'
               : 'hm-intel cache is fresh';
+
+        // PR-E Phase 2 (2026-05-27) — partial tip overrides the four legacy branches.
+        if (fr.status === 'partial' && fr.multi) {
+          const _failed = fr.multi.slots_failed || [];
+          const _missing = fr.multi.slots_missing || [];
+          const _gapList = [..._failed, ..._missing].slice(0, 4).join(', ');
+          tip = 'Deep refresh is partial — ' + label + ' slots filled. Gap: ' + _gapList + (_failed.length + _missing.length > 4 ? '…' : '') + '. Click ↻ to retry the missing slots.';
+        }
         return '<span class="intel-age-chip intel-age-' + fr.status + '" title="' + tip + '">intel ' + label + '</span>';
       } catch (e) { return ''; }
     })()}</td>
@@ -3754,16 +3809,31 @@ function renderRow(r, idx) {
       // cache age + opens the cost-confirmation modal on click. Always visible
       // (no jumpy layout) but de-emphasized for fresh rows; promoted for stale.
       const fr = _computeIntelFreshness(r);
-      const ageLabel = fr.status === 'missing'
-        ? 'never'
-        : fr.ageDays >= 1 ? Math.round(fr.ageDays) + 'd' : '<1d';
-      const tip = fr.status === 'stale'
-        ? 'Intel ' + ageLabel + ' old (past 14d ceiling) — click for a 7-slot deep refresh ($25-$105)'
-        : fr.status === 'cooling'
-          ? 'Intel ' + ageLabel + ' old (approaching 14d) — click for a 7-slot deep refresh ($25-$105)'
-          : fr.status === 'missing'
-            ? 'No hm-intel cache for this row — click for the first 7-slot deep refresh ($25-$105)'
-            : 'Intel ' + ageLabel + ' old (fresh) — click for a 7-slot deep refresh ($25-$105)';
+      let ageLabel;
+      if (fr.status === 'partial' && fr.multi) {
+        const _done = fr.multi.slots_done?.length || 0;
+        const _total = (fr.multi.slots_done?.length || 0) + (fr.multi.slots_failed?.length || 0) + (fr.multi.slots_missing?.length || 0);
+        ageLabel = _done + '/' + (_total || 10);
+      } else {
+        ageLabel = fr.status === 'missing'
+          ? 'never'
+          : fr.ageDays >= 1 ? Math.round(fr.ageDays) + 'd' : '<1d';
+      }
+      let tip;
+      if (fr.status === 'partial' && fr.multi) {
+        const _failed = fr.multi.slots_failed || [];
+        const _missing = fr.multi.slots_missing || [];
+        const _gap = [..._failed, ..._missing].slice(0, 4).join(', ');
+        tip = 'Deep refresh is partial — ' + ageLabel + ' slots filled. Gap: ' + _gap + (_failed.length + _missing.length > 4 ? '…' : '') + '. Click for a 7-slot deep refresh to fill the gap ($25-$105).';
+      } else {
+        tip = fr.status === 'stale'
+          ? 'Intel ' + ageLabel + ' old (past 14d ceiling) — click for a 7-slot deep refresh ($25-$105)'
+          : fr.status === 'cooling'
+            ? 'Intel ' + ageLabel + ' old (approaching 14d) — click for a 7-slot deep refresh ($25-$105)'
+            : fr.status === 'missing'
+              ? 'No hm-intel cache for this row — click for the first 7-slot deep refresh ($25-$105)'
+              : 'Intel ' + ageLabel + ' old (fresh) — click for a 7-slot deep refresh ($25-$105)';
+      }
       const num = htmlEscape(String(r.num || ''));
       const company = htmlEscape(r.company || '');
       const role = htmlEscape(r.role || '');
@@ -5433,7 +5503,9 @@ async function build() {
   const _deepRefreshStaleRows = [];
   for (const r of applyNowSorted) {
     const fr = _computeIntelFreshness(r);
-    if (fr.status === 'stale' || fr.status === 'missing' || fr.status === 'cooling') {
+    // PR-E Phase 2 (2026-05-27) — include 'partial' rows so the bulk refresh
+    // modal can surface partially-filled deep refreshes that need a retry.
+    if (fr.status === 'stale' || fr.status === 'missing' || fr.status === 'cooling' || fr.status === 'partial') {
       _deepRefreshStaleRows.push({
         num: r.num,
         company: r.company || '',
@@ -5441,11 +5513,17 @@ async function build() {
         status: fr.status,
         ageDays: Number.isFinite(fr.ageDays) ? Number(fr.ageDays.toFixed(1)) : null,
         score: r.score || 0,
+        // PR-E Phase 2: slot-level annotation for the bulk modal hover.
+        slots_done_count: fr.multi?.slots_done?.length ?? null,
+        slots_failed_count: fr.multi?.slots_failed?.length ?? null,
+        slots_missing_count: fr.multi?.slots_missing?.length ?? null,
       });
     }
   }
   _deepRefreshStaleRows.sort((a, b) => {
-    const rank = { stale: 0, missing: 1, cooling: 2 };
+    // PR-E Phase 2 (2026-05-27) — 'partial' ranks BETWEEN missing and cooling
+    // (more actionable than cooling, but less urgent than missing/stale).
+    const rank = { stale: 0, missing: 1, partial: 2, cooling: 3 };
     const ra = rank[a.status], rb = rank[b.status];
     if (ra !== rb) return ra - rb;
     if (a.ageDays === null && b.ageDays === null) return b.score - a.score;
@@ -5454,7 +5532,8 @@ async function build() {
     return b.ageDays - a.ageDays;
   });
   const _deepRefreshStaleJson = JSON.stringify(_deepRefreshStaleRows).replace(/<\//g, '<\\/');
-  const _deepRefreshStaleCount = _deepRefreshStaleRows.filter(r => r.status === 'stale' || r.status === 'missing').length;
+  // PR-E Phase 2: count includes 'partial' — these are actionable retries too.
+  const _deepRefreshStaleCount = _deepRefreshStaleRows.filter(r => r.status === 'stale' || r.status === 'missing' || r.status === 'partial').length;
 
   // ── PR-09 (2026-05-25) — build-time cache-age map for drawer staleness UI ──
   // Keyed by row.num (string). Values: per-surface age bucket. Injected as
@@ -8288,6 +8367,12 @@ async function build() {
   .row-deep-refresh-stale:hover { background: rgba(220, 38, 38, 0.16); }
   .row-deep-refresh-missing { color: var(--text-3); border-color: var(--border-strong); border-style: dashed; }
   .row-deep-refresh-missing:hover { color: var(--text); border-color: var(--text-3); }
+  /* PR-E Phase 2 (2026-05-27) — partial: amber, between fresh and missing.
+     Surfaces when some slots are present on disk but at least one is missing
+     or failed. Disk-derived via lib/intel-refresh-state.mjs::getRefreshStatus. */
+  .row-deep-refresh-partial { color: #92400e; border-color: rgba(217, 119, 6, 0.45); background: rgba(217, 119, 6, 0.06); }
+  body.dark .row-deep-refresh-partial { color: #fcd34d; border-color: rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.08); }
+  .row-deep-refresh-partial:hover { background: rgba(217, 119, 6, 0.12); }
 
   /* 2026-05-24 v2: intel-age chip beside the Eval Date staleness badge.
      Surfaces hm-intel cache freshness independently of the eval-date age. */
@@ -8310,6 +8395,10 @@ async function build() {
   .intel-age-stale   { color: #b91c1c; border-color: rgba(220, 38, 38, 0.5); background: rgba(220, 38, 38, 0.08); font-weight: 700; }
   body.dark .intel-age-stale { color: #fca5a5; border-color: rgba(248, 113, 113, 0.55); background: rgba(248, 113, 113, 0.10); }
   .intel-age-missing { color: var(--text-3); border-style: dashed; font-style: italic; }
+  /* PR-E Phase 2 (2026-05-27) — partial chip for the eval-date area row chip.
+     Amber, between fresh and missing. Disk-derived via getRefreshStatus. */
+  .intel-age-partial { color: #92400e; border-color: rgba(217, 119, 6, 0.45); background: rgba(217, 119, 6, 0.06); font-weight: 600; }
+  body.dark .intel-age-partial { color: #fcd34d; border-color: rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.08); }
   /* PR-09 (2026-05-25) — cache freshness badge from lib/cache-freshness.mjs.
      Sits inline after dcard-label text. tone-safe: "Updated N days ago — refresh?"
      Rendered at build time; visible when the cache surface has aged past its TTL. */
@@ -32724,6 +32813,9 @@ function _drmEsc(s) {
 
 function _drmAgeLabel(ageDays, status) {
   if (status === 'missing' || ageDays == null) return 'never refreshed';
+  // PR-E Phase 2 (2026-05-27) — 'partial' state from disk-derive shows up here
+  // when the bulk-modal renders rows whose deep refresh didn't fill all slots.
+  if (status === 'partial') return 'partial refresh (retry recommended)';
   if (ageDays < 1) return '<1d old';
   return Math.round(ageDays) + 'd old';
 }

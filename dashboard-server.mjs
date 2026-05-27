@@ -33,6 +33,9 @@ import { estimateTTO } from './lib/tto-estimator.mjs';
 import { scoreToxicity } from './lib/toxicity-scorer.mjs';
 import { renderChildPageHTML } from './lib/child-page-template.mjs';
 import { renderInlineDiff, renderSideBySideDiff } from './lib/diff-renderer.mjs';
+// PR-E Phase 2 (2026-05-27) — disk-deriving status reader. Replaces direct
+// state.json reads with derived-from-disk truth. See lib/intel-refresh-state.mjs.
+import { getRefreshStatus as _intelGetRefreshStatus, getSlotNames as _intelGetSlotNames } from './lib/intel-refresh-state.mjs';
 // ZETA 2026-05-19 — network-database search + person lookups
 import {
   searchNetwork as networkSearch,
@@ -9011,12 +9014,53 @@ async function generatePack(){
           };
         }
 
-        return json({ ok: true, slug, team_health, interview_likelihood, hm_visibility, hm_chance });
+        // PR-E Phase 2 (2026-05-27) — surface disk-derived refresh status as
+        // additive payload so the chip drawer can color-band a "partial" state
+        // without requiring a second round-trip to /api/intel-refresh-status.
+        // Falls back to null when row lookup fails (e.g. slug-only request
+        // without a matching apply-now row) — never blocks the primary payload.
+        let refresh_status = null;
+        try {
+          const rowParam = String(query.row || '').trim();
+          if (rowParam && /^[0-9]{1,5}$/.test(rowParam)) {
+            refresh_status = _intelGetRefreshStatus(rowParam);
+          } else if (slug) {
+            const m = String(slug).match(/^(\d+)-/);
+            if (m) refresh_status = _intelGetRefreshStatus(m[1]);
+          }
+        } catch { /* best-effort, never block */ }
+
+        return json({ ok: true, slug, team_health, interview_likelihood, hm_visibility, hm_chance, refresh_status });
       } catch (err) {
         return json({ ok: false, error: err.message }, 500);
       }
     })();
     return;
+  }
+
+  // ── PR-E Phase 2 (2026-05-27) — disk-derived intel-refresh status ─────────
+  // GET /api/intel-refresh-status?row=N
+  //
+  // Disk-derived per-slot completeness for one apply-now row. Returns:
+  //   { ok, rowId, status, slots_done[], slots_failed[], slots_missing[],
+  //     last_refresh, slot_files }
+  // where status ∈ 'never-refreshed' | 'partial' | 'complete' | 'stale'.
+  //
+  // Disk is the source of truth. state.json contributes only the informational
+  // last_refresh ISO + the slots_failed annotations (so we can distinguish
+  // "missing & known-failed" from "missing & never-attempted"). Deleting
+  // state.json would NOT lose information about what work has been done.
+  if (url.startsWith('/api/intel-refresh-status') && req.method === 'GET') {
+    try {
+      const rowParam = String(query.row || query.rowId || '').trim();
+      if (!rowParam || !/^[0-9]{1,5}$/.test(rowParam)) {
+        return json({ ok: false, error: 'row query param required (numeric)' }, 400);
+      }
+      const result = _intelGetRefreshStatus(rowParam);
+      return json({ ok: !result.error, rowId: rowParam, ...result });
+    } catch (err) {
+      return json({ ok: false, error: err.message }, 500);
+    }
   }
 
   // ── Phase 5.2 (2026-05-22) — Interview Likelihood detail endpoint ─────────

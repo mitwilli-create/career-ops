@@ -30,7 +30,7 @@
  * can stream it.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, renameSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -78,10 +78,101 @@ function loadState() {
 }
 
 function saveState(state) {
+  // Atomic write — temp + rename — closes the half-written-state-file failure
+  // mode where a process death between writeFileSync open + close leaves
+  // STATE_PATH corrupt. With rename, the file either has the prior contents
+  // or the new contents — never partial.
   try {
     mkdirSync(dirname(STATE_PATH), { recursive: true });
-    writeFileSync(STATE_PATH, JSON.stringify(state, null, 2), 'utf-8');
+    const tmpPath = `${STATE_PATH}.tmp.${process.pid}.${Date.now()}`;
+    writeFileSync(tmpPath, JSON.stringify(state, null, 2), 'utf-8');
+    renameSync(tmpPath, STATE_PATH);
   } catch (_) { /* */ }
+}
+
+/**
+ * Post-write disk verification for child-script slots.
+ *
+ * The 4 spawnSync slots (hm-intel, role-enrichment, hm-chance,
+ * interview-likelihood) shell out to child scripts and previously trusted
+ * `result.status === 0` as the success signal. That trust was the source of
+ * the row-2387 state-disk drift bug — populate-hm-intel-mini.mjs (or its
+ * sibling scripts) can exit 0 without writing to the expected target path.
+ *
+ * This helper closes that surface by verifying disk-after-exit: if exit_code
+ * is 0 but `target` does not exist OR is zero-bytes, downgrade to
+ * { ok: false, error: 'script-exited-0-but-no-disk-artifact' }.
+ *
+ * @param {Object} args
+ * @param {string} args.slot         — slot name for emit() telemetry
+ * @param {Object} args.row          — apply-now row { num, company, role }
+ * @param {string} args.target       — expected disk-artifact path
+ * @param {Object} args.spawnResult  — return value of child_process.spawnSync
+ * @returns {{ok:boolean, exit_code:number, path:string, error?:string}}
+ */
+export function verifyChildScriptDiskWrite({ slot, row, target, spawnResult }) {
+  const exitCode = spawnResult.status;
+  if (exitCode !== 0) {
+    return { ok: false, exit_code: exitCode, path: target, error: `exit_code=${exitCode}` };
+  }
+  if (!existsSync(target)) {
+    emit({ slot, row: row.num, step: 'verification-failed', expected: target, reason: 'no-disk-artifact-after-exit-0' });
+    return { ok: false, exit_code: exitCode, path: target, error: 'script-exited-0-but-no-disk-artifact' };
+  }
+  try {
+    if (statSync(target).size === 0) {
+      emit({ slot, row: row.num, step: 'verification-failed', expected: target, reason: 'empty-file' });
+      return { ok: false, exit_code: exitCode, path: target, error: 'script-wrote-empty-file' };
+    }
+  } catch (e) {
+    return { ok: false, exit_code: exitCode, path: target, error: `stat-failed: ${e.message}` };
+  }
+  return { ok: true, exit_code: exitCode, path: target };
+}
+
+/**
+ * Compute the next state.rows[rowId] entry from the prior entry + this run's
+ * per-slot results. Pure function — no I/O — for testability.
+ *
+ * Semantics (closes the state-disk drift bug):
+ *   - slots that returned ok:true with cache='hit' or 'skipped'  → done (trust)
+ *   - slots that returned ok:true with cache='miss' and a path   → done IF disk-verifier passed earlier (already filtered into res.ok)
+ *   - slots that returned ok:true with no cache field but path   → done (in-process slots that wrote successfully)
+ *   - slots that returned ok:true with per_metric / per_artifact → done (multi-file slots have internal write checks)
+ *   - slots that returned ok:false                               → failed (recorded with structured error)
+ *   - slots NOT touched this run                                  → preserved from prior state (set-union)
+ *
+ * @param {Object} args
+ * @param {Object|null} args.prevRowState — prior state.rows[rowId] or null
+ * @param {Object}      args.results      — per-slot result map for this run
+ * @param {string}      args.now          — ISO timestamp for last_refresh
+ * @returns {{ last_refresh: string, slots_done: string[], slots_failed?: Array }}
+ */
+export function computeRowStateAfterRun({ prevRowState, results, now }) {
+  const prevDone = Array.isArray(prevRowState?.slots_done) ? prevRowState.slots_done : [];
+  const newlyDone = [];
+  const newlyFailed = [];
+  for (const [slot, res] of Object.entries(results || {})) {
+    if (!res || typeof res !== 'object') continue;
+    if (res.ok === true) {
+      newlyDone.push(slot);
+    } else if (res.ok === false) {
+      newlyFailed.push({
+        slot,
+        error: String(res.error || `exit_code=${res.exit_code}` || 'unknown'),
+        attempted_at: now,
+      });
+    }
+    // res.ok undefined → slot didn't actually run (shouldn't happen in practice).
+  }
+  // Set-union of previously-done + newly-done, MINUS any slot that failed this run.
+  // (A slot that succeeded yesterday but failed today MUST be removed from done.)
+  const failedSet = new Set(newlyFailed.map(f => f.slot));
+  const combined = new Set([...prevDone, ...newlyDone].filter(s => !failedSet.has(s)));
+  const slots_done = Array.from(combined).sort();
+  const out = { last_refresh: now, slots_done };
+  if (newlyFailed.length) out.slots_failed = newlyFailed;
+  return out;
 }
 
 function extractJson(c) {
@@ -128,9 +219,12 @@ async function refreshHmIntel(row, opts = {}) {
     ? [scriptPath, '--row', String(row.num), ...(opts.force ? ['--force'] : [])]
     : [scriptPath, '--rows', String(row.num)];
   const result = spawnSync('node', args, { cwd: ROOT, stdio: 'inherit', env: process.env, timeout: 1500_000 });
-  const ok = result.status === 0;
   emit({ slot: 'hm-intel', row: row.num, step: 'research-done', exit_code: result.status, path: target, mode: deep ? 'deep-council-7' : 'mini' });
-  return { ok, exit_code: result.status, path: target, mode: deep ? 'deep-council-7' : 'mini' };
+  // Post-write verification — closes the state-disk drift bug (canonical
+  // incident: row 2387 example-co 2026-05-26). Child script may exit 0 without
+  // writing target.
+  const verification = verifyChildScriptDiskWrite({ slot: 'hm-intel', row, target, spawnResult: result });
+  return { ...verification, mode: deep ? 'deep-council-7' : 'mini' };
 }
 
 /* -------- SLOT 2: toxicity composite -------- */
@@ -506,9 +600,9 @@ async function refreshRoleEnrichment(row, opts = {}) {
   // enrich-apply-now accepts --rows=N (kebab-with-equals form).
   const args = [scriptPath, `--rows=${row.num}`];
   const result = spawnSync('node', args, { cwd: ROOT, stdio: 'inherit', env: process.env, timeout: 600_000 });
-  const ok = result.status === 0;
   emit({ slot: 'role-enrichment', row: row.num, step: 'enrichment-done', exit_code: result.status, path: bfTarget });
-  return { ok, exit_code: result.status, path: bfTarget };
+  // Post-write verification — closes the state-disk drift bug.
+  return verifyChildScriptDiskWrite({ slot: 'role-enrichment', row, target: bfTarget, spawnResult: result });
 }
 
 /* -------- SLOT 8: hm-chance — companion-agent chip popout (--deep only by default) -------- */
@@ -529,9 +623,9 @@ async function refreshHmChance(row, opts = {}) {
   const args = [scriptPath, '--row', String(row.num), '--max-cost-usd', '30'];
   if (opts.force) args.push('--force');
   const result = spawnSync('node', args, { cwd: ROOT, stdio: 'inherit', env: process.env, timeout: 600_000 });
-  const ok = result.status === 0;
   emit({ slot: 'hm-chance', row: row.num, step: 'research-done', exit_code: result.status, path: target });
-  return { ok, exit_code: result.status, path: target };
+  // Post-write verification — closes the state-disk drift bug.
+  return verifyChildScriptDiskWrite({ slot: 'hm-chance', row, target, spawnResult: result });
 }
 
 /* -------- SLOT 9: interview-likelihood — companion-agent chip popout (--deep only by default) -------- */
@@ -552,9 +646,9 @@ async function refreshInterviewLikelihood(row, opts = {}) {
   const args = [scriptPath, '--row', String(row.num), '--max-cost-usd', '25'];
   if (opts.force) args.push('--force');
   const result = spawnSync('node', args, { cwd: ROOT, stdio: 'inherit', env: process.env, timeout: 600_000 });
-  const ok = result.status === 0;
   emit({ slot: 'interview-likelihood', row: row.num, step: 'research-done', exit_code: result.status, path: target });
-  return { ok, exit_code: result.status, path: target };
+  // Post-write verification — closes the state-disk drift bug.
+  return verifyChildScriptDiskWrite({ slot: 'interview-likelihood', row, target, spawnResult: result });
 }
 
 /* -------- SLOT 10: team-health — corpus-grounded synthesis (PR-04, 2026-05-25) -------- */
@@ -644,7 +738,15 @@ export async function runIntelRefresh({ row, rowId, slots = ['all'], all = false
     emit({ phase: 'row-start', row: r.num, company: r.company, role: r.role });
     try {
       results[r.num] = await refreshRow(r, slots, opts);
-      state.rows[r.num] = { last_refresh: new Date().toISOString(), slots_done: Object.keys(results[r.num]) };
+      // PR-E (2026-05-26): set-union of previously-done + this-run's disk-verified
+      // slots, MINUS any slot that failed this run. Was Object.keys(results) which
+      // (a) silently included slots whose child-script exited 0 without writing
+      // disk artifact, and (b) overwrote prior slots_done on targeted retry.
+      state.rows[r.num] = computeRowStateAfterRun({
+        prevRowState: state.rows[r.num] || null,
+        results: results[r.num],
+        now: new Date().toISOString(),
+      });
       saveState(state);
     } catch (e) {
       results[r.num] = { error: String(e.message || e) };

@@ -38,6 +38,8 @@ import { homedir } from 'os';
 import mjml2html from 'mjml';
 import { generateSubject } from './dispatch-subject-line.mjs';
 import { isCurationFresh, stripDayOfWeekParenthetical } from '../lib/event-liveness.mjs';
+import { getThemeForIso, loadThemeContent, pickThemeItems } from '../lib/themed-weekday.mjs';
+import { getReminders } from '../lib/reminders.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
@@ -701,8 +703,22 @@ function renderSystemStatus(state, palette) {
 }
 
 // ── Render: feature blocks ────────────────────────────────────────────────
+// PR-B 2026-05-27: added REMINDERS (always-present, time-sensitive) +
+// TODAY'S THEME (themed weekday rotation: Mon=convos, Wed=articles, Thu=tips,
+// Fri=digest — Tue=events delegates to existing IN THE PNW; weekend skipped
+// per Q10 locked "no weekend emails"). See lib/themed-weekday.mjs +
+// lib/reminders.mjs for the selectors; data files at data/dispatch/*.json
+// populated by scripts/agents/content-ingest.mjs daily 03:00 PT cron.
 function renderFeatureBlocks(state, surface, palette) {
   const parts = [];
+
+  // REMINDERS (always-present, morning only — PR-B 2026-05-27)
+  if (surface === 'morning') {
+    const reminders = getReminders(state.date);
+    if (reminders?.items?.length) {
+      parts.push(renderReminders(reminders, palette));
+    }
+  }
 
   // BUILDER STANDING
   const stat = pickBuilderStat(state.date);
@@ -720,6 +736,18 @@ function renderFeatureBlocks(state, surface, palette) {
   const event = pickPnwEvent(state.date);
   if (event) parts.push(renderInThePnw(event, palette));
 
+  // TODAY'S THEME (themed weekday rotation, morning only — PR-B 2026-05-27)
+  if (surface === 'morning') {
+    const theme = getThemeForIso(state.date);
+    if (theme?.id && theme.id !== 'no-email' && theme.id !== 'events') {
+      const content = loadThemeContent(theme);
+      const items = pickThemeItems(theme, content, { maxItems: 3 });
+      if (items.length > 0) {
+        parts.push(renderThemedModule(theme, items, palette));
+      }
+    }
+  }
+
   // TODAY'S FORECAST (morning) / EVENING REFLECTION (evening)
   const forecast = pickForecast(surface, state);
   if (forecast) parts.push(renderForecast(forecast, surface, palette));
@@ -730,6 +758,54 @@ function renderFeatureBlocks(state, surface, palette) {
   }
 
   return parts.join('\n');
+}
+
+// ── Render: reminders (PR-B 2026-05-27, always-present morning section) ──
+function renderReminders(reminders, palette) {
+  const URGENCY_COLOR = {
+    critical: palette.negative,
+    high: palette.accent,
+    medium: palette.ink_3,
+  };
+  const itemsHtml = reminders.items.slice(0, 4).map(r => {
+    const color = URGENCY_COLOR[r.urgency] || palette.ink_3;
+    const kind = (r.kind || '').replace(/-/g, ' ').toUpperCase();
+    const linkOpen = r.action_url ? `<a href="${escapeHtml(r.action_url)}" style="color:${palette.accent};text-decoration:none;border-bottom:1px solid ${palette.rule}">` : '';
+    const linkClose = r.action_url ? `</a>` : '';
+    return `
+<div style="margin:0 0 6px 0;padding:6px 0 6px 12px;border-left:3px solid ${color}">
+  <div style="font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;letter-spacing:0.10em;text-transform:uppercase;color:${color};margin-bottom:2px">${escapeHtml(kind)}</div>
+  <p style="margin:0 0 2px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:600;font-size:13px;line-height:1.3;color:${palette.ink}">${linkOpen}${escapeHtml(r.label || '')}${linkClose}</p>
+  ${r.detail ? `<p style="margin:0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:12px;line-height:1.4;color:${palette.ink_3}">${escapeHtml(r.detail)}</p>` : ''}
+</div>`.trim();
+  }).join('\n');
+  return `
+<div style="margin:8px 0 8px 0">
+  <div class="editorial-grotesk" style="font-family:'Inter',sans-serif;font-size:9px;font-weight:700;letter-spacing:0.20em;text-transform:uppercase;color:${palette.ink_4};margin-bottom:8px">Reminders &middot; Today</div>
+  ${itemsHtml}
+</div>`.trim();
+}
+
+// ── Render: themed weekday module (PR-B 2026-05-27, morning only) ────────
+function renderThemedModule(theme, items, palette) {
+  const itemsHtml = items.map(i => {
+    const sourceTag = i.source ? `<span style="font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;letter-spacing:0.10em;text-transform:uppercase;color:${palette.ink_4}">${escapeHtml(i.source)}</span>` : '';
+    const score = i.score !== undefined && i.score !== null ? ` &middot; <span style="color:${palette.ink_4}">${escapeHtml(String(i.score))}</span>` : '';
+    const author = i.author ? ` &middot; ${escapeHtml(i.author)}` : '';
+    const linkOpen = i.url ? `<a href="${escapeHtml(i.url)}" style="color:${palette.accent};text-decoration:none;border-bottom:1px solid ${palette.rule}">` : '';
+    const linkClose = i.url ? `</a>` : '';
+    return `
+<div style="margin:0 0 8px 0">
+  <p style="margin:0 0 2px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:600;font-size:13px;line-height:1.3;color:${palette.ink}">${linkOpen}${escapeHtml(i.title || '')}${linkClose}</p>
+  <p style="margin:0 0 2px 0">${sourceTag}${score}${author}</p>
+  ${i.summary ? `<p style="margin:0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:12px;line-height:1.4;color:${palette.ink_3}">${escapeHtml(i.summary.slice(0, 280))}</p>` : ''}
+</div>`.trim();
+  }).join('\n');
+  return `
+<div style="margin:8px 0 6px 0">
+  <div class="editorial-grotesk" style="font-family:'Inter',sans-serif;font-size:9px;font-weight:700;letter-spacing:0.20em;text-transform:uppercase;color:${palette.ink_4};margin-bottom:6px">${escapeHtml(theme.label || theme.id)}</div>
+  ${itemsHtml}
+</div>`.trim();
 }
 
 function renderBuilderStanding(stat, palette) {

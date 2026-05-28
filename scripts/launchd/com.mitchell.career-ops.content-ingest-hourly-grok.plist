@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mitchell.career-ops.content-ingest-hourly-grok</string>
+
+    <!-- PR-B 2026-05-27 — Grok-4 X chatter re-scrape every 6h.
+         Per Q12 locked per-source cadence: X has 15-min news cycle so the
+         daily 03:00 PT refresh is too stale. This cron updates only the
+         data/dispatch/convos.json::x.items field (preserves reddit branch).
+         Loaded-but-DISABLED day-1 — enable after reviewing first daily run:
+           launchctl enable gui/$(id -u)/com.mitchell.career-ops.content-ingest-hourly-grok
+         Typical run cost: $0.04-$0.08 per fire. -->
+
+    <key>Label</key>
+    <string>com.mitchell.career-ops.content-ingest-hourly-grok</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/mitchellwilliams/.nvm/versions/node/v24.14.0/bin/node</string>
+        <string>/Users/mitchellwilliams/Documents/career-ops/scripts/agents/content-ingest.mjs</string>
+        <string>--mode=hourly</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/mitchellwilliams/Documents/career-ops</string>
+
+    <!-- Every 6 hours (21600 seconds). launchd will fire on bootstrap if
+         RunAtLoad=false + StartInterval and then every 21600s thereafter. -->
+    <key>StartInterval</key>
+    <integer>21600</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/mitchellwilliams/Library/Logs/career-ops/content-ingest-hourly-grok.out</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/mitchellwilliams/Library/Logs/career-ops/content-ingest-hourly-grok.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/mitchellwilliams/.nvm/versions/node/v24.14.0/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/mitchellwilliams</string>
+    </dict>
+
+    <key>AbandonProcessGroup</key>
+    <true/>
+
+    <!-- Loaded but disabled — manual enable after first daily run verified. -->
+    <key>Disabled</key>
+    <true/>
+</dict>
+</plist>

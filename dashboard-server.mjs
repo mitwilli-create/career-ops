@@ -1228,6 +1228,191 @@ function loadPipelineProcessState() {
 // to call on every poll/SSE tick without coordinating with the running
 // orchestrator. Returns null when no log file or no parsable progress.
 // AGENTS.md bug-class: long-phase-no-liveness-signal-looks-like-stall.
+// 2026-05-27 — Full-run ETA helper. Sums remaining-time estimates across all
+// 4 Process All phases: triage (from live rate) + batch (item-count × per-row
+// estimate) + merge (~30s) + rebuild (~30s) + email (~10s). Returns
+// {total_seconds, total_label, phases[]} where phases is rendered as a hover
+// tooltip breakdown. Returns null when no live_progress is available.
+function _computeFullRunETA(job, livePhaseProgress) {
+  if (!job || !job.phase) return null;
+  const phase = job.phase;
+  // Per-phase estimates. Tunable via env if needed.
+  const BATCH_ESTIMATE_SECONDS_PER_ITEM = 3;   // ~3s/item (Anthropic batch processing rate)
+  const BATCH_MIN_SECONDS = 300;                // 5 min minimum
+  const MERGE_ESTIMATE_SECONDS = 30;
+  const REBUILD_ESTIMATE_SECONDS = 30;
+  const EMAIL_ESTIMATE_SECONDS = 10;
+  // Default 12% advance rate (matches dashboard-server.mjs ADVANCE_RATE_ESTIMATE constant)
+  const DEFAULT_ADVANCE_RATE = 0.12;
+  const phases = [];
+
+  // ── Triage ──────────────────────────────────────────────────────────────
+  let triageRemaining = 0;
+  let triageProcessedSoFar = 0;
+  let pipelineSizeBefore = job.pending_before || job.triage_pipeline_before || 0;
+  if (livePhaseProgress && livePhaseProgress.phase === 'triage' && livePhaseProgress.processed != null && livePhaseProgress.total) {
+    triageProcessedSoFar = livePhaseProgress.processed;
+    triageRemaining = livePhaseProgress.eta_seconds || 0;
+  } else if (phase === 'triage' && pipelineSizeBefore > 0) {
+    // Triage active but no rate yet — fallback to 1.4s/url conservative.
+    triageRemaining = pipelineSizeBefore * 1.4;
+  }
+  // If we're PAST triage, remaining = 0 (we know what advanced)
+  const phaseOrder = ['triage', 'batch', 'merge', 'rebuild', 'email', 'done'];
+  const phaseIdx = phaseOrder.indexOf(phase);
+  phases.push({
+    name: 'triage',
+    est_seconds: Math.max(0, Math.round(triageRemaining)),
+    est_label: _fmtEtaLabel(triageRemaining),
+    active: phase === 'triage',
+    done: phaseIdx > phaseOrder.indexOf('triage'),
+  });
+
+  // ── Batch ───────────────────────────────────────────────────────────────
+  // Estimate batch_eval_count: confirmed advances + expected advances in remaining triage
+  let batchItemEstimate = 0;
+  if (phase === 'batch' && livePhaseProgress?.total) {
+    // We're IN batch — use the total batch size from live_progress (anthropic batch API count)
+    const batchDone = livePhaseProgress.processed || 0;
+    const batchTotal = livePhaseProgress.total;
+    const batchRemaining = Math.max(0, batchTotal - batchDone);
+    batchItemEstimate = batchRemaining;
+  } else if (phase === 'triage') {
+    // Predict batch size from current advance rate + remaining triage URLs
+    const lp = livePhaseProgress;
+    const advancesSoFar = lp?.advance_count || job.triage_advanced || 0;
+    const remainingTriageUrls = lp?.total ? Math.max(0, lp.total - lp.processed) : 0;
+    const observedAdvanceRate = (lp?.processed && lp.processed > 10)
+      ? (advancesSoFar / lp.processed)
+      : DEFAULT_ADVANCE_RATE;
+    const additionalAdvances = Math.round(remainingTriageUrls * observedAdvanceRate);
+    batchItemEstimate = advancesSoFar + additionalAdvances;
+  }
+  // Items already triaged + sent to batch (from prior runs) live in triage-advance.tsv;
+  // adds those to batch estimate to account for accumulated queue. Read once.
+  try {
+    const taFp = join(ROOT, 'batch/triage-advance.tsv');
+    if (existsSync(taFp)) {
+      const queued = readFileSync(taFp, 'utf-8').split('\n').filter(l => l.trim() && !l.startsWith('url\t')).length;
+      batchItemEstimate += queued;
+    }
+  } catch (_) {}
+  const batchEst = Math.max(BATCH_MIN_SECONDS, batchItemEstimate * BATCH_ESTIMATE_SECONDS_PER_ITEM);
+  phases.push({
+    name: 'batch',
+    est_seconds: phaseIdx > phaseOrder.indexOf('batch') ? 0 : Math.round(batchEst),
+    est_label: phaseIdx > phaseOrder.indexOf('batch') ? '0s' : _fmtEtaLabel(batchEst),
+    active: phase === 'batch',
+    done: phaseIdx > phaseOrder.indexOf('batch'),
+    item_estimate: batchItemEstimate,
+  });
+
+  // ── Merge / Rebuild / Email ─────────────────────────────────────────────
+  for (const [name, est] of [['merge', MERGE_ESTIMATE_SECONDS], ['rebuild', REBUILD_ESTIMATE_SECONDS], ['email', EMAIL_ESTIMATE_SECONDS]]) {
+    phases.push({
+      name,
+      est_seconds: phaseIdx > phaseOrder.indexOf(name) ? 0 : est,
+      est_label: phaseIdx > phaseOrder.indexOf(name) ? '0s' : _fmtEtaLabel(est),
+      active: phase === name,
+      done: phaseIdx > phaseOrder.indexOf(name),
+    });
+  }
+
+  const totalSeconds = phases.reduce((s, p) => s + (p.est_seconds || 0), 0);
+  return {
+    total_seconds: totalSeconds,
+    total_label: _fmtEtaLabel(totalSeconds),
+    phases,
+  };
+}
+
+// 2026-05-27 — Format a duration (in seconds) as a compact label.
+function _fmtEtaLabel(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '0s';
+  const s = Math.round(seconds);
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.round(s / 60) + 'm';
+  const h = Math.floor(s / 3600);
+  const m = Math.round((s % 3600) / 60);
+  return h + 'h ' + m + 'm';
+}
+
+// 2026-05-27 — Current batch progress for the "Last batch" chip auto-switch
+// (per Q2). When the active Process All job is in batch phase, the
+// _computeLivePhaseProgress returns batch-specific counts; surface them as
+// a separate current_batch object so the legacy "Last batch" chip can
+// auto-switch to live data.
+function _computeCurrentBatchProgress(job, livePhaseProgress) {
+  if (!job || job.phase !== 'batch') return null;
+  if (!livePhaseProgress || livePhaseProgress.phase !== 'batch') return null;
+  if (livePhaseProgress.processed == null || !livePhaseProgress.total) return null;
+  return {
+    completed: livePhaseProgress.processed,
+    total: livePhaseProgress.total,
+    elapsed_seconds: livePhaseProgress.phase_elapsed_sec || null,
+    elapsed_label: livePhaseProgress.phase_elapsed_sec ? _fmtEtaLabel(livePhaseProgress.phase_elapsed_sec) : null,
+    pct: livePhaseProgress.pct,
+  };
+}
+
+// 2026-05-27 — Live counts that downstream widgets (Total Eval tile, Tracker
+// chip, Pipeline Pending tile) can read from SSE without rebuilding the
+// dashboard. All read fresh from disk on every tick — cheap (small files).
+// new_publishes_since_run_start: rows in applications.md whose date >= job.started_at
+// AND status ∈ {Evaluated, Applied, Responded, Interview, Offer} — these are
+// the candidates that landed during the current Process All run.
+function _computeLiveCounts(activeJob) {
+  const counts = {
+    applications_total: null,
+    evaluations_total: null,
+    applied_count: null,
+    pipeline_pending: null,
+    new_publishes_since_run_start: 0,
+  };
+
+  // applications.md row count + status breakdown
+  try {
+    const appsFp = join(ROOT, 'data/applications.md');
+    if (existsSync(appsFp)) {
+      const text = readFileSync(appsFp, 'utf-8');
+      // Row format: | num | YYYY-MM-DD | Company | Role | score/5 | Status | ... |
+      const rows = text.split('\n').filter(l => /^\|\s+\d+\s+\|/.test(l));
+      counts.applications_total = rows.length;
+      counts.evaluations_total = rows.length;
+      let applied = 0;
+      let newSinceRun = 0;
+      const runStartedMs = activeJob?.started_at ? Date.parse(activeJob.started_at) : 0;
+      for (const row of rows) {
+        const cols = row.split('|').map(c => c.trim()).filter(Boolean);
+        // cols: [num, date, company, role, score, status, ...]
+        const date = cols[1];
+        const status = cols[5] || '';
+        if (/Applied|Responded|Interview|Offer/i.test(status)) applied++;
+        // Count rows whose date >= run start (rough; applications.md dates are YYYY-MM-DD only)
+        if (runStartedMs && date && /^\d{4}-\d{2}-\d{2}/.test(date)) {
+          const rowMs = Date.parse(date) || 0;
+          if (rowMs >= runStartedMs - 24 * 60 * 60 * 1000) newSinceRun++;
+        }
+      }
+      counts.applied_count = applied;
+      counts.new_publishes_since_run_start = newSinceRun;
+    }
+  } catch (_) {}
+
+  // pipeline.md pending count
+  try {
+    const pipeFp = join(ROOT, 'data/pipeline.md');
+    if (existsSync(pipeFp)) {
+      counts.pipeline_pending = readFileSync(pipeFp, 'utf-8')
+        .split('\n')
+        .filter(l => l.startsWith('- [ ]'))
+        .length;
+    }
+  } catch (_) {}
+
+  return counts;
+}
+
 function _computeLivePhaseProgress(job) {
   if (!job || !job.log_path || !existsSync(job.log_path)) return null;
   const phase = job.phase || 'unknown';
@@ -2462,6 +2647,12 @@ function batchLive() {
         // events; no orchestrator restart required. AGENTS.md bug-class:
         // long-phase-no-liveness-signal-looks-like-stall.
         const livePhaseProgress = _computeLivePhaseProgress(activeJob);
+        // 2026-05-27 (PR-organic-wiring) — full-run ETA + per-phase breakdown
+        // for hover tooltip. Sums all 4 phases. Updates every SSE tick.
+        const fullRunETA = _computeFullRunETA(activeJob, livePhaseProgress);
+        // Current batch progress (auto-switch from "Last batch" chip when
+        // process-all is in batch phase). Returns null otherwise.
+        const currentBatchProgress = _computeCurrentBatchProgress(activeJob, livePhaseProgress);
         // α Run-Batch eval 2026-05-19: phaseOrder now includes 'polish' and 'merge'.
         // process-all-pipeline.mjs emits phase='polish' (line 150) and phase='merge'
         // (line 186) between batch and rebuild — they were absent from this enum,
@@ -2540,6 +2731,14 @@ function batchLive() {
           // 2026-05-27 — live per-URL progress for the currently-active phase.
           // Sidebar widget + dispatch chip + toast all read this.
           live_progress: livePhaseProgress,
+          // 2026-05-27 (PR-organic-wiring) — full-run ETA across all 4 phases.
+          // Toast title + sidebar title surface total_label prominently; hover
+          // tooltip renders phases[] breakdown.
+          full_eta: fullRunETA,
+          // 2026-05-27 (PR-organic-wiring) — current batch progress, null
+          // unless phase === 'batch'. mc-batch chip uses this to auto-switch
+          // from "Last batch" to "⚡ Current batch X/Y · Zm in".
+          current_batch: currentBatchProgress,
         };
       }
     } catch (_) {}
@@ -2612,6 +2811,21 @@ function batchLive() {
   // the two computations in lockstep.
   const last_batch = _computeLastBatchSummary(stateRows);
 
+  // 2026-05-27 (PR-organic-wiring) — live counts that downstream widgets
+  // (Total Eval tile, Tracker chip, Pipeline Pending tile, Apply-Now banner)
+  // read on every SSE tick instead of waiting for the rebuild phase. The
+  // active job is passed so new_publishes_since_run_start can filter rows
+  // landed since job.started_at.
+  let liveActiveJob = null;
+  if (existsSync(pipelineStatePath)) {
+    try {
+      const ps = JSON.parse(readFileSync(pipelineStatePath, 'utf-8'));
+      const running = Object.values(ps.jobs || {}).find(j => j && j.status === 'running');
+      liveActiveJob = running || null;
+    } catch (_) {}
+  }
+  const live_counts = _computeLiveCounts(liveActiveJob);
+
   return {
     total, completed, failed, running, pending, pct,
     rows: sorted.slice(0, 500),
@@ -2623,6 +2837,9 @@ function batchLive() {
     // 2026-05-27 — one-time terminal signal for Process All completion toast.
     // null when no fresh terminal run; else { jobId, status, summary, ... }.
     last_run_complete,
+    // 2026-05-27 (PR-organic-wiring) — live counts for downstream widgets.
+    // Read fresh from disk every tick. Cheap (small files).
+    live_counts,
   };
 }
 
@@ -5966,7 +6183,13 @@ const server = createServer((req, res) => {
     // liveness during long phases. AGENTS.md bug-class: long-phase-no-
     // liveness-signal-looks-like-stall.
     const live_progress = _computeLivePhaseProgress(job);
-    return json({ ok: true, job, log_tail: tail, live_progress });
+    // 2026-05-27 (PR-organic-wiring) — Full-run ETA + per-phase breakdown
+    // for the toast title + hover tooltip.
+    const full_eta = _computeFullRunETA(job, live_progress);
+    // Attach full_eta to job so the client's _updatePipelineToast can read
+    // it without a separate API call.
+    const enriched = { ...job, full_eta };
+    return json({ ok: true, job: enriched, log_tail: tail, live_progress, full_eta });
   }
 
   // 2026-05-26 — Job-log full-content endpoint backing the "see log" hyperlink

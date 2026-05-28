@@ -15522,12 +15522,33 @@ function _mcRenderBatch(batch) {
     const pa = batch.processAll;
     const phase = pa.phase || 'running';
     const lp = pa.live_progress;
-    let text = '🚀 ' + phase.charAt(0).toUpperCase() + phase.slice(1);
-    if (lp && lp.processed != null && lp.total) {
-      text += ' · ' + lp.processed + '/' + lp.total + ' (' + (lp.pct != null ? lp.pct + '%' : '—') + ')';
-      if (lp.eta_label) text += ' · ETA ' + lp.eta_label;
+    const cb = pa.current_batch;  // 2026-05-27 (PR-organic-wiring) — auto-switch when in batch phase
+    let text;
+    // Q2 — When in batch phase, the "Last batch" chip auto-switches to
+    // current_batch progress instead of showing stale prior-run data.
+    if (phase === 'batch' && cb && cb.total) {
+      text = '⚡ Current batch ' + cb.completed + '/' + cb.total + ' (' + (cb.pct || 0) + '%)';
+      if (cb.elapsed_label) text += ' · ' + cb.elapsed_label + ' in';
+    } else {
+      text = '🚀 ' + phase.charAt(0).toUpperCase() + phase.slice(1);
+      if (lp && lp.processed != null && lp.total) {
+        text += ' · ' + lp.processed + '/' + lp.total + ' (' + (lp.pct != null ? lp.pct + '%' : '—') + ')';
+      }
+      // Q1 — Total ETA prominent. Hover tooltip on the parent <div> for breakdown.
+      if (pa.full_eta && pa.full_eta.total_label) {
+        text += ' · ETA ' + pa.full_eta.total_label + ' total';
+      } else if (lp && lp.eta_label) {
+        text += ' · ETA ' + lp.eta_label;
+      }
     }
     txt.textContent = text;
+    // Tooltip with per-phase breakdown when full_eta available
+    if (pa.full_eta && pa.full_eta.phases) {
+      const tip = ['Full-run ETA: ' + pa.full_eta.total_label]
+        .concat(pa.full_eta.phases.map(p => (p.active ? '▶ ' : (p.done ? '✓ ' : '  ')) + p.name + ' ~ ' + (p.est_label || '0s')))
+        .join(String.fromCharCode(10));
+      el.title = tip;
+    }
     return;
   }
   if (!batch || batch.isIdle || batch.state === 'idle') {
@@ -15616,11 +15637,15 @@ function initMissionControlStrip() {
       // 2026-05-27 — carry process-all status so _mcRenderBatch can surface
       // "🚀 Triage · 460/2288 · ETA 42m" instead of "No batch running" when
       // a process-all run is in its triage phase (no batch active yet).
+      // 2026-05-27 (PR-organic-wiring) — also carry full_eta + current_batch
+      // for total ETA display + Q2 last-batch chip auto-switch.
       const processAll = (data.pipelineStages && data.pipelineStages.status === 'running')
         ? {
             status: 'running',
             phase: data.pipelineStages.current_phase,
             live_progress: data.pipelineStages.live_progress || null,
+            full_eta: data.pipelineStages.full_eta || null,
+            current_batch: data.pipelineStages.current_batch || null,
           }
         : null;
       lastBatch = {
@@ -26382,6 +26407,65 @@ function selectBatch(batchId) {
 
 let _batchInterval = null;
 
+// 2026-05-27 (PR-organic-wiring) — Live counts updater. Wired into every
+// SSE tick so the Total Eval tile, Pipeline Pending tile, and Apply-Now
+// refresh banner stay current during a running Process All without waiting
+// for the rebuild phase. Q3+Q4 from the interview.
+function _updateLiveCounts(lc) {
+  if (!lc || typeof lc !== 'object') return;
+  // Total Eval tile (id=live-applied is actually the "applied" tile; we
+  // look for total-evaluations specifically by class + label).
+  try {
+    var tiles = document.querySelectorAll('.stat-cell');
+    for (var i = 0; i < tiles.length; i++) {
+      var lbl = tiles[i].querySelector('.stat-label, .label-full');
+      var val = tiles[i].querySelector('.stat-value');
+      if (!lbl || !val) continue;
+      var lblText = (lbl.textContent || '').toUpperCase().trim();
+      if (lblText.indexOf('TOTAL EVALUATIONS') >= 0 && lc.evaluations_total != null) {
+        val.textContent = String(lc.evaluations_total);
+      } else if (lblText.indexOf('PIPELINE PENDING') >= 0 && lc.pipeline_pending != null) {
+        val.textContent = String(lc.pipeline_pending);
+      }
+    }
+  } catch (_) {}
+  // Apply-Now refresh banner — appears when new ≥4.0 rows have landed
+  // since the current Process All run started. Click-to-refresh = reloads
+  // queue without churning while user is browsing. Q4 locked.
+  try {
+    var n = lc.new_publishes_since_run_start || 0;
+    var existing = document.getElementById('apply-now-live-publishes-banner');
+    if (n > 0) {
+      var panel = document.getElementById('apply-now-section');
+      if (panel) {
+        if (!existing) {
+          existing = document.createElement('div');
+          existing.id = 'apply-now-live-publishes-banner';
+          existing.style.cssText = 'margin:0 12px 10px;padding:10px 14px;background:rgba(46,160,67,0.08);border-left:3px solid #2ea043;border-radius:6px;color:rgba(255,255,255,0.92);font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px';
+          existing.setAttribute('role', 'button');
+          existing.setAttribute('tabindex', '0');
+          existing.title = 'Click to refresh the Apply-Now queue with the latest evals from this run';
+          existing.addEventListener('click', function() {
+            if (typeof refreshDashboardData === 'function') refreshDashboardData();
+            existing.remove();
+          });
+          // Insert as first child of the panel after the title
+          var title = panel.querySelector('.panel-title');
+          if (title && title.nextSibling) {
+            panel.insertBefore(existing, title.nextSibling);
+          } else {
+            panel.insertBefore(existing, panel.firstChild);
+          }
+        }
+        existing.innerHTML = '<span><strong>✨ ' + n + ' new eval' + (n === 1 ? '' : 's') + '</strong> landed during this Process All run — click to refresh the queue</span>'
+          + '<span style="opacity:0.6;font-size:11px">↻</span>';
+      }
+    } else if (existing) {
+      existing.remove();
+    }
+  } catch (_) {}
+}
+
 // 2026-05-27 — Toast helper for Process All completion signal.
 // Per-jobId deduplicated via localStorage so the same toast doesn't re-fire
 // on page reload. Auto-dismisses after 30s; click-to-dismiss. Surfaces the
@@ -26723,6 +26807,12 @@ async function pollBatch() {
               _renderPipelineActivity(window.__PIPELINE_ACTIVITY__);
             }
           } catch (_) { /* render is best-effort */ }
+        }
+        // 2026-05-27 (PR-organic-wiring) — live counts wired to every SSE tick.
+        // Updates Total Eval tile, Pipeline Pending tile, Apply-Now refresh
+        // banner. Per Q3+Q4 from the interview.
+        if (data && data.live_counts) {
+          try { _updateLiveCounts(data.live_counts); } catch (_) {}
         }
         _setBatchStreamMode('stream');
         _backoffMs = 1000;  // reset backoff on successful message
@@ -29251,7 +29341,28 @@ function _updatePipelineToast(job, logTail, liveProgress) {
     fillEl.style.width = info.pct + '%';
     fillEl.style.background = 'var(--red-fg, #dc2626)';
   } else {
-    titleEl.textContent = (job.type === 'process-all' ? '🚀 Processing all…' : '⚡ Running batch…');
+    // 2026-05-27 (PR-organic-wiring) — Total ETA in toast title. When the
+    // server returns live_progress (which now carries phase-aware ETA) AND
+    // a full-run ETA from the new batchLive() helper, render "ETA Xm total"
+    // in the title + a hover tooltip with per-phase breakdown.
+    // job.full_eta is set when the toast is fed via the job-status endpoint;
+    // fallback to the per-phase live_progress ETA if full_eta unavailable.
+    var totalEtaLabel = null;
+    var etaTooltip = '';
+    if (job && job.full_eta && job.full_eta.total_label) {
+      totalEtaLabel = job.full_eta.total_label;
+      var phaseLines = (job.full_eta.phases || []).map(function(p) {
+        var marker = p.active ? '▶ ' : (p.done ? '✓ ' : '  ');
+        return marker + p.name + ' ~ ' + (p.est_label || '0s');
+      });
+      etaTooltip = 'Full-run ETA: ' + totalEtaLabel + '\\n' + phaseLines.join('\\n');
+    } else if (liveProgress && liveProgress.eta_label) {
+      totalEtaLabel = liveProgress.eta_label;
+      etaTooltip = 'ETA for current phase: ' + totalEtaLabel;
+    }
+    var baseTitle = job.type === 'process-all' ? '🚀 Processing all…' : '⚡ Running batch…';
+    titleEl.textContent = totalEtaLabel ? (baseTitle + ' · ETA ' + totalEtaLabel) : baseTitle;
+    if (etaTooltip) titleEl.title = etaTooltip.replace(/\\\\n/g, String.fromCharCode(10));
     // 2026-05-19 Mitchell screenshot fix — batch-runner polls Anthropic
     // every 60s and writes the progress line with CR (carriage return) so
     // the terminal overwrites. In log files CR accumulates, so the last

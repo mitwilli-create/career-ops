@@ -1285,6 +1285,19 @@ function applyPackUrl(row) {
   return null;
 }
 
+// PR-X 2026-05-27 — direct link to the dark-themed rendered report page.
+// dashboard-server.mjs::renderMarkdownPage now uses dashboard dark tokens
+// (#06070d bg + #4ade80 accent + Fraunces/Inter/JetBrains Mono) so this
+// link lands users on a page that belongs to the dashboard, not the
+// fork from the light-themed legacy renderer. See AGENTS.md bug class
+// `report-renderer-aesthetic-fork`.
+function reportPageUrl(reportPath) {
+  if (!reportPath) return null;
+  const fileBasename = reportPath.split('/').pop();
+  if (!fileBasename) return null;
+  return `${PUBLIC_BASE}/reports/${fileBasename}`;
+}
+
 // One-click status flip URL — points at /mark on dashboard-server.mjs.
 // Hitting it edits applications.md (Evaluated → Applied) and shows a
 // confirmation page. Used in the heartbeat email so Mitchell can clear
@@ -1516,7 +1529,15 @@ function formatRoleBlock(r, packEligibleNums = null) {
   if (url) btnBits.push(primaryBtn('Apply', url, ` aria-label="Apply to ${r.company}"`));
   if (packUrl && packAllowed) btnBits.push(primaryBtn('Apply Pack', packUrl, ` aria-label="Open apply pack for ${r.company}"`));
   btnBits.push(primaryBtn('Mark Applied', markStatusUrl(r.num, 'Applied'), ` aria-label="Mark ${r.company} as applied"`));
-  if (r.reportPath) btnBits.push(secondaryBtn('Open report', `${deeplink('row', r.num)}`, ` aria-label="Open report for ${r.company}"`));
+  // PR-X 2026-05-27 — "Open report" now links to the actual dark-themed
+  // rendered report at /reports/<file>.md (not the drawer at ?focus=row:N
+  // which was the prior misalignment). The role NAME + role # cells still
+  // link to the drawer per Q3 3-link layout. See AGENTS.md bug class
+  // `report-renderer-aesthetic-fork`.
+  if (r.reportPath) {
+    const _reportUrl = reportPageUrl(r.reportPath);
+    if (_reportUrl) btnBits.push(secondaryBtn('Open report', _reportUrl, ` aria-label="Open report for ${r.company}"`));
+  }
 
   if (btnBits.length) out.push(btnBits.join(''));
   out.push('');

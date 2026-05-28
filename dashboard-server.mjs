@@ -10478,11 +10478,12 @@ async function generatePack(){
     return;
   }
 
-  // ── Scanner status + control endpoints (Phase 5E, 2026-05-26) ───────────────
+  // ── Scanner status + control endpoints (Phase 5E, 2026-05-26 · enable added 2026-05-27) ─
   // GET /api/scanner/status → scanner inventory from data/pipeline-ingress-state.json
   // POST /api/scanner/refresh/:name → launchctl kickstart (immediate trigger)
   // POST /api/scanner/reboot/:name  → launchctl kickstart -k (force-restart)
   // POST /api/scanner/disable/:name → launchctl bootout (remove from schedule)
+  // POST /api/scanner/enable/:name  → launchctl enable + bootstrap (restore from disable)
 
   if (url === '/api/scanner/status' && req.method === 'GET') {
     const fp = join(ROOT, 'data', 'pipeline-ingress-state.json');
@@ -10498,10 +10499,14 @@ async function generatePack(){
   const scannerRefreshM = url.match(/^\/api\/scanner\/refresh\/([^/?]+)$/);
   const scannerRebootM  = url.match(/^\/api\/scanner\/reboot\/([^/?]+)$/);
   const scannerDisableM = url.match(/^\/api\/scanner\/disable\/([^/?]+)$/);
+  const scannerEnableM  = url.match(/^\/api\/scanner\/enable\/([^/?]+)$/);
 
-  if ((scannerRefreshM || scannerRebootM || scannerDisableM) && req.method === 'POST') {
-    const action = scannerRefreshM ? 'refresh' : scannerRebootM ? 'reboot' : 'disable';
-    const scannerName = decodeURIComponent((scannerRefreshM || scannerRebootM || scannerDisableM)[1]);
+  if ((scannerRefreshM || scannerRebootM || scannerDisableM || scannerEnableM) && req.method === 'POST') {
+    const action = scannerRefreshM ? 'refresh'
+                 : scannerRebootM  ? 'reboot'
+                 : scannerDisableM ? 'disable'
+                 : 'enable';
+    const scannerName = decodeURIComponent((scannerRefreshM || scannerRebootM || scannerDisableM || scannerEnableM)[1]);
 
     const fp = join(ROOT, 'data', 'pipeline-ingress-state.json');
     if (!existsSync(fp)) return json({ ok: false, error: 'pipeline-ingress-state.json not found' }, 404);
@@ -10526,10 +10531,21 @@ async function generatePack(){
         // kickstart -k — stops + restarts
         cmd = `launchctl kickstart -k ${svcPath}`;
         note = `Rebooted ${scannerName}`;
-      } else {
+      } else if (action === 'disable') {
         // disable + bootout — removes from schedule until re-enabled
         cmd = `launchctl disable ${svcPath} && launchctl bootout ${svcPath} 2>/dev/null; true`;
         note = `Disabled ${scannerName}`;
+      } else {
+        // enable: undo a prior disable by re-enabling the service + bootstrapping
+        // the plist back into the schedule. `enable` clears the disabled flag set
+        // by `launchctl disable`; `bootstrap` re-registers the agent so it fires
+        // on its next CalendarInterval / StartInterval tick.
+        const plistPath = `${process.env.HOME}/Library/LaunchAgents/${label}.plist`;
+        if (!existsSync(plistPath)) {
+          return json({ ok: false, action, scanner: scannerName, label, error: `plist not found at ${plistPath}` }, 404);
+        }
+        cmd = `launchctl enable ${svcPath} 2>/dev/null; launchctl bootstrap ${domain} ${plistPath}`;
+        note = `Re-enabled ${scannerName}`;
       }
       _execSync(cmd, { encoding: 'utf8', timeout: 10000 });
       return json({ ok: true, action, scanner: scannerName, label, note });

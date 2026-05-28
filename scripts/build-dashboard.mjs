@@ -30468,22 +30468,33 @@ function _scannerFetchAndRender() {
       var STATUS_COLOR = { green: '#22c55e', yellow: '#f59e0b', red: '#ef4444' };
       var STATUS_LABEL = { green: 'Live', yellow: 'Lagging', red: 'Offline' };
       var rows = scanners.map(function(s) {
-        var col = STATUS_COLOR[s.status] || '#94a3b8';
-        var lbl = STATUS_LABEL[s.status] || s.status;
+        var disabled = _scannerIsDisabled(s);
+        var tracker  = window._scannerTracking[s.name];
+        var col = disabled ? '#94a3b8' : (STATUS_COLOR[s.status] || '#94a3b8');
+        var lbl = disabled ? 'Disabled'  : (STATUS_LABEL[s.status] || s.status);
         var age = s.log && s.log.ageHours != null ? (s.log.ageHours < 1 ? Math.round(s.log.ageHours * 60) + 'm ago' : s.log.ageHours.toFixed(1) + 'h ago') : '—';
         var warns = (s.warnings || []).map(function(w) { return '<div style="font-size:10px;color:#f59e0b;margin-top:2px">⚠ ' + w + '</div>'; }).join('');
-        return '<div style="display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:1px solid var(--border,#2d2f3a)">'
+        var actionsHtml;
+        if (disabled) {
+          actionsHtml = '<button type="button" onclick="scannerAction(\\'' + s.name + '\\',\\'enable\\')" style="font-size:11px;padding:4px 8px;border-radius:4px;border:1px solid #22c55e;background:transparent;color:#22c55e;cursor:pointer">✓ Re-enable</button>';
+        } else if (tracker) {
+          var elapsed = Math.round((Date.now() - tracker.triggeredAt) / 1000);
+          var elapsedStr = elapsed < 60 ? elapsed + 's' : Math.floor(elapsed / 60) + 'm ' + (elapsed % 60) + 's';
+          actionsHtml = '<span style="font-size:11px;color:#3b82f6;padding:4px 8px;display:inline-flex;align-items:center;gap:4px" title="' + tracker.action + ' fired ' + elapsedStr + ' ago \\u2014 polling /api/scanner/status for completion">⏳ running (' + elapsedStr + ')</span>';
+        } else {
+          actionsHtml = ''
+            + '<button type="button" onclick="scannerAction(\\'' + s.name + '\\',\\'refresh\\')" style="font-size:11px;padding:4px 8px;border-radius:4px;border:1px solid #3b82f6;background:transparent;color:#3b82f6;cursor:pointer">▶ Trigger</button>'
+            + '<button type="button" onclick="scannerAction(\\'' + s.name + '\\',\\'reboot\\')" style="font-size:11px;padding:4px 8px;border-radius:4px;border:1px solid var(--border,#2d2f3a);background:transparent;color:var(--text-2,#94a3b8);cursor:pointer">↻ Reboot</button>'
+            + '<button type="button" onclick="scannerAction(\\'' + s.name + '\\',\\'disable\\')" style="font-size:11px;padding:4px 8px;border-radius:4px;border:1px solid #ef4444;background:transparent;color:#ef4444;cursor:pointer">✕ Disable</button>';
+        }
+        return '<div data-scanner="' + s.name + '" style="display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:1px solid var(--border,#2d2f3a)">'
           + '<span style="width:8px;height:8px;border-radius:50%;background:' + col + ';flex-shrink:0;margin-top:5px"></span>'
           + '<div style="flex:1;min-width:0">'
           + '<div style="font-size:13px;font-weight:500;color:var(--text-1,#e2e8f0)">' + s.name + ' <span style="font-size:11px;color:' + col + '">' + lbl + '</span></div>'
           + '<div style="font-size:11px;color:var(--text-3,#64748b)">cadence: ' + (s.cadenceHours || '?') + 'h · last log: ' + age + '</div>'
           + warns
           + '</div>'
-          + '<div style="display:flex;gap:6px;flex-shrink:0">'
-          + '<button type="button" onclick="scannerAction(\\'' + s.name + '\\',\\'refresh\\')" style="font-size:11px;padding:4px 8px;border-radius:4px;border:1px solid #3b82f6;background:transparent;color:#3b82f6;cursor:pointer">▶ Trigger</button>'
-          + '<button type="button" onclick="scannerAction(\\'' + s.name + '\\',\\'reboot\\')" style="font-size:11px;padding:4px 8px;border-radius:4px;border:1px solid var(--border,#2d2f3a);background:transparent;color:var(--text-2,#94a3b8);cursor:pointer">↻ Reboot</button>'
-          + '<button type="button" onclick="scannerAction(\\'' + s.name + '\\',\\'disable\\')" style="font-size:11px;padding:4px 8px;border-radius:4px;border:1px solid #ef4444;background:transparent;color:#ef4444;cursor:pointer">✕ Disable</button>'
-          + '</div></div>';
+          + '<div style="display:flex;gap:6px;flex-shrink:0">' + actionsHtml + '</div></div>';
       });
       body.innerHTML = rows.join('') || '<div style="color:var(--text-3);padding:16px;font-size:13px">No scanner data.</div>';
     })
@@ -30491,13 +30502,99 @@ function _scannerFetchAndRender() {
       if (body) body.innerHTML = '<div style="color:#ef4444;padding:16px;font-size:13px">Failed to load: ' + String(e.message || e) + '</div>';
     });
 }
+// ── Scanner tracking system (window-scoped, survives modal close) ──────────
+// 2026-05-27: post-trigger completion detection via /api/scanner/status poll
+// with exponential backoff up to 10 min. window.toast() fires when scan
+// finishes (or times out) regardless of modal state. localStorage-backed
+// Disabled flag persists across page reloads so Re-enable button is restored.
+window._scannerTracking = window._scannerTracking || {};
+function _scannerIsDisabled(scanner) {
+  if (scanner && scanner.launchd && scanner.launchd.loaded === false) return true;
+  try { if (scanner && localStorage.getItem('_scannerDisabled_' + scanner.name)) return true; } catch (_) {}
+  return false;
+}
+function _scannerSetDisabled(name, disabled) {
+  try {
+    if (disabled) localStorage.setItem('_scannerDisabled_' + name, '1');
+    else localStorage.removeItem('_scannerDisabled_' + name);
+  } catch (_) {}
+}
+function _scannerStartTracking(name, action, baseline) {
+  // Cancel any prior tracker for this scanner (user re-triggered).
+  if (window._scannerTracking[name]) window._scannerTracking[name] = null;
+  var startTime = Date.now();
+  var entry = {
+    triggeredAt: startTime,
+    action: action,
+    baselineMtimeISO: (baseline && baseline.log && baseline.log.mtimeISO) || '',
+    baselineLastExit: (baseline && baseline.launchd && baseline.launchd.lastExit !== undefined) ? baseline.launchd.lastExit : null,
+  };
+  window._scannerTracking[name] = entry;
+  var MAX_MS = 10 * 60 * 1000;
+  var BACKOFF = [3000, 5000, 10000, 30000, 60000];
+  var idx = 0;
+  function tick() {
+    if (window._scannerTracking[name] !== entry) return; // cancelled / replaced
+    if (Date.now() - startTime > MAX_MS) {
+      window._scannerTracking[name] = null;
+      if (window.toast) window.toast(name + ' \\u2014 timed out after 10 min (may complete in background)', 'info');
+      _scannerFetchAndRender();
+      return;
+    }
+    fetch('/api/scanner/status', { cache: 'no-store' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (window._scannerTracking[name] !== entry) return;
+        var scanner = (d.scanners || []).find(function(s) { return s.name === name; });
+        if (scanner) {
+          var newMtime = (scanner.log && scanner.log.mtimeISO) || '';
+          var newExit  = (scanner.launchd && scanner.launchd.lastExit !== undefined) ? scanner.launchd.lastExit : null;
+          var advanced = newMtime && newMtime > entry.baselineMtimeISO;
+          var exitChanged = newExit !== entry.baselineLastExit;
+          if (advanced || exitChanged) {
+            window._scannerTracking[name] = null;
+            var elapsed = Math.round((Date.now() - startTime) / 1000);
+            var ok = newExit === 0 || newExit == null;
+            var msg = ok
+              ? '\\u2713 ' + name + ' completed in ' + elapsed + 's'
+              : '\\u2717 ' + name + ' failed (exit ' + newExit + ')';
+            if (window.toast) window.toast(msg, ok ? 'success' : 'error');
+            _scannerFetchAndRender();
+            return;
+          }
+        }
+        // Re-render to update inline elapsed time (only if modal open).
+        var md = document.getElementById('scanner-popout-modal');
+        if (md && md.style.display !== 'none') _scannerFetchAndRender();
+        var delay = BACKOFF[Math.min(idx, BACKOFF.length - 1)]; idx++;
+        setTimeout(tick, delay);
+      })
+      .catch(function() {
+        var delay = BACKOFF[Math.min(idx, BACKOFF.length - 1)]; idx++;
+        setTimeout(tick, delay);
+      });
+  }
+  setTimeout(tick, BACKOFF[0]);
+}
+
 function scannerAction(name, action) {
   var isAll = name === 'all';
-  var displayName = isAll ? 'all scanners' : name;
-  var actionLabel = action === 'refresh' ? 'Triggering' : action === 'reboot' ? 'Rebooting' : 'Disabling';
-  var doneLabel   = action === 'refresh' ? 'triggered'  : action === 'reboot' ? 'rebooted'  : 'disabled';
 
-  // Disable buttons to prevent double-submit
+  // Q5 locked: confirm-before-Disable (single-scanner only; "all" already an
+  // aggregate intent so additional confirm is redundant — and Reboot-all-
+  // unhealthy is the common bulk path, not Disable-all).
+  if (action === 'disable' && !isAll) {
+    var ok = window.confirm('Disable ' + name + '?\\n\\nThis removes it from launchd\\u2019s schedule until you re-enable from this modal.');
+    if (!ok) return;
+  }
+
+  var displayName = isAll ? 'all scanners' : name;
+  var actionLabelMap = { refresh: 'Triggering', reboot: 'Rebooting', disable: 'Disabling', enable: 'Re-enabling' };
+  var doneLabelMap   = { refresh: 'triggered',  reboot: 'rebooted',  disable: 'disabled',  enable: 're-enabled' };
+  var actionLabel = actionLabelMap[action] || action;
+  var doneLabel   = doneLabelMap[action] || action;
+
+  // Disable buttons to prevent double-submit.
   var body = document.getElementById('scanner-popout-body');
   if (body) {
     var targetEl = isAll ? body : (body.querySelector('[data-scanner="' + name + '"]') || body);
@@ -30505,39 +30602,77 @@ function scannerAction(name, action) {
   }
   if (window.toast) window.toast(actionLabel + ' ' + displayName + '\\u2026', 'info');
 
-  function _done(ok, count) {
-    var suffix = action !== 'disable' ? ' \\u2014 new results in ~15 min' : '';
-    var msg = ok
-      ? (isAll ? (count || 0) + ' scanner(s) ' + doneLabel + suffix : displayName + ' ' + doneLabel + suffix)
-      : 'Scanner action failed \\u2014 check launchctl logs';
-    if (window.toast) window.toast(msg, ok ? 'success' : 'error');
-    if (ok && action !== 'disable') {
-      setTimeout(closeScannerPopout, 1800);
-    } else {
+  function _done(ok, count, baselineForTracking) {
+    // For disable / enable: no completion polling, fire toast immediately.
+    if (action === 'disable' || action === 'enable') {
+      var msg = ok
+        ? (isAll ? (count || 0) + ' scanner(s) ' + doneLabel : displayName + ' ' + doneLabel)
+        : 'Scanner ' + action + ' failed \\u2014 check launchctl logs';
+      if (window.toast) window.toast(msg, ok ? 'success' : 'error');
       setTimeout(_scannerFetchAndRender, 600);
+      return;
     }
+    // refresh / reboot: launchctl-accept toast + register tracker(s) for true completion.
+    if (!ok) {
+      if (window.toast) window.toast('Scanner ' + action + ' failed \\u2014 check launchctl logs', 'error');
+      setTimeout(_scannerFetchAndRender, 600);
+      return;
+    }
+    if (isAll) {
+      if (window.toast) window.toast((count || 0) + ' scanner(s) ' + doneLabel + ' \\u2014 watching for completion', 'success');
+      (baselineForTracking || []).forEach(function(b) {
+        _scannerStartTracking(b.name, action, b.scanner);
+      });
+    } else {
+      if (window.toast) window.toast(name + ' ' + doneLabel + ' \\u2014 watching for completion', 'success');
+      _scannerStartTracking(name, action, baselineForTracking);
+    }
+    setTimeout(_scannerFetchAndRender, 600);
   }
 
   if (isAll) {
+    // Q1: "Reboot all unhealthy" now targets red + yellow (was red-only — silent no-op when 0 red).
     fetch('/api/scanner/status', { cache: 'no-store' })
       .then(function(r) { return r.json(); })
       .then(function(d) {
         var targets = (d.scanners || []).filter(function(s) {
-          return action !== 'reboot' || s.status === 'red';
+          return action !== 'reboot' || s.status === 'red' || s.status === 'yellow';
         });
-        if (!targets.length) { _done(true, 0); return; }
+        if (!targets.length) {
+          if (window.toast) window.toast('Nothing to ' + action + ' \\u2014 all scanners are healthy', 'info');
+          setTimeout(_scannerFetchAndRender, 600);
+          return;
+        }
+        var baselines = targets.map(function(s) { return { name: s.name, scanner: s }; });
         Promise.all(targets.map(function(s) {
           return fetch('/api/scanner/' + action + '/' + encodeURIComponent(s.name), { method: 'POST' })
             .catch(function() {});
-        })).then(function() { _done(true, targets.length); });
+        })).then(function() {
+          if (action === 'enable') targets.forEach(function(s) { _scannerSetDisabled(s.name, false); });
+          else if (action === 'disable') targets.forEach(function(s) { _scannerSetDisabled(s.name, true); });
+          _done(true, targets.length, baselines);
+        });
       })
       .catch(function() { _done(false); });
     return;
   }
 
-  fetch('/api/scanner/' + action + '/' + encodeURIComponent(name), { method: 'POST' })
+  // Single-scanner — fetch baseline FIRST, then POST.
+  fetch('/api/scanner/status', { cache: 'no-store' })
     .then(function(r) { return r.json(); })
-    .then(function(d) { _done(d && d.ok !== false); })
+    .then(function(d) {
+      var baseline = (d.scanners || []).find(function(s) { return s.name === name; }) || null;
+      return fetch('/api/scanner/' + action + '/' + encodeURIComponent(name), { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(resp) {
+          var ok = resp && resp.ok !== false;
+          if (ok) {
+            if (action === 'disable') _scannerSetDisabled(name, true);
+            else if (action === 'enable') _scannerSetDisabled(name, false);
+          }
+          _done(ok, 1, baseline);
+        });
+    })
     .catch(function() { _done(false); });
 }
 window.openScannerPopout  = openScannerPopout;
@@ -36861,7 +36996,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     <div style="text-align:center;padding:32px 0;color:var(--text-3,#64748b);font-size:13px">Loading scanner status…</div>
   </div>
   <div style="padding:12px 20px;border-top:1px solid var(--border,#2d2f3a);display:flex;gap:8px;flex-wrap:wrap">
-    <button type="button" id="scanner-reboot-all-btn" onclick="scannerAction('all','reboot')" style="flex:1;min-width:140px;padding:8px 14px;border-radius:6px;border:1px solid var(--border,#2d2f3a);background:var(--surface-3,#1a1d2a);color:var(--text-1,#e2e8f0);font-size:13px;cursor:pointer">↻ Reboot all offline</button>
+    <button type="button" id="scanner-reboot-all-btn" onclick="scannerAction('all','reboot')" style="flex:1;min-width:140px;padding:8px 14px;border-radius:6px;border:1px solid var(--border,#2d2f3a);background:var(--surface-3,#1a1d2a);color:var(--text-1,#e2e8f0);font-size:13px;cursor:pointer" title="Reboots all scanners flagged unhealthy (red Offline + yellow Lagging)">↻ Reboot all unhealthy</button>
     <button type="button" id="scanner-refresh-all-btn" onclick="scannerAction('all','refresh')" style="flex:1;min-width:140px;padding:8px 14px;border-radius:6px;border:none;background:#3b82f6;color:#fff;font-size:13px;cursor:pointer">▶ Trigger all now</button>
   </div>
 </div>

@@ -217,7 +217,12 @@ async function callClaude(prompt) {
         // can add brief preamble; 300 gives headroom for the structured
         // reply without inviting verbose tangents.
         max_tokens:  300,
-        temperature: 0,
+        // 2026-05-27 — `temperature` removed. claude-sonnet-4-6 rejects
+        // with `invalid_request_error: temperature is deprecated for this
+        // model.` Pre-fix this Anthropic vote silently errored on every
+        // recommendation call + consensus fell through to Gemini-only.
+        // See PR #308 + AGENTS.md bug class
+        // `vendor-deprecation-100-percent-error-with-no-mark`.
         messages:    [{ role: 'user', content: prompt }],
       }),
       signal: AbortSignal.timeout(45_000),

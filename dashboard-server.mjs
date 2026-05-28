@@ -3458,7 +3458,12 @@ function _buildBatchStatusDetailedUncached() {
       total:     live.total,
       eta_seconds,
       model:     'claude-sonnet-4-6',  // current batch-runner-batches.mjs default
-      temperature: 0,
+      // 2026-05-27 — `temperature` removed from this status block. The
+      // batch-runner no longer sends a temperature param (Sonnet 4.6
+      // deprecated it; see PR #308). Keeping the field would mislead
+      // operators inspecting /api/batch/status-detailed and would re-encourage
+      // the same regression in any future reimplementation copying from
+      // this status shape.
     },
     process_all_active,
     recent_runs,
@@ -4454,9 +4459,29 @@ function handleMarkRequest(req, res) {
 }
 
 function renderMarkdownPage(mdContent, fileName) {
+  // PR-X 2026-05-27 — dark-first rewrite to match dashboard aesthetic
+  // (lib/heartbeat-tokens.json::color.dark.*). The old light-themed renderer
+  // was the failure surface for the "connected living-breathing system"
+  // contract — clicking a role's "Report" link from the heartbeat email
+  // landed users on a light-themed Spanish-headered page that did not
+  // belong to the dashboard. See AGENTS.md bug class
+  // `report-renderer-aesthetic-fork`.
   marked.setOptions({ gfm: true, breaks: false });
   const restHtml = marked.parse(mdContent);
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${fileName} · career-ops</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;max-width:920px;margin:32px auto;padding:0 24px;color:#1e293b;line-height:1.6;background:#f8fafc}.nav{font-size:13px;color:#64748b;margin-bottom:18px}.nav a{color:#4338ca;text-decoration:none}article{background:#fff;padding:32px 40px;border-radius:12px;border:1px solid #e2e8f0}h1{font-size:26px;margin:0 0 14px;color:#0f172a}h2{font-size:19px;margin:28px 0 10px;color:#0f172a;border-left:4px solid #6366f1;padding-left:10px}h3{font-size:16px;margin:22px 0 8px;color:#1e293b}a{color:#4338ca}code{background:#f1f5f9;padding:1px 6px;border-radius:4px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}pre{background:#f1f5f9;padding:14px 16px;border-radius:8px;overflow-x:auto;font-size:13px}table{border-collapse:collapse;width:100%;margin:16px 0;font-size:14px}th,td{text-align:left;padding:8px 12px;border-bottom:1px solid #e2e8f0;vertical-align:top}th{background:#f8fafc;font-weight:600}blockquote{margin:16px 0;padding:12px 18px;border-left:4px solid #6366f1;background:#eef2ff;color:#312e81;border-radius:0 8px 8px 0}hr{border:none;height:1px;background:#e2e8f0;margin:24px 0}ul,ol{padding-left:24px}li{margin:4px 0}</style></head><body><div class="nav"><a href="/dashboard/">← back to dashboard</a> · <code>${fileName}</code></div><article>${restHtml}</article></body></html>`;
+  // Dashboard dark tokens (hardcoded — markdown render is a static view):
+  //   bg.app                 #06070d
+  //   bg.panel               #11131c
+  //   bg.panel_strong        #181b27
+  //   border.default         #232737
+  //   border.strong          #353a52
+  //   text.t1                #fafafa  (display headings)
+  //   text.t2                #e4e4e7  (body)
+  //   text.t3                #b8b8c0  (secondary body, blockquote)
+  //   text.t4                #9a9aa6  (subtle nav)
+  //   brand.primary          #4ade80  (accent borders, h2 rule, links)
+  //   link.default           #86efac  (anchors)
+  //   link.hover             #bbf7d0
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>${fileName} · career-ops</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"><style>:root{color-scheme:dark}html,body{background:#06070d;color:#e4e4e7}body{font-family:'Inter','-apple-system',BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;max-width:920px;margin:32px auto;padding:0 24px;line-height:1.65;font-size:15px}.nav{font-size:12px;color:#9a9aa6;margin-bottom:18px;letter-spacing:0.02em;text-transform:uppercase;font-weight:600}.nav a{color:#86efac;text-decoration:none;border-bottom:1px solid rgba(74,222,128,0.30);padding-bottom:1px}.nav a:hover{color:#bbf7d0;border-bottom-color:#bbf7d0}.nav code{background:#11131c;color:#b8b8c0;padding:2px 8px;border-radius:4px;border:1px solid #232737;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:11px;text-transform:none;letter-spacing:0}article{background:#11131c;padding:40px 48px;border-radius:12px;border:1px solid #232737;box-shadow:0 1px 0 rgba(255,255,255,0.02) inset}h1{font-family:'Fraunces',Georgia,serif;font-size:30px;font-weight:600;font-style:italic;margin:0 0 18px;color:#fafafa;line-height:1.2;letter-spacing:-0.01em}h2{font-family:'Fraunces',Georgia,serif;font-size:21px;font-weight:600;font-style:italic;margin:32px 0 12px;color:#fafafa;border-left:3px solid #4ade80;padding-left:14px;line-height:1.3}h3{font-family:'Inter',sans-serif;font-size:16px;font-weight:600;margin:24px 0 8px;color:#fafafa;letter-spacing:-0.005em}h4,h5,h6{font-family:'Inter',sans-serif;font-weight:600;color:#e4e4e7;margin:18px 0 6px}p{margin:12px 0;color:#e4e4e7}a{color:#86efac;text-decoration:none;border-bottom:1px solid rgba(74,222,128,0.30);transition:color 0.15s,border-color 0.15s}a:hover{color:#bbf7d0;border-bottom-color:#bbf7d0}strong,b{color:#fafafa;font-weight:600}em,i{color:#e4e4e7}code{background:#181b27;color:#bbf7d0;padding:2px 7px;border-radius:4px;font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;border:1px solid #232737}pre{background:#181b27;padding:16px 18px;border-radius:8px;overflow-x:auto;font-size:13px;border:1px solid #232737;line-height:1.55}pre code{background:transparent;border:0;padding:0;color:#e4e4e7}table{border-collapse:collapse;width:100%;margin:18px 0;font-size:14px;background:#0d0f17;border-radius:8px;overflow:hidden;border:1px solid #232737}th,td{text-align:left;padding:10px 14px;border-bottom:1px solid #232737;vertical-align:top;color:#e4e4e7}tr:last-child td{border-bottom:0}th{background:#181b27;font-weight:600;color:#fafafa;font-size:13px;text-transform:uppercase;letter-spacing:0.05em;font-family:'Inter',sans-serif}blockquote{margin:18px 0;padding:14px 20px;border-left:3px solid #4ade80;background:#181b27;color:#b8b8c0;border-radius:0 8px 8px 0;font-family:'Fraunces',Georgia,serif;font-style:italic}blockquote p:first-child{margin-top:0}blockquote p:last-child{margin-bottom:0}hr{border:none;height:1px;background:#232737;margin:28px 0}ul,ol{padding-left:26px;color:#e4e4e7}li{margin:6px 0}li::marker{color:#9a9aa6}@media(max-width:640px){body{margin:18px auto;padding:0 16px}article{padding:24px 22px;border-radius:8px}h1{font-size:24px}h2{font-size:18px}}</style></head><body><div class="nav"><a href="https://dashboard.careers-ops.com/">← back to dashboard</a> · <code>${fileName}</code></div><article>${restHtml}</article></body></html>`;
 }
 
 // ── SSE batch-live stream (Tier A Item #2) ─────────────────────

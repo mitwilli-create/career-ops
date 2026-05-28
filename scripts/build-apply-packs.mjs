@@ -707,7 +707,10 @@ OUTPUT: Full corrected cover letter. Final word count on the last line: [N words
         body: JSON.stringify({
           model: SONNET,
           max_tokens: 1400,
-          temperature: 0,
+          // 2026-05-27 — `temperature` removed. claude-sonnet-4-6 rejects
+          // with `invalid_request_error: temperature is deprecated for
+          // this model.` See PR #308 + AGENTS.md bug class
+          // `vendor-deprecation-100-percent-error-with-no-mark`.
           system: systemPrompt,
           messages: [
             { role: 'user', content: userPrompt },

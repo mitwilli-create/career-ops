@@ -348,7 +348,12 @@ async function callHaiku(prompt) {
       body: JSON.stringify({
         model:       USE_SONNET_JD ? SONNET : HAIKU,
         max_tokens:  USE_SONNET_JD ? 800 : 300,
-        temperature: 0,
+        // 2026-05-27 — `temperature` removed from this body. claude-sonnet-4-6
+        // rejects with `invalid_request_error: temperature is deprecated for
+        // this model.` Haiku still accepts the param but we omit it
+        // unconditionally so the branch can't silently re-break when
+        // `USE_SONNET_JD` flips on. See PR #308 + AGENTS.md bug class
+        // `vendor-deprecation-100-percent-error-with-no-mark`.
         messages:    [{ role: 'user', content: prompt }],
       }),
       signal: ctrl.signal,

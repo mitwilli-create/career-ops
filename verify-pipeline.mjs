@@ -108,9 +108,21 @@ for (const e of entries) {
 if (badStatuses === 0) ok('All statuses are canonical');
 
 // --- Check 2: Duplicates ---
+//
+// 2026-05-27 (PR #311): LIVE-only filter ported from L4 invariant test.
+// Pre-fix: this check flagged any (company × exact-role) collision regardless
+// of status. After L1-L2 cleanup created ~20 Discarded DUPE-of-#N audit rows,
+// the check was emitting 18+ false-positive 'Possible duplicates' warnings
+// for rows that were intentionally Discarded with audit trail. Same matcher
+// contract as tests/applications-dedupe-invariant.test.mjs — only flag if
+// 2+ LIVE rows (Evaluated / Applied / Responded / Interview / Offer) share
+// the same (normalized-company × normalized-role) key. Discarded / Rejected /
+// SKIP rows are settled audits — they are not 'possible duplicates' anymore.
+const LIVE_RE = /^(evaluated|applied|responded|interview|offer|evaluada|aplicado|respondido|entrevista|oferta)$/i;
 const companyRoleMap = new Map();
 let dupes = 0;
 for (const e of entries) {
+  if (!LIVE_RE.test((e.status || '').trim())) continue;
   const key = e.company.toLowerCase().replace(/[^a-z0-9]/g, '') + '::' +
     e.role.toLowerCase().replace(/[^a-z0-9 ]/g, '');
   if (!companyRoleMap.has(key)) companyRoleMap.set(key, []);
@@ -118,11 +130,11 @@ for (const e of entries) {
 }
 for (const [key, group] of companyRoleMap) {
   if (group.length > 1) {
-    warn(`Possible duplicates: ${group.map(e => `#${e.num}`).join(', ')} (${group[0].company} — ${group[0].role})`);
+    warn(`Possible duplicates: ${group.map(e => `#${e.num}`).join(', ')} (${group[0].company} — ${group[0].role}) — all LIVE status`);
     dupes++;
   }
 }
-if (dupes === 0) ok('No exact duplicates found');
+if (dupes === 0) ok('No LIVE-status duplicates found (Discarded audit rows excluded)');
 
 // --- Check 3: Report links ---
 let brokenReports = 0;

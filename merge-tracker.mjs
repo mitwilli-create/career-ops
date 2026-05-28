@@ -357,10 +357,29 @@ for (const file of tsvFiles) {
   }
 
   if (!duplicate) {
-    // Company + role fuzzy match
+    // Company + role fuzzy match — terminal-status rows EXCLUDED.
+    //
+    // Bug class fix (2026-05-27, PR #311): pre-fix, this step matched ANY
+    // existing row including Discarded/Rejected/SKIP. A fresh TSV whose
+    // (company, role) collided with a settled-Discarded row would 'update'
+    // that row — overwriting its report ref + notes + score — even though
+    // the new TSV was a legitimately distinct evaluation event.
+    //
+    // Canonical incident: 2026-05-27 orphan-backfill attempt for canonical
+    // Anthropic AAA Industries was redirected to #2539 (Discarded dupe)
+    // because the fuzzy match didn't filter by status. Audit trail for
+    // #2539 + #2563 got corrupted (notes + report ref overwritten).
+    //
+    // Rule: only match against LIVE rows (Evaluated / Applied / Responded /
+    // Interview / Offer). Discarded / Rejected / SKIP rows represent
+    // settled audits — they shouldn't be 'updated' by a new TSV. A new
+    // TSV for a previously-Discarded role inserts as a new row + becomes
+    // its own evaluation event.
     const normCompany = normalizeCompany(addition.company);
+    const TERMINAL_RE = /^(discarded|rejected|skip|descartad[oa]|rechazad[oa]|no aplicar|no_aplicar)$/i;
     duplicate = existingApps.find(app => {
       if (normalizeCompany(app.company) !== normCompany) return false;
+      if (TERMINAL_RE.test((app.status || '').trim())) return false;
       return roleFuzzyMatch(addition.role, app.role);
     });
   }

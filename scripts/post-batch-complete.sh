@@ -19,9 +19,21 @@ node scripts/mark-pipeline-evaluated.mjs 2>&1 | tee -a "$LOG"
 log "Running pipeline verification..."
 node verify-pipeline.mjs 2>&1 | tee -a "$LOG"
 
-# 3 — Dedup tracker (catch any dupes from parallel workers)
-log "Deduplicating tracker..."
-node dedup-tracker.mjs 2>&1 | tee -a "$LOG"
+# 3 — Dedup drift check (catch any dupes from parallel workers).
+#
+# 2026-05-27 (PR #311): switched from default `node dedup-tracker.mjs` (which
+# resolves to --delete legacy mode + removes the offending lines) to
+# `--check` (audit-only, exits 2 if dupes detected). Rationale: --delete
+# loses audit trail per L1's "DUPE-of-#N" pattern; --check surfaces drift
+# to the operator without auto-deleting. The dedup-tracker now also has
+# `--mark` mode (preserves rows + flips status=Discarded with audit note)
+# which is the cleaner cleanup path when collisions ARE detected.
+#
+# Exit 2 here is non-fatal because `tee -a` masks the exit code, and the
+# warning gets logged. To restore the old auto-delete behavior, change
+# `--check` back to no-arg (legacy default).
+log "Running dedup drift check..."
+node dedup-tracker.mjs --check 2>&1 | tee -a "$LOG" || true
 
 # 4 — Pattern analysis
 log "Running pattern analysis..."

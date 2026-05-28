@@ -1221,6 +1221,112 @@ function loadPipelineProcessState() {
   catch { return { jobs: {} }; }
 }
 
+// 2026-05-27 — Live phase progress reader. Reads the job's log file and
+// counts per-URL events (triage: `→ ADVANCE|SKIP|DEAD`; batch: `\d+/\d+
+// complete`) so the toast + sidebar can show "X / Y · ETA Zm" instead of a
+// static phase label that doesn't tick. Pure read — no state mutation, safe
+// to call on every poll/SSE tick without coordinating with the running
+// orchestrator. Returns null when no log file or no parsable progress.
+// AGENTS.md bug-class: long-phase-no-liveness-signal-looks-like-stall.
+function _computeLivePhaseProgress(job) {
+  if (!job || !job.log_path || !existsSync(job.log_path)) return null;
+  const phase = job.phase || 'unknown';
+  const phaseStartedAt = Date.parse(job.phase_started_at || job.started_at || '') || 0;
+  const now = Date.now();
+  const phaseElapsedSec = phaseStartedAt ? Math.max(1, Math.round((now - phaseStartedAt) / 1000)) : null;
+
+  let raw;
+  try { raw = readFileSync(job.log_path, 'utf-8'); } catch { return null; }
+  if (!raw) return null;
+
+  // Phase-specific parsers. Each returns { processed, total, current_target?, last_event_excerpt }
+  // or null if the phase isn't currently producing per-URL events.
+  let phaseProgress = null;
+
+  if (phase === 'triage') {
+    // triage.mjs emits `→ ADVANCE` / `→ SKIP` / `→ DEAD` once per URL.
+    const advance = (raw.match(/→ ADVANCE/g) || []).length;
+    const skip    = (raw.match(/→ SKIP/g) || []).length;
+    const dead    = (raw.match(/→ DEAD/g) || []).length;
+    const processed = advance + skip + dead;
+    const total = job.pending_before || job.triage_pipeline_before || null;
+    // Find the last `[T1|T2|T3] https://...` line for currently-processing context.
+    const tMatches = raw.match(/\[T\d\] https?:\/\/[^\s…]+…?/g);
+    const last_target = tMatches && tMatches.length ? tMatches[tMatches.length - 1] : null;
+    phaseProgress = {
+      phase: 'triage',
+      processed,
+      total,
+      advance_count: advance,
+      skip_count: skip,
+      dead_count: dead,
+      current_target: last_target,
+    };
+  } else if (phase === 'batch') {
+    // batch-runner-batches.mjs polling output: `\d+/\d+ complete` (CR-overwritten).
+    // Take the most recent line with that pattern.
+    const lines = raw.split(/[\r\n]+/);
+    let lastCompleteLine = null;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (/\d+\/\d+\s+complete/i.test(lines[i])) { lastCompleteLine = lines[i]; break; }
+    }
+    if (lastCompleteLine) {
+      const m = lastCompleteLine.match(/(\d+)\/(\d+)\s+complete/i);
+      if (m) {
+        phaseProgress = {
+          phase: 'batch',
+          processed: parseInt(m[1], 10),
+          total: parseInt(m[2], 10),
+          current_target: lastCompleteLine.trim().slice(0, 120),
+        };
+      }
+    }
+  } else if (phase === 'polish' || phase === 'pregen') {
+    // Post-2026-05-27 these phases are removed from Process All. Kept here so a
+    // legacy-pre-PR run's log still parses cleanly.
+    phaseProgress = { phase, processed: null, total: null, current_target: null };
+  }
+
+  if (!phaseProgress || phaseProgress.processed == null || phaseProgress.total == null || phaseProgress.total <= 0) {
+    return {
+      phase,
+      processed: null,
+      total: null,
+      rate_per_min: null,
+      eta_seconds: null,
+      eta_label: null,
+      phase_elapsed_sec: phaseElapsedSec,
+      current_target: phaseProgress?.current_target || null,
+    };
+  }
+
+  const { processed, total } = phaseProgress;
+  const ratePerSec = phaseElapsedSec ? (processed / phaseElapsedSec) : 0;
+  const ratePerMin = ratePerSec * 60;
+  const remaining = Math.max(0, total - processed);
+  const etaSeconds = ratePerSec > 0 ? Math.round(remaining / ratePerSec) : null;
+  let etaLabel = null;
+  if (etaSeconds != null) {
+    if (etaSeconds < 60)         etaLabel = etaSeconds + 's';
+    else if (etaSeconds < 3600)  etaLabel = Math.round(etaSeconds / 60) + 'm';
+    else                          etaLabel = Math.floor(etaSeconds / 3600) + 'h ' + Math.round((etaSeconds % 3600) / 60) + 'm';
+  }
+  return {
+    phase,
+    processed,
+    total,
+    rate_per_min: Math.round(ratePerMin * 10) / 10,
+    eta_seconds: etaSeconds,
+    eta_label: etaLabel,
+    phase_elapsed_sec: phaseElapsedSec,
+    current_target: phaseProgress.current_target,
+    pct: Math.round((processed / total) * 100),
+    advance_count: phaseProgress.advance_count,
+    skip_count: phaseProgress.skip_count,
+    dead_count: phaseProgress.dead_count,
+  };
+}
+
 // ── Per-company preview for the Process All 2-phase modal ─────────
 // Surfaces the per-company table the user inspects BEFORE confirming
 // the orchestrator run. Each row carries enough signal for triage:
@@ -2351,6 +2457,11 @@ function batchLive() {
       }
       if (activeJob) {
         const ph = activeJob.phase || '';
+        // 2026-05-27 — live phase progress for the sidebar widget + top-bar
+        // dispatch chip + bottom-right toast. Parses log file for per-URL
+        // events; no orchestrator restart required. AGENTS.md bug-class:
+        // long-phase-no-liveness-signal-looks-like-stall.
+        const livePhaseProgress = _computeLivePhaseProgress(activeJob);
         // α Run-Batch eval 2026-05-19: phaseOrder now includes 'polish' and 'merge'.
         // process-all-pipeline.mjs emits phase='polish' (line 150) and phase='merge'
         // (line 186) between batch and rebuild — they were absent from this enum,
@@ -2426,6 +2537,9 @@ function batchLive() {
                         total: publishedCount == null ? '✓' : publishedCount,
                         count_unknown: publishedCount == null },
           },
+          // 2026-05-27 — live per-URL progress for the currently-active phase.
+          // Sidebar widget + dispatch chip + toast all read this.
+          live_progress: livePhaseProgress,
         };
       }
     } catch (_) {}
@@ -5846,7 +5960,13 @@ const server = createServer((req, res) => {
         tail = lines.slice(-20);
       } catch {}
     }
-    return json({ ok: true, job, log_tail: tail });
+    // 2026-05-27 — Live phase progress: count per-URL events in the log so
+    // the toast can show "X / Y triaged · ETA Zm" instead of a static
+    // "Phase 1/4 — Triage" with no internal motion. Source-of-truth for
+    // liveness during long phases. AGENTS.md bug-class: long-phase-no-
+    // liveness-signal-looks-like-stall.
+    const live_progress = _computeLivePhaseProgress(job);
+    return json({ ok: true, job, log_tail: tail, live_progress });
   }
 
   // 2026-05-26 — Job-log full-content endpoint backing the "see log" hyperlink

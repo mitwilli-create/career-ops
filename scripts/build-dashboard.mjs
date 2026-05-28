@@ -15511,6 +15511,25 @@ function _mcRenderBatch(batch) {
   const el = document.getElementById('mc-batch');
   const txt = document.getElementById('mc-batch-text');
   if (!el || !txt) return;
+  // 2026-05-27 — Process All takes precedence over "No batch running" text.
+  // When a process-all run is in flight (triage/batch/merge/rebuild/email
+  // phase), surface its progress + ETA instead of the misleading "No batch
+  // running" — which is technically true during triage (no batch yet) but
+  // tells the user the wrong story. AGENTS.md bug-class:
+  // long-phase-no-liveness-signal-looks-like-stall.
+  if (batch && batch.processAll && batch.processAll.status === 'running') {
+    el.setAttribute('data-state', 'running');
+    const pa = batch.processAll;
+    const phase = pa.phase || 'running';
+    const lp = pa.live_progress;
+    let text = '🚀 ' + phase.charAt(0).toUpperCase() + phase.slice(1);
+    if (lp && lp.processed != null && lp.total) {
+      text += ' · ' + lp.processed + '/' + lp.total + ' (' + (lp.pct != null ? lp.pct + '%' : '—') + ')';
+      if (lp.eta_label) text += ' · ETA ' + lp.eta_label;
+    }
+    txt.textContent = text;
+    return;
+  }
   if (!batch || batch.isIdle || batch.state === 'idle') {
     el.setAttribute('data-state', 'idle');
     txt.textContent = 'No batch running';
@@ -15594,10 +15613,21 @@ function initMissionControlStrip() {
       const state = running > 0
         ? 'running'
         : (completed >= total && total > 0 ? 'completed' : (failed > 0 ? 'failed' : 'idle'));
+      // 2026-05-27 — carry process-all status so _mcRenderBatch can surface
+      // "🚀 Triage · 460/2288 · ETA 42m" instead of "No batch running" when
+      // a process-all run is in its triage phase (no batch active yet).
+      const processAll = (data.pipelineStages && data.pipelineStages.status === 'running')
+        ? {
+            status: 'running',
+            phase: data.pipelineStages.current_phase,
+            live_progress: data.pipelineStages.live_progress || null,
+          }
+        : null;
       lastBatch = {
         state, completed, total, running, failed, pct,
         startedAtIso: earliestStart ? new Date(earliestStart).toISOString() : null,
         isIdle,
+        processAll,
       };
       _mcRenderBatch(lastBatch);
 
@@ -26413,9 +26443,22 @@ function _renderBatchData(data) {
       var batchRunning = (data.running || 0) > 0;
       if (ps && ps.status === 'running') {
         var phase = ps.current_phase || 'running';
-        dchip.textContent = 'dispatch: 🚀 process-all · ' + phase;
+        // 2026-05-27 — Live phase progress in the chip: "🚀 process-all ·
+        // triage · 326/2288 · ETA 48m" instead of static "process-all · triage".
+        var dlp = ps.live_progress;
+        var chipText = 'dispatch: 🚀 process-all · ' + phase;
+        var chipTitle = 'Process-all running · phase ' + phase + ' · click for detail';
+        if (dlp && dlp.processed != null && dlp.total) {
+          chipText += ' · ' + dlp.processed + '/' + dlp.total;
+          if (dlp.eta_label) chipText += ' · ETA ' + dlp.eta_label;
+          chipTitle = 'Process-all · ' + phase + ' · ' + dlp.processed + '/' + dlp.total
+            + (dlp.eta_label ? ' · ETA ' + dlp.eta_label : '')
+            + (dlp.rate_per_min ? ' · ' + dlp.rate_per_min + '/min' : '')
+            + ' · click for detail';
+        }
+        dchip.textContent = chipText;
         dchip.className = 'pipeline-dispatch-chip active';
-        dchip.title = 'Process-all running · phase ' + phase + ' · click for detail';
+        dchip.title = chipTitle;
       } else if (batchRunning) {
         var bpct = data.pct ? Math.round(data.pct) : 0;
         dchip.textContent = 'dispatch: ⚡ batch · ' + bpct + '%';
@@ -26457,6 +26500,11 @@ function _renderBatchData(data) {
         { key: 'polish',   label: 'Polish'   },
         { key: 'publish',  label: 'Publish'  },
       ];
+      // 2026-05-27 — live phase progress for the currently-active stage.
+      // When the server emits ph.live_progress (per-URL count + rate + ETA),
+      // override the active stage's done/ttl with the live numbers so the
+      // bar ticks per-URL instead of staying at 0/N for the entire phase.
+      var lp = ph.live_progress;
       var stageHtml = stageList.filter(function(s) {
         if (!ph.stages[s.key]) return false;
         // 2026-05-27 — polish stage removed from orchestrator. Hide it
@@ -26470,6 +26518,19 @@ function _renderBatchData(data) {
         var countUnknown = st.count_unknown;
         var ttl   = typeof st.total === 'number' ? st.total : 0;
         var done  = typeof st.completed === 'number' ? st.completed : 0;
+        // 2026-05-27 — Live override for the active stage. When this stage's
+        // key matches the live_progress phase AND live numbers are present,
+        // swap them in. Triage's process stage in the canonical stage list
+        // also accepts the 'batch' live phase (legacy naming carry-over).
+        if (lp && lp.processed != null && lp.total) {
+          var liveMatches = (s.key === 'triage' && lp.phase === 'triage')
+                          || (s.key === 'process' && lp.phase === 'batch')
+                          || (s.key === 'evaluate' && lp.phase === 'batch');
+          if (liveMatches) {
+            done = lp.processed;
+            ttl  = lp.total;
+          }
+        }
         var pct   = (st.done || countUnknown) ? 100 : (ttl > 0 ? Math.round((done / ttl) * 100) : 0);
         var barClr = (st.done || countUnknown) ? '#2ea043' : st.active ? '#1f6feb' : 'rgba(255,255,255,0.12)';
         var txtClr = (st.done || countUnknown) ? '#2ea043' : st.active ? '#58a6ff' : 'rgba(255,255,255,0.3)';
@@ -26498,15 +26559,36 @@ function _renderBatchData(data) {
       stagesEl.innerHTML = stageHtml;
       var phaseLbl = ph.current_phase || 'running';
       // γ GAMMA: append staleness chip so user sees a 6h-old failed job is NOT live.
+      // 2026-05-27 — Don't show stale chip when live_progress is fresh (we have
+      // a real per-URL heartbeat from log parsing, even if state.json hasn't
+      // been written in 5 min).
       var staleChip = '';
-      if (ph.staleness_seconds != null && ph.staleness_seconds > 300) {
+      if (ph.staleness_seconds != null && ph.staleness_seconds > 300 && !lp) {
         var mins = Math.round(ph.staleness_seconds / 60);
         staleChip = ' <span style="color:#d29922;font-size:10px;font-weight:400">'
           + '· last update ' + (mins < 60 ? (mins + 'm') : (Math.round(mins / 60) + 'h')) + ' ago</span>';
       }
+      // 2026-05-27 — ETA chip in the sidebar title. Surfaces "ETA 48m" when
+      // live_progress carries an estimate. Builds confidence the run is alive
+      // + gives the user a target time to check back.
+      var etaChip = '';
+      if (lp && lp.eta_label) {
+        etaChip = ' <span style="color:#58a6ff;font-size:10px;font-weight:400">'
+          + '· ETA ' + lp.eta_label
+          + (lp.rate_per_min ? ' · ' + lp.rate_per_min + '/min' : '')
+          + '</span>';
+      }
       document.getElementById('sidebar-batch-title').innerHTML =
-        '⚡ ' + phaseLbl.charAt(0).toUpperCase() + phaseLbl.slice(1) + (ph.status === 'running' ? '…' : '') + staleChip;
-      document.getElementById('sidebar-batch-stats').innerHTML = '';
+        '⚡ ' + phaseLbl.charAt(0).toUpperCase() + phaseLbl.slice(1) + (ph.status === 'running' ? '…' : '') + etaChip + staleChip;
+      // 2026-05-27 — Current target line beneath the bars when live_progress has one.
+      var currentTargetLine = '';
+      if (lp && lp.current_target) {
+        var ctEsc = String(lp.current_target).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        currentTargetLine = '<div style="margin-top:6px;font-size:10px;color:rgba(255,255,255,0.45);font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+          + '⚡ ' + ctEsc
+          + '</div>';
+      }
+      document.getElementById('sidebar-batch-stats').innerHTML = currentTargetLine;
     } else {
       // ── Legacy single-bar mode ──────────────────────────────────────────
       if (stagesEl) stagesEl.style.display = 'none';
@@ -29080,7 +29162,9 @@ function startPipelineStatusPoll(jobId) {
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       if (!data.ok || !data.job) throw new Error('no job');
-      _updatePipelineToast(data.job, data.log_tail);
+      // 2026-05-27 — pass live_progress through to the toast renderer so it
+      // can show "X / Y triaged · ETA Zm" instead of static "Phase 1/4".
+      _updatePipelineToast(data.job, data.log_tail, data.live_progress);
       if (data.job.status === 'completed' || data.job.status === 'failed') {
         return;  // stop polling
       }
@@ -29100,7 +29184,7 @@ let _pipelineLastProgressSig = '';
 let _pipelineLastProgressMs  = 0;
 const PIPELINE_STALL_THRESHOLD_MS = 5 * 60 * 1000;
 
-function _updatePipelineToast(job, logTail) {
+function _updatePipelineToast(job, logTail, liveProgress) {
   const phaseEl = document.getElementById('pipeline-toast-phase');
   const fillEl  = document.getElementById('pipeline-toast-fill');
   const titleEl = document.getElementById('pipeline-toast-title');
@@ -29183,8 +29267,30 @@ function _updatePipelineToast(job, logTail) {
       const segments = lastLine.split(CR).map(s => s.trim()).filter(Boolean);
       lastLine = segments[segments.length - 1] || lastLine;
     }
-    phaseEl.textContent = info.label + (lastLine ? ' · ' + lastLine.slice(0, 80) : '');
-    fillEl.style.width = info.pct + '%';
+    // 2026-05-27 — Live phase progress wired into the toast. When the server
+    // returns live_progress (per-URL count + rate + ETA), render that as the
+    // primary signal: "Phase 1/4 — Triage · 326/2288 (14%) · ETA 48m · 41/min".
+    // Falls back to the legacy "last log line" when live_progress is absent
+    // (phase doesn't emit per-URL events, e.g. merge / rebuild). The fill bar
+    // uses the WITHIN-PHASE percentage when available so the bar ticks during
+    // long phases instead of jumping in 5 discrete steps.
+    let phaseText = info.label;
+    let fillPct = info.pct;
+    if (liveProgress && liveProgress.processed != null && liveProgress.total) {
+      phaseText += ' · ' + liveProgress.processed + '/' + liveProgress.total
+        + ' (' + (liveProgress.pct != null ? liveProgress.pct + '%' : '—') + ')'
+        + (liveProgress.eta_label ? ' · ETA ' + liveProgress.eta_label : '')
+        + (liveProgress.rate_per_min ? ' · ' + liveProgress.rate_per_min + '/min' : '');
+      // Spread the bar fill within the phase's pct range so it ticks per-URL.
+      // Each phase gets a 20-30 pct slice — interpolate proportionally.
+      const phaseStart = info.pct - 15;
+      const phaseEnd = info.pct + 15;
+      fillPct = Math.max(phaseStart, Math.min(phaseEnd, phaseStart + (liveProgress.pct / 100) * (phaseEnd - phaseStart)));
+    } else if (lastLine) {
+      phaseText += ' · ' + lastLine.slice(0, 80);
+    }
+    phaseEl.textContent = phaseText;
+    fillEl.style.width = fillPct + '%';
   }
   // Closure D (2026-05-22): stall warning chip — surfaced inside the toast
   // when the job hasn't moved for PIPELINE_STALL_THRESHOLD_MS. Mounted /

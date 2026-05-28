@@ -754,6 +754,22 @@ export async function runOmegaSteward(opts = {}) {
         let recommendations = generateRecommendations(agents, health, research);
         recommendations = await appendRefreshEcosystemProposals(recommendations);
         recommendations = await ingestRegressionGuardFindings(recommendations);
+        // Wave 2 task 8 (2026-05-28): catalog-aware persona review of every
+        // recommendation. DHH fires on mints-new-agent/plist proposals; Howard
+        // fires on net-new library code; Hickey fires on contract-shape changes.
+        // All advisory only (per Wave 1 contract). Mutates recommendations in
+        // place adding `persona_findings`. Env kill switch: PERSONA_OMEGA_REVIEW=false.
+        try {
+            const { annotateOmegaRecommendationsWithPersonaReview } = await import('../../lib/persona-omega-review.mjs');
+            const personaSummary = await annotateOmegaRecommendationsWithPersonaReview(recommendations);
+            log(`phase 4 (persona-review): reviewed ${personaSummary.reviewedCount} proposals · ${personaSummary.findingsCount} findings · $${(personaSummary.costUsd || 0).toFixed(4)} spent`);
+            if (personaSummary.errors?.length > 0) {
+                log(`phase 4 (persona-review): ${personaSummary.errors.length} persona errors (non-fatal):`);
+                for (const e of personaSummary.errors.slice(0, 3)) log(`   - rec ${e.recId} ${e.persona}: ${e.error?.slice?.(0, 100)}`);
+            }
+        } catch (err) {
+            log(`phase 4 (persona-review): SKIPPED — ${err.message?.slice?.(0, 120) || 'unknown error'}`);
+        }
         const path = writeProposalFile(recommendations);
         log(`STOPPING at approval gate. Review ${path} and append approvals to data/omega-approvals.md.`);
         return { path, recommendations };

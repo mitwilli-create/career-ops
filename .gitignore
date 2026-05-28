@@ -24,6 +24,17 @@ data/regression-bug-queue.jsonl
 data/v2-rollback-counter.jsonl
 data/v2-fix-log.jsonl
 data/v2-verify-spend.jsonl
+# Persona-system ledgers (added 2026-05-28 with persona-system Wave 1):
+# - persona-findings.jsonl: append-only findings written by /deploy-verify Phase 3.5,
+#   /bug-resolver verify (Hamilton), /omega-steward Phase 4 (DHH/Howard/Hickey),
+#   /council --persona, /personas batch. Each finding may quote sensitive-path
+#   code; cross-fork-leak guard treats this path as sensitive.
+# - persona-review-spend.jsonl: per-invocation LLM cost; sums into V2_BUDGET_USD=$300.
+# - persona-monthly-review-*.md: precision-review reports written by Wave 3
+#   CLI; include finding samples by hash_only reference (per cross-fork-leak guard).
+data/persona-findings.jsonl
+data/persona-review-spend.jsonl
+data/persona-monthly-review-*.md
 # Process All audit log (PR cap-raise 2026-05-26) — append-only record of every
 # spawn whose cost estimate exceeded $250; includes companies list which can
 # contain personal pipeline data.

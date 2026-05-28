@@ -30,6 +30,16 @@ export const SENSITIVE_PATH_PATTERNS = [
   /\/data\/applications\.md$/,
   /\/data\/hm-intel\//,
   /\/data\/apply-pack[s]?\//,
+  // Persona-system ledgers (added 2026-05-28 with persona-system Wave 1).
+  // The findings ledger contains bug-class severity + file paths the personas
+  // cite — potentially quoting sensitive-path code. The spend ledger contains
+  // persona names + phases that infer codebase architecture. Both gitignored;
+  // both must be hash_only OR summary_only when referenced in PR descriptions
+  // / reports / commit messages.
+  /\/data\/persona-findings\.jsonl$/,
+  /\/data\/persona-review-spend\.jsonl$/,
+  // Monthly review reports — aggregate persona finding samples
+  /\/data\/persona-monthly-review-[\d-]+\.md$/,
 ];
 
 export function isSensitivePath(p) {

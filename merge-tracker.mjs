@@ -313,7 +313,9 @@ if (!existsSync(ADDITIONS_DIR)) {
 const tsvFiles = readdirSync(ADDITIONS_DIR).filter(f => f.endsWith('.tsv'));
 if (tsvFiles.length === 0) {
   console.log('✅ No pending additions to merge.');
-  process.exit(0);
+  // Fall through to post-merge --check (catches pre-existing dupes even on
+  // empty-merge runs — important for cron + manual invocations that exist
+  // to verify dedupe drift hasn't crept in via other writers).
 }
 
 // Sort files numerically for deterministic processing
@@ -442,6 +444,34 @@ if (!DRY_RUN) {
 
 console.log(`\n📊 Summary: +${added} added, 🔄${updated} updated, ⏭️${skipped} skipped`);
 if (DRY_RUN) console.log('(dry-run — no changes written)');
+
+// Post-merge dedupe drift check (L2b of 2026-05-27 dedupe-defense PR).
+// After every successful merge, scan applications.md for cross-surface
+// duplicate (company × variant-safe role × LIVE-status) collisions and
+// surface them. Warn-only — does NOT mutate. The in-batch dedup fix at
+// lines 392-412 prevents NEW dupes from accumulating; this catches any
+// that slip past + pre-existing legacy dupes that need cleanup.
+console.log('\n--- Post-merge dedupe drift check ---');
+try {
+  // Non-throw spawn so a non-zero exit (2 = collisions found) doesn't
+  // crash the merge-tracker run — the merge already landed successfully.
+  const result = execFileSync('node', [join(CAREER_OPS, 'dedup-tracker.mjs'), '--check'], {
+    cwd: CAREER_OPS,
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  console.log(result);
+} catch (err) {
+  // exit code 2 from dedup-tracker --check = collisions found (expected
+  // surface). stdout was on the captured stream; print it + emit a clear
+  // operator-facing WARN.
+  if (err.status === 2) {
+    console.log(err.stdout || '');
+    console.warn('⚠️  WARN: dedupe drift detected after merge. Run `node dedup-tracker.mjs --mark` (preserves audit trail) or `--delete` (legacy) to clean up.');
+  } else {
+    console.warn(`⚠️  dedup-tracker --check failed unexpectedly: ${err.message}`);
+  }
+}
 
 // Optional verify
 if (VERIFY && !DRY_RUN) {

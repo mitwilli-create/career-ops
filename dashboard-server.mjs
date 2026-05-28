@@ -1410,6 +1410,15 @@ function _computeLiveCounts(activeJob) {
     }
   } catch (_) {}
 
+  // batch/triage-advance.tsv queued count — drives the sidebar Run Batch chip
+  // (#pipeline-btn-batch-count) + Process All chip (#pipeline-btn-all-count =
+  // pipeline_pending + triage_advance_count). Wired into _updateLiveCounts on
+  // 2026-05-27 so the sidebar reflects state changes within the SSE tick
+  // instead of waiting for a full dashboard rebuild.
+  try {
+    counts.triage_advance_count = countTriageAdvanceQueued();
+  } catch (_) { counts.triage_advance_count = null; }
+
   return counts;
 }
 

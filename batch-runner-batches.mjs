@@ -667,7 +667,16 @@ async function phaseSubmit(apiKey) {
 
     // Static context in system block with cache_control — API caches this prefix across requests
     // max_tokens capped at 1,400: eval reports are 500–900 tokens; 4096 wastes money on runaway outputs
-    // temperature: 0 eliminates verbose preambles that inflate output tokens in scoring tasks
+    //
+    // NOTE (2026-05-27): `temperature` removed. claude-sonnet-4-6 returns
+    // `invalid_request_error: \`temperature\` is deprecated for this model.`
+    // Before this fix EVERY batch request errored 100% (verified against
+    // msgbatch_01MmnS5GbuWFqxfwQFHJcoad et al — 179/179 errored, 0 succeeded,
+    // 0 reports written) which left URLs stuck `[ ]` in pipeline.md and drove
+    // the infinite re-batch loop documented in this PR. Sonnet's default
+    // sampling is already deterministic enough for scoring tasks; preamble
+    // verbosity was the only secondary concern + can be controlled via prompt
+    // instructions if regressions surface.
     //
     // QUALITY WARNING (added 2026-05-16): 1400 is set assuming the current
     // A–F + Block G prompt produces ≤900 token reports. If you add new
@@ -681,7 +690,6 @@ async function phaseSubmit(apiKey) {
       params = {
         model: MODEL,
         max_tokens: 1400,
-        temperature: 0,
         system: [{ type: 'text', text: staticBlock, cache_control: { type: 'ephemeral' } }],
         messages: [{ role: 'user', content: userPrompt }],
       };
@@ -691,7 +699,6 @@ async function phaseSubmit(apiKey) {
       params = {
         model: MODEL,
         max_tokens: 1400,
-        temperature: 0,
         messages: [{ role: 'user', content: `${staticBlock}\n\n${userPrompt}` }],
       };
     }
@@ -860,12 +867,35 @@ async function phaseProcess(apiKey) {
 
     let written = 0, errors = 0;
 
+    // ── Pipeline mark helper (2026-05-27) ────────────────────────────
+    // Centralised so the SUCCESS path AND the terminally-errored/expired path
+    // both mark the URL as processed in pipeline.md. Before this refactor
+    // the mark only fired for `succeeded` results — so when Anthropic
+    // returned `errored` for every request in a batch (as it did 2026-05-28
+    // after `temperature` got deprecated on Sonnet 4.6), all 179 URLs stayed
+    // `[ ]` and got re-batched on every Process All run. See AGENTS.md
+    // bug-class: pipeline-mark-not-idempotent-on-terminal-error.
+    const markPipelineUrl = (url) => {
+      try {
+        const pipeline = readFileSync(PIPELINE_FILE, 'utf8');
+        const updated  = pipeline.replace(`- [ ] ${url}`, `- [x] ${url}`);
+        if (updated !== pipeline) writeFileSync(PIPELINE_FILE, updated);
+      } catch (_) {}
+    };
+
     for (const result of results) {
       const meta = batchRecord.requests?.find(r => r.custom_id === result.custom_id);
       if (!meta) { errors++; continue; }
 
       if (result.result?.type !== 'succeeded') {
-        console.log(`  ❌ ${result.custom_id}: ${result.result?.type} — ${result.result?.error?.message ?? 'unknown'}`);
+        const kind = result.result?.type ?? 'unknown';
+        console.log(`  ❌ ${result.custom_id}: ${kind} — ${result.result?.error?.error?.message ?? result.result?.error?.message ?? 'unknown'}`);
+        // Terminal-error path: mark `[x]` so the URL doesn't get re-batched
+        // forever. `canceled` is the only non-terminal type (user-initiated
+        // cancel mid-flight); skip marking for it so a retry can re-run.
+        if (kind === 'errored' || kind === 'expired') {
+          markPipelineUrl(meta.url);
+        }
         errors++;
         continue;
       }
@@ -951,12 +981,9 @@ async function phaseProcess(apiKey) {
       ].join('\t');
       appendFileSync(join(TRACKER_DIR, `${numStr}-${slug}.tsv`), tsvLine + '\n');
 
-      // Mark URL as checked in pipeline.md
-      try {
-        const pipeline = readFileSync(PIPELINE_FILE, 'utf8');
-        const updated  = pipeline.replace(`- [ ] ${meta.url}`, `- [x] ${meta.url}`);
-        if (updated !== pipeline) writeFileSync(PIPELINE_FILE, updated);
-      } catch {}
+      // Mark URL as checked in pipeline.md (success path — same helper as
+      // the terminal-error branch above, idempotent across re-runs).
+      markPipelineUrl(meta.url);
 
       console.log(`  ✅ ${numStr} ${company} — ${role} (${score.toFixed(1)}/5)`);
       written++;

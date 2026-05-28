@@ -193,6 +193,81 @@ async function main() {
     log.push(`  + rank ${newRow.rank} (#${arow.num} ${arow.company} — ${arow.role.slice(0, 40)}): score=${arow.score} status=${arow.status} gate=${verdict.bucket}`);
   }
 
+  // Pass 3 — pre-flight collision gate (L3 of 2026-05-27 dedupe-defense PR).
+  // Detect (normalized-company × variant-safe role × LIVE-status) collisions
+  // in the final ranked[] BEFORE writing the queue. The queue is the public
+  // surface — dupes here mean the dashboard apply-now widget shows the same
+  // role 2+ times. WARN by default; ABORT (exit 3) if QUEUE_DEDUPE_STRICT=true.
+  // Variant-safe roleEqual is inlined here to keep the queue rebuild a
+  // single-file script with zero new module imports — the comma-qualifier
+  // guard logic is identical to merge-tracker.mjs::roleFuzzyMatch fast-path
+  // and dedup-tracker.mjs::roleMatch (all three agree on what's a dupe).
+  const QUEUE_DEDUPE_STRICT = process.env.QUEUE_DEDUPE_STRICT === 'true';
+  const QUEUE_LIVE_RE = /^(evaluated|responded|applied|interview|offer)$/i;
+  const normCompany = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const variantSafeRoleEqual = (a, b) => {
+    const normA = String(a || '').trim().toLowerCase();
+    const normB = String(b || '').trim().toLowerCase();
+    if (normA === normB) return true;
+    const hasCommaA = normA.includes(',');
+    const hasCommaB = normB.includes(',');
+    if (hasCommaA || hasCommaB) {
+      if (hasCommaA !== hasCommaB) return false;
+      const qualA = normA.split(',').slice(1).join(',').trim();
+      const qualB = normB.split(',').slice(1).join(',').trim();
+      if (qualA !== qualB) return false;
+      const baseA = normA.split(',')[0].trim();
+      const baseB = normB.split(',')[0].trim();
+      return baseA === baseB;
+    }
+    return false;
+  };
+
+  const liveRows = ranked.filter(r => !r._dropped && QUEUE_LIVE_RE.test((r.status || '').trim()));
+  const companyBuckets = new Map();
+  for (const r of liveRows) {
+    const key = normCompany(r.company);
+    if (!companyBuckets.has(key)) companyBuckets.set(key, []);
+    companyBuckets.get(key).push(r);
+  }
+  const queueCollisions = [];
+  for (const [, group] of companyBuckets) {
+    if (group.length < 2) continue;
+    const seenNums = new Set();
+    for (let i = 0; i < group.length; i++) {
+      if (seenNums.has(String(group[i].num))) continue;
+      const cluster = [group[i]];
+      seenNums.add(String(group[i].num));
+      for (let j = i + 1; j < group.length; j++) {
+        if (seenNums.has(String(group[j].num))) continue;
+        if (variantSafeRoleEqual(group[i].role, group[j].role)) {
+          cluster.push(group[j]);
+          seenNums.add(String(group[j].num));
+        }
+      }
+      if (cluster.length >= 2) queueCollisions.push(cluster);
+    }
+  }
+
+  if (queueCollisions.length > 0) {
+    const totalDupeRows = queueCollisions.reduce((n, c) => n + c.length, 0);
+    console.warn(`\n⚠️  PRE-FLIGHT COLLISION GATE: ${queueCollisions.length} bucket(s) with ${totalDupeRows} duplicate live row(s):`);
+    for (const c of queueCollisions) {
+      console.warn(`    ${c[0].company} / ${c[0].role}`);
+      for (const r of c) console.warn(`      #${r.num} (score ${r.eval_score ?? '?'}, ${r.status}, rank ${r.rank})`);
+    }
+    console.warn(`\n    Resolve: node dedup-tracker.mjs --mark   (then re-run this rebuild)`);
+    stats.queue_collisions = queueCollisions.length;
+    stats.queue_collision_rows = totalDupeRows;
+    if (QUEUE_DEDUPE_STRICT) {
+      console.error('\nFATAL: QUEUE_DEDUPE_STRICT=true and collisions detected — refusing to write queue.');
+      process.exit(3);
+    }
+  } else {
+    stats.queue_collisions = 0;
+    stats.queue_collision_rows = 0;
+  }
+
   // Update queue metadata
   queue.ranked = ranked;
   queue.total_rows = ranked.length;

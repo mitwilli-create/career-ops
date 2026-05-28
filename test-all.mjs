@@ -383,6 +383,40 @@ if (fileExists('VERSION')) {
   fail('VERSION file missing');
 }
 
+// ── 11. APPLICATIONS.MD DEDUPE INVARIANT (L4 of 2026-05-27 dedupe-defense PR) ─
+
+console.log('\n11. Applications.md dedupe invariant (cross-surface dupes)');
+
+try {
+  // Runs tests/applications-dedupe-invariant.test.mjs — exits 2 if any
+  // (normalized-company × variant-safe role × LIVE-status) collisions
+  // exist. The PR that introduced this section also cleaned the baseline,
+  // so this should hold green. Future PRs that touch any of the 8 writers
+  // to applications.md (scan / scan-rss / normalize-statuses / gemini-eval /
+  // dedup-tracker / merge-tracker / batch-runner-batches / audit /
+  // dashboard-server) MUST keep this test green or fix the dedupe path.
+  execFileSync('node', ['tests/applications-dedupe-invariant.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+  });
+  pass('No cross-surface dedupe collisions in applications.md');
+} catch (err) {
+  if (err.status === 2) {
+    fail(`Dedupe invariant VIOLATED — applications.md has cross-surface dupes`);
+    // Print the colliding rows so the operator can act
+    const out = (err.stdout || '') + (err.stderr || '');
+    for (const line of out.split('\n').slice(0, 40)) {
+      if (line.trim()) console.log(`     ${line}`);
+    }
+    console.log(`     → Fix: node dedup-tracker.mjs --mark`);
+  } else {
+    fail(`Dedupe invariant test crashed: ${err.message}`);
+  }
+}
+
+// Import execFileSync (was already imported above)
+
 // ── SUMMARY ─────────────────────────────────────────────────────
 
 console.log('\n' + '='.repeat(50));

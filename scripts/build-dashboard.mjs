@@ -26429,6 +26429,22 @@ function _updateLiveCounts(lc) {
       }
     }
   } catch (_) {}
+  // 2026-05-27 — Sidebar count badges (Run Batch + Process All chips).
+  // Before this wiring, both badges only refreshed when the entire dashboard
+  // was rebuilt — so after a Process All drained 179 URLs from the pipeline,
+  // the sidebar still showed the pre-drain count until the next nightly
+  // rebuild. The badges are now updated on every SSE tick from live_counts.
+  try {
+    if (lc.triage_advance_count != null) {
+      var batchBadge = document.getElementById('pipeline-btn-batch-count');
+      if (batchBadge) batchBadge.textContent = String(lc.triage_advance_count);
+    }
+    if (lc.pipeline_pending != null) {
+      var allBadge = document.getElementById('pipeline-btn-all-count');
+      var triageN  = (lc.triage_advance_count != null) ? lc.triage_advance_count : 0;
+      if (allBadge) allBadge.textContent = String(lc.pipeline_pending + triageN);
+    }
+  } catch (_) {}
   // Apply-Now refresh banner — appears when new ≥4.0 rows have landed
   // since the current Process All run started. Click-to-refresh = reloads
   // queue without churning while user is browsing. Q4 locked.

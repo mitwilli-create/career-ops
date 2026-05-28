@@ -499,3 +499,4 @@ data/closeout-*.json
 # Deployment reports — personal pipeline data (per /deploy-verify Q8 locked decision)
 data/deployment-report-*.md
 data/deployment-inventory-*.md
+.claude/audit/pipeline-dupe-drain-2026-05-27/

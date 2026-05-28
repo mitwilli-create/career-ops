@@ -37,6 +37,7 @@ import { fileURLToPath } from 'url';
 import { homedir } from 'os';
 import mjml2html from 'mjml';
 import { generateSubject } from './dispatch-subject-line.mjs';
+import { isCurationFresh, stripDayOfWeekParenthetical } from '../lib/event-liveness.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
@@ -281,12 +282,28 @@ function pickTrainingRec(iso) {
   return t.recommendations[slot % t.recommendations.length];
 }
 
-// ── PNW event selection (first event with date >= today) ──────────────────
+// ── PNW event selection (date >= today + verified_live !== false) ─────────
+// PR-A 2026-05-27: added verified_live filter to drop stale-URL audit-trail
+// entries (`verified_live:false` events kept for context but never surfaced).
+// Also surfaces a stderr WARN if the dispatch JSON's $lastUpdated is >7d old
+// so the launchd log captures it. PR-B will add runtime URL liveness probe +
+// PNW geographic cascade fallback (Seattle → Portland → Vancouver → SF → LA).
+// See lib/event-liveness.mjs for the freshness/liveness primitives.
 function pickPnwEvent(iso) {
   const p = pnwEvents();
   if (!p || !Array.isArray(p.events)) return null;
+  if (p.$lastUpdated && !isCurationFresh({ retrieved: p.$lastUpdated }, iso)) {
+    process.stderr.write(JSON.stringify({
+      t: new Date().toISOString(),
+      level: 'warn',
+      source: 'heartbeat-dispatch.pickPnwEvent',
+      msg: 'pnw-events.json $lastUpdated is >7d stale — re-scrape via PR-B refresh agent',
+      $lastUpdated: p.$lastUpdated,
+      today: iso,
+    }) + '\n');
+  }
   const sorted = [...p.events]
-    .filter(e => e.date && e.date >= iso)
+    .filter(e => e.date && e.date >= iso && e.verified_live !== false)
     .sort((a, b) => a.date.localeCompare(b.date));
   return sorted[0] || null;
 }
@@ -739,6 +756,12 @@ function renderOnTheCounter(rec, palette) {
 }
 
 function renderInThePnw(event, palette) {
+  // PR-A 2026-05-27: strip "(Friday)" / "(Saturday)" parentheticals from
+  // event names — they may not match the actual day-of-week derived from
+  // the event date for the current year (see AGENTS.md bug-class
+  // "event-name-day-of-week-drift"). The niceDate label below derives the
+  // weekday from event.date so the rendered day is always correct.
+  const cleanName = stripDayOfWeekParenthetical(event.name || '');
   const niceDate = (() => {
     try {
       const d = new Date(event.date + 'T12:00:00Z');
@@ -748,7 +771,7 @@ function renderInThePnw(event, palette) {
   return `
 <div style="margin:8px 0 6px 0">
   <div class="editorial-grotesk" style="font-family:'Inter',sans-serif;font-size:9px;font-weight:700;letter-spacing:0.20em;text-transform:uppercase;color:${palette.ink_4};margin-bottom:6px">In the PNW &middot; Networking</div>
-  <p style="margin:0 0 2px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:600;font-size:15px;line-height:1.25;color:${palette.ink}">${escapeHtml(event.name || '')}</p>
+  <p style="margin:0 0 2px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:600;font-size:15px;line-height:1.25;color:${palette.ink}">${escapeHtml(cleanName)}</p>
   <p style="margin:0 0 4px 0;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;letter-spacing:0.10em;text-transform:uppercase;color:${palette.ink_4}">${escapeHtml(niceDate)} &middot; ${escapeHtml(event.venue || event.address || 'venue on event page')}</p>
   ${event.fit_for_mitchell ? `<p style="margin:0 0 4px 0;font-family:'Fraunces',Georgia,serif;font-style:italic;font-weight:400;font-size:12px;line-height:1.4;color:${palette.ink_3}">${escapeHtml(event.fit_for_mitchell)}</p>` : ''}
   ${event.rsvp_url ? `<p style="margin:0;font-family:'Inter',sans-serif;font-size:10px"><a href="${escapeHtml(event.rsvp_url)}" style="color:${palette.accent};text-decoration:none;border-bottom:1px solid ${palette.rule};font-weight:700;letter-spacing:0.10em;text-transform:uppercase">RSVP &rarr;</a></p>` : ''}

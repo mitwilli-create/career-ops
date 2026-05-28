@@ -7,6 +7,51 @@
 
 ---
 
+## ⚠ Supersession notice — 2026-05-27
+
+This guide was written 2026-05-06, before the `/apply-pack-polish`,
+`/pre-apply-check`, `/intel-refresh`, and `/network-emailer` skills shipped.
+The per-role flow has moved to `data/runbook-daily-apply-flow-2026-05-27.md`,
+which orchestrates those skills.
+
+**Phases still canonical here (use this guide):**
+- Phase 0 — Referral Activation (5× callback rate uplift)
+- Phase 0.5 — Audition Artifact (35-45% callback ceiling)
+- Phase 6 — 1-Pager / HM Outreach
+- Phase 8 — Interview Defense Prep
+
+**Phases superseded (use new skills instead):**
+- Phase 1 (Job Intelligence Decode) → invoke `/intel-refresh --priority`
+- Phase 2 (CV Tailoring) → `/apply-pack-polish` runs this in artifact 1 of 6
+- Phase 3 (Cover Letter) → `/apply-pack-polish` artifact 2 of 6
+- Phase 4 (Application Form Fields) → `/apply-pack-polish` artifact 3 of 6
+- Phase 5 (ATS + Format Checklist) → `/pre-apply-check` ATS subcheck
+- Phase 7 (Pre-Submit Quality Check) → `/pre-apply-check` overall_status gate
+
+Read those phases here for context, but DO NOT execute them inline anymore —
+the skills produce better-calibrated output via 4-round polish loop + gate
+adjudication. See `data/prompt-runbook-index-2026-05-27.md` for the full
+prompt-runbook taxonomy.
+
+### Skills + close standard (2026-05-27 standardization)
+
+Read `AGENTS.md` for system context + `CLAUDE.md` for project conventions
+before running any phase below. Cost-cap reference: `V2_BUDGET_USD=$300` daily
+ceiling across all phases combined.
+
+| Canonical phase | Primary skill leverage | Per-phase close |
+|---|---|---|
+| Phase 0 — Referral Activation | `/network-emailer`, `/network-enricher` | Single next action = named outreach sent OR "no warm path" documented |
+| Phase 0.5 — Audition Artifact | `gh` CLI, Chrome MCP for X review | Single next action = one named ≤4h build target OR "existing surface sufficient" |
+| Phase 6 — 1-Pager / HM Outreach | `/network-emailer` for HM email lookup | Single next action = 1-pager + outreach sent OR scheduled |
+| Phase 8 — Interview Defense Prep | `/researcher` for company-specific HM intel | Single next action = top 3 stories rehearsed + filed in interview-prep/ |
+
+Each phase below was written before the close-standard convention; treat the
+table above as the canonical close pattern. If a phase ends in a checklist (a
+menu), pick ONE item before moving forward.
+
+---
+
 ## The Brutal Reality First
 
 From 700+ real candidate reports (Reddit r/cscareerquestions, r/jobsearchhacks, Blind Anthropic/OpenAI megathreads, X threads, Mar–May 2026):

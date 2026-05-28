@@ -37,6 +37,8 @@ import { guessCompany, buildCompanyMatcher, extractRoleFromUrl } from './lib/ats
 import { checkUrl } from './lib/http-liveness.mjs';
 import { renderDiscardPatternBrief } from './lib/discard-pattern-injector.mjs';
 import { scoreZombie } from './lib/zombie-scorer.mjs';
+import { detectSurfaceAlias } from './lib/surface-alias-detector.mjs';
+import { recordSurfaceAlias } from './lib/role-surface-aliases.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
@@ -836,10 +838,45 @@ async function main() {
         skipped++;
         quota.skipped++;
       } else {
-        console.log(`🟢 ${score.toFixed(1)}/5 [${archetype}] → ADVANCE  (${scoreReason})`);
-        writeAdvance(url, tier, score, archetype, scoreReason);
-        advanced++;
-        quota.advanced++;
+        // L5 gate (2026-05-27, dedupe-defense PR sequence #310): before
+        // writing to triage-advance.tsv, check if this URL is a different
+        // surface of an already-evaluated canonical row in applications.md.
+        // If yes, record the surface-alias + skip eval $. If no, proceed.
+        //
+        // Detection is best-effort: any error short-circuits to "no match"
+        // + falls through to normal advance. Cost guard via L5_DAILY_USD_CAP.
+        let l5Match = null;
+        try {
+          const l5Title = extractRoleFromUrl(url, body || '');
+          const l5Company = guessCompany(url);
+          if (l5Title && l5Company) {
+            const l5Result = await detectSurfaceAlias({ title: l5Title, company: l5Company, url });
+            if (l5Result.match) {
+              l5Match = l5Result;
+              recordSurfaceAlias({
+                canonical_num: l5Result.match,
+                alias_url: url,
+                method: l5Result.method,
+                confidence: l5Result.confidence,
+                triage_score: score,
+                triage_archetype: archetype,
+              });
+            }
+          }
+        } catch (l5Err) {
+          // Best-effort: never block triage on L5 failure. Log + advance.
+          console.warn(`⚠️  L5 detector error (proceeding to eval anyway): ${l5Err.message}`);
+        }
+
+        if (l5Match) {
+          console.log(`🔗 ${score.toFixed(1)}/5 [${archetype}] → ALIAS of canonical #${l5Match.match} (${l5Match.method}, conf ${l5Match.confidence.toFixed(2)}) — skipping eval`);
+          quota.advanced++; // count as "processed" — alias recorded
+        } else {
+          console.log(`🟢 ${score.toFixed(1)}/5 [${archetype}] → ADVANCE  (${scoreReason})`);
+          writeAdvance(url, tier, score, archetype, scoreReason);
+          advanced++;
+          quota.advanced++;
+        }
       }
 
       quota.triaged++;

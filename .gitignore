@@ -500,3 +500,9 @@ data/closeout-*.json
 data/deployment-report-*.md
 data/deployment-inventory-*.md
 .claude/audit/pipeline-dupe-drain-2026-05-27/
+
+# L5 surface-alias registry — contains personal pipeline data (canonical row
+# nums + alias URLs across LinkedIn / Greenhouse / etc). Gitignored same as
+# applications.md + apply-now-queue is gitignored. Local-only.
+data/role-surface-aliases.json
+data/l5-spend-*.json

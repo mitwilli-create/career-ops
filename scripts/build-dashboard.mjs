@@ -38,6 +38,12 @@ import { computeStrategyCeiling, renderStrategyCard }              from '../lib/
 // PR-E Phase 2 (2026-05-27) — disk-derived intel-refresh status for the
 // partial-success badge state. See lib/intel-refresh-state.mjs.
 import { getRefreshStatus as _intelGetRefreshStatus, getSlotNames as _intelGetSlotNames } from '../lib/intel-refresh-state.mjs';
+// Spec 5b-(i) (2026-05-29) — apply-now enrichment-status badge. Surfaces a
+// small "enriching…" chip when the row has been freshly evaluated but the
+// intel-refresh agent hasn't caught up with load-bearing supplementary
+// slots (hm-intel / role-enrichment / team-health). Calibration signal —
+// never gates rendering, never hides the row.
+import { isRowEnriching, loadIntelRefreshState } from '../lib/apply-now-enrichment-status.mjs';
 import { renderEquitySlidersHtml }                                 from '../lib/equity-calculator.mjs';
 import { getDashboardSidebar, getDashboardSidebarInner }            from '../lib/dashboard-shell.mjs';
 import { loadAllPolishStatus }                                     from '../lib/polish-status-loader.mjs';
@@ -3226,6 +3232,18 @@ function _buildTimeStalenessInline(cacheDir, filePath, slot, slug) {
   }
 }
 
+// Spec 5b-(i) (2026-05-29) — memoized intel-refresh-state load. Read once
+// per build pass; subsequent renderRow calls reuse the cached snapshot.
+// Reset via _resetIntelStateCacheForBadge() if a test or watcher needs a
+// fresh read mid-pass (not currently used, but cheap to expose).
+let _cachedIntelStateForBadge = null;
+function _getIntelStateForBadgeOnce() {
+  if (_cachedIntelStateForBadge !== null) return _cachedIntelStateForBadge;
+  try { _cachedIntelStateForBadge = loadIntelRefreshState(ROOT); }
+  catch (_) { _cachedIntelStateForBadge = { rows: {}, last_run: null }; }
+  return _cachedIntelStateForBadge;
+}
+
 function renderRow(r, idx) {
   const archetype = getReportArchetype(r.reportPath);
   // Prefer the queue's canonical_url (resolved by lib/jd-url-canonicalizer.mjs
@@ -3293,10 +3311,40 @@ function renderRow(r, idx) {
   // ── Meta chips ──────────────────────────────────────────
   // Wave C-A drill-in wiring: comp chip → comp:{num}:{base}, date chip → metric:{num}:evalDate
   const _compBase = (() => { try { const m = String(comp||'').match(/\$\s*(\d{2,4})\s*K/i); return m ? parseInt(m[1],10)*1000 : 0; } catch(_){return 0;} })();
+  // Spec 5b-(i) (2026-05-29) — apply-now enrichment-status badge. Only
+  // surfaces for rows in the apply-now table (idx prefixed 'apply-'). Small
+  // amber chip with hover tooltip naming the slots still landing. Renders
+  // BELOW the primary chips (comp / archetype / date) so it never visually
+  // dominates the row. Per AGENTS.md § Bug class:
+  // confidence-label-annotation-not-gating — annotate, never gate.
+  let enrichingBadge = '';
+  if (idx && typeof idx === 'string' && idx.startsWith('apply-')) {
+    try {
+      const _enrichRow = { num: r.num, eval_date: r.date || r.eval_date };
+      const _enrichResult = isRowEnriching(_enrichRow, _getIntelStateForBadgeOnce());
+      if (_enrichResult.enriching) {
+        const _missingLabel = _enrichResult.missing_slots && _enrichResult.missing_slots.length
+          ? _enrichResult.missing_slots.join(', ')
+          : 'load-bearing intel';
+        const _reasonCopy = _enrichResult.reason === 'never-refreshed'
+          ? 'never refreshed — supplementary intel will land on the next intel-refresh cycle'
+          : _enrichResult.reason === 'eval-newer-than-refresh'
+            ? 'eval is newer than last enrichment — intel will catch up on the next cycle'
+            : 'awaiting ' + _missingLabel;
+        const _tooltip = '⏳ enriching · ' + _reasonCopy + ' · missing: ' + _missingLabel;
+        enrichingBadge = '<span class="meta-chip meta-chip-enriching" '
+          + 'style="font-size:9px;opacity:0.78;background:rgba(210,153,34,0.10);color:#d29922;padding:1px 6px;border-radius:8px;font-weight:400" '
+          + 'title="' + htmlEscape(_tooltip) + '" '
+          + 'aria-label="Row enriching — supplementary intel still landing">⏳ enriching</span>';
+      }
+    } catch (_) { /* badge is optional; never block row render */ }
+  }
+
   const metaChips = [
     comp ? `<span class="meta-chip meta-chip-comp drill-trigger" data-drill="comp:${htmlEscape(String(r.num||''))}:${_compBase}" role="button" tabindex="0" title="Jump to comp intelligence + sources at the bottom of this drawer" onclick="event.stopPropagation();_scrollDrawerTo('rd-comp-intel',this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();_scrollDrawerTo('rd-comp-intel',this)}">💰 ${htmlEscape(comp)}</span>` : '',
     archetype ? `<span class="meta-chip meta-chip-tier">${htmlEscape(archetype)}</span>` : '',
     r.date ? `<span class="meta-chip drill-trigger" data-drill="metric:${htmlEscape(String(r.num||''))}:evalDate" role="button" tabindex="0" title="Click for eval provenance — when scored, by what model" onclick="event.stopPropagation();window.drillIn('metric','${htmlEscape(String(r.num||''))}:evalDate',event)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();window.drillIn('metric','${htmlEscape(String(r.num||''))}:evalDate',event)}">📅 ${htmlEscape(r.date)}</span>` : '',
+    enrichingBadge,
   ].filter(Boolean).join('');
 
   // ── Intro: TL;DR + alignment bars + positioning (compact, full-width) ─────
@@ -26428,6 +26476,11 @@ let _batchInterval = null;
 // for the rebuild phase. Q3+Q4 from the interview.
 function _updateLiveCounts(lc) {
   if (!lc || typeof lc !== 'object') return;
+  // Spec 5c (2026-05-29) — publish live counts to a window global so modal
+  // renderers (Process All Phase A, batch-status queue cells) can read the
+  // current SSE-fresh pipeline_pending instead of their build-time-cached
+  // snapshot. Closes the "modal shows 419, sidebar shows 303" drift.
+  try { window.__LIVE_COUNTS__ = lc; } catch (_) {}
   // Total Eval tile (id=live-applied is actually the "applied" tile; we
   // look for total-evaluations specifically by class + label).
   try {
@@ -26548,6 +26601,61 @@ function _renderBatchData(data) {
   // re-fire the toast on every SSE tick. Wrapped in try/catch so render
   // is never blocked by a toast-helper failure.
   try { _maybeShowProcessAllCompletionToast(data && data.last_run_complete); } catch (_) {}
+
+  // Spec 5a (2026-05-29) — In-flight Anthropic batch chip. Surfaces an
+  // amber chip whenever any batch in batches-api-state.json has
+  // processing>0, even when no orchestrator job is in batch phase (between
+  // rounds, after orchestrator advanced, sibling-submitted batches).
+  // Closes the "stuck progress" misread caused by Anthropic's 60s poll
+  // cadence + atomic 0→N progress updates: the user couldn't tell whether
+  // the batch was alive or dead between polls. The chip is calibration
+  // signal — it never blocks any other render path, never throws.
+  try {
+    var iflBatch = data && data.in_flight_batch;
+    var iflEl = document.getElementById('in-flight-batch-chip');
+    if (iflBatch && iflBatch.total > 0) {
+      var hostWidget = document.getElementById('sidebar-batch');
+      if (!iflEl) {
+        iflEl = document.createElement('div');
+        iflEl.id = 'in-flight-batch-chip';
+        iflEl.style.cssText = 'margin:8px 12px;padding:8px 12px;background:rgba(210,153,34,0.10);border-left:3px solid #d29922;border-radius:6px;color:rgba(255,255,255,0.88);font-size:12px;display:flex;flex-direction:column;gap:3px';
+        iflEl.title = 'Anthropic batch in flight — atomic progress updates (0→N at poll time, not incremental)';
+        if (hostWidget && hostWidget.parentNode) {
+          // Insert before sidebar-batch so it sits above the widget; if
+          // the widget is hidden (idle), the chip still shows in sidebar flow.
+          hostWidget.parentNode.insertBefore(iflEl, hostWidget);
+        } else {
+          // No widget host yet — defer; SSE tick will retry.
+          iflEl = null;
+        }
+      }
+      if (iflEl) {
+        var elapsedMs = iflBatch.elapsed_ms || 0;
+        var elapsedMin = Math.floor(elapsedMs / 60000);
+        var elapsedSec = Math.floor((elapsedMs % 60000) / 1000);
+        var elapsedLabel = (elapsedMin > 0 ? elapsedMin + 'm ' : '') + elapsedSec + 's';
+        var nextPollSec = Math.max(1, Math.round((iflBatch.next_poll_in_ms || 60000) / 1000));
+        var doneCt = (iflBatch.succeeded || 0) + (iflBatch.errored || 0);
+        var pctLabel = iflBatch.total > 0 ? Math.round((doneCt / iflBatch.total) * 100) + '%' : '—';
+        var erroredNote = (iflBatch.errored || 0) > 0 ? ' · <span style="color:#f85149">' + iflBatch.errored + ' errored</span>' : '';
+        iflEl.innerHTML =
+          '<div style="display:flex;align-items:center;gap:6px;font-weight:600;color:#d29922">'
+          + '⏳ Anthropic batch in flight'
+          + ' <span style="font-weight:400;color:rgba(255,255,255,0.55);font-size:11px">· ' + (iflBatch.succeeded || 0) + ' of ' + iflBatch.total + ' (' + pctLabel + ')' + erroredNote + '</span>'
+          + '</div>'
+          + '<div style="font-size:10px;color:rgba(255,255,255,0.45)">'
+          + 'elapsed ' + elapsedLabel
+          + ' · next poll ~' + nextPollSec + 's'
+          + ' · ' + (iflBatch.processing || 0) + ' still processing'
+          + '</div>'
+          + '<div style="font-size:10px;color:rgba(255,255,255,0.30);font-style:italic">'
+          + 'Anthropic batch progress jumps from 0→N at poll time — not gradual'
+          + '</div>';
+      }
+    } else if (iflEl) {
+      iflEl.remove();
+    }
+  } catch (_) { /* never block render on chip */ }
   // P4.33 (2026-05-20) — dispatch chip update.
   // Runs FIRST so the chip refreshes even when sidebar-batch widget is absent
   // (e.g., before the widget DOM has been wired by deferred render).
@@ -27149,7 +27257,8 @@ function _bsRenderBody(data, changed) {
           '<div class="batch-status-queue-lbl">Triage advance</div>' +
         '</div>' +
         '<button type="button" class="batch-status-queue-cell batch-status-queue-cell-clickable" onclick="openBatchDrillIn(\\'pipeline_pending\\')" title="Items pending in data/pipeline.md — click to see the URL list" aria-label="Show pipeline pending items">' +
-          '<div class="batch-status-queue-num ' + ch('q:pipeline_pending') + '">' + (q.pipeline_pending || 0) + '</div>' +
+          // Spec 5c (2026-05-29) — prefer SSE-fresh window.__LIVE_COUNTS__.pipeline_pending over the modal's cached q.pipeline_pending snapshot.
+          '<div class="batch-status-queue-num ' + ch('q:pipeline_pending') + '">' + ((typeof window !== 'undefined' && window.__LIVE_COUNTS__ && typeof window.__LIVE_COUNTS__.pipeline_pending === 'number') ? window.__LIVE_COUNTS__.pipeline_pending : (q.pipeline_pending || 0)) + '</div>' +
           '<div class="batch-status-queue-lbl">Pipeline pending</div>' +
         '</button>' +
         '<button type="button" class="batch-status-queue-cell batch-status-queue-cell-clickable" onclick="openBatchDrillIn(\\'batch_input\\')" title="Items in batch/batch-input.tsv — click to see the queued list" aria-label="Show batch input items">' +
@@ -28418,8 +28527,18 @@ function _renderProcessAllPhaseA(pAgg, pCmp) {
   // also drains the queued_for_batch set (already-triaged items waiting for
   // batch eval, e.g. 172). The sidebar badge already shows the honest total
   // (pending + queued, e.g. 187); the modal should match.
-  const triageCount = pAgg.process_all.triage_count || 0;
-  const queuedForBatch = pAgg.queued_for_batch || 0;
+  // Spec 5c (2026-05-29) — live-count override for the pipeline + triage
+  // queue counts. When SSE has pushed fresh live_counts via
+  // _updateLiveCounts → window.__LIVE_COUNTS__, use them instead of the
+  // cached pAgg snapshot (which was fetched once when the modal opened
+  // and may be minutes stale). Read-only — does not mutate pAgg.
+  const _liveCounts = (typeof window !== 'undefined' && window.__LIVE_COUNTS__) || null;
+  const triageCount = (_liveCounts && typeof _liveCounts.pipeline_pending === 'number')
+    ? _liveCounts.pipeline_pending
+    : (pAgg.process_all.triage_count || 0);
+  const queuedForBatch = (_liveCounts && typeof _liveCounts.triage_advance_count === 'number')
+    ? _liveCounts.triage_advance_count
+    : (pAgg.queued_for_batch || 0);
   const totalPipelineItems = triageCount + queuedForBatch;
   const scopedRows = (pCmp && Array.isArray(pCmp.companies))
     ? pCmp.companies.filter(c => !c.excluded)

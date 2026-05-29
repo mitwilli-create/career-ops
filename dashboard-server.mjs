@@ -36,6 +36,13 @@ import { renderInlineDiff, renderSideBySideDiff } from './lib/diff-renderer.mjs'
 // PR-E Phase 2 (2026-05-27) — disk-deriving status reader. Replaces direct
 // state.json reads with derived-from-disk truth. See lib/intel-refresh-state.mjs.
 import { getRefreshStatus as _intelGetRefreshStatus, getSlotNames as _intelGetSlotNames } from './lib/intel-refresh-state.mjs';
+// Spec 5a (2026-05-29) — Anthropic batch in-flight detector. Surfaces the
+// most-recent batch with processing>0 from batch/batches-api-state.json so
+// the sidebar can render an "⏳ in-flight · Mm elapsed · next poll Ns" chip
+// even when no orchestrator job is currently in batch phase. Closes the
+// funnel-visibility gap where 60s polling + atomic progress updates made
+// the sidebar feel "stuck" mid-batch.
+import { detectInFlightBatchFromDisk } from './lib/in-flight-batch-detector.mjs';
 // ZETA 2026-05-19 — network-database search + person lookups
 import {
   searchNetwork as networkSearch,
@@ -2835,6 +2842,15 @@ function batchLive() {
   }
   const live_counts = _computeLiveCounts(liveActiveJob);
 
+  // Spec 5a (2026-05-29) — in-flight Anthropic batch snapshot. Independent of
+  // orchestrator state — surfaces even when no pipelineStages job is active
+  // (e.g., batch left in flight after orchestrator phase advanced, or batch
+  // submitted by a sibling instance). Returns null when nothing is in flight.
+  // The client renderer uses this to render an amber "⏳ in-flight" chip
+  // with elapsed time + next-poll countdown.
+  let in_flight_batch = null;
+  try { in_flight_batch = detectInFlightBatchFromDisk(ROOT); } catch (_) { /* never block SSE on detector */ }
+
   return {
     total, completed, failed, running, pending, pct,
     rows: sorted.slice(0, 500),
@@ -2849,6 +2865,10 @@ function batchLive() {
     // 2026-05-27 (PR-organic-wiring) — live counts for downstream widgets.
     // Read fresh from disk every tick. Cheap (small files).
     live_counts,
+    // Spec 5a (2026-05-29) — in-flight Anthropic batch (null when none).
+    // { batchId, processing, succeeded, errored, total, submitted_at,
+    //   elapsed_ms, next_poll_in_ms, error_rate }
+    in_flight_batch,
   };
 }
 

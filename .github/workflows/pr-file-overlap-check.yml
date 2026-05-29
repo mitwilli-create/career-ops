@@ -24,6 +24,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # `bash -e` is the default for `run` blocks. Without `set +e` here,
+          # the node line aborts the whole script on the script's intentional
+          # exit-2 ("overlap detected, warn-only"), and the trailing
+          # `EXIT_CODE=$?` + `exit 0` never run. Workflow then reports
+          # failure even though the intent was a warning annotation.
+          # Surfaced via PR #320 2026-05-29.
+          set +e
           node scripts/check-pr-file-overlap.mjs ${{ github.event.pull_request.number }} > /tmp/overlap-report.txt 2>/tmp/overlap-stderr.txt
           EXIT_CODE=$?
           cat /tmp/overlap-stderr.txt >&2

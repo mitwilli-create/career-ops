@@ -20,11 +20,16 @@
  *   node scripts/process-all-pipeline.mjs --job-id=xxx    # use specific job ID (server pre-allocates)
  */
 
-import { readFileSync, writeFileSync, existsSync, appendFileSync, mkdirSync, statSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, appendFileSync, mkdirSync, statSync, renameSync, unlinkSync } from 'fs';
 import { spawn } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { randomBytes } from 'crypto';
+// 2026-05-29 — Spec data/spec-process-all-drain-and-visibility-2026-05-29.md.
+// Atomic state-write + resume-state + batch-state-repair-sweep. Closes 6+
+// session recurring ask about Process All not draining the queue.
+import { writeProcessState, writeResumeState, shouldResume, clearResumeState } from '../lib/process-all-state.mjs';
+import { runBatchStateRepairSweep } from '../lib/batch-state-repair-sweep.mjs';
 
 try {
   const { config } = await import('dotenv');
@@ -34,6 +39,14 @@ try {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const STATE_FILE = join(ROOT, 'data/pipeline-process-state.json');
+// 2026-05-29 — resume-state path. Written on SIGTERM/SIGINT/crash; read on
+// next invocation to skip already-completed phases. Cleared on success.
+const RESUME_PATH = join(ROOT, 'data/process-all-resume-state.json');
+const BATCHES_API_STATE = join(ROOT, 'batch/batches-api-state.json');
+const PIPELINE_PATH = join(ROOT, 'data/pipeline.md');
+// Captured at module-init so all phases share the same start-time anchor.
+const STARTED_AT = new Date().toISOString();
+const STARTED_AT_MS = Date.now();
 
 const ARGS = Object.fromEntries(
   process.argv.slice(2).filter(a => a.startsWith('--')).map(a => {
@@ -49,6 +62,10 @@ const DRY_RUN = !!ARGS['dry-run'];
 // MONTHLY_BUDGET_USD guard ignored the dashboard's force-override checkbox.
 // See AGENTS.md bug-class: force-override-not-propagated-to-internal-guard.
 const CAP_OVERRIDE = !!ARGS['cap-override'];
+// 2026-05-29 — Resume control. --restart forces fresh triage even if a
+// resume-state file exists < 24h. --resume is informational (default behavior
+// is to resume when state exists + fresh).
+const RESTART_FLAG = !!ARGS['restart'];
 const JOB_ID = ARGS['job-id'] || ('proc-' + Date.now().toString(36) + '-' + randomBytes(3).toString('hex'));
 const LOG_PATH = `/tmp/process-all-${JOB_ID}.log`;
 
@@ -89,6 +106,9 @@ const COMPANIES_ARG = typeof ARGS.companies === 'string' && ARGS.companies.trim(
 const SCOPED_ARGS = COMPANIES_ARG ? [`--companies=${COMPANIES_ARG}`] : [];
 
 // ── State helpers ─────────────────────────────────────────────────────────
+// 2026-05-29 — saveState is now atomic (tmp + rename) per state-write-without-
+// disk-write bug class. Half-written JSON used to break SSE consumer + leave
+// dashboard rendering undefined chips.
 function loadState() {
   if (!existsSync(STATE_FILE)) return { jobs: {} };
   try { return JSON.parse(readFileSync(STATE_FILE, 'utf-8')); }
@@ -96,11 +116,31 @@ function loadState() {
 }
 function saveState(s) {
   if (!existsSync(dirname(STATE_FILE))) mkdirSync(dirname(STATE_FILE), { recursive: true });
-  writeFileSync(STATE_FILE, JSON.stringify(s, null, 2));
+  const tmpPath = `${STATE_FILE}.tmp.${process.pid}.${randomBytes(3).toString('hex')}`;
+  try {
+    writeFileSync(tmpPath, JSON.stringify(s, null, 2));
+    renameSync(tmpPath, STATE_FILE);
+  } catch (err) {
+    try { if (existsSync(tmpPath)) unlinkSync(tmpPath); } catch {}
+    throw err;
+  }
 }
+// updateJob is the per-phase partial-patch helper. Each call atomically
+// merges the patch onto the existing job record + preserves the type tag
+// so SSE filters (which require type === 'process-all') always pass.
 function updateJob(patch) {
   const s = loadState();
-  s.jobs[JOB_ID] = { ...(s.jobs[JOB_ID] || {}), jobId: JOB_ID, ...patch, updated_at: new Date().toISOString() };
+  const prior = s.jobs[JOB_ID] || {};
+  s.jobs[JOB_ID] = {
+    ...prior,
+    jobId: JOB_ID,
+    job_id: JOB_ID,
+    type: prior.type || 'process-all',
+    ...patch,
+    updated_at: new Date().toISOString(),
+    last_event_at: new Date().toISOString(),
+    wallclock_elapsed_ms: Math.max(0, Date.now() - STARTED_AT_MS),
+  };
   saveState(s);
 }
 
@@ -255,7 +295,7 @@ async function phaseTriage() {
   let pipelineBefore = 0;
   try {
     const pipeText = readFileSync(join(ROOT, 'data/pipeline.md'), 'utf-8');
-    pipelineBefore = (pipeText.match(/^- \[ \] https?:\/\//gm) || []).length;
+    pipelineBefore = pipeText.split('\n').filter(l => l.startsWith('- [ ]')).length;
   } catch {}
   updateJob({ triage_pipeline_before: pipelineBefore, triage_cap: cap });
 
@@ -279,7 +319,7 @@ async function phaseTriage() {
   let pipelineAfter = 0;
   try {
     const pipeText = readFileSync(join(ROOT, 'data/pipeline.md'), 'utf-8');
-    pipelineAfter = (pipeText.match(/^- \[ \] https?:\/\//gm) || []).length;
+    pipelineAfter = pipeText.split('\n').filter(l => l.startsWith('- [ ]')).length;
   } catch {}
   const capHit = processed >= cap && pipelineAfter > 0;
   const missed = capHit ? pipelineAfter : 0;
@@ -306,21 +346,65 @@ function countTriageAdvanceRows() {
   return lines.length;
 }
 
+// 2026-05-29 — Inspect the most recent batch's error rate from
+// batches-api-state.json. Returns a number in [0, 1] or null when the file
+// is unreadable or contains no batches. Used by the 2-consecutive-100%-error
+// early-abort guard in phaseBatch.
+function _readMostRecentBatchErrorRate() {
+  try {
+    if (!existsSync(BATCHES_API_STATE)) return null;
+    const s = JSON.parse(readFileSync(BATCHES_API_STATE, 'utf-8'));
+    const field = s && s.batches != null ? s.batches : s;
+    const list = Array.isArray(field) ? field : Object.values(field || {});
+    if (list.length === 0) return null;
+    const sorted = list
+      .filter(b => b && typeof b === 'object')
+      .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
+    const last = sorted[sorted.length - 1];
+    if (!last) return null;
+    const c = last.request_counts || {};
+    const total = (Number(c.succeeded) || 0) + (Number(c.errored) || 0) + (Number(c.expired) || 0);
+    if (total === 0) return null;
+    return ((Number(c.errored) || 0) + (Number(c.expired) || 0)) / total;
+  } catch {
+    return null;
+  }
+}
+
 async function phaseBatch() {
   updateJob({ phase: 'batch', phase_started_at: new Date().toISOString() });
   log('━━━ Phase 2/4: BATCH EVAL ━━━');
   if (DRY_RUN) { log('(dry-run) skipping batch'); return { ok: true }; }
 
-  // 2026-05-19 cohesion fix #1 (Mitchell postmortem) — drain loop. Was a
-  // single batch-runner call capped at LIMIT=100 (the script's default),
-  // which left items in triage-advance.tsv after queues > 100. Now loops
-  // up to MAX_ROUNDS calls with --limit=1000 each, breaking when queue
-  // empties OR no progress is made between rounds.
-  const MAX_ROUNDS = Math.max(1, Math.min(20, parseInt(process.env.PROCESS_ALL_MAX_BATCH_ROUNDS || '10', 10)));
+  // 2026-05-29 — MAX_ROUNDS ceiling raised 10 → 30 default, clamp [1, 100].
+  // Realized per-batch sizes cluster at 73-179 (per CLAUDE.md Session Notes
+  // 2026-05-27 audit), so 10 rounds capped throughput at 730-1790 URLs even
+  // when all rounds succeeded. With error-rate spikes the effective drain
+  // was much lower. 30 default lets a 3000-URL queue drain in one run.
+  const MAX_ROUNDS = Math.max(1, Math.min(100, parseInt(process.env.PROCESS_ALL_MAX_BATCH_ROUNDS || '30', 10)));
   const PER_ROUND_LIMIT = Math.max(1, parseInt(process.env.PROCESS_ALL_BATCH_LIMIT || '1000', 10));
+  // 2026-05-29 — wall-clock cap. Default 90 min, clamp [10 min, 6 hours].
+  // Secondary to PER_RUN_CAP_PROCESS_ALL_USD ($1000) — wall-clock is a hung-
+  // process safeguard, not a budget cap.
+  const WALLCLOCK_CAP_MS = Math.max(10 * 60 * 1000, Math.min(6 * 60 * 60 * 1000,
+    parseInt(process.env.PROCESS_ALL_MAX_WALLCLOCK_MS || String(90 * 60 * 1000), 10)));
+  // 2026-05-29 — 2-consecutive-100%-error early abort. If two rounds in a
+  // row produce error_rate >= 80%, abort with `aborted-batch-degraded` so
+  // the SSE toast can surface "every batch is erroring — likely a vendor
+  // deprecation; investigate."
+  const ERROR_RATE_ABORT_THRESHOLD = 0.80;
+  let consecutiveHighErrorRounds = 0;
   let round = 1;
   let totalDrained = 0;
   while (round <= MAX_ROUNDS) {
+    // 2026-05-29 — wall-clock check at the top of every round so a hung
+    // batch-runner can be bounded.
+    const elapsedMs = Date.now() - STARTED_AT_MS;
+    if (elapsedMs > WALLCLOCK_CAP_MS) {
+      log(`  ⏰ wall-clock cap reached (${Math.round(elapsedMs/60000)}m > ${Math.round(WALLCLOCK_CAP_MS/60000)}m) — aborting`);
+      updateJob({ batch_aborted_reason: 'wallclock-cap', batch_rounds_used: round - 1 });
+      return { ok: true, aborted: 'wallclock-cap', rounds_used: round - 1, total_drained: totalDrained };
+    }
     const beforeCount = countTriageAdvanceRows();
     if (beforeCount === 0) {
       log(`  batch queue empty (round ${round}) — drain complete`);
@@ -343,6 +427,25 @@ async function phaseBatch() {
     const drainedThisRound = beforeCount - afterCount;
     totalDrained += drainedThisRound;
     log(`  round ${round}: ${beforeCount} → ${afterCount} (drained ${drainedThisRound})`);
+    // 2026-05-29 — Persist rounds_completed on every round so the SSE shows
+    // real-time progress. Also tracks the resume-from-round counter.
+    updateJob({ rounds_completed: round, batch_items_drained_so_far: totalDrained });
+    // 2026-05-29 — Error-rate early abort. Inspect the just-submitted batch's
+    // request_counts in batches-api-state.json. If two consecutive rounds
+    // both show >= 80% errors, abort — likely a vendor deprecation or
+    // upstream auth issue, not a transient blip.
+    const errorRateThisRound = _readMostRecentBatchErrorRate();
+    if (errorRateThisRound != null && errorRateThisRound >= ERROR_RATE_ABORT_THRESHOLD) {
+      consecutiveHighErrorRounds++;
+      log(`  round ${round}: error-rate ${Math.round(errorRateThisRound * 100)}% (consecutive high-error rounds: ${consecutiveHighErrorRounds})`);
+      if (consecutiveHighErrorRounds >= 2) {
+        log(`  ⚠ 2 consecutive rounds with error-rate ≥ ${Math.round(ERROR_RATE_ABORT_THRESHOLD * 100)}% — aborting (likely vendor deprecation or auth issue; investigate batches-api-state.json)`);
+        updateJob({ batch_aborted_reason: 'error-rate-degraded', batch_rounds_used: round });
+        return { ok: true, aborted: 'error-rate-degraded', rounds_used: round, total_drained: totalDrained };
+      }
+    } else if (errorRateThisRound != null) {
+      consecutiveHighErrorRounds = 0;
+    }
     if (drainedThisRound <= 0) {
       log(`  round ${round}: no drain detected — breaking (queue may be stuck behind expired postings or company-scope filter)`);
       break;
@@ -452,15 +555,90 @@ async function main() {
   // ε 2026-05-19 — run orphan-state cleanup BEFORE registering ourselves so
   // we don't accidentally mark our own brand-new row as crashed.
   try { cleanupOrphanState(); } catch (err) { log(`[cleanup] error (non-fatal): ${err.message}`); }
+
+  // 2026-05-29 — Resume-state detection. If a fresh (< 24h) resume-state
+  // file exists AND --restart was not passed, log the resume state.
+  // Kill switch: PROCESS_ALL_DISABLE_RESUME=true forces fresh runs.
+  const _disableResume = String(process.env.PROCESS_ALL_DISABLE_RESUME || '').toLowerCase() === 'true';
+  let resumeDecision = null;
+  if (!DRY_RUN && !_disableResume) {
+    try {
+      resumeDecision = shouldResume({ resumePath: RESUME_PATH, restartFlag: RESTART_FLAG });
+      if (resumeDecision.resume) {
+        const rf = resumeDecision.state.resume_from || {};
+        log(`▶ RESUMING from prior abandoned run ${resumeDecision.state.job_id} — ${rf.phase}, next_round=${rf.next_round}, remaining=${rf.remaining_url_count}`);
+        log(`  abandoned_at: ${resumeDecision.state.abandoned_at} · reason: ${resumeDecision.state.reason}`);
+      } else if (resumeDecision.state) {
+        log(`(resume-state present but skipping: ${resumeDecision.reason})`);
+      }
+    } catch (err) {
+      log(`[resume] error (non-fatal): ${err.message}`);
+    }
+  }
+
+  // 2026-05-29 — Batch-state-repair-sweep. Re-marks pipeline.md URLs as [x]
+  // when their batch is in terminal-error or terminal-expired state. Closes
+  // the loop from PR #308 (markPipelineUrl-on-terminal-error) for batches
+  // that predate the fix. Idempotent; safe to run on every Process All start.
+  // Kill switch: PROCESS_ALL_DISABLE_REPAIR_SWEEP=true skips.
+  const _disableSweep = String(process.env.PROCESS_ALL_DISABLE_REPAIR_SWEEP || '').toLowerCase() === 'true';
+  if (!DRY_RUN && !_disableSweep) {
+    try {
+      const sweep = runBatchStateRepairSweep({
+        pipelinePath: PIPELINE_PATH,
+        statePath: BATCHES_API_STATE,
+      });
+      if (sweep.ok) {
+        log(`✓ batch-state-repair-sweep: marked ${sweep.marked} URLs from ${sweep.batchesScanned} batches scanned`);
+      } else {
+        log(`⚠ batch-state-repair-sweep: ${sweep.error} (non-fatal — continuing)`);
+      }
+    } catch (err) {
+      log(`[sweep] error (non-fatal): ${err.message}`);
+    }
+  }
+
   const pendingBefore = countPendingPipeline();
+  // 2026-05-29 — Tag type='process-all' explicitly so SSE filters surface
+  // this run even when invoked directly from CLI / launchd (server-spawn
+  // pre-writes this; CLI invocation didn't until now).
   updateJob({
+    type:            'process-all',
     status:          'running',
-    started_at:      new Date().toISOString(),
+    started_at:      STARTED_AT,
     pending_before:  pendingBefore,
+    triage_advanced: 0,
+    processed:       0,
+    pending_after:   null,
+    rounds_completed: 0,
     send_email:      SEND_EMAIL,
     dry_run:         DRY_RUN,
     log_path:        LOG_PATH,
   });
+
+  // 2026-05-29 — Signal handlers. Write resume-state on SIGTERM/SIGINT so a
+  // killed run is resumable.
+  const _onSignalAbandon = (signalName) => {
+    try {
+      const remaining = countPendingPipeline();
+      writeResumeState({
+        resumePath: RESUME_PATH,
+        jobId: JOB_ID,
+        startedAt: STARTED_AT,
+        phase: _heartbeatCurrentPhase,
+        roundsCompleted: 0,
+        remainingUrlCount: remaining,
+        reason: signalName === 'SIGINT' ? 'sigint' : 'sigterm',
+      });
+      updateJob({ status: 'cancelled', cancelled_at: new Date().toISOString(), phase: 'cancelled', cancel_reason: signalName });
+      log(`  signal ${signalName} — wrote resume-state at ${RESUME_PATH}; pipeline.md has ${remaining} remaining URLs`);
+    } catch (err) {
+      log(`[signal] error writing resume-state: ${err.message}`);
+    }
+    process.exitCode = 130;
+  };
+  process.on('SIGTERM', () => _onSignalAbandon('SIGTERM'));
+  process.on('SIGINT',  () => _onSignalAbandon('SIGINT'));
   log(`Process-all-pipeline job ${JOB_ID} starting`);
   log(`  pending items before: ${pendingBefore}`);
   log(`  send_email: ${SEND_EMAIL}`);
@@ -534,6 +712,9 @@ async function main() {
     phases,
     phase:            'done',
   });
+  // 2026-05-29 — On successful completion, clear any prior resume-state so
+  // the next invocation starts fresh.
+  try { clearResumeState({ resumePath: RESUME_PATH }); } catch {}
   log(`✓ Done. Processed ${processed} items (${pendingBefore} → ${pendingAfter}). Published: ${publishedCount == null ? 'unknown' : publishedCount}`);
 }
 

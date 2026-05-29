@@ -30,12 +30,22 @@
 //   composeReviseArtifactPrompt, planRevision, reviseArtifact,
 //   groupAnswersByArtifact, parseArgs
 
-import { scanCorpus } from '../../lib/corpus-scanner.mjs';
-import { loadRoles } from './position-ranker.mjs';
-import { callCouncil, initCostTrace } from '../../lib/council.mjs';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+// Load .env BEFORE importing modules that read process.env at module-load.
+// Mitchell's shell pre-sets ANTHROPIC_API_KEY="" so override:true is required
+// (the empty value would otherwise win against the .env value). Bug class:
+// env-shadow-on-lazy-dotenv — see AGENTS.md.
+try {
+  const { config } = await import('dotenv');
+  config({ path: join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.env'), override: true });
+} catch { /* dotenv optional — silently skip if not installed */ }
+
+import { scanCorpus } from '../../lib/corpus-scanner.mjs';
+import { loadRoles } from './position-ranker.mjs';
+import { callCouncil, initCostTrace } from '../../lib/council.mjs';
 
 const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const STATE_DIR = join(ROOT, 'data');

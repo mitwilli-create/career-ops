@@ -55,6 +55,10 @@ data/cost-distribution-strategy-*.md
 # contain personal pipeline data.
 data/process-all-audit.jsonl
 data/ef-mode-state.json
+# Apply-pack-interview state files (Theme 7 PR 3, 2026-05-29) — per-role
+# interview state with role context + questions + Mitchell's answers +
+# apply log. Personal data; never commit.
+data/apply-pack-interview-*.json
 data/logs/regression-guard-*.log
 # Drawer auto-enrich (PR-03 2026-05-25) — job state cache + lock files + daily spend ledger
 data/drawer-jobs/

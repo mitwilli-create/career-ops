@@ -47,6 +47,11 @@ const HEALTH_FILE = join(ROOT, 'data', 'pipeline-health.json');
 const STUCK_THRESHOLD_HOURS = parseFloat(process.env.PIPELINE_HEALTH_STUCK_THRESHOLD_HOURS || '2');
 const QUEUE_STALE_THRESHOLD_HOURS = parseFloat(process.env.PIPELINE_HEALTH_QUEUE_STALE_HOURS || '20');
 const DASHBOARD_URL = process.env.DASHBOARD_HEALTH_URL || 'http://localhost:3097';
+// Max concurrent orchestrators considered healthy. Default 1; raise via
+// PIPELINE_HEALTH_MAX_ORCHESTRATORS=2 (or higher) when sibling Claude Code
+// sessions routinely overlap. Pre-2026-05-29 the threshold was hardcoded to 1
+// which surfaced as a flapping plist whenever 2 sessions ran in parallel.
+const MAX_ORCHESTRATORS = Math.max(1, parseInt(process.env.PIPELINE_HEALTH_MAX_ORCHESTRATORS || '1', 10));
 
 function countPipelinePending() {
   const fp = join(ROOT, 'data/pipeline.md');
@@ -191,7 +196,9 @@ async function main() {
   // 5. Orchestrator process check — flag if more than 1 alive (race condition)
   const pids = findOrchestratorPids();
   checks.orchestrator_pids = pids;
-  checks.orchestrator_warning = pids.length > 1 ? `${pids.length} orchestrator processes alive (expected 0 or 1)` : null;
+  checks.orchestrator_warning = pids.length > MAX_ORCHESTRATORS
+    ? `${pids.length} orchestrator processes alive (expected 0..${MAX_ORCHESTRATORS})`
+    : null;
 
   // 6. Roll up to a single "healthy" flag
   const healthy =
@@ -220,7 +227,12 @@ async function main() {
   // Compact stderr log so launchd's StandardOutPath stays small
   console.error(`[pipeline-health] ${result.healthy ? '✓' : '✗'} ${result.summary}`);
 
-  process.exit(result.healthy ? 0 : 1);
+  // Always exit 0 — the JSON file is the signal (see top-of-file comment).
+  // Pre-2026-05-29 this exited 1 on !healthy, which launchd misclassified as
+  // a runtime crash, surfacing the plist as flapping for normal data-signal
+  // states. The dashboard reads pipeline-health.json directly; launchd
+  // success/failure is irrelevant to the health-detection contract.
+  process.exit(0);
 }
 
 main().catch(err => {

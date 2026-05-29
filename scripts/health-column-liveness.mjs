@@ -159,7 +159,13 @@ async function main() {
       }
     }
   }
-  process.exit(healthOk ? 0 : 1);
+  // Always exit 0 — data/health-column-coverage.json IS the signal.
+  // Pre-2026-05-29 this exited 1 when coverage_pct < 90 or stale/missing rows
+  // existed, which launchd misclassified as a runtime crash and surfaced as a
+  // flapping plist for normal data-coverage states. The dashboard's freshness
+  // widget + /api/health-column-coverage read the JSON directly. Exit 2 is
+  // still reserved for true FATAL runtime errors (catch block below).
+  process.exit(0);
 }
 
 main().catch(e => {

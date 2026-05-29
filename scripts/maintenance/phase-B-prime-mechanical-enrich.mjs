@@ -37,6 +37,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execSync } from 'node:child_process';
 
 try {
   const { config } = await import('dotenv');
@@ -501,6 +502,21 @@ async function buildScrapeSession() {
 
 async function main() {
   log(`═══ phase-B-prime start (TOP_N=${TOP_N}, COST_CAP=$${COST_CAP}, DRY_RUN=${DRY_RUN}, SINGLE=${SINGLE_CONTACT || 'none'}) ═══`);
+
+  // Inline build-dashboard so _CONTACTS_DATA is populated regardless of when the
+  // morning rebuild fired. Without this, contact-priority-scorer.mjs throws
+  // "No _CONTACTS_DATA found". Idempotent. Override: SKIP_DASHBOARD_PRELOAD=1.
+  if (process.env.SKIP_DASHBOARD_PRELOAD !== '1') {
+    try {
+      log('rebuilding dashboard inline to populate _CONTACTS_DATA…');
+      const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+      execSync('node scripts/build-dashboard.mjs', { stdio: 'inherit', timeout: 300_000, cwd: repoRoot });
+      log('dashboard rebuild complete');
+    } catch (e) {
+      log(`HALT: dashboard rebuild failed (${(e.message || '').slice(0, 200)})`);
+      process.exit(3);
+    }
+  }
 
   // Build candidate list
   let candidates;

@@ -7,15 +7,19 @@
 
     <!-- ZETA recurring: rebuild the canonical data/network-database.json from on-disk LinkedIn/X/contacts sources. -->
     <!-- Pure aggregation, $0/run. Daily 02:30 PT. Underlying agent: scripts/build-network-database.mjs (shipped by ZETA overnight 2026-05-19). -->
-    <!-- Cadence guard: always (launchd handles the daily cadence). -->
+    <!--
+        Direct node invocation (no bash/cron-run.sh wrapper).
+        Reason: macOS Tahoe TCC blocks /bin/bash from reading scripts under
+        ~/Documents/ (exit 126, Operation not permitted). node was already
+        invokable because launchd executes /Users/.../node (binary outside
+        Documents) which then reads the script as an argument. Matches the
+        bug-intake-mapper / pipeline-health / health-column-liveness pattern.
+        Fixed 2026-05-29 — see AGENTS.md § Bug class: launchd-bash-wrapper-tahoe-tcc-block.
+    -->
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/mitchellwilliams/Documents/career-ops/scripts/wrappers/cron-run.sh</string>
-        <string>network-database-build</string>
-        <string>always</string>
         <string>/Users/mitchellwilliams/.nvm/versions/node/v24.14.0/bin/node</string>
-        <string>scripts/build-network-database.mjs</string>
+        <string>/Users/mitchellwilliams/Documents/career-ops/scripts/build-network-database.mjs</string>
     </array>
 
     <key>WorkingDirectory</key>

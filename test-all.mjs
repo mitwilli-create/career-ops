@@ -415,6 +415,38 @@ try {
   }
 }
 
+// ── 12. NO LINKEDIN URLs IN APPLICATIONS.MD OR APPLY-NOW-QUEUE.JSON ────
+
+console.log('\n12. LinkedIn URL invariant (no linkedin.com/jobs in apps.md or queue)');
+
+try {
+  // Runs tests/no-linkedin-urls-invariant.test.mjs — exits 2 if any
+  // applications.md row OR apply-now-queue.json ranked entry carries a
+  // LinkedIn job-wrapper URL. Closes the 9-session recurring dropped ask
+  // documented at data/spec-linkedin-url-canonicalization-2026-05-29.md.
+  // Future PRs touching any ingest writer (triage.mjs / merge-tracker.mjs /
+  // batch-runner-batches.mjs / rebuild-apply-now-queue.mjs / batch-only-
+  // pipeline.mjs / council-048-runner.mjs / phase3b-evaluator.mjs) MUST
+  // keep this test green or fix the canonicalization path.
+  execFileSync('node', ['tests/no-linkedin-urls-invariant.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+  });
+  pass('No LinkedIn URLs in applications.md or apply-now-queue.json');
+} catch (err) {
+  if (err.status === 2) {
+    fail(`LinkedIn URL invariant VIOLATED — LinkedIn job URL found in ingest output`);
+    const out = (err.stdout || '') + (err.stderr || '');
+    for (const line of out.split('\n').slice(0, 40)) {
+      if (line.trim()) console.log(`     ${line}`);
+    }
+    console.log(`     → Fix: node scripts/canonicalize-queue-rows.mjs --rows=<N,M,...>`);
+  } else {
+    fail(`LinkedIn URL invariant test crashed: ${err.message}`);
+  }
+}
+
 // Import execFileSync (was already imported above)
 
 // ── SUMMARY ─────────────────────────────────────────────────────

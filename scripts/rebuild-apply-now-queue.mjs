@@ -46,6 +46,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gateRow } from '../lib/apply-now-queue-gate.mjs';
+import { isLinkedInJobUrl, classifyUrl } from '../lib/jd-url-canonicalizer.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -54,6 +55,21 @@ const APPS_PATH = join(ROOT, 'data', 'applications.md');
 const LIVENESS_PATH = join(ROOT, 'data', 'liveness-state.json');
 
 const DRY_RUN = process.argv.includes('--dry-run');
+
+// 2026-05-29 — Pull canonical URL from each report file's `**URL:**` frontmatter.
+// parseApplicationsFile() doesn't return a URL field (it's not in the applications.md
+// table itself — only in the linked report file). Closes the side-finding renderer
+// gap where every queue row had url: undefined.
+function extractUrlFromReport(reportPath) {
+  if (!reportPath) return null;
+  const filePath = join(ROOT, reportPath);
+  if (!existsSync(filePath)) return null;
+  try {
+    const head = readFileSync(filePath, 'utf-8').split('\n').slice(0, 60).join('\n');
+    const urlMatch = /^\*\*URL:\*\*\s*(\S+)/m.exec(head);
+    return urlMatch ? urlMatch[1] : null;
+  } catch { return null; }
+}
 
 function loadLivenessState() {
   try { return JSON.parse(readFileSync(LIVENESS_PATH, 'utf-8')); }
@@ -138,10 +154,38 @@ async function main() {
 
     // Strict gate annotation (does not drop the row — informational + actionable downstream)
     if (!qrow._dropped) {
-      const enriched = { ...qrow, url: qrow.url || app.url || '', canonical_url: qrow.canonical_url || app.canonical_url || '' };
+      // 2026-05-29 — pull URL from report file (parseApplicationsFile doesn't return one).
+      // Closes the renderer side-finding gap where every queue row had url: undefined.
+      // ALSO populates canonical_url when the report URL is already a known-ATS host.
+      const reportUrl = extractUrlFromReport(app.reportPath);
+      if (!qrow.url && reportUrl) qrow.url = reportUrl;
+      if (!qrow.canonical_url && reportUrl) {
+        const cls = classifyUrl(reportUrl);
+        if (cls.type === 'already-canonical') qrow.canonical_url = reportUrl;
+      }
+
+      // LinkedIn defense-in-depth — if the row's only URL is a LinkedIn job
+      // wrapper AND no canonical_url override exists, mark _dropped so
+      // refresh-master demotes to Tier D + the dashboard widget hides it.
+      // Preserves curated factor data; reversible if a canonical_url is later
+      // populated via scripts/canonicalize-queue-rows.mjs.
+      if (qrow.url && isLinkedInJobUrl(qrow.url) && !qrow.canonical_url) {
+        qrow._dropped = true;
+        qrow._dropped_at = today;
+        qrow._dropped_reason = 'linkedin-url-only-no-canonical';
+        stats.droppedFromApplyNow++;
+        process.stderr.write(JSON.stringify({
+          t: new Date().toISOString(),
+          event: 'rebuild-queue-drop-linkedin-existing',
+          num: qrow.num, company: qrow.company, role: qrow.role,
+          url: qrow.url,
+        }) + '\n');
+        log.push(`  ↓ rank ${qrow.rank} (#${qrow.num} ${qrow.company}): LinkedIn-URL-only — dropped (run canonicalize-queue-rows.mjs --rows=${qrow.num} to recover)`);
+      }
+    }
+
+    if (!qrow._dropped) {
       const verdict = annotateGate(qrow, gateCtx);
-      // Mirror enriched URL fields back to qrow for downstream consumers without overwriting curated data
-      if (!qrow.url && app.url) qrow.url = app.url;
       if (verdict.bucket === 'PASS') stats.gate_pass++;
       else if (verdict.bucket === 'AUTO_ENRICH') stats.gate_auto_enrich++;
       else if (verdict.bucket === 'REMOVE') stats.gate_remove++;
@@ -151,8 +195,28 @@ async function main() {
   // Pass 2: add applications.md apply-now rows not in queue
   const maxExistingRank = ranked.reduce((m, r) => Math.max(m, Number(r.rank) || 0), 0);
   let nextRank = maxExistingRank + 1;
+  stats.skipped_linkedin_only = 0;
   for (const arow of applyNow) {
     if (queueByNum.has(String(arow.num))) continue;
+
+    // ── LinkedIn URL defense-in-depth (2026-05-29) ─────────────────────
+    // Read the report file's canonical URL header. If LinkedIn-only with no
+    // canonical alternative, skip the queue insertion entirely + log to NDJSON.
+    // Refusing to add the row here is safer than adding then dropping —
+    // dashboards that read the queue won't render a half-populated card.
+    const reportUrl = extractUrlFromReport(arow.reportPath);
+    if (reportUrl && isLinkedInJobUrl(reportUrl)) {
+      stats.skipped_linkedin_only++;
+      process.stderr.write(JSON.stringify({
+        t: new Date().toISOString(),
+        event: 'rebuild-queue-skip-linkedin-new',
+        num: arow.num, company: arow.company, role: arow.role,
+        url: reportUrl,
+      }) + '\n');
+      log.push(`  ⏭ skip #${arow.num} ${arow.company} — ${arow.role.slice(0, 40)}: LinkedIn URL in report (run canonicalize-queue-rows.mjs --rows=${arow.num} to recover)`);
+      continue;
+    }
+
     const synthComposite = Math.round(arow.score * 17); // 4.0 → 68, 4.7 → 80
     const tierBucket = arow.score >= 4.5 ? 'A2' : arow.score >= 4.2 ? 'B' : 'C';
     const newRow = {
@@ -182,7 +246,13 @@ async function main() {
     };
     // Run strict gate on the new candidate (annotation only — still added to queue
     // so refresh-master + auto-enrich workflow can act on AUTO_ENRICH rows)
-    newRow.url = arow.url || '';
+    // 2026-05-29 — populate url + canonical_url from the report file's frontmatter,
+    // so the dashboard widget can render a clickable link instead of url: undefined.
+    newRow.url = reportUrl || arow.url || '';
+    if (reportUrl) {
+      const cls = classifyUrl(reportUrl);
+      if (cls.type === 'already-canonical') newRow.canonical_url = reportUrl;
+    }
     const verdict = annotateGate(newRow, gateCtx);
     if (verdict.bucket === 'PASS') stats.gate_pass++;
     else if (verdict.bucket === 'AUTO_ENRICH') stats.gate_auto_enrich++;

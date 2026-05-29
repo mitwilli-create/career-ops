@@ -18,6 +18,7 @@ import { readFileSync, writeFileSync, readdirSync, mkdirSync, renameSync, exists
 import { join, basename, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execFileSync } from 'child_process';
+import { isLinkedInJobUrl } from './lib/jd-url-canonicalizer.mjs';
 
 const CAREER_OPS = dirname(fileURLToPath(import.meta.url));
 // Support both layouts: data/applications.md (boilerplate) and applications.md (original)
@@ -28,6 +29,28 @@ const ADDITIONS_DIR = join(CAREER_OPS, 'batch/tracker-additions');
 const MERGED_DIR = join(ADDITIONS_DIR, 'merged');
 const DRY_RUN = process.argv.includes('--dry-run');
 const VERIFY = process.argv.includes('--verify');
+// 2026-05-29 — defense-in-depth gate for LinkedIn URL canonicalization.
+// Refuses to merge a TSV row whose referenced report file carries a LinkedIn
+// job URL in its `**URL:**` frontmatter (proving triage.mjs gate missed it).
+// Bypass with --allow-linkedin-fallthrough for the rare legitimate case
+// (e.g. manual eval where Mitchell intentionally tracked the LinkedIn URL).
+// AGENTS.md § Bug class: linkedin-url-bypassed-canonicalizer-at-ingest.
+const ALLOW_LINKEDIN_FALLTHROUGH = process.argv.includes('--allow-linkedin-fallthrough');
+const REPORTS_DIR = join(CAREER_OPS, 'reports');
+
+function extractUrlFromReport(reportPath) {
+  // reportPath looks like "[123](reports/123-slug-2026-05-29.md)"
+  const match = /\(([^)]+)\)/.exec(reportPath || '');
+  if (!match) return null;
+  const filePath = join(CAREER_OPS, match[1]);
+  if (!existsSync(filePath)) return null;
+  try {
+    // Only read the first 60 lines — the URL header is in the frontmatter
+    const head = readFileSync(filePath, 'utf-8').split('\n').slice(0, 60).join('\n');
+    const urlMatch = /^\*\*URL:\*\*\s*(\S+)/m.exec(head);
+    return urlMatch ? urlMatch[1] : null;
+  } catch { return null; }
+}
 
 // Ensure required directories exist (fresh setup)
 mkdirSync(join(CAREER_OPS, 'data'), { recursive: true });
@@ -336,6 +359,23 @@ for (const file of tsvFiles) {
   const content = readFileSync(join(ADDITIONS_DIR, file), 'utf-8').trim();
   const addition = parseTsvContent(content, file);
   if (!addition) { skipped++; continue; }
+
+  // ── LinkedIn URL canonicalization gate (defense-in-depth, 2026-05-29) ──
+  // The report file referenced by this TSV row carries the canonical URL in
+  // its `**URL:**` frontmatter. If that URL is a LinkedIn job-wrapper URL,
+  // the triage.mjs primary gate (Phase 0a) must have missed it — refuse the
+  // merge with an actionable WARN unless --allow-linkedin-fallthrough is set.
+  if (!ALLOW_LINKEDIN_FALLTHROUGH) {
+    const reportUrl = extractUrlFromReport(addition.report);
+    if (reportUrl && isLinkedInJobUrl(reportUrl)) {
+      console.warn(`⚠️  ${file}: report has uncanonicalized LinkedIn URL — refusing merge.`);
+      console.warn(`     URL: ${reportUrl.slice(0, 110)}`);
+      console.warn(`     Resolve: node scripts/canonicalize-queue-rows.mjs --rows=${addition.num}`);
+      console.warn(`     Or merge with: --allow-linkedin-fallthrough`);
+      skipped++;
+      continue;
+    }
+  }
 
   // Check for duplicate by:
   // 1. Exact report number match

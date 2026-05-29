@@ -39,6 +39,7 @@ import { renderDiscardPatternBrief } from './lib/discard-pattern-injector.mjs';
 import { scoreZombie } from './lib/zombie-scorer.mjs';
 import { detectSurfaceAlias } from './lib/surface-alias-detector.mjs';
 import { recordSurfaceAlias } from './lib/role-surface-aliases.mjs';
+import { canonicalize, isLinkedInJobUrl } from './lib/jd-url-canonicalizer.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
@@ -754,7 +755,7 @@ async function main() {
 
   } else {
     // ── SEQUENTIAL path (original behavior, also used for scoring) ──
-    for (const { url, tier } of items) {
+    for (let { url, tier } of items) {
       if (!LIVENESS_ONLY && quota.triaged >= DAILY_LIMIT) {
         console.log('\nDaily quota hit — stopping. Resume tomorrow.\n');
         break;
@@ -762,6 +763,57 @@ async function main() {
 
       const short = url.slice(0, 72) + (url.length > 72 ? '…' : '');
       process.stdout.write(`[T${tier}] ${short}\n      `);
+
+      // ── Phase 0a: LinkedIn URL canonicalization gate ─────────────────
+      // 2026-05-29 — wire lib/jd-url-canonicalizer.mjs::canonicalize() at the
+      // earliest possible point in the ingest pipeline. If the URL is a
+      // LinkedIn job wrapper, resolve it to the underlying company-ATS URL
+      // BEFORE liveness, zombie, scoring, or any downstream write. Closes
+      // 9-session recurring dropped ask (data/spec-linkedin-url-canonicalization-
+      // 2026-05-29.md) + AGENTS.md § Bug class: linkedin-url-bypassed-
+      // canonicalizer-at-ingest. Env kill-switch:
+      //   launchctl setenv DISABLE_INGEST_CANONICALIZATION true
+      if (process.env.DISABLE_INGEST_CANONICALIZATION !== 'true' && isLinkedInJobUrl(url)) {
+        process.stdout.write(`🔗 canonicalize… `);
+        const cnxRes = await canonicalize(url, { timeoutMs: 30_000 });
+        if (cnxRes.canonical) {
+          // Success — rebind url to canonical for all downstream phases.
+          const oldUrl = url;
+          url = cnxRes.canonical;
+          process.stdout.write(`→ ${cnxRes.source} (${(cnxRes.confidence ?? 0).toFixed(2)})\n      `);
+          process.stderr.write(JSON.stringify({
+            t: new Date().toISOString(),
+            event: 'canonicalize-success',
+            original: oldUrl,
+            canonical: cnxRes.canonical,
+            source: cnxRes.source,
+            confidence: cnxRes.confidence,
+          }) + '\n');
+          markChecked(oldUrl);
+          // Note: pipeline.md still has the LinkedIn URL as `[x]`-marked
+          // (markChecked); the canonical URL is what flows downstream into
+          // triage-advance.tsv and applications.md via writeAdvance below.
+        } else {
+          // Failure — LinkedIn URL we cannot resolve. Drop with reason.
+          const reason = `linkedin-unresolvable: ${cnxRes.error || 'no resolution'}`;
+          console.log(`✗ ${reason}`);
+          process.stderr.write(JSON.stringify({
+            t: new Date().toISOString(),
+            event: 'canonicalize-fail',
+            original: url,
+            error: cnxRes.error || 'no resolution',
+            source: cnxRes.source,
+          }) + '\n');
+          markChecked(url);
+          writeSkip(url, reason);
+          skipped++;
+          quota.skipped++;
+          quota.triaged++;
+          processed++;
+          saveQuota(quota);
+          continue;
+        }
+      }
 
       // ── Phase 0: Liveness ──
       const { live, reason, body } = await checkLiveness(url);

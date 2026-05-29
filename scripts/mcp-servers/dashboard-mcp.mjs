@@ -16,6 +16,9 @@
  *   dashboard_screenshot      capture screenshot (scoped or full page, ≤2000px)
  *   dashboard_list_widgets    enumerate all widgets on the current page
  *   dashboard_api_fetch       proxy fetch to dashboard API with service-token auth
+ *   dashboard_dismiss_chip    dismiss a chip via DOM click or /api/dismiss-row fallback
+ *                             (Theme 8 PR, 2026-05-29 — dashboard chips only; CCD session
+ *                             task chips remain harness-managed + must be clicked in UI)
  *
  * Usage (stdio MCP):
  *   node scripts/mcp-servers/dashboard-mcp.mjs
@@ -342,6 +345,151 @@ server.tool(
         text: `${method} ${url}\nStatus: ${res.status}\n\n${
           typeof parsed === 'string' ? parsed.slice(0, 4000) : JSON.stringify(parsed, null, 2).slice(0, 4000)
         }`,
+      }],
+    };
+  }
+);
+
+// ── Tool: dashboard_dismiss_chip ───────────────────────────────────────────
+// Theme 8 (2026-05-29) — dismiss a dashboard chip programmatically.
+// Strategy: find the chip element → search inside + adjacent for a dismiss
+// affordance (aria-label/title containing "dismiss"/"close", .dismiss/.close
+// class, or data-dismiss-target attribute) → click it. Falls back to
+// POST /api/dismiss-row when the chip carries data-row-id. NOTE: this does
+// NOT dismiss CCD session task chips (those are harness-managed and have no
+// programmatic API — Mitchell must click them in the Claude Code UI).
+server.tool(
+  'dashboard_dismiss_chip',
+  'Dismiss a chip on the dashboard by CSS selector OR by visible text. Searches inside + adjacent ' +
+  'to the chip for a dismiss/close/X affordance and clicks it via Playwright. Falls back to ' +
+  'POST /api/dismiss-row when the chip carries a data-row-id attribute. Returns ' +
+  '{ dismissed, method, chip_text, ... }. NOTE: does NOT dismiss CCD session task chips ' +
+  '(harness-managed; click in UI).',
+  {
+    type: 'object',
+    properties: {
+      selector:   { type: 'string', description: 'CSS selector for the chip element' },
+      text:       { type: 'string', description: 'Visible text content of the chip (used if selector omitted)' },
+      timeout_ms: { type: 'number', description: 'Max ms to wait for the chip (default 5000)' },
+    },
+    required: [],
+  },
+  async ({ selector, text, timeout_ms = 5000 }) => {
+    if (!selector && !text) {
+      return { content: [{ type: 'text', text: 'Either selector or text is required' }], isError: true };
+    }
+    const page = await getPage();
+    let chip = null;
+    try {
+      if (selector) {
+        chip = await page.waitForSelector(selector, { timeout: timeout_ms });
+      } else {
+        chip = await page.getByText(text, { exact: false }).first().elementHandle({ timeout: timeout_ms });
+      }
+    } catch {
+      chip = null;
+    }
+
+    if (!chip) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({ dismissed: false, reason: 'chip not found', selector, text }, null, 2),
+        }],
+      };
+    }
+
+    // Strategy 1 — DOM-click an inline dismiss affordance
+    const dismissResult = await chip.evaluate((el) => {
+      const inner = el.querySelectorAll(
+        '[aria-label*="dismiss" i], [aria-label*="close" i], ' +
+        '[title*="dismiss" i], [title*="close" i], ' +
+        '.dismiss, .close, .chip-x, .chip-dismiss, button.x'
+      );
+      const sibling = el.parentElement
+        ? el.parentElement.querySelectorAll('[data-dismiss-target]')
+        : [];
+      const btn = (inner[0] || sibling[0]);
+      if (btn) {
+        btn.click();
+        return {
+          ok: true,
+          method: 'dom-click',
+          label: btn.getAttribute('aria-label')
+            || btn.getAttribute('title')
+            || (btn.textContent || '').trim().slice(0, 40)
+            || 'unknown',
+        };
+      }
+      return { ok: false };
+    });
+
+    const chipText = await chip.evaluate(el => (el.textContent || '').trim().slice(0, 120));
+
+    if (dismissResult.ok) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            dismissed: true,
+            method: 'dom-click',
+            via: dismissResult.label,
+            chip_text: chipText,
+          }, null, 2),
+        }],
+      };
+    }
+
+    // Strategy 2 — API fallback via data-row-id → POST /api/dismiss-row
+    const rowId = await chip.getAttribute('data-row-id');
+    if (rowId) {
+      const url = DASHBOARD_URL.replace(/\/$/, '') + '/api/dismiss-row';
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'CF-Access-Client-Id':     CF_CLIENT_ID,
+            'CF-Access-Client-Secret': CF_CLIENT_SECRET,
+            'Content-Type':            'application/json',
+          },
+          body: JSON.stringify({ num: Number(rowId) }),
+        });
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              dismissed: res.ok,
+              method:    'api-dismiss-row',
+              row_id:    Number(rowId),
+              status:    res.status,
+              chip_text: chipText,
+            }, null, 2),
+          }],
+        };
+      } catch (err) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              dismissed: false,
+              reason:    'api-dismiss-row error',
+              error:     String(err?.message || err),
+              chip_text: chipText,
+            }, null, 2),
+          }],
+        };
+      }
+    }
+
+    // Strategy 3 — nothing worked; surface the chip text so caller can decide
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          dismissed: false,
+          reason:    'no dismiss handler found (no X/close button, no data-row-id)',
+          chip_text: chipText,
+        }, null, 2),
       }],
     };
   }

@@ -57,6 +57,18 @@ compensation:
   currency: "USD"
   minimum: "$120K"               # Walk-away number
   location_flexibility: "Remote preferred, 1 week/month on-site possible"
+  # Optional: location-aware hard floors enforced by lib/comp-floor-gate.mjs.
+  # When you copy this file to config/profile.yml, REPLACE these values
+  # with your own walk-away numbers per location. Eval reports surfacing a
+  # base salary below the matching floor get demoted (score → 0.0, status
+  # → Discarded) unless an override is added to data/triage-overrides.json.
+  # Removing the comp_floor block falls back to the lib's hardcoded defaults
+  # (defined in batch/triage-prompt.md). All values in USD.
+  comp_floor:
+    remote: 120000   # REPLACE — your remote walk-away
+    seattle: 130000  # REPLACE — your Seattle/onsite walk-away
+    sf: 150000       # REPLACE — your SF walk-away
+    nyc: 160000      # REPLACE — your NYC walk-away
 
 location:
   country: "United States"

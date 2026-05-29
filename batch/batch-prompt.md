@@ -138,6 +138,25 @@ Read `cv.md`. Table with each JD requirement mapped to exact CV lines or i18n.ts
 3. Is there a portfolio project that covers this gap?
 4. Concrete mitigation plan
 
+#### Block "Why This Fits" — Mitchell-specific corpus-grounded rationale
+
+Output a section titled exactly `## Block C — Why This Fits Mitchell` immediately after `## B) CV Match` in the report (this is intentional — it sits BEFORE `## C) Level and Strategy` so the corpus-grounded "why this score" rationale leads the human-readable narrative; the dashboard popout reads from this section).
+
+**Rules — apply strictly:**
+
+1. **3-4 sentences.** No more, no fewer. Tight, dense, Mitchell-readable.
+2. **Every sentence must cite a specific corpus location** — at minimum 3 citations total across the block. Use this format:
+   - `[cv.md: <section heading>]` — e.g. `[cv.md: Google xGE § Editorial Lead]`
+   - `[article-digest: <entry title>]` — e.g. `[article-digest: Voice DNA RAG]`
+   - `[second-brain: <doc>]` — e.g. `[second-brain: personality-strengths-profile]`
+   - `[hm-intel: <field>]` — e.g. `[hm-intel: rejection-pattern]` or `[hm-intel: hiring-manager-priorities]`
+3. **DO NOT generalize.** "Mitchell's editorial background fits" is rejected.
+   **Specify.** "Mitchell's 2-year stint as Editorial Lead at Google's xGE function shipping the Voice DNA RAG product `[cv.md: Google § Editorial Lead]` is a direct match to this role's 'AI Enablement for content teams' responsibility `[JD § Responsibilities-1]`." is accepted.
+4. **If you cannot find 3 corpus-anchored citations to justify the score**, then **lower the Overall score by 0.3** and append the literal phrase `downscored due to thin corpus support` in the rationale. Do not pad with generic claims to reach 3.
+5. **Voice:** third-person about Mitchell (`Mitchell's …`, `his …`). NEVER first-person Mitchell self-talk. Apply tone-safe framing per `lib/ground-prompt.mjs` rules — no "failed/broken/wrong/bad/poor/weak". Banned vocabulary: leverage, synergy, deep dive, ideate, circle back, touch base, bandwidth, moving forward, reach out.
+
+**Naming note (do not rename in output):** the output section header is `## Block C — Why This Fits Mitchell`. The pre-existing Level-and-Strategy section that previously followed `## B) CV Match` continues to be output as `## C) Level and Strategy` — two distinct headings, intentional. The popout dashboard widget reads from `## Block C — Why This Fits Mitchell` specifically.
+
 #### Block C — Level and Strategy
 
 1. **Level detected** in the JD vs **candidate's natural level**
@@ -223,6 +242,9 @@ Where `{company-slug}` is the company name in lowercase, no spaces, with dashes.
 
 ## B) CV Match
 (full content)
+
+## Block C — Why This Fits Mitchell
+(full content — 3-4 sentences, ≥3 corpus citations per the Block "Why This Fits" rubric above; downscore Overall by 0.3 if citations are thin)
 
 ## C) Level and Strategy
 (full content)

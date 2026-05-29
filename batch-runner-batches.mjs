@@ -34,6 +34,7 @@ import { guessCompany, buildCompanyMatcher } from './lib/ats-utils.mjs';
 import { checkUrl } from './lib/http-liveness.mjs';
 import { isCdpAvailable, connectToChromeCDP } from './lib/cdp-browser.mjs';
 import { renderDiscardPatternBrief } from './lib/discard-pattern-injector.mjs';
+import { gateCompFloor } from './lib/comp-floor-gate.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
@@ -327,6 +328,23 @@ Three tiers: High Confidence / Proceed with Caution / Suspicious.
 }
 
 // Return just the lines from scan-history.tsv that contain the company
+// 2026-05-29 — Lightweight location extractor for the comp-floor gate.
+// Looks at the report's Block A Role Summary / Remote policy line for common
+// location markers. Defaults to 'remote' (most permissive floor — $100K)
+// when no signal is found so we don't false-positive demote on unknown.
+// Spec: data/spec-triage-eval-quality-gate-2026-05-29.md § 2.
+function _extractLocationFromReport(reportText) {
+  if (!reportText || typeof reportText !== 'string') return 'remote';
+  // First-pass: the Role Summary table row "| Remote policy | ... |" or
+  // "| Remote | ... |" or "| Location | ... |" — most reliable signal.
+  const tableMatch = reportText.match(/\|\s*(?:Remote(?:\s+policy)?|Location)\s*\|\s*([^\n|]+)/i);
+  const probe = tableMatch ? tableMatch[1].toLowerCase() : reportText.slice(0, 2000).toLowerCase();
+  if (/\bseattle\b/.test(probe)) return 'seattle';
+  if (/\bsan\s*francisco\b|\bsf\b(?!\w)|\bbay\s*area\b/.test(probe)) return 'sf';
+  if (/\bnew\s*york\b|\bnyc\b|\bmanhattan\b/.test(probe)) return 'nyc';
+  return 'remote';
+}
+
 function scanHistorySnippet(company) {
   try {
     const hist = readFileSync(SCAN_HISTORY, 'utf8');
@@ -962,9 +980,35 @@ async function phaseProcess(apiKey) {
           if (tldr.length > 200) tldr = tldr.slice(0, 197).trimEnd() + '…';
         }
       } catch {}
-      const noteText = tldr
-        ? `${tldr} | triage ${meta.triageScore}/5`
-        : `Evaluated | ${archetype} | ${legitimacy} | triage ${meta.triageScore}/5`;
+
+      // ── 2026-05-29 Comp-floor gate post-eval pass ──
+      // Spec: data/spec-triage-eval-quality-gate-2026-05-29.md § 2
+      // Extracts base salary from the report text + compares to a
+      // location-aware floor (defaults to remote). BELOW_FLOOR demotes the
+      // row to score 0.0 + status Discarded with audit note. unknown gate
+      // does NOT demote (surfaces for human review).
+      // Kill switch: DISABLE_COMP_FLOOR_GATE=true.
+      let trackerStatus = 'Evaluated';
+      let trackerScore = `${score.toFixed(1)}/5`;
+      let demoteNote = '';
+      try {
+        const location = _extractLocationFromReport(cleanReport);
+        const compResult = gateCompFloor({ reportText: cleanReport, location });
+        if (compResult.gate === 'BELOW_FLOOR' && !compResult.disabled && !compResult.overridden) {
+          trackerStatus = 'Discarded';
+          trackerScore = '0.0/5';
+          demoteNote = compResult.note || 'DEMOTED: comp below floor';
+        }
+      } catch (e) {
+        console.warn(`  ⚠️  comp-floor-gate error (no demotion applied): ${e.message}`);
+      }
+
+      const noteParts = [];
+      if (demoteNote) noteParts.push(demoteNote);
+      if (tldr) noteParts.push(tldr);
+      else noteParts.push(`Evaluated | ${archetype} | ${legitimacy}`);
+      noteParts.push(`triage ${meta.triageScore}/5`);
+      const noteText = noteParts.join(' | ');
 
       // Write tracker TSV
       trackerNum++;
@@ -973,8 +1017,8 @@ async function phaseProcess(apiKey) {
         date,
         company,
         role,
-        'Evaluated',
-        `${score.toFixed(1)}/5`,
+        trackerStatus,
+        trackerScore,
         '❌',
         `[${numStr}](reports/${filename})`,
         noteText,

@@ -40,6 +40,7 @@ import { scoreZombie } from './lib/zombie-scorer.mjs';
 import { detectSurfaceAlias } from './lib/surface-alias-detector.mjs';
 import { recordSurfaceAlias } from './lib/role-surface-aliases.mjs';
 import { canonicalize, isLinkedInJobUrl } from './lib/jd-url-canonicalizer.mjs';
+import { applyHardDisqualifiers } from './lib/triage-hard-disqualifier-filter.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
@@ -878,11 +879,40 @@ async function main() {
 
       const { score, archetype, decision, reason: scoreReason } = await quickScoreRouted(url, tier, body || '');
 
+      // ── 2026-05-29 Hard-disqualifier deterministic post-pass ──
+      // Spec: data/spec-triage-eval-quality-gate-2026-05-29.md § 1
+      // Closes the AGENTS.md bug-class `llm-judge-soft-enforcement-of-hard-rules`:
+      // Haiku/Flash are generous with scores and rarely fire hard-SKIP rules
+      // declared in batch/triage-prompt.md. This deterministic regex pass
+      // overrides Haiku's verdict when a JD trips a hard rule (Python
+      // production engineering as primary screen, mandatory leetcode,
+      // former PM, 10+yr leadership, etc.). Archetype-aware exemptions.
+      // Kill switch: DISABLE_HARD_DISQUALIFIER_FILTER=true.
+      let hardDqViolations = [];
+      if (body && score !== null) {
+        try {
+          const hd = applyHardDisqualifiers({ jdText: body, archetype });
+          if (hd.decision === 'SKIP' && !hd.disabled && !hd.overridden) {
+            hardDqViolations = hd.violations;
+          }
+        } catch (e) {
+          console.warn(`⚠️  hard-disqualifier filter error (proceeding with Haiku verdict): ${e.message}`);
+        }
+      }
+      const hardSkip = hardDqViolations.length > 0;
+
       if (score === null) {
         console.log(`⚠️  score failed (${scoreReason}) → advancing cautiously`);
         writeAdvance(url, tier, 0, '?', `score-fail: ${scoreReason}`);
         advanced++;
         quota.advanced++;
+      } else if (hardSkip) {
+        const dqReason = `hard-disqualifier: ${hardDqViolations.join(', ')}`;
+        console.log(`🛑 ${score.toFixed(1)}/5 [${archetype}] → SKIP via ${dqReason}`);
+        markChecked(url);
+        writeSkip(url, dqReason);
+        skipped++;
+        quota.skipped++;
       } else if (score < threshold || decision === 'SKIP') {
         console.log(`⏭️  ${score.toFixed(1)}/5 → SKIP  (${scoreReason})`);
         markChecked(url);

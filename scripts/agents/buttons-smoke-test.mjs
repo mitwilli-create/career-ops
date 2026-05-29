@@ -119,10 +119,20 @@ assert('batch-runner exits with code 0 in dry-run',
 assert('batch-runner does NOT time out',
   !batchResult.timed_out,
   null);
-assert('batch-runner dry-run reports the expected queue size',
-  batchResult.stdout.includes(`Triage queue: ${beforeState.triage_advance_rows} items`) ||
-  batchResult.stdout.includes(`No items in batch/triage-advance.tsv`) ||  // empty queue case
-  beforeState.triage_advance_rows === 0,
+// 2026-05-29 — relaxed from exact-count match (`Triage queue: ${N} items`)
+// to regex pattern. Daemons (community-scan, scan-only, triage) append to
+// batch/triage-advance.tsv concurrently with the smoke test, so the queue
+// count can grow between snapshotState() and batch-runner --dry-run load.
+// The strict assertion was failing this every run with non-empty queue
+// (the canonical incident: snapshot=21, batch-runner read=99). The relaxed
+// match still validates that batch-runner reports A queue size from the
+// expected file — just doesn't require the count to match exactly.
+const _queueSizeReported =
+  /Triage queue:\s+\d+\s+items\s+in\s+batch\/triage-advance\.tsv/.test(batchResult.stdout) ||
+  batchResult.stdout.includes('No items in batch/triage-advance.tsv') ||
+  beforeState.triage_advance_rows === 0;
+assert('batch-runner dry-run reports queue size (count may drift due to concurrent daemon writes)',
+  _queueSizeReported,
   null);
 
 // Phase 4 — Post-state verification: dry-run did NOT mutate

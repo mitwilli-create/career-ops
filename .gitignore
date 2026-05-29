@@ -35,6 +35,21 @@ data/v2-verify-spend.jsonl
 data/persona-findings.jsonl
 data/persona-review-spend.jsonl
 data/persona-monthly-review-*.md
+# Cost-trace + paid-action audit logs (Theme 6, 2026-05-29) — caps removed
+# from lib/council.mjs, audit logs added in their place:
+# - polish-cost-trace-*.json: per-call cost trace (model/tokens/cost). Was
+#   previously only in .git/info/exclude (local-only); moved to repo-level
+#   for parity across clones. Pattern covers .CORRUPTED variants too.
+# - paid-action-log-*.jsonl: per-call audit log (Theme 6 replacement for the
+#   cap-refusal pre-flight; written by callCouncil + recordPaidAction for
+#   every paid call). Contains vendor + model + estimated cost + agent_slug.
+data/polish-cost-trace-*.json
+data/paid-action-log-*.jsonl
+# Cost-distribution strategy docs (Theme 6 deliverable, 2026-05-29 onward):
+# - Contains verified pricing tables + approximate spend numbers + architecture
+#   notes. Carries [PERSONAL — DO NOT PUBLISH] frontmatter; PR diffs reference
+#   it by name + summarize key findings in the PR description.
+data/cost-distribution-strategy-*.md
 # Process All audit log (PR cap-raise 2026-05-26) — append-only record of every
 # spawn whose cost estimate exceeded $250; includes companies list which can
 # contain personal pipeline data.

@@ -9667,6 +9667,21 @@ async function build() {
   .dcard-btn:hover { background: var(--surface); border-color: var(--text-4); color: var(--text); text-decoration: none; }
   .dcard-btn--primary { background: var(--blue-fg); color: #fff; border-color: var(--blue-fg); }
   .dcard-btn--primary:hover { background: var(--blue); color: #fff; border-color: var(--blue); }
+  /* F104 (2026-05-29): pulse the per-row Deep Refresh button while a refresh
+     fires + auto-clear on modal close / page reload. Visual assurance that
+     "this is taking place" per Mitchell's 2026-05-26 audit ask. */
+  .dcard-btn.drm-firing {
+    animation: drm-firing-pulse 1.4s ease-in-out infinite;
+    pointer-events: none;
+    opacity: 0.78;
+  }
+  @keyframes drm-firing-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(96,165,250,0.0); }
+    50%      { box-shadow: 0 0 0 4px rgba(96,165,250,0.32); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .dcard-btn.drm-firing { animation: none !important; opacity: 0.78; }
+  }
   .dcard-gap-prose { font-size: 12px; line-height: 1.5; color: var(--text-3); margin-top: 7px; }
   .dcard-story-row { display: flex; gap: 9px; align-items: flex-start; padding: 6px 0; }
   .dcard-story-row + .dcard-story-row { border-top: 1px dashed var(--border); }
@@ -33316,7 +33331,7 @@ function openDeepRefreshModal(rowId, btn) {
     const hit = window.__DEEP_REFRESH_STALE_ROWS__.find(r => String(r.num) === rowId);
     if (hit) { company = hit.company; role = hit.role; status = hit.status; ageDays = hit.ageDays; }
   }
-  window._drmState = { mode: 'single', rows: [{ num: rowId, company, role, status, ageDays }], firing: false, results: {} };
+  window._drmState = { mode: 'single', rows: [{ num: rowId, company, role, status, ageDays }], firing: false, results: {}, firingBtn: btn || null };
 
   const titleEl    = document.getElementById('deep-refresh-title');
   const subtitleEl = document.getElementById('deep-refresh-subtitle');
@@ -33475,6 +33490,14 @@ function closeDeepRefreshModal() {
   // Note: if jobs are already firing, this just hides the modal — the
   // background jobs keep running on the server (the SSE streams aren't tied
   // to the modal). User can re-open via the section-header button.
+  // F104 (2026-05-29): clear firing-state on the per-row button when user
+  // closes the modal. On successful completion _drmRebuildAndReload reloads
+  // the page so cleanup happens via reload; this path covers user-cancel +
+  // close-while-firing where we want the button restored visually.
+  const state = window._drmState;
+  if (state && state.firingBtn && state.firingBtn.classList) {
+    state.firingBtn.classList.remove('drm-firing');
+  }
   const backdrop = document.getElementById('deep-refresh-backdrop');
   const modal    = document.getElementById('deep-refresh-modal');
   if (backdrop) backdrop.classList.remove('visible');
@@ -33639,6 +33662,8 @@ async function confirmDeepRefresh() {
   const statusMsg = document.getElementById('deep-refresh-status-msg');
   if (state.firing) return; // double-click guard
   state.firing = true;
+  // F104 (2026-05-29): visual feedback — pulse the per-row button while firing.
+  if (state.firingBtn && state.firingBtn.classList) state.firingBtn.classList.add('drm-firing');
 
   if (state.mode === 'single') {
     // Single-row mode (v3 2026-05-25): stream live NDJSON progress directly
@@ -33670,6 +33695,8 @@ async function confirmDeepRefresh() {
         statusMsg.appendChild(document.createTextNode(_drmEsc(err.message || String(err))));
       }
       if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'Retry'; }
+      // F104 (2026-05-29): clear firing-state on launch fail so user can retry.
+      if (state.firingBtn && state.firingBtn.classList) state.firingBtn.classList.remove('drm-firing');
       state.firing = false;
       return;
     }

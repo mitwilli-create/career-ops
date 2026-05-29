@@ -24,10 +24,13 @@
  */
 
 import {
-  appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync,
+  appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync,
+  statSync, unlinkSync, writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
 
 import {
   hashCite,
@@ -36,8 +39,17 @@ import {
 import {
   encodeProjectPath,
 } from './regression-guard/lib/path-encoder.mjs';
+import { readJson, readText } from '../../lib/safe-fetch.mjs';
 
-const REPO_ROOT = process.env.TASK_AUDIT_REPO_ROOT || '/home/user/career-ops';
+// Derive repo root from the script's own location (scripts/agents/task-audit.mjs → 3 levels up).
+// Env override preserved for non-standard layouts.
+const __FILE = fileURLToPath(import.meta.url);
+const REPO_ROOT = process.env.TASK_AUDIT_REPO_ROOT || dirname(dirname(dirname(__FILE)));
+
+// Load .env with override:true — defends against Pattern E env-shadow (shell may pre-set
+// ANTHROPIC_API_KEY="" empty, which without override:true silently wins over the real key in .env).
+dotenv.config({ path: join(REPO_ROOT, '.env'), override: true });
+
 const PROJECTS_ROOT = join(homedir(), '.claude', 'projects');
 const PROJECT_TRANSCRIPTS_DIR = join(
   PROJECTS_ROOT,
@@ -49,6 +61,10 @@ const AUDIT_DIR = join(REPO_ROOT, '.claude', 'audit', TODAY);
 const REPORT_PATH = join(AUDIT_DIR, `task-audit-${TODAY}.md`);
 const FOLLOWUPS_PATH = join(AUDIT_DIR, `task-audit-followups-${TODAY}.md`);
 const SPEND_LEDGER_PATH = join(REPO_ROOT, 'data', 'task-audit-spend.jsonl');
+// Per-session sidecar JSONL — survives interrupt at session N so resume picks up at N+1.
+// Append-only during the run; renamed to *.completed.jsonl after final report writes.
+const PARTIAL_PATH = join(AUDIT_DIR, `task-audit-partial-${TODAY}.jsonl`);
+const PARTIAL_DONE_PATH = join(AUDIT_DIR, `task-audit-partial-${TODAY}.completed.jsonl`);
 
 const DAILY_USD_CAP = Math.max(
   0,
@@ -70,6 +86,7 @@ function parseArgs(argv) {
     budget: DAILY_USD_CAP,
     dryRun: false,
     skipFollowups: false,
+    forceRestart: false,
   };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
@@ -82,6 +99,7 @@ function parseArgs(argv) {
     else if (a === '--budget') out.budget = Math.max(0, Math.min(50, parseFloat(next())));
     else if (a === '--dry-run') out.dryRun = true;
     else if (a === '--skip-followups') out.skipFollowups = true;
+    else if (a === '--force-restart') out.forceRestart = true;
     else if (a === '--help' || a === '-h') { printHelp(); process.exit(0); }
     else {
       process.stderr.write(`unknown flag: ${a}\n`);
@@ -106,12 +124,22 @@ usage:
   node scripts/agents/task-audit.mjs [--last N | --session <uuid> | --sessions u1,u2,...]
                                      [--since YYYY-MM-DD --until YYYY-MM-DD]
                                      [--budget USD] [--dry-run] [--skip-followups]
+                                     [--force-restart]
 
-defaults: --last 5, budget=$${DAILY_USD_CAP}
+flags:
+  --force-restart   Ignore today's partial sidecar + audit every in-scope session
+                    from scratch. Use after a smoke-test run if you want a clean
+                    real-audit on the same day. Without this, a resumable run
+                    on the same date picks up where a prior interrupted run
+                    left off.
+
+defaults: --last 5, budget=\$${DAILY_USD_CAP}
 outputs:
   ${REPORT_PATH}
   ${FOLLOWUPS_PATH}
   ${SPEND_LEDGER_PATH}
+  ${PARTIAL_PATH}        (during the run)
+  ${PARTIAL_DONE_PATH}   (after successful completion)
 `);
 }
 
@@ -144,6 +172,86 @@ function appendSpendLedger(rec) {
     mkdirSync(dirname(SPEND_LEDGER_PATH), { recursive: true });
   }
   appendFileSync(SPEND_LEDGER_PATH, JSON.stringify(rec) + '\n');
+}
+
+// ─── Partial-sidecar persistence (resume-on-restart) ────────────────────────
+//
+// Default-to-restart is a tax on memory-only state. Two consecutive runs on
+// 2026-05-28 (60% and 91% complete) died before producing a report; ~$7.42
+// was burned because nothing on disk recorded "we got this far." The sidecar
+// fixes that — every audited session is appended as one JSONL line. On
+// re-launch, the loop preloads the cache + skips already-audited sessions.
+//
+// Schema (minimum fields enforced at load):
+//   { session_sha256: "sha256:...", mtime_ms: number, asks_count: number,
+//     verdicts: array, session_result: full-shape SessionResult }
+//
+// The schema's `session_result` field carries the rendering-time shape
+// (uuid, uuidHash, mtime, asks[], verdicts[], cost_usd, skipped_reason)
+// so the final report can render without re-parsing transcripts.
+
+function loadPartialSidecar() {
+  if (!existsSync(PARTIAL_PATH)) return null;
+  const auditedSHAs = new Set();
+  const results = [];
+  let raw;
+  try { raw = readFileSync(PARTIAL_PATH, 'utf-8'); }
+  catch (e) { log(`partial sidecar read fail: ${e.message}`, 'warn'); return null; }
+  let lineNo = 0;
+  for (const line of raw.split('\n')) {
+    lineNo++;
+    if (!line.trim()) continue;
+    let entry;
+    try { entry = JSON.parse(line); }
+    catch (e) {
+      log(`partial sidecar line ${lineNo} JSON parse skip: ${e.message}`, 'warn');
+      continue;
+    }
+    // Minimum-schema validation
+    if (typeof entry.session_sha256 !== 'string' ||
+        typeof entry.mtime_ms !== 'number' ||
+        typeof entry.asks_count !== 'number' ||
+        !Array.isArray(entry.verdicts) ||
+        !entry.session_result || typeof entry.session_result !== 'object') {
+      log(`partial sidecar line ${lineNo} schema invalid — skip`, 'warn');
+      continue;
+    }
+    auditedSHAs.add(entry.session_sha256);
+    results.push(entry.session_result);
+  }
+  return { auditedSHAs, results };
+}
+
+function appendPartialSidecar(sessionResult) {
+  try {
+    if (!existsSync(dirname(PARTIAL_PATH))) {
+      mkdirSync(dirname(PARTIAL_PATH), { recursive: true });
+    }
+    const entry = {
+      session_sha256: sessionResult.uuidHash,
+      mtime_ms: new Date(sessionResult.mtime).getTime(),
+      asks_count: sessionResult.asks.length,
+      verdicts: sessionResult.verdicts,
+      session_result: sessionResult,
+    };
+    appendFileSync(PARTIAL_PATH, JSON.stringify(entry) + '\n');
+  } catch (e) {
+    // Non-fatal — log + continue. The whole point is that an interrupted run
+    // should remain partly-recoverable; a sidecar-write failure can't take
+    // down the run.
+    log(`partial sidecar append fail (non-fatal): ${e.message}`, 'warn');
+  }
+}
+
+function finalizePartialSidecar() {
+  try {
+    if (existsSync(PARTIAL_PATH)) {
+      renameSync(PARTIAL_PATH, PARTIAL_DONE_PATH);
+      log(`finalized partial sidecar → ${PARTIAL_DONE_PATH}`);
+    }
+  } catch (e) {
+    log(`partial sidecar finalize fail (non-fatal): ${e.message}`, 'warn');
+  }
 }
 
 // ─── Session enumeration ────────────────────────────────────────────────────
@@ -396,10 +504,14 @@ async function callSonnetAdjudicate(prompt, opts = {}) {
     });
     clearTimeout(timer);
     if (!r.ok) {
-      const errBody = await r.text().catch(() => '');
+      // Body-read timeout: 30s for error bodies (small)
+      const errBody = await readText(r, 30_000, 'sonnet-error-body').catch(() => '');
       return { content: null, error: `HTTP ${r.status}: ${errBody.slice(0, 240)}`, usd: 0 };
     }
-    const j = await r.json();
+    // Body-read timeout: 120s for success bodies (canonical missing-timeout-on-long-running-operation
+    // bug class — Node's r.json() is NOT signal-aware after the fetch resolves, so a stalled response
+    // stream can hang the process indefinitely. The 5.6 MB session #2f260f40327b hit this on 2026-05-28).
+    const j = await readJson(r, 120_000, 'sonnet-success-body');
     const content = (j?.content || []).map(b => b.text || '').join('\n');
     const tokens_in = j?.usage?.input_tokens || 0;
     const tokens_out = j?.usage?.output_tokens || 0;
@@ -704,6 +816,17 @@ function escMd(s) {
 async function main() {
   const opts = parseArgs(process.argv);
 
+  // Already-complete short-circuit. If today's report + DONE sidecar exist
+  // AND no in-flight PARTIAL exists, exit without re-burning $ on the same
+  // date. --force-restart bypasses.
+  if (!opts.forceRestart
+      && (existsSync(PARTIAL_DONE_PATH) || existsSync(REPORT_PATH))
+      && !existsSync(PARTIAL_PATH)) {
+    log(`today already complete (--force-restart to redo)`);
+    process.stdout.write(`task-audit done. (already-complete)\n`);
+    return;
+  }
+
   // Daily cap pre-check
   const todaySpend = getTodaySpend();
   if (todaySpend >= opts.budget) {
@@ -711,7 +834,23 @@ async function main() {
     process.exit(3);
   }
 
-  log(`scope: ${JSON.stringify({ last: opts.last, session: opts.session, sessions: opts.sessions, since: opts.since, until: opts.until })}, budget=$${opts.budget}, dryRun=${opts.dryRun}`);
+  // --force-restart: unlink today's PARTIAL so the loop starts clean.
+  if (opts.forceRestart && existsSync(PARTIAL_PATH)) {
+    log(`--force-restart: unlinking partial sidecar`);
+    try { unlinkSync(PARTIAL_PATH); }
+    catch (e) { log(`force-restart unlink fail: ${e.message}`, 'warn'); }
+  }
+
+  // Load resume state from today's PARTIAL sidecar (if any) — preloads
+  // sessionResults + builds the skip-set the loop consults.
+  const resumeState = opts.forceRestart ? null : loadPartialSidecar();
+  const auditedSHAs = resumeState?.auditedSHAs ?? new Set();
+  const sessionResults = resumeState ? resumeState.results.slice() : [];
+  if (auditedSHAs.size > 0) {
+    log(`[resume] preloaded ${auditedSHAs.size} session(s) from sidecar at ${PARTIAL_PATH}`);
+  }
+
+  log(`scope: ${JSON.stringify({ last: opts.last, session: opts.session, sessions: opts.sessions, since: opts.since, until: opts.until })}, budget=$${opts.budget}, dryRun=${opts.dryRun}, forceRestart=${opts.forceRestart}`);
 
   const { sessions, descriptor } = enumerateSessions(opts);
   if (sessions.length === 0) {
@@ -719,36 +858,46 @@ async function main() {
     if (!existsSync(AUDIT_DIR)) mkdirSync(AUDIT_DIR, { recursive: true });
     writeFileSync(REPORT_PATH, renderReport([], opts, todaySpend));
     if (!opts.skipFollowups) writeFileSync(FOLLOWUPS_PATH, renderFollowups([]));
+    finalizePartialSidecar();
     process.stdout.write(`wrote ${REPORT_PATH}\n`);
     return;
   }
   log(`found ${sessions.length} session(s) in scope (${descriptor})`);
 
-  const sessionResults = [];
   let spentThisRun = 0;
   for (const sm of sessions) {
+    const smHash = hashCite(sm.uuid);
+    if (auditedSHAs.has(smHash)) {
+      log(`[resumed] sha256:${smHash.replace('sha256:', '').slice(0, 12)} — skipping (in sidecar)`);
+      continue;
+    }
     if (todaySpend + spentThisRun >= opts.budget) {
-      log(`CAP HIT mid-run: ${sessionResults.length}/${sessions.length} sessions audited`, 'error');
+      log(`CAP HIT mid-run: ${sessionResults.length} results so far, ${sessions.length} in scope`, 'error');
       break;
     }
-    log(`auditing session #${hashCite(sm.uuid).replace('sha256:', '')} (${sm.bytes} bytes)`);
+    log(`auditing session #${smHash.replace('sha256:', '')} (${sm.bytes} bytes)`);
+    let result;
     try {
-      const r = await auditOneSession(sm, opts);
-      sessionResults.push(r);
-      spentThisRun += r.cost_usd;
-      log(`  → ${r.asks.length} asks, ${r.verdicts.length} verdicts, $${r.cost_usd.toFixed(4)}`);
+      result = await auditOneSession(sm, opts);
+      spentThisRun += result.cost_usd;
+      log(`  → ${result.asks.length} asks, ${result.verdicts.length} verdicts, $${result.cost_usd.toFixed(4)}`);
     } catch (e) {
       log(`  ! session failed: ${e.message}`, 'warn');
-      sessionResults.push({
+      result = {
         uuid: sm.uuid,
-        uuidHash: hashCite(sm.uuid),
+        uuidHash: smHash,
         mtime: new Date(sm.mtimeMs).toISOString(),
         asks: [],
         verdicts: [],
         cost_usd: 0,
         skipped_reason: `exception: ${e.message.slice(0, 120)}`,
-      });
+      };
     }
+    sessionResults.push(result);
+    // Persist BEFORE moving to the next session — the whole point of the
+    // sidecar is that an interrupt here loses at most this session's verdicts,
+    // not the whole run.
+    appendPartialSidecar(result);
   }
 
   if (!existsSync(AUDIT_DIR)) mkdirSync(AUDIT_DIR, { recursive: true });
@@ -761,6 +910,9 @@ async function main() {
     writeFileSync(FOLLOWUPS_PATH, followupsMd);
     log(`wrote ${FOLLOWUPS_PATH}`);
   }
+  // Atomically signal "today is complete" by renaming PARTIAL → DONE. The
+  // already-complete short-circuit at top of main() reads this on next launch.
+  finalizePartialSidecar();
   process.stdout.write(`task-audit done. sessions=${sessionResults.length} spent=$${spentThisRun.toFixed(4)} report=${REPORT_PATH}\n`);
 }
 

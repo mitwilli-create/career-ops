@@ -3580,10 +3580,18 @@ function renderRow(r, idx) {
   // showed the same provenance-error empty state. Card is now display-only;
   // strategic positioning content will be regenerated through the council
   // pipeline in Wave D.
+  // 2026-05-30 drawer-quality hotfix (follow-up to PR #338):
+  // sanitizeDrawerText wraps the positioning string before marked-rendering.
+  // Strips Spanish residues ("Nivel detectado:" → "Detected level:"),
+  // neutralizes overclaims ("Pure ... archetype hit"), rewrites first-person.
+  // Previously the sanitizer was wired into _renderHMIntel + richSummary build,
+  // but THIS card renders via renderHowToPosition(positioning) which is a
+  // separate build-time path that bypassed both. Wrapping `positioning` here
+  // catches the 26+ "Nivel detectado:" hits in served HTML.
   const posCard = positioning ? `<div class="dcard dcard--static" style="margin-bottom:8px">
     <div class="dcard-label">How to position yourself</div>
     ${_staleEvalLabel}
-    <div class="dcard-body htp-md">${renderHowToPosition(positioning)}</div>
+    <div class="dcard-body htp-md">${renderHowToPosition(sanitizeDrawerText(positioning))}</div>
   </div>` : '';
 
   // ── Card 1: Fit evidence + what matches (merged 2026-05-18) ─────
@@ -3726,7 +3734,7 @@ function renderRow(r, idx) {
     return (c + '-' + ro).replace(/^-+|-+$/g, '').slice(0, 80);
   })();
   const storyCard = stories.length ? `<div class="dcard dcard--story">
-    <div class="dcard-label">Stories to use in your application</div>
+    <div class="dcard-label">Stories Mitchell can use in his application</div>
     ${_staleEvalLabel}
     ${stories.map((s, i) => {
       const childHref = _storyChildPath(s);
@@ -3746,7 +3754,7 @@ function renderRow(r, idx) {
       </div>`;
     }).join('')}
   </div>` : `<div class="dcard dcard--story">
-    <div class="dcard-label">Stories to use in your application</div>
+    <div class="dcard-label">Stories Mitchell can use in his application</div>
     <div class="dcard-story-empty muted-text" style="font-size:12px;font-style:italic;padding:6px 0;opacity:.7">No stories generated yet for this match. <a href="/api/drawer/auto-enrich?slot=story-card&amp;slug=${htmlEscape(_storyRowSlug)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="story-cta-link" style="color:var(--blue-fg);text-decoration:underline dotted" title="Trigger story generation via drawer-auto-enrich pipeline">Generate story for this match? &rarr;</a></div>
   </div>`;
 
@@ -21935,13 +21943,18 @@ function _freshnessChip(timestampStr, opts) {
 
 function _renderHMIntel(d, slug) {
   if (!d) return '';
-  // 2026-05-29 drawer-quality sweep: render-time sanitization of cached
-  // content. Strips Spanish residues (Nivel detectado → Detected level),
-  // neutralizes overclaims (Pure ... archetype hit → archetype-adjacent),
-  // and rewrites first-person voice slips to third-person. See
-  // lib/drawer-content-sanitizer.mjs + the retroactive-sweep spec at
-  // data/spec-drawer-content-retroactive-sweep-2026-05-29.md.
-  d = sanitizeObjectStrings(d);
+  // 2026-05-30 hotfix (regression from PR #338): _renderHMIntel runs in
+  // BROWSER context (emitted as inline script). The Node-side import of
+  // sanitizeObjectStrings at the top of this file is server-side only.
+  // Browser tries to call sanitizeObjectStrings(d) and crashes with
+  // "Error: sanitizeObjectStrings is not defined", which broke the
+  // COMP INTELLIGENCE section render. Removed the client-side call here.
+  // Server-side sanitization is still active for the richSummary build
+  // pass and the renderHowToPosition(positioning) call (both run in Node).
+  // For client-side hm-intel sanitization, a separate inline-bundled
+  // sanitizer is the right pattern -- covered by the retroactive sweep spec.
+  // NOTE: avoid backticks inside this comment -- triggers outer-template-
+  // unescape bug class (AGENTS.md).
   const succeeded = (d.providers_succeeded || []).length;
   const called    = (d.providers_called    || []).length || 7;
   // 2026-05-29 drawer-quality sweep: prior code emitted literal "?" when

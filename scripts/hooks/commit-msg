@@ -48,6 +48,43 @@ if echo "$commit_msg" | grep -q '\[skip-ui-verify\]'; then
   exit 0
 fi
 
+# ──────────────────────────────────────────────────────────────────────────
+# safe-dashboard-deploy guard (added 2026-05-30, bug-class:
+# ad-hoc-cp-of-build-artifact). Refuses dashboard/index.html commits unless
+# the message references safe-dashboard-deploy.sh OR contains
+# SKIP_SAFE_DEPLOY=1 audit note. Narrower than the UI-affecting check below:
+# this catches the specific case of committing the BUILT HTML by hand, which
+# bypasses the 6-gate wrapper.
+# ──────────────────────────────────────────────────────────────────────────
+staged_safe_deploy_check="$(git diff --cached --name-only 2>/dev/null || true)"
+if echo "$staged_safe_deploy_check" | grep -q '^dashboard/index\.html$'; then
+  if ! echo "$commit_msg" | grep -qE 'safe-dashboard-deploy|SKIP_SAFE_DEPLOY'; then
+    {
+      echo ""
+      echo "╔═══════════════════════════════════════════════════════════════════════╗"
+      echo "║  COMMIT BLOCKED — dashboard/index.html staged without safe-deploy ref ║"
+      echo "║  (commit-msg hook — safe-dashboard-deploy.sh is the canonical path)   ║"
+      echo "╚═══════════════════════════════════════════════════════════════════════╝"
+      echo ""
+      echo "dashboard/index.html is a BUILD ARTIFACT. Hand-committing it bypasses"
+      echo "the 6-gate safety wrapper (source merge-base check, AST lint, backtick"
+      echo "lint, marker preservation, server restart, headless canary)."
+      echo ""
+      echo "Canonical path:"
+      echo "  bash scripts/safe-dashboard-deploy.sh"
+      echo ""
+      echo "Emergency bypass (any one):"
+      echo "  - git commit -m \"SKIP_SAFE_DEPLOY=1: <one-line reason>\" ..."
+      echo "  - git commit -m \"... safe-dashboard-deploy ...\" (reference the script)"
+      echo "  - git commit --no-verify (bypasses ALL hooks)"
+      echo ""
+      echo "See AGENTS.md § Bug class: ad-hoc-cp-of-build-artifact"
+    } >&2
+    exit 1
+  fi
+fi
+# ──────────────────────────────────────────────────────────────────────────
+
 # Staged files WITH status codes so we can distinguish add/modify/rename
 # (which can change rendering) from delete (which cannot — the file is just
 # removed from the index, on-disk content and the running build are untouched).

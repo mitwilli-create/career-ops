@@ -543,3 +543,6 @@ data/deployment-inventory-*.md
 # applications.md + apply-now-queue is gitignored. Local-only.
 data/role-surface-aliases.json
 data/l5-spend-*.json
+
+# Personal Session Notes archives — rotated from CLAUDE.md (2026-05-30)
+data/session-notes-archive/

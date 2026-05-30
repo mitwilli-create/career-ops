@@ -120,6 +120,24 @@ async function main() {
   const log = [];
   const gateCtx = { livenessState: loadLivenessState() };
 
+  // Pass 0 — sentinel normalization (runs on ALL rows including orphans).
+  // Closes Margaret Hamilton Phase 3.5 finding (sentinel-string-treated-as-truthy-
+  // by-gating-predicate, 2026-05-29) by migrating legacy
+  // "unknown — set after manual review" strings in factors.equity_stage to null
+  // so downstream `if (row.factors.equity_stage)` gates correctly treat as absent.
+  // Idempotent — only touches rows with the specific sentinel pattern.
+  let sentinelMigrated = 0;
+  for (const qrow of ranked) {
+    if (qrow?.factors && typeof qrow.factors.equity_stage === 'string' &&
+        /unknown\s*[—-]\s*set after manual review/i.test(qrow.factors.equity_stage)) {
+      qrow.factors.equity_stage = null;
+      sentinelMigrated++;
+    }
+  }
+  if (sentinelMigrated > 0) {
+    log.push(`  ↺ Pass 0: migrated ${sentinelMigrated} legacy factors.equity_stage sentinels → null`);
+  }
+
   // Pass 1: update status on existing queue rows from applications.md
   for (const qrow of ranked) {
     const app = appsByNum.get(String(qrow.num));
@@ -163,6 +181,7 @@ async function main() {
         const cls = classifyUrl(reportUrl);
         if (cls.type === 'already-canonical') qrow.canonical_url = reportUrl;
       }
+
 
       // LinkedIn defense-in-depth — if the row's only URL is a LinkedIn job
       // wrapper AND no canonical_url override exists, mark _dropped so
@@ -232,7 +251,12 @@ async function main() {
       factors: {
         base_fit: 15,
         equity_upside: 0,
-        equity_stage: 'unknown — set after manual review',
+        // Use null sentinel (not a truthy string) so downstream JS-truthy gates
+        // (`if (row.factors.equity_stage)`) correctly skip auto-added rows
+        // until manual curation populates a real stage. Closes Margaret
+        // Hamilton Phase 3.5 finding F#2 (sentinel-string-treated-as-truthy-
+        // by-gating-predicate) from 2026-05-29 task-audit deploy-verify.
+        equity_stage: null,
         freshness: 20,
         eval_age_days: Math.max(0, Math.round((Date.now() - Date.parse(arow.date)) / 86400000)),
         tier_match: 10,

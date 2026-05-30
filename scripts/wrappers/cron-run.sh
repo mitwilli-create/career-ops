@@ -25,7 +25,7 @@ GUARD="${2:?missing cadence-guard}"
 shift 2
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
-LOG_DIR="$REPO/data/logs"
+LOG_DIR="$HOME/Library/Logs/career-ops"  # patched 2026-05-29: Tahoe TCC blocks log writes to ~/Documents from launchd
 LOG="$LOG_DIR/${LABEL}-$(date +%Y-%m-%d).log"
 mkdir -p "$LOG_DIR"
 

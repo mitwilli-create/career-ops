@@ -2,56 +2,34 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>Label</key>
-    <string>com.mitchell.career-ops.network-database-build</string>
-
-    <!-- ZETA recurring: rebuild the canonical data/network-database.json from on-disk LinkedIn/X/contacts sources. -->
-    <!-- Pure aggregation, $0/run. Daily 02:30 PT. Underlying agent: scripts/build-network-database.mjs (shipped by ZETA overnight 2026-05-19). -->
-    <!--
-        Direct node invocation (no bash/cron-run.sh wrapper).
-        Reason: macOS Tahoe TCC blocks /bin/bash from reading scripts under
-        ~/Documents/ (exit 126, Operation not permitted). node was already
-        invokable because launchd executes /Users/.../node (binary outside
-        Documents) which then reads the script as an argument. Matches the
-        bug-intake-mapper / pipeline-health / health-column-liveness pattern.
-        Fixed 2026-05-29 — see AGENTS.md § Bug class: launchd-bash-wrapper-tahoe-tcc-block.
-    -->
-    <key>ProgramArguments</key>
-    <array>
-        <string>/Users/mitchellwilliams/.nvm/versions/node/v24.14.0/bin/node</string>
-        <string>/Users/mitchellwilliams/Documents/career-ops/scripts/build-network-database.mjs</string>
-    </array>
-
-    <key>WorkingDirectory</key>
-    <string>/Users/mitchellwilliams/Documents/career-ops</string>
-
-    <!-- Daily 02:30 PT -->
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>2</integer>
-        <key>Minute</key>
-        <integer>30</integer>
-    </dict>
-
-    <key>RunAtLoad</key>
-    <false/>
-
-    <!-- Log path MUST live outside ~/Documents/ - macOS Tahoe TCC blocks
-         launchd from writing to log files under Documents (silent EX_CONFIG=78).
-         Pattern F / feedback_tahoe_sandbox_calendar_interval.md. Fixed 2026-05-22. -->
-    <key>StandardOutPath</key>
-    <string>/Users/mitchellwilliams/Library/Logs/career-ops/network-database-build.out</string>
-
-    <key>StandardErrorPath</key>
-    <string>/Users/mitchellwilliams/Library/Logs/career-ops/network-database-build.err</string>
-
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PATH</key>
-        <string>/Users/mitchellwilliams/.nvm/versions/node/v24.14.0/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
-        <key>HOME</key>
-        <string>/Users/mitchellwilliams</string>
-    </dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>/Users/mitchellwilliams</string>
+		<key>PATH</key>
+		<string>/Users/mitchellwilliams/.nvm/versions/node/v24.14.0/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+	</dict>
+	<key>Label</key>
+	<string>com.mitchell.career-ops.network-database-build</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/mitchellwilliams/.nvm/versions/node/v24.14.0/bin/node</string>
+		<string>/Users/mitchellwilliams/.local/career-ops-wrappers/cron-run.sh</string>
+	</array>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardErrorPath</key>
+	<string>/Users/mitchellwilliams/Library/Logs/career-ops/network-database-build.err</string>
+	<key>StandardOutPath</key>
+	<string>/Users/mitchellwilliams/Library/Logs/career-ops/network-database-build.out</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>2</integer>
+		<key>Minute</key>
+		<integer>30</integer>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>/Users/mitchellwilliams</string>
 </dict>
 </plist>

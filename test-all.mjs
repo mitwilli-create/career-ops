@@ -449,6 +449,66 @@ try {
 
 // Import execFileSync (was already imported above)
 
+// ── 13. QUEUE REBUILDER CANONICAL_URL POPULATION INVARIANT ─────────────
+
+console.log('\n13. Queue rebuild canonical_url invariant (apply-now rows with already-canonical URLs)');
+
+try {
+  // Runs tests/queue-rebuild-canonical-url-invariant.test.mjs — exits 2 if
+  // any apply-now-eligible ranked queue row references an already-canonical
+  // ATS report URL but the queue row itself is missing canonical_url.
+  // Closes F4 from .claude/audit/2026-05-30/task-audit-2026-05-30.md and
+  // locks in the databricks.com host expansion in lib/jd-url-canonicalizer.mjs.
+  execFileSync('node', ['tests/queue-rebuild-canonical-url-invariant.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+  });
+  pass('Queue canonical_url invariant — all apply-now rows populated');
+} catch (err) {
+  if (err.status === 2) {
+    fail(`Queue canonical_url invariant VIOLATED — apply-now row(s) missing canonical_url`);
+    const out = (err.stdout || '') + (err.stderr || '');
+    for (const line of out.split('\n').slice(0, 40)) {
+      if (line.trim()) console.log(`     ${line}`);
+    }
+    console.log(`     → Fix: node scripts/rebuild-apply-now-queue.mjs`);
+  } else {
+    fail(`Queue canonical_url invariant test crashed: ${err.message}`);
+  }
+}
+
+// ── 14. NO TRUTHY-SENTINEL STRINGS IN FACTORS.EQUITY_STAGE ─────────────
+
+console.log('\n14. No truthy-sentinel in factors.equity_stage (sentinel-string-treated-as-truthy bug class)');
+
+try {
+  // Runs tests/no-truthy-sentinel-factors-invariant.test.mjs — exits 2 if any
+  // apply-now-queue.json ranked row's factors.equity_stage contains a
+  // JS-truthy sentinel STRING ("unknown — set after manual review", etc.)
+  // that downstream `if (row.factors.equity_stage)` gates would mistreat
+  // as a real value. Closes Margaret Hamilton's Phase 3.5 finding from
+  // /deploy-verify 2026-05-29. Companion to AGENTS.md
+  // `### Bug class: sentinel-string-treated-as-truthy-by-gating-predicate`.
+  execFileSync('node', ['tests/no-truthy-sentinel-factors-invariant.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+  });
+  pass('No truthy-sentinel strings in factors.equity_stage');
+} catch (err) {
+  if (err.status === 2) {
+    fail(`Truthy-sentinel invariant VIOLATED — sentinel string in factors.equity_stage`);
+    const out = (err.stdout || '') + (err.stderr || '');
+    for (const line of out.split('\n').slice(0, 40)) {
+      if (line.trim()) console.log(`     ${line}`);
+    }
+    console.log(`     → Fix: replace sentinel with null at writer, then re-run rebuild-apply-now-queue.mjs`);
+  } else {
+    fail(`Truthy-sentinel invariant test crashed: ${err.message}`);
+  }
+}
+
 // ── SUMMARY ─────────────────────────────────────────────────────
 
 console.log('\n' + '='.repeat(50));

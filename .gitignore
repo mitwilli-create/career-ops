@@ -546,3 +546,25 @@ data/l5-spend-*.json
 
 # Personal Session Notes archives — rotated from CLAUDE.md (2026-05-30)
 data/session-notes-archive/
+
+# Personal Google Drive artifact dumps (2026-05-30) — XGE comms + Corp Eng
+# artifacts uploaded for the corpus-librarian agent. Google-confidential exec
+# comms, 1:1 notes, playbooks, recruitment videos. Never commit. (.mov/.mp4 are
+# already covered by the global extension globs above; these lines add the PDFs,
+# DOCX, and any .md sidecars the librarian generates.)
+data/corp-eng-artifacts/
+data/xge-comms-artifacts/
+
+# corpus-librarian agent outputs (2026-05-30) — handover, decision docs, index,
+# coverage matrix, naming conventions. Contain personal corpus detail (Drive
+# links, archetype tags, file paths from the gitignored corpus). Never commit.
+data/corpus-librarian-*.md
+data/corpus-index.json
+data/corpus-coverage-matrix.json
+data/corpus-naming-conventions.json
+data/corpus-naming-proposals-*.json
+data/corpus-citation-proposals-*.json
+data/corpus-optimize-findings-*.json
+data/corpus-drive-links.json
+data/corpus-rename-ledger-*.jsonl
+data/corpus-dedup-ledger-*.jsonl

@@ -25,6 +25,7 @@ import { parseApplicationsFile } from '../lib/parse-applications.mjs';
 import { statusKey, statusBadgeClass, STATUS_KEY_SOURCE, STATUS_BADGE_CLASS_SOURCE } from '../lib/status-key.mjs';
 import { networkSummary as _linkedInNetworkSummary, networkMeta as _linkedInNetworkMeta } from '../lib/linkedin-network.mjs';
 import { lookupCompCache } from '../lib/comp-researcher.mjs';
+import { sanitizeDrawerText, sanitizeObjectStrings } from '../lib/drawer-content-sanitizer.mjs';
 import { scoreAlignmentCached } from '../lib/alignment-scorer.mjs';
 // ── Wave C-B: lib imports (consumed by drill-in renderers + dashboard features) ──
 import { getPeerContext, renderPeerTable, renderPeerTableHtml }    from '../lib/peer-context.mjs';
@@ -3947,8 +3948,17 @@ function renderRow(r, idx) {
           const _bl  = _src.blind_url      || `https://www.teamblind.com/company/${encodeURIComponent(r.company.replace(/\s+/g,'-'))}/salaries`;
           const _row = (label, val, href) =>
             val ? `<li style="margin-bottom:6px;line-height:1.55"><a href="${htmlEscape(href)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:var(--text-2);font-weight:700;text-decoration:underline dotted;text-decoration-color:var(--text-4)">${htmlEscape(label)}</a> <span style="color:var(--text-3)">→</span> ${htmlEscape(String(val))}</li>` : '';
-          // Audit Tier 5 (2026-05-20): "What to ask the recruiter" footer
-          // turns the comp-intel card from passive data into interview prep.
+          // 2026-05-29 drawer-quality sweep: the previously-hardcoded "What to ask the
+          // recruiter" footer was identical for every role (generic 409A / vesting
+          // boilerplate). Now: render the footer ONLY when _ci.recruiter_questions is
+          // present (per-role content from the comp-intel agent). When absent, the
+          // section ends at the data table. Re-eval pass (PR-next) will populate
+          // _ci.recruiter_questions per role with company-specific intel.
+          const _recruiterFooter = _ci.recruiter_questions
+            ? `<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);font-size:11.5px;color:var(--text-3);line-height:1.55">
+              <strong style="color:var(--text-2)">What to ask the recruiter (${htmlEscape(r.company)}-specific):</strong> ${htmlEscape(String(_ci.recruiter_questions))}
+            </div>`
+            : '';
           return `<div class="dcard dcard--comp rd-comp-intel" style="margin-top:10px">
             <div class="dcard-label">Comp intelligence</div>
             <ul class="dcard-bullets" style="margin:0;padding-left:18px;font-size:12.5px">
@@ -3958,9 +3968,7 @@ function renderRow(r, idx) {
               ${_row('Glassdoor',  _ci.glassdoor,  _gd)}
               ${_row('Blind',      _ci.blind,      _bl)}
             </ul>
-            <div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);font-size:11.5px;color:var(--text-3);line-height:1.55">
-              <strong style="color:var(--text-2)">What to ask the recruiter:</strong> the disclosed base range, the equity grant size in shares + most recent 409A price, vesting schedule (typical: 4-year, 1-year cliff), sign-on bonus or relocation, and whether the band is firm or has top-of-band flex for senior candidates. For pre-IPO equity, ask about the secondary tender cadence so you understand liquidity.
-            </div>
+            ${_recruiterFooter}
           </div>`;
         } catch (_) { return ''; }
       })()}
@@ -5816,7 +5824,13 @@ async function build() {
               };
             }
           } catch (_) { _toxicityNotes = null; }
-          _cbData.richSummary[String(_r.num)] = {
+          // 2026-05-29 drawer-quality sweep: sanitize every text field before
+          // embedding into _cbData. Strips Spanish residues ("Nivel detectado:"
+          // → "Detected level:"), neutralizes overclaims ("Pure ... archetype
+          // hit" → "archetype-adjacent"), rewrites first-person voice to
+          // third-person. Idempotent; runs at build time so client-side JS
+          // renders clean strings without per-render cost.
+          _cbData.richSummary[String(_r.num)] = sanitizeObjectStrings({
             tldr:           _truncate(_parsed.tldr || '', 360),
             why:            _truncate(_parsed.whyGapsDontBlock || '', 300),
             angles:         _strategy ? _strategy.angles : [],
@@ -5829,7 +5843,7 @@ async function build() {
             toxicityNotes:  _toxicityNotes,
             reportPath:     _r.reportPath,
             evalDate:       _r.date || '',
-          };
+          });
         } catch (_) { /* per-row skip */ }
       }
     } catch (_) { _cbData.richSummary = {}; }
@@ -18733,11 +18747,11 @@ _drillInRegister('metric', function(id) {
            + '<p style="font-size:13px;line-height:1.55;margin:0">' + rs.tldr + '</p></div>';
     }
     if (rs.detectedLevel) {
-      sec += '<div style="margin-bottom:14px"><div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);font-weight:600;margin-bottom:5px">Detected level vs. yours</div>'
+      sec += '<div style="margin-bottom:14px"><div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);font-weight:600;margin-bottom:5px">Detected level vs. Mitchell&#39;s</div>'
            + '<p style="font-size:13px;line-height:1.55;margin:0">' + rs.detectedLevel + '</p></div>';
     }
     if (rs.angles && rs.angles.length) {
-      sec += '<div style="margin-bottom:14px"><div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);font-weight:600;margin-bottom:6px">How to position yourself (your strongest 2–3 angles)</div>';
+      sec += '<div style="margin-bottom:14px"><div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);font-weight:600;margin-bottom:6px">How Mitchell should position (strongest 2–3 angles)</div>';
       for (var ai = 0; ai < rs.angles.length; ai++) {
         var ang = rs.angles[ai];
         sec += '<div style="margin-bottom:9px;padding:8px 10px;background:var(--surface-2);border-radius:6px;border-left:3px solid var(--green-fg)">'
@@ -21921,9 +21935,25 @@ function _freshnessChip(timestampStr, opts) {
 
 function _renderHMIntel(d, slug) {
   if (!d) return '';
+  // 2026-05-29 drawer-quality sweep: render-time sanitization of cached
+  // content. Strips Spanish residues (Nivel detectado → Detected level),
+  // neutralizes overclaims (Pure ... archetype hit → archetype-adjacent),
+  // and rewrites first-person voice slips to third-person. See
+  // lib/drawer-content-sanitizer.mjs + the retroactive-sweep spec at
+  // data/spec-drawer-content-retroactive-sweep-2026-05-29.md.
+  d = sanitizeObjectStrings(d);
   const succeeded = (d.providers_succeeded || []).length;
   const called    = (d.providers_called    || []).length || 7;
-  const provFootline = 'Synthesized from ' + succeeded + ' of ' + called + ' LLM providers (council research) · ' + (d.sources_cited_count || '?') + ' distinct sources cited';
+  // 2026-05-29 drawer-quality sweep: prior code emitted literal "?" when
+  // sources_cited_count was null — surfaced as "? distinct sources cited" in the
+  // header, signaling "intel didn't populate" with a confusing punctuation char.
+  // Now: omit the sources clause when null; show "intel pending — Deep Refresh"
+  // when both fields are missing. Real counts always render.
+  const _srcCount = Number(d.sources_cited_count || 0);
+  const _srcClause = _srcCount > 0 ? ' · ' + _srcCount + ' distinct sources cited' : '';
+  const provFootline = succeeded > 0
+    ? 'Synthesized from ' + succeeded + ' of ' + called + ' LLM providers (council research)' + _srcClause
+    : 'Hiring intel pending — Deep Refresh to populate';
   // Phase 6.5-CAD-2: stale-data chip when the synthesis is >3d old.
   const stalenessChip = _freshnessChip(d.synthesized_at, { thresholdDays: 3, label: 'HM intel stale' });
   // FIX 3 (2026-05-17) — surface only HIGH-confidence contacts. Filter at the
@@ -21960,7 +21990,7 @@ function _renderHMIntel(d, slug) {
     + '<div class="hm-intel-head"><h3>🎯 Hiring intel' + stalenessChip + '</h3><span class="hm-prov-footline">' + _hmEsc(provFootline) + '</span></div>'
 
     + (d.role_summary          ? '<section class="hm-section"><h4>Role (Mitchell-tailored)</h4><p>' + _hmEsc(d.role_summary) + '</p></section>' : '')
-    + (d.alignment_with_goals  ? '<section class="hm-section"><h4>Why this aligns with my goals</h4><p>' + _hmEsc(d.alignment_with_goals) + '</p></section>' : '')
+    + (d.alignment_with_goals  ? '<section class="hm-section"><h4>Why this aligns with Mitchell&#39;s goals</h4><p>' + _hmEsc(d.alignment_with_goals) + '</p></section>' : '')
     + (d.fit_evidence          ? '<section class="hm-section"><h4>Fit evidence</h4>' + _hmFitEvidence(d.fit_evidence) + '</section>' : '')
 
     + (hmCards  ? '<section class="hm-section"><h4>Likely hiring managers (' + hmHigh.length + ')</h4>' + hmCards + '</section>' : '')
@@ -21969,7 +21999,7 @@ function _renderHMIntel(d, slug) {
 
     + (d.outreach_strategy     ? '<section class="hm-section"><h4>Outreach tactic</h4>' + (_voicePurityOk(d.outreach_strategy) ? _formatOutreachSection(d.outreach_strategy) : '<p class="muted-text" style="font-size:12px;font-style:italic;opacity:.7" title="Voice-purity check found style issues. Regenerate via intel-refresh to get a corrected version.">Voice-check pending — regenerate via intel-refresh</p>') + '</section>' : '')
     // FIX 4 (2026-05-17) — clump prose broken into scannable bullets.
-    + (d.team_gap_analysis     ? '<section class="hm-section"><h4>Team gaps I fill</h4>' + _hmProseBullets(d.team_gap_analysis) + '</section>' : '')
+    + (d.team_gap_analysis     ? '<section class="hm-section"><h4>Team gaps Mitchell fills</h4>' + _hmProseBullets(d.team_gap_analysis) + '</section>' : '')
 
     + ((d.honest_gaps_vs_requirements||[]).length ? '<section class="hm-section"><h4>Honest gaps + close actions</h4><ul class="hm-gap-list">' + _hmGapList(d.honest_gaps_vs_requirements) + '</ul></section>' : '')
 

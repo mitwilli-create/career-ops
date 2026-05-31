@@ -312,8 +312,13 @@ console.log('\n7. Absolute path check');
 // so CHANGELOG.md perpetually surfaces them. The doc-not-code rationale
 // applies — commit-message history is documentation of past fixes, not
 // active source code.
+// docs/BUG-CLASSES.md exclusion (added 2026-05-31): the bug-class catalog was
+// extracted from AGENTS.md (commit a60f365) and carries illustrative absolute
+// plist paths for the launchd-bash-wrapper-tahoe-tcc-block bug-class — which is
+// itself ABOUT absolute paths. Same doc-not-code rationale as AGENTS.md (its
+// source); genericizing them to ~/ would make the bug example inaccurate.
 const absPathResult = run(
-  `git grep -n "/Users/" -- '*.mjs' '*.sh' '*.md' '*.go' '*.yml' 2>/dev/null | grep -v README.md | grep -v LICENSE | grep -v CLAUDE.md | grep -v AGENTS.md | grep -v CHANGELOG.md | grep -v DASHBOARD_INVARIANTS.md | grep -v test-all.mjs | grep -v lib/preflight-gates.mjs | grep -vE '^data/' | grep -vE '^\\.claude/audit/' | grep -vE '^tests/.*\\.test\\.mjs:' | grep -vE '^scripts/(.*-unattended\\.(mjs|sh)|dashboard-phase3-worker\\.sh|weekly-light\\.mjs|openai-terminal-agent\\.mjs|career-library-builder\\.mjs|test-anthropic-slots\\.mjs|test-pipeline-e2e\\.mjs|overpay-signals\\.mjs|launchd/.*-nohup\\.sh|hooks/.*\\.sh|council-048-runner\\.mjs|dispatch-phase-f1-research\\.mjs|agents/regression-guard/lib/path-encoder\\.mjs):'`
+  `git grep -n "/Users/" -- '*.mjs' '*.sh' '*.md' '*.go' '*.yml' 2>/dev/null | grep -v README.md | grep -v LICENSE | grep -v CLAUDE.md | grep -v AGENTS.md | grep -v CHANGELOG.md | grep -v DASHBOARD_INVARIANTS.md | grep -v BUG-CLASSES.md | grep -v test-all.mjs | grep -v lib/preflight-gates.mjs | grep -vE '^data/' | grep -vE '^\\.claude/audit/' | grep -vE '^tests/.*\\.test\\.mjs:' | grep -vE '^scripts/(.*-unattended\\.(mjs|sh)|dashboard-phase3-worker\\.sh|weekly-light\\.mjs|openai-terminal-agent\\.mjs|career-library-builder\\.mjs|test-anthropic-slots\\.mjs|test-pipeline-e2e\\.mjs|overpay-signals\\.mjs|launchd/.*-nohup\\.sh|hooks/.*\\.sh|council-048-runner\\.mjs|dispatch-phase-f1-research\\.mjs|agents/regression-guard/lib/path-encoder\\.mjs):'`
 );
 if (!absPathResult) {
   pass('No absolute paths in code files');

@@ -128,7 +128,8 @@ async function main() {
   let made = 0, skipped = 0, count = 0;
   for (const { org, root } of DUMPS) {
     if (!existsSync(root)) { log(`(skip ${org}: ${root} absent — run corpus-cleanup-apply --execute first)`); continue; }
-    const files = walk(root).filter(f => { const e = extname(f).slice(1).toLowerCase(); return DOC_EXTS.has(e) || TEXT_EXTS.has(e); });
+    // exclude our own generated sidecars from the input walk — else a 2nd run treats *.sidecar.md as source and emits *.sidecar.sidecar.md (idempotency)
+    const files = walk(root).filter(f => { const e = extname(f).slice(1).toLowerCase(); return (DOC_EXTS.has(e) || TEXT_EXTS.has(e)) && !f.endsWith('.sidecar.md'); });
     log(`── ${org}: ${files.length} text artifacts ──`);
     for (const f of files) {
       if (count >= LIMIT) break;

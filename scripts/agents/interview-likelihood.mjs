@@ -61,7 +61,7 @@ try {
   config({ path: join(ROOT, '.env'), override: true });
 } catch { /* dotenv optional */ }
 
-import { callCouncil } from '../../lib/council.mjs';
+import { callCouncil, COUNCIL_FANOUT_LINEUP } from '../../lib/council.mjs';
 import { buildGroundedPrompt } from '../../lib/ground-prompt.mjs';
 import { reserveQuota, recordTokens } from '../../lib/quota-tracker.mjs';
 
@@ -405,11 +405,16 @@ async function runCouncilResearch(row, opts = {}) {
     : '';
 
   // Full council fan-out per Decision-Maximization Policy (no subsets unless cost-capped).
-  // DEFAULT_LINEUP in lib/council.mjs is Sonnet + GPT-5 + Gemini 2.5 Pro + Perplexity Sonar Pro.
+  // 2026-05-31 fix: DEFAULT_LINEUP was reduced to single-Sonnet (cost-distribution Part 2,
+  // 2026-05-25), but this agent still requires parses.length >= 2 — so the implicit default
+  // always returned council-too-thin and wrote NOTHING. hm-chance.mjs already fixed this by
+  // passing COUNCIL_FANOUT_LINEUP explicitly (see its line ~441); interview-likelihood was
+  // missed. Match it: explicit 4-vendor lineup restores real multi-model adjudication.
   const t0 = Date.now();
   const council = await callCouncil({
     prompt,
     systemPrompt: grounded.system,
+    models: COUNCIL_FANOUT_LINEUP,
     opts: {
       timeoutMs: 180_000,   // 3 min per provider (rule: pass timeoutMs per hang-prevention)
       maxTokens: 3500,

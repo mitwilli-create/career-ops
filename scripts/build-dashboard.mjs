@@ -19029,8 +19029,8 @@ _drillInRegister('percentage', function(id) {
         }
       } else if (key === 'hmNoticing') {
         var hmParts = [];
-        if (rs.competitiveEdge && rs.competitiveEdge.length) hmParts.push({label: 'Competitive edge to lead with', items: rs.competitiveEdge.slice(0, 3).map(String)});
-        if (rs.stories && rs.stories.length) hmParts.push({label: 'Stories that stop an HM', items: rs.stories.map(function(s){ return s.title + (s.excerpt ? ' &mdash; ' + s.excerpt : ''); })});
+        if (rs.competitiveEdge && rs.competitiveEdge.length) hmParts.push({label: 'Competitive edge to lead with', items: rs.competitiveEdge.slice(0, 3).map(function(e){ if (typeof e === 'string') return e; if (!e || typeof e !== 'object') return ''; var head = e.requirement || e.claim || e.text || e.point || e.edge || e.title || ''; var ev = (typeof e.evidence === 'string') ? e.evidence : ''; return (head && ev && ev !== head) ? (head + ' &mdash; ' + ev) : (head || ev || ''); }).filter(Boolean)});
+        if (rs.stories && rs.stories.length) hmParts.push({label: 'Stories that stop an HM', items: rs.stories.map(function(s){ if (typeof s === 'string') return s; if (!s || typeof s !== 'object') return ''; return (s.title || s.text || '') + (s.excerpt ? ' &mdash; ' + s.excerpt : ''); }).filter(Boolean)});
         if (hmParts.length) {
           tailoredHtml = '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-top:14px;margin-bottom:6px">Your HM-noticing levers (tailored)</div>';
           for (var hi = 0; hi < hmParts.length; hi++) {
@@ -19106,7 +19106,7 @@ _drillInRegister('percentage', function(id) {
       refreshTag.textContent = 'Looking for role-specific advice…';
       bodyEl.appendChild(refreshTag);
       fetch('/api/drill/percentage/' + encodeURIComponent(rowId) + '/' + encodeURIComponent(key), {
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(90000),
       }).then(function (r) { return r.ok ? r.json() : null; })
         .then(function (data) {
           if (!data || !data.ok || !data.html) {
@@ -19127,7 +19127,7 @@ _drillInRegister('percentage', function(id) {
           // and unspecific "live refresh skipped" — read like a debug log.
           // Be explicit about what failed and what's still useful.
           refreshTag.textContent = err.name === 'TimeoutError'
-            ? 'Could not reach the strategy compute (timed out after 15s). The general definition above still applies.'
+            ? 'Still computing your role-tailored strategy (the council pass can take ~60-90s). Reopen this popout in a moment to see it; the summary above applies meanwhile.'
             : 'Strategy compute is offline — the general definition above is what I have right now.';
         });
     },
@@ -21760,6 +21760,21 @@ function _cleanOutreachProse(text) {
 // Browser-side helper — invoked from _renderHMIntel at runtime (async fetch).
 function _formatOutreachSection(prose) {
   if (!prose) return '';
+  // 2026-05-31 object-stringification fix: outreach_strategy is a plain string in older
+  // council outputs but a structured object ({lead_with, best_first_move, ...}) in newer
+  // ones. Coerce object/array shapes to prose so the drawer never renders "[object Object]".
+  if (typeof prose === 'object') {
+    if (Array.isArray(prose)) {
+      prose = prose.map(function(x){ return typeof x === 'string' ? x : ((x && (x.text || x.message || x.move || x.lead_with || x.best_first_move)) || ''); }).filter(Boolean).join(' ');
+    } else {
+      var _segs = [];
+      if (prose.lead_with) _segs.push(String(prose.lead_with));
+      if (prose.best_first_move) _segs.push(String(prose.best_first_move));
+      for (var _k in prose) { if (_k !== 'lead_with' && _k !== 'best_first_move' && typeof prose[_k] === 'string' && prose[_k].trim()) _segs.push(prose[_k]); }
+      prose = _segs.join(' ');
+    }
+    if (!prose) return '';
+  }
   const raw = String(prose).trim();
   if (!raw) return '';
   const cleaned = _cleanOutreachProse(raw);

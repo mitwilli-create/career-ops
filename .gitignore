@@ -339,6 +339,11 @@ data/network-graph.json
 # Network database (ZETA 2026-05-19) — aggregated personal-CRM index with
 # emails + confidence bands + verification timestamps. Never commit.
 data/network-database.json
+# Press/media roster — derived from network-database.json, contains contact
+# names + LinkedIn URLs + connection dates. Personal data, never commit.
+data/press-media-network-roster.md
+# Press roster editorial config — references real contact names (AI-beat flags). Never commit.
+data/press-roster-config.json
 data/network-database-saved-searches.json
 data/network-database-cache/
 data/zeta-post-impl-snapshots/

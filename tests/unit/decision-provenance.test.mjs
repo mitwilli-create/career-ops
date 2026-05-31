@@ -65,11 +65,15 @@ test('renderProvenanceCard contains prov-card class', () => {
   assert.match(html, /class="prov-card"/);
 });
 
-test('renderProvenanceCard uses --text-sm and --text-base tokens', () => {
+test('renderProvenanceCard applies inline font sizing and var(--text*) design tokens', () => {
+  // The BRAVO content-sweep rewrite (2026-05) replaced the --text-sm/--text-base
+  // sizing tokens with inline px font-sizes plus the dashboard's var(--text*)
+  // color-token vocabulary. This pins the CURRENT styling contract — the old
+  // tokens are gone from the renderer under every input (empty or populated).
   const prov = getProvenance(99999, 'score');
   const html = renderProvenanceCard(prov);
-  assert.match(html, /--text-sm/,   'must reference --text-sm token');
-  assert.match(html, /--text-base/, 'must reference --text-base token');
+  assert.match(html, /font-size:\s*\d/, 'card must apply explicit font sizing');
+  assert.match(html, /var\(--text/,     'card must use the dashboard var(--text*) token vocabulary');
 });
 
 test('renderProvenanceCard escapes HTML entities in values', () => {
@@ -91,9 +95,38 @@ test('renderProvenanceCard escapes HTML entities in values', () => {
   assert.match(html, /&lt;script&gt;/);
 });
 
-test('renderProvenanceCard contains Inputs and Phase history details sections', () => {
-  const prov = getProvenance(99999, 'score');
+test('renderProvenanceCard renders the technical provenance breakdown for a populated row', () => {
+  // The BRAVO content-sweep rewrite renamed the old "Inputs" / "Phase history"
+  // sections. A populated row now surfaces the provenance breakdown inside a
+  // collapsed "Technical details" <details> block: the source report, the
+  // re-scoring (phase) history, and the backing evidence the pipeline read.
+  // Synthetic fixture (no disk dependency) — same pattern as the escaping test.
+  const prov = {
+    _rowId:          42,
+    value:           4.6,
+    computed_at:     '2026-04-25',
+    inputs:          ['cv.md:18', 'data/hm-intel/_weights.json'],
+    gates_passed:    ['H4'],
+    gates_failed:    [],
+    failed_reasons:  {},
+    soft_gaps:       [],
+    corpus_refs:     [{ source: 'cv.md', line: 18 }],
+    corpus_snippets: [{ source: 'cv.md', line: 18, text: 'Built production LLM agents.' }],
+    phase_history:   [{ date: '2026-05-16', score: 4.1, phase_e: true, gates_fired: ['H4'] }],
+    report_file:     '/Users/x/career-ops/reports/042-acme-2026-04-25.md',
+    report_title:    'Acme — Senior Engineer',
+    decision:        'APPLY',
+    confidence:      'High',
+    council_line:    'sonnet=4.6/5 → APPLY',
+    archetype:       'B',
+    git_log:         [{ sha: 'abc1234def', date: '2026-04-25 10:00:00 -0700', subject: 'add report' }],
+    weights:         { profile: 1 },
+    tracker:         null,
+    strategy:        null,
+    hmIntel:         null,
+  };
   const html = renderProvenanceCard(prov);
-  assert.match(html, /Inputs/);
-  assert.match(html, /Phase history/);
+  assert.match(html, /Technical details/,  'populated card must surface the Technical details section');
+  assert.match(html, /Re-scoring history/, 'populated card must surface the phase (re-scoring) history');
+  assert.match(html, /Source report:/,     'populated card must name the source report');
 });

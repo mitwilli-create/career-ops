@@ -49,6 +49,7 @@ import { join } from 'path';
 import { execSync } from 'child_process';
 import { runCheck as humanizeCheck } from './humanize-check.mjs';
 import { SONNET } from '../lib/models.mjs';
+import { scrubArtifactsOrThrow } from './lib/scrub-gate.mjs';
 
 const ROOT = process.cwd();
 const args = process.argv.slice(2);
@@ -1903,6 +1904,35 @@ async function buildPack(role) {
   writeFileSync(join(linkedinDir, 'peer-referral.md'), buildPeerReferral(role, report));
   writeFileSync(join(linkedinDir, 'connection-search.md'), buildConnectionSearch(role, report));
 
+  // ── Fabrication tollbooth (2026-05-31 v9 hardening) ──────────────────────
+  // Scrub EVERY freshly-written pack artifact through the deterministic
+  // retired-metric scrubber BEFORE the pack is considered built. The council /
+  // corpus re-introduces HARDENED-CV-SPEC-retired metrics (canonical: "three
+  // production LLM agents"); the scrubber auto-fixes known forms (idempotent,
+  // exit 0) and FAILS LOUD (exit 1 → FabricationLeakError) on a novel leak it
+  // cannot safely rewrite. A surviving leak marks this row PARTIAL and halts it
+  // here — no CV-PDF render, no apply-ready status — so IL/HC/story never
+  // ground on contaminated pack copy. Kill switch: SCRUB_GATE_DISABLED=1.
+  const packArtifacts = [
+    ...readdirSync(dir).filter(f => f.endsWith('.md') || f.endsWith('.json')).map(f => join(dir, f)),
+    ...(existsSync(linkedinDir)
+      ? readdirSync(linkedinDir).filter(f => f.endsWith('.md')).map(f => join(linkedinDir, f))
+      : []),
+  ];
+  try {
+    scrubArtifactsOrThrow(packArtifacts, { surface: 'apply-pack', row: role.num });
+  } catch (err) {
+    if (err && err.code === 'FABRICATION_LEAK') {
+      console.error(`  🔴 PARTIAL #${role.num} ${role.company}: a fabrication leak survived scrub — pack is NOT apply-ready, row halted.`);
+      const leakLines = String(err.output || '').split('\n')
+        .filter(l => l.includes('SURVIVING LEAK') || l.includes('still leaking') || /^\s+(data|apply-pack)\//.test(l))
+        .slice(0, 8);
+      if (leakLines.length) console.error(leakLines.join('\n'));
+      return 'PARTIAL';
+    }
+    throw err; // exit-2 / infra error → genuine crash, do not mask
+  }
+
   // CV PDF wiring — additive path (audit Item B 2026-05-18):
   //   1. If `apply-pack/<slug>/tailored-cv.md` exists, render via Typst →
   //      `tailored-cv.pdf` as a real file (preferred path; reflects the
@@ -2016,10 +2046,21 @@ async function main() {
 
   console.log(`Building Apply Packs for ${queue.length} role${queue.length === 1 ? '' : 's'}...`);
   let built = 0;
+  const partials = [];
   for (const role of queue) {
-    if (await buildPack(role)) built++;
+    const res = await buildPack(role);
+    if (res === 'PARTIAL') partials.push(role.num);
+    else if (res) built++;
   }
-  console.log(`\nDone. ${built} pack${built === 1 ? '' : 's'} built or rebuilt; ${queue.length - built} skipped.`);
+  const skipped = queue.length - built - partials.length;
+  console.log(`\nDone. ${built} pack${built === 1 ? '' : 's'} built or rebuilt; ${skipped} skipped${partials.length ? `; ${partials.length} PARTIAL (halted on fabrication leak)` : ''}.`);
+  // Fail-loud: a surviving fabrication leak in any row halts that row AND makes
+  // the run exit non-zero, so the per-row pipeline / orchestrator does NOT
+  // advance the affected row(s) to IL/HC/story on contaminated pack copy.
+  if (partials.length) {
+    console.error(`\n🔴 ${partials.length} row(s) HALTED on a surviving fabrication leak — HAND-FIX before they reach popouts/story: ${partials.join(', ')}`);
+    process.exit(1);
+  }
 }
 
 main().catch(err => {

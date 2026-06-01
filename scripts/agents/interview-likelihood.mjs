@@ -62,6 +62,7 @@ try {
 } catch { /* dotenv optional */ }
 
 import { callCouncil, COUNCIL_FANOUT_LINEUP } from '../../lib/council.mjs';
+import { scrubArtifactsOrThrow } from '../lib/scrub-gate.mjs';
 import { buildGroundedPrompt } from '../../lib/ground-prompt.mjs';
 import { reserveQuota, recordTokens } from '../../lib/quota-tracker.mjs';
 
@@ -150,7 +151,7 @@ function extractJson(content) {
   return null;
 }
 
-function buildResearchPrompt({ company, role, num, cvSnippet, articleSnippet, reportSnippet, hmIntel, jdSnippet, packArtifacts, teamHealth }) {
+function buildResearchPrompt({ company, role, num, cvSnippet, articleSnippet, reportSnippet, hmIntel, jdSnippet, packArtifacts, teamHealth, rosterSnippet }) {
   const lines = [
     `# Task — assess Mitchell Williams's INTERVIEW LIKELIHOOD for a specific role`,
     ``,
@@ -169,6 +170,10 @@ function buildResearchPrompt({ company, role, num, cvSnippet, articleSnippet, re
     ``,
     `# Mitchell's article digest (article-digest.md, top 4000 chars)`,
     articleSnippet || '(empty)',
+    ``,
+    `# Mitchell's PRESS / MEDIA NETWORK (data/press-media-network-roster.md — REAL named LinkedIn relationships at recognized news outlets; top 5000 chars)`,
+    `When assessing media-relations or journalist-relationship gaps, USE THIS roster. Do NOT claim "no documented journalist relationships" if named AI/tech-beat reporters appear here (e.g. Kevin Roose / NYT / Hard Fork). These are real relationships and a genuine outreach asset — but they are connections, NOT evidence of a formal external-PR role launching research papers to the press; weigh them honestly as an edge, not as paper-launch experience.`,
+    rosterSnippet || '(no roster on disk)',
     ``,
     `# Prior evaluation report (auto-evaluation, top 4000 chars)`,
     reportSnippet || '(no report)',
@@ -316,6 +321,7 @@ async function runCouncilResearch(row, opts = {}) {
   // ─── Load corpus ───
   const cvSnippet = readSafe(join(ROOT, 'cv.md'), 6000);
   const articleSnippet = readSafe(join(ROOT, 'article-digest.md'), 4000);
+  const rosterSnippet = readSafe(join(ROOT, 'data', 'press-media-network-roster.md'), 5000);
   const reportPath = findLatestReport(num);
   const reportSnippet = reportPath ? readSafe(reportPath, 4000) : '';
   const roleSlug = findRoleSlug(slug);
@@ -368,12 +374,12 @@ async function runCouncilResearch(row, opts = {}) {
   } catch { /* soft-fail */ }
 
   emit({ slot: 'il', row: num, phase: 'council-research',
-    inputs: { cv: cvSnippet.length, article: articleSnippet.length, report: reportSnippet.length, hm: hmIntel.length, jd: jdSnippet.length, pack: packArtifacts.length, teamHealth: teamHealth.length },
+    inputs: { cv: cvSnippet.length, article: articleSnippet.length, roster: rosterSnippet.length, report: reportSnippet.length, hm: hmIntel.length, jd: jdSnippet.length, pack: packArtifacts.length, teamHealth: teamHealth.length },
   });
 
   const prompt = buildResearchPrompt({
     company, role, num,
-    cvSnippet, articleSnippet, reportSnippet, hmIntel, jdSnippet,
+    cvSnippet, articleSnippet, rosterSnippet, reportSnippet, hmIntel, jdSnippet,
     packArtifacts, teamHealth,
   });
 
@@ -566,6 +572,16 @@ async function runRow(row, opts = {}) {
     try { writeFileSync(join(packDir, 'interview-likelihood.json'), JSON.stringify(out, null, 2)); } catch {}
   }
 
+  // ── Fabrication tollbooth (2026-05-31 v9) — scrub BOTH the canonical popout
+  //    json AND its pack-local mirror BEFORE marking the row done. Auto-fixes
+  //    known retired metrics in place (idempotent); fails loud (exit 1 →
+  //    FabricationLeakError) on a novel leak so a contaminated popout never
+  //    reaches the dashboard. Throws → caught by the run loop → row PARTIAL +
+  //    process exits non-zero. Kill switch: SCRUB_GATE_DISABLED=1.
+  const ilFiles = [outPath];
+  if (packDir) ilFiles.push(join(packDir, 'interview-likelihood.json'));
+  scrubArtifactsOrThrow(ilFiles, { surface: 'il-popout', row: row.num });
+
   emit({ slot: 'il', row: row.num, phase: 'row-done',
     pct: out.likelihood_pct, conf: out.confidence, cost_usd: out.cost_usd,
   });
@@ -655,6 +671,7 @@ if (DRY_RUN) {
 }
 
 let totalCost = 0;
+let hadFabricationLeak = false;
 const summary = [];
 for (let i = 0; i < targets.length; i++) {
   if (totalCost >= MAX_COST_USD) {
@@ -667,10 +684,19 @@ for (let i = 0; i < targets.length; i++) {
     totalCost += r.cost_usd || 0;
     summary.push(r);
   } catch (err) {
-    emit({ slot: 'il', row: t.num, phase: 'row-threw', error: String(err.message || err) });
-    summary.push({ row: t.num, slug: t.slug, ok: false, error: String(err.message || err), cost_usd: 0 });
+    const partial = !!(err && err.code === 'FABRICATION_LEAK');
+    if (partial) hadFabricationLeak = true;
+    emit({ slot: 'il', row: t.num, phase: partial ? 'row-partial' : 'row-threw', error: String(err.message || err) });
+    summary.push({ row: t.num, slug: t.slug, ok: false, partial, error: String(err.message || err), cost_usd: 0 });
   }
 }
 
-emit({ slot: 'il', phase: 'done', total_cost_usd: Number(totalCost.toFixed(4)), count: summary.length });
-console.log(JSON.stringify({ ok: true, total_cost_usd: Number(totalCost.toFixed(4)), summary }, null, 2));
+emit({ slot: 'il', phase: 'done', total_cost_usd: Number(totalCost.toFixed(4)), count: summary.length, fabrication_leak: hadFabricationLeak });
+console.log(JSON.stringify({ ok: !hadFabricationLeak, total_cost_usd: Number(totalCost.toFixed(4)), summary }, null, 2));
+// Fail-loud: a surviving fabrication leak halts the affected row(s) and makes
+// the process exit non-zero so the per-row pipeline does NOT advance a
+// contaminated popout to the dashboard / story step.
+if (hadFabricationLeak) {
+  console.error('🔴 PARTIAL: a fabrication leak survived scrub on ≥1 IL popout — row(s) halted, NOT apply-ready. Hand-fix, then re-run --force.');
+  process.exit(1);
+}

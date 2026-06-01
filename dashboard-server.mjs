@@ -8397,17 +8397,55 @@ const server = createServer((req, res) => {
         const refreshRequested = /(^|&)refresh=1(&|$)/.test(drillPctQuery || '');
 
         let role = '', company = '', hmIntel = null;
+        // 2026-05-31 FIX 1 — sidebar-value reconciliation.
+        // The sidebar percentage for each metric comes from scoreAlignmentCached
+        // (alignment-scorer.mjs). If we pass currentValue: null, the LLM receives
+        // no anchor and the strategy card can render a "Current: 0%" headline that
+        // disagrees with the sidebar value the user just clicked. Fix: derive the
+        // exact sidebar value here and pass it as currentValue so both renderers
+        // (legacy + data-first) display the identical number the sidebar shows.
+        // KEY_MAP mirrors the normalize table in build-dashboard.mjs _drillInRegister.
+        const SIDEBAR_KEY_MAP = {
+          alignment:  'alignment',
+          interview:  'interview',
+          hmNoticing: 'hmNoticing',
+          hm:         'hmNoticing',
+          profile:    'alignment',
+          profile_alignment:    'alignment',
+          interview_likelihood: 'interview',
+          hm_noticing_chance:   'hmNoticing',
+          hm_noticing:          'hmNoticing',
+        };
+        let currentValue = null;
+        let rowReportPath = null;
         try {
           const apps = parseApplications();
           const row = apps.find(r => String(r.num) === String(rowId));
           if (row) {
             role = row.role || '';
             company = row.company || '';
+            rowReportPath = row.report || row.reportPath || null;
             if (company && role) {
               const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
               const hmIntelPath = join(ROOT, 'data', 'hm-intel', `${slug(company)}-${slug(role)}.json`);
               if (existsSync(hmIntelPath)) {
                 try { hmIntel = JSON.parse(readFileSync(hmIntelPath, 'utf-8')); } catch { /* malformed JSON → null */ }
+              }
+            }
+            // Derive sidebar value from alignment-scorer (same source as build-dashboard.mjs bar).
+            const alignField = SIDEBAR_KEY_MAP[key] || null;
+            if (alignField && rowReportPath) {
+              try {
+                const { scoreAlignmentCached } = await import(join(ROOT, 'lib', 'alignment-scorer.mjs'));
+                const absReportPath = rowReportPath.startsWith('/') ? rowReportPath : join(ROOT, rowReportPath);
+                if (existsSync(absReportPath)) {
+                  const align = scoreAlignmentCached({ reportPath: absReportPath, companyName: company });
+                  if (!align.unavailable && typeof align[alignField] === 'number') {
+                    currentValue = align[alignField];
+                  }
+                }
+              } catch (alignErr) {
+                _d25Log(`[drill/percentage] sidebar-value hydration soft-failed: ${alignErr.message}`);
               }
             }
           }
@@ -8419,7 +8457,7 @@ const server = createServer((req, res) => {
         // (corpus-mtime aware) — no need to compute it separately here.
         const result = await computeStrategyCeiling({
           rowId, metricKey: key, role, company,
-          currentValue: null, jdText: '', hmIntel,
+          currentValue, jdText: '', hmIntel,
           opts: refreshRequested ? { maxAgeMs: 0 } : {},
         });
         const html = renderStrategyCard(result);

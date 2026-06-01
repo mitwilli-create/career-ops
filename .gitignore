@@ -473,6 +473,21 @@ data/*-calibration-prev.json
 # scripts (e.g. com.mitchell.career-ops.foo.plist.bak-2026-05-23T...).
 *.bak
 *.bak-*
+# Contaminated-content quarantine sinks (de-contamination sweeps 2026-05-30/31).
+# Hold pre-scrub copies of hm-intel / popout / cv content — personal data with
+# forbidden-metric phrasing. Dir-level ignore so a stray `git add -A` can never
+# stage them (contents are also *.bak-ignored, but the dirs were not dir-ignored).
+data/contaminated-*quarantine*/
+
+# Scrub-backups (scripts/scrub-fabrications.mjs:34) — pre-scrub copies of apply-pack
+# artifacts / popout JSONs / story drafts. Each backup holds BOTH Mitchell's personal
+# career narrative AND the exact retired-metric fabrications the scrubber removes
+# ("three production LLM agents", "99% fidelity", "600+ L8+"). A stray `git add -A`
+# would leak both the personal data and the very fabrications being scrubbed from the
+# public-facing corpus. Dir glob covers the dated dir, the -PRISTINE-PASS1 sibling, and
+# any future-dated variant. Keep the backups on disk — they are the scrubber's audit trail.
+data/scrub-backups*/
+data/scrub-backups*
 
 # Auth state files — interview decision 2026-05-21. Regenerable via setup-auth.mjs
 # / identity-bootstrap. Constant-diff in git status when kept tracked; cross-fork
@@ -563,3 +578,75 @@ data/deployment-inventory-*.md
 # applications.md + apply-now-queue is gitignored. Local-only.
 data/role-surface-aliases.json
 data/l5-spend-*.json
+
+# Personal Session Notes archives — rotated from CLAUDE.md (2026-05-30)
+data/session-notes-archive/
+
+# Personal Google Drive artifact dumps (2026-05-30) — XGE comms + Corp Eng
+# artifacts uploaded for the corpus-librarian agent. Google-confidential exec
+# comms, 1:1 notes, playbooks, recruitment videos. Never commit. (.mov/.mp4 are
+# already covered by the global extension globs above; these lines add the PDFs,
+# DOCX, and any .md sidecars the librarian generates.)
+data/corp-eng-artifacts/
+data/xge-comms-artifacts/
+
+# corpus-librarian agent outputs (2026-05-30) — handover, decision docs, index,
+# coverage matrix, naming conventions. Contain personal corpus detail (Drive
+# links, archetype tags, file paths from the gitignored corpus). Never commit.
+data/corpus-librarian-*.md
+data/corpus-index.json
+data/corpus-coverage-matrix.json
+data/corpus-naming-conventions.json
+data/corpus-naming-proposals-*.json
+data/corpus-citation-proposals-*.json
+data/corpus-optimize-findings-*.json
+data/corpus-drive-links.json
+data/corpus-rename-ledger-*.jsonl
+data/corpus-dedup-ledger-*.jsonl
+
+# ── 2026-05-31 closer hygiene: local-only working docs / scratchpads / audit dirs ──
+# Session handoff seeds, dated analysis docs, dry-run manifests, queue snapshots, and
+# daemon working-state — all local-only artifacts that must never land in the PUBLIC
+# fork. Files stay on disk; these rules only stop them showing as untracked noise so
+# `git status` reads clean (recruiter-ready tree). Dated/dashed patterns so they never
+# collide with the tracked base files (e.g. voice-fidelity-calibration.json stays tracked).
+
+# Overnight session scratchpads (handoff seeds, progress, runbooks, unverified ledgers, COMPLETE)
+data/overnight-*.md
+
+# Dated working / analysis docs + dry-run manifests
+data/data-truth-audit-*.md
+data/detector-health-*.md
+data/experience-gap-ledger-*.md
+data/xge-naresh-evidence-digest-*.md
+data/sigma-audit-*.md
+data/corpus-drive-link-inject-report-*.md
+data/delta-ats-watch-runner-*.md
+data/*-DRYRUN.json
+data/corpus-delete-manifest-*.json
+data/canonicalize-queue-rows-*.json
+
+# Queue snapshots / flags / daemon working-state (local-only; regenerable)
+data/apply-now-queue.pre-calibration-*.json
+data/queue-rescored-*.flag
+data/voice-fidelity-calibration-*.json
+data/liveness-auto-removals-*.json
+data/liveness-cache.json
+
+# Company-pulse daemon outputs (local-only pipeline reports)
+data/company-pulse/
+data/company-pulse-reports/
+
+# Dated audit-work dirs (matches the explicit per-dir convention above)
+.claude/audit/2026-05-29/
+.claude/audit/2026-05-30/
+.claude/audit/deploy-verify-closer-2026-05-31/
+.claude/audit/flapping-plist-triage-2026-05-29/
+.claude/audit/spec5-funnel-visibility-2026-05-29/
+.claude/audit/tahoe-tcc-cron-run-wrapper-2026-05-29/
+.claude/audit/v9-quick-wins-popout-stories-2026-05-31/
+
+# 2026-05-31 public-fork scrub — untrack personal data from the PUBLIC fork (kept on local disk)
+data/role-enrichment/
+dashboard/stories/
+interview-prep/stories/

@@ -588,3 +588,45 @@ data/corpus-optimize-findings-*.json
 data/corpus-drive-links.json
 data/corpus-rename-ledger-*.jsonl
 data/corpus-dedup-ledger-*.jsonl
+
+# ── 2026-05-31 closer hygiene: local-only working docs / scratchpads / audit dirs ──
+# Session handoff seeds, dated analysis docs, dry-run manifests, queue snapshots, and
+# daemon working-state — all local-only artifacts that must never land in the PUBLIC
+# fork. Files stay on disk; these rules only stop them showing as untracked noise so
+# `git status` reads clean (recruiter-ready tree). Dated/dashed patterns so they never
+# collide with the tracked base files (e.g. voice-fidelity-calibration.json stays tracked).
+
+# Overnight session scratchpads (handoff seeds, progress, runbooks, unverified ledgers, COMPLETE)
+data/overnight-*.md
+
+# Dated working / analysis docs + dry-run manifests
+data/data-truth-audit-*.md
+data/detector-health-*.md
+data/experience-gap-ledger-*.md
+data/xge-naresh-evidence-digest-*.md
+data/sigma-audit-*.md
+data/corpus-drive-link-inject-report-*.md
+data/delta-ats-watch-runner-*.md
+data/*-DRYRUN.json
+data/corpus-delete-manifest-*.json
+data/canonicalize-queue-rows-*.json
+
+# Queue snapshots / flags / daemon working-state (local-only; regenerable)
+data/apply-now-queue.pre-calibration-*.json
+data/queue-rescored-*.flag
+data/voice-fidelity-calibration-*.json
+data/liveness-auto-removals-*.json
+data/liveness-cache.json
+
+# Company-pulse daemon outputs (local-only pipeline reports)
+data/company-pulse/
+data/company-pulse-reports/
+
+# Dated audit-work dirs (matches the explicit per-dir convention above)
+.claude/audit/2026-05-29/
+.claude/audit/2026-05-30/
+.claude/audit/deploy-verify-closer-2026-05-31/
+.claude/audit/flapping-plist-triage-2026-05-29/
+.claude/audit/spec5-funnel-visibility-2026-05-29/
+.claude/audit/tahoe-tcc-cron-run-wrapper-2026-05-29/
+.claude/audit/v9-quick-wins-popout-stories-2026-05-31/

@@ -78,6 +78,21 @@ data/decisions-pending-*.md
 .claude/audit/*/task-audit-*.md
 .claude/audit/*/task-audit-followups-*.md
 data/task-audit-spend.jsonl
+# audit-skill suite outputs (Theme 3 of 2026-05-29 task-audit chain) — all 6
+# audits synthesize over personal corpora and carry [PERSONAL — DO NOT PUBLISH]
+# frontmatter; spend ledgers are operational telemetry.
+.claude/audit/*/pre-apply-audit-*.md
+.claude/audit/*/polish-audit-*.md
+.claude/audit/*/corpus-audit-*.md
+.claude/audit/*/scan-audit-*.md
+.claude/audit/*/batch-audit-*.md
+.claude/audit/*/eval-ux-audit-*.md
+data/pre-apply-audit-spend.jsonl
+data/polish-audit-spend.jsonl
+data/corpus-audit-spend.jsonl
+data/scan-audit-spend.jsonl
+data/batch-audit-spend.jsonl
+data/eval-ux-audit-spend.jsonl
 # Panel JSON reveals file paths from .claude/audit/ work-product directories,
 # which can include personal workflow names (e.g. apply-now-clipboard-modal).
 # Agent regenerates this on every scheduled run.

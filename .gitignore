@@ -630,3 +630,8 @@ data/company-pulse-reports/
 .claude/audit/spec5-funnel-visibility-2026-05-29/
 .claude/audit/tahoe-tcc-cron-run-wrapper-2026-05-29/
 .claude/audit/v9-quick-wins-popout-stories-2026-05-31/
+
+# 2026-05-31 public-fork scrub — untrack personal data from the PUBLIC fork (kept on local disk)
+data/role-enrichment/
+dashboard/stories/
+interview-prep/stories/

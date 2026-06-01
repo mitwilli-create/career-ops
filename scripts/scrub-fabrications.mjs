@@ -60,10 +60,18 @@ const RULES = [
   // STALE-but-conservative scope: cv.md:21 canonical = "1000+ L8+". "600+ L8+" was the
   // interim recalled value (v5.1 claimed it swept to 0, but 1,791 files still carry it).
   [/\b600\+\s*L8\+/gi, '1,000+ L8+'],
+  // ── 180K headcount claim (HARDENED-CV-SPEC retired "180K-person"; added 2026-05-31).
+  //    Drop the retired headcount, keep the org/Google framing. NEVER matches "$180" comp
+  //    figures — every form requires person/employee/eng-org/Google/workforce after 180K|180,000. ──
+  [/\b180(?:,?000|K)[ -]person([ -])/gi, 'large$1'],         // 180K-person / 180,000-person qualifier → large …
+  [/\b180K[ -](eng|engineering)([ -]org)/gi, 'large $1$2'],  // 180K eng org (no "person") → large eng org
+  [/\b180K[ -]employee\b/gi, 'large-enterprise'],            // 180K-employee (compound adj) → large-enterprise IT support
+  [/\b180K[ -]employees\b/gi, 'many employees'],             // 180K employees (plural noun) → many employees
+  [/\b180K (Google )?workforce\b/gi, '$1workforce'],         // (full) 180K Google workforce → (full) Google workforce
 ];
 
 // ── EXACT verify-dashboard-real-2026-05-31 PAT + EXCL (source of truth for "forbidden") ──
-const PAT = '99% stylistic fidelity|99% fidelity|>90% classification|greater than 90% classification|over 90% classification|300%\\+ (active|capacity|scaling|deployment)|348 (attendees|senior eng|senior tech|of them)|93% CSAT|9,000 machines and 9,500|top 0\\.5%|(three|3) (shipped |deployed |distinct |production-grade )?production (AI|LLM) (agents|systems|builds|artifacts|deployments|surfaces)|(three|3) production (AI voice |AI |LLM |voice )?agents|1,000 senior';
+const PAT = '99% stylistic fidelity|99% fidelity|>90% classification|greater than 90% classification|over 90% classification|300%\\+ (active|capacity|scaling|deployment)|348 (attendees|senior eng|senior tech|of them)|93% CSAT|9,000 machines and 9,500|top 0\\.5%|(three|3) (shipped |deployed |distinct |production-grade )?production (AI|LLM) (agents|systems|builds|artifacts|deployments|surfaces)|(three|3) production (AI voice |AI |LLM |voice )?agents|1,000 senior|180(,?000|K)[ -]?(person|people|employee|eng|engineering|Google|workforce)';
 const EXCL = 'quarantine|zzz-polish|unsupported|dropped|Metric-hardened|corrected or dropped|No retired metrics';
 
 function resolveSlugFiles(slug) {

@@ -28236,12 +28236,20 @@ function _renderPipelineModalBody(action, p) {
         return Math.round(h / 24) + 'd ago';
       } catch (_) { return 'recently'; }
     })();
-    var statusGlyph = lrd.status === 'completed' ? '✓' : '⊘';
-    var statusTone  = lrd.status === 'completed' ? '#2ea043' : '#d29922';
-    deltaChip = '<div class="pipeline-modal-section" style="background:rgba(46,160,67,0.06);border-left:3px solid ' + statusTone + ';padding:8px 12px;margin-bottom:12px">'
+    // 2026-06-01 Guard 3 — no-op chip. Render amber ⚠ for a run that drained
+    // nothing from a non-empty queue (status set by the orchestrator, or inferred
+    // from the delta for historical runs that predate the completed_no_op status).
+    var lrdNoOp = lrd.status === 'completed_no_op' ||
+      (lrd.status === 'completed' && (lrd.drained || 0) === 0 && (lrd.advanced || 0) === 0
+       && (lrd.batch_drained || 0) === 0 && (lrd.pipeline_before || 0) > 0);
+    var statusGlyph = lrdNoOp ? '⚠' : (lrd.status === 'completed' ? '✓' : '⊘');
+    var statusTone  = lrdNoOp ? '#d29922' : (lrd.status === 'completed' ? '#2ea043' : '#d29922');
+    var statusLabel = lrdNoOp ? 'no-op — queue not drained' : lrd.status;
+    var statusBg    = lrdNoOp ? 'rgba(210,153,34,0.10)' : 'rgba(46,160,67,0.06)';
+    deltaChip = '<div class="pipeline-modal-section" style="background:' + statusBg + ';border-left:3px solid ' + statusTone + ';padding:8px 12px;margin-bottom:12px">'
       + '<div style="font-size:11px;color:rgba(255,255,255,0.55);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px">Last Process All · ' + sinceLabel + '</div>'
       + '<div style="font-size:13px;color:rgba(255,255,255,0.85)">'
-      + '<span style="color:' + statusTone + ';font-weight:600">' + statusGlyph + ' ' + lrd.status + '</span> · drained '
+      + '<span style="color:' + statusTone + ';font-weight:600">' + statusGlyph + ' ' + statusLabel + '</span> · drained '
       + '<strong>' + (lrd.drained || 0) + '</strong> from pipeline ('
       + (lrd.pipeline_before || 0) + ' → ' + (lrd.pipeline_after || 0) + ') · '
       + (lrd.advanced || 0) + ' advanced · ' + (lrd.batch_drained || 0) + ' batch-eval'
@@ -28776,12 +28784,18 @@ function _renderProcessAllPhaseA(pAgg, pCmp) {
         return Math.round(h / 24) + 'd ago';
       } catch (_) { return 'recently'; }
     })();
-    var _glyph = _lrd.status === 'completed' ? '✓' : '⊘';
-    var _tone  = _lrd.status === 'completed' ? '#2ea043' : '#d29922';
-    phaseAdeltaChip = '<div style="background:rgba(46,160,67,0.06);border-left:3px solid ' + _tone + ';padding:8px 12px;margin:0 0 12px 0">'
+    // 2026-06-01 Guard 3 — no-op chip (mirrors the modal chip above).
+    var _noOp = _lrd.status === 'completed_no_op' ||
+      (_lrd.status === 'completed' && (_lrd.drained || 0) === 0 && (_lrd.advanced || 0) === 0
+       && (_lrd.batch_drained || 0) === 0 && (_lrd.pipeline_before || 0) > 0);
+    var _glyph = _noOp ? '⚠' : (_lrd.status === 'completed' ? '✓' : '⊘');
+    var _tone  = _noOp ? '#d29922' : (_lrd.status === 'completed' ? '#2ea043' : '#d29922');
+    var _label = _noOp ? 'no-op — queue not drained' : _lrd.status;
+    var _bg    = _noOp ? 'rgba(210,153,34,0.10)' : 'rgba(46,160,67,0.06)';
+    phaseAdeltaChip = '<div style="background:' + _bg + ';border-left:3px solid ' + _tone + ';padding:8px 12px;margin:0 0 12px 0">'
       + '<div style="font-size:11px;color:rgba(255,255,255,0.55);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px">Last Process All · ' + _since + '</div>'
       + '<div style="font-size:13px;color:rgba(255,255,255,0.85)">'
-      + '<span style="color:' + _tone + ';font-weight:600">' + _glyph + ' ' + _lrd.status + '</span> · drained '
+      + '<span style="color:' + _tone + ';font-weight:600">' + _glyph + ' ' + _label + '</span> · drained '
       + '<strong>' + (_lrd.drained || 0) + '</strong> from pipeline ('
       + (_lrd.pipeline_before || 0) + ' → ' + (_lrd.pipeline_after || 0) + ') · '
       + (_lrd.advanced || 0) + ' advanced · ' + (_lrd.batch_drained || 0) + ' batch-eval'

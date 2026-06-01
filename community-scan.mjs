@@ -192,7 +192,12 @@ function getTierSection(pipelineContent, tier) {
 
 function addToPipeline(url, tier, sourceNote) {
   const content = readFileSync(PIPELINE_FILE, 'utf8');
-  const entry = `- [ ] ${url}`;
+  // 2026-06-01 — already URL-first (parsePipeline-safe); append source provenance
+  // for consistency with the canonical `- [ ] <url> | … (from <source>)` shape.
+  // URL stays the first token so parsePipeline's /^- \[ \] (https?:\/\/\S+)/ and
+  // markChecked's `- [ ] <url>` prefix replace both still match.
+  const _src = String(sourceNote || '').replace(/[|\n]/g, ' ').trim();
+  const entry = _src ? `- [ ] ${url} (from ${_src})` : `- [ ] ${url}`;
 
   // Find insertion point: after Tier section header, before next ## or end
   const tierRe = new RegExp(`(## Tier ${tier}[^\n]*\n)`, 'm');

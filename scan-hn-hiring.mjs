@@ -155,7 +155,24 @@ function loadExistingUrls() {
 function appendToPipeline(entries) {
   if (entries.length === 0) return;
   const lines = entries.map(e => {
-    return `- [ ] ${e.company} — ${e.titleHint} | ${e.url} (from HN Who-Is-Hiring #${e.commentId})`;
+    // 2026-06-01 — CANONICAL URL-FIRST FORMAT. Previously emitted company-first
+    // (`- [ ] ${company} — ${titleHint} | ${url}`), which triage.mjs::parsePipeline
+    // (regex /^- \[ \] (https?:\/\/\S+)/) cannot parse → HN entries silently never
+    // triaged and Process All reported "completed · drained 0" forever (303 stuck
+    // items, 2026-06-01). Fix at ingest per Strategy B. `titleHint` historically
+    // absorbed the whole HN comment (pipes + a homepage URL), so sanitize it: strip
+    // any leaked URL, neutralize the `|` field delimiter, collapse whitespace, cap.
+    const role = String(e.titleHint || '')
+      .replace(/https?:\/\/\S+/g, ' ')
+      .replace(/\|/g, '/')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 120) || 'See posting';
+    const company = String(e.company || '')
+      .replace(/\|/g, '/')
+      .replace(/\s+/g, ' ')
+      .trim() || 'Unknown';
+    return `- [ ] ${e.url} | ${company} | ${role} (from HN Who-Is-Hiring #${e.commentId})`;
   });
   const block = `\n<!-- HN Who-Is-Hiring ingest ${DATE} (${entries.length} matches) -->\n${lines.join('\n')}\n`;
   if (!DRY_RUN) appendFileSync(PIPELINE_PATH, block);

@@ -514,6 +514,35 @@ try {
   }
 }
 
+// ── 15. PIPELINE PARSE INVARIANT (parsePipeline count === '- [ ]' line count) ──
+
+console.log("\n15. Pipeline parse invariant (triage.mjs::parsePipeline sees every '- [ ] ' line)");
+
+try {
+  // Runs tests/pipeline-parse-invariant.test.mjs — exits 2 if data/pipeline.md
+  // has pending '- [ ] ' lines that parsePipeline can't parse (non-URL-first).
+  // Closes the "Process All completed · drained 0" silent failure (303 stuck
+  // HN company-first entries, 2026-06-01). Companion to AGENTS.md
+  // `### Bug class: pipeline-ingest-format-drift`.
+  execFileSync('node', ['tests/pipeline-parse-invariant.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+  });
+  pass("Pipeline parse invariant — parsePipeline sees every '- [ ] ' pending line");
+} catch (err) {
+  if (err.status === 2) {
+    fail(`Pipeline parse invariant VIOLATED — un-parseable pending lines in pipeline.md`);
+    const out = (err.stdout || '') + (err.stderr || '');
+    for (const line of out.split('\n').slice(0, 40)) {
+      if (line.trim()) console.log(`     ${line}`);
+    }
+    console.log(`     → Fix: node scripts/backfill-hn-pipeline-format.mjs --apply`);
+  } else {
+    fail(`Pipeline parse invariant test crashed: ${err.message}`);
+  }
+}
+
 // ── SUMMARY ─────────────────────────────────────────────────────
 
 console.log('\n' + '='.repeat(50));

@@ -880,7 +880,7 @@ function _computeLastRunDelta() {
     if (!existsSync(fp)) return null;
     const ps = JSON.parse(readFileSync(fp, 'utf-8'));
     const jobs = Object.values(ps.jobs || {})
-      .filter(j => j && j.type === 'process-all' && (j.status === 'completed' || j.status === 'cancelled'))
+      .filter(j => j && j.type === 'process-all' && (j.status === 'completed' || j.status === 'completed_no_op' || j.status === 'cancelled'))
       .sort((a, b) => {
         const ta = Date.parse(a.finished_at || a.cancelled_at || a.updated_at || '') || 0;
         const tb = Date.parse(b.finished_at || b.cancelled_at || b.updated_at || '') || 0;

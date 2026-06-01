@@ -703,8 +703,27 @@ async function main() {
     }
   } catch (_) { /* leave null — renderer falls back to ✓ */ }
 
+  // ── Guard 2 (2026-06-01): no-op detection ──────────────────────────────────
+  // A run that found pending items but processed/drained NONE did no work despite
+  // a non-empty queue (parser-format drift, gate misconfig, or all candidates
+  // already triaged). Mark it `completed_no_op` so the dashboard renders an amber
+  // warning instead of a green ✓ that lies. Closes the "completed · drained 0"
+  // silent-failure class (303 HN-format items, 2026-06-01).
+  const _triageProcessed = (phases.triage && phases.triage.processed) || 0;
+  const _didNoWork = pendingBefore > 0 && processed === 0 && _triageProcessed === 0;
+  const _warnings = [];
+  if (_didNoWork) {
+    _warnings.push(
+      `No-op: ${pendingBefore} item(s) were pending but 0 were processed and 0 drained. ` +
+      `Likely un-parseable lines in data/pipeline.md (run: node scripts/backfill-hn-pipeline-format.mjs --apply) ` +
+      `or all remaining items were already triaged.`
+    );
+    log(`⚠ NO-OP DETECTED — ${_warnings[0]}`);
+  }
   updateJob({
-    status:           'completed',
+    status:           _didNoWork ? 'completed_no_op' : 'completed',
+    no_op:            _didNoWork,
+    warnings:         _warnings,
     finished_at:      new Date().toISOString(),
     pending_after:    pendingAfter,
     processed,
@@ -715,7 +734,7 @@ async function main() {
   // 2026-05-29 — On successful completion, clear any prior resume-state so
   // the next invocation starts fresh.
   try { clearResumeState({ resumePath: RESUME_PATH }); } catch {}
-  log(`✓ Done. Processed ${processed} items (${pendingBefore} → ${pendingAfter}). Published: ${publishedCount == null ? 'unknown' : publishedCount}`);
+  log(`${_didNoWork ? '⚠ Done (NO-OP)' : '✓ Done'}. Processed ${processed} items (${pendingBefore} → ${pendingAfter}). Published: ${publishedCount == null ? 'unknown' : publishedCount}`);
 }
 
 main().catch(err => {

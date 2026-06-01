@@ -671,7 +671,23 @@ async function main() {
     process.exit(0);
   }
 
-  const allItems = parsePipeline(readFileSync(PIPELINE_FILE, 'utf8'));
+  const _pipelineContent = readFileSync(PIPELINE_FILE, 'utf8');
+  const allItems = parsePipeline(_pipelineContent);
+
+  // ── Guard 1 (2026-06-01): parse-coverage tripwire ────────────────
+  // The orchestrator counts pending items with a blind `- [ ] ` prefix match,
+  // while parsePipeline requires a URL-first line. If they disagree, the gap is
+  // pending items that are INVISIBLE to triage and will never be processed — the
+  // "Process All completed · drained 0" silent failure (303 HN-format items,
+  // 2026-06-01). Warn loudly so the gap shows in logs + Process All run output.
+  // See AGENTS.md bug-class: pipeline-ingest-format-drift.
+  {
+    const rawPending = _pipelineContent.split('\n').filter(l => l.startsWith('- [ ] ')).length;
+    const parseGap = rawPending - allItems.length;
+    if (parseGap > 0) {
+      console.warn(`⚠ PARSE GAP: ${rawPending} '- [ ] ' pending line(s) but parsePipeline matched only ${allItems.length} — ${parseGap} item(s) are un-parseable (non-URL-first format) and will NEVER be triaged. Fix: node scripts/backfill-hn-pipeline-format.mjs --apply`);
+    }
+  }
 
   // ── Freshness sweep ─────────────────────────────────────────────
   // Mark stale URLs [x] before spending quota, then sort newest-first

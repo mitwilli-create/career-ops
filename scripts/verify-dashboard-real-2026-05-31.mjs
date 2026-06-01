@@ -120,8 +120,12 @@ if (run('content')) {
 
 // ── Section: FABRICATION — zero forbidden-metric lines across REAL render dirs ──
 if (run('fabrication')) {
-  const PAT = '99% stylistic fidelity|99% fidelity|>90% classification|greater than 90% classification|over 90% classification|300%\\+ (active|capacity|scaling|deployment)|348 (attendees|senior eng|senior tech|of them)|93% CSAT|9,000 machines and 9,500|top 0\\.5%|three production (AI|LLM) (agents|systems|builds|artifacts|deployments|surfaces)|1,000 senior';
-  const EXCL = 'quarantine|zzz-polish|unsupported|dropped|Metric-hardened|corrected or dropped';
+  const PAT = '99% stylistic fidelity|99% fidelity|>90% classification|greater than 90% classification|over 90% classification|300%\\+ (active|capacity|scaling|deployment)|348 (attendees|senior eng|senior tech|of them)|93% CSAT|9,000 machines and 9,500|top 0\\.5%|(three|3) (shipped |deployed |distinct |production-grade )?production (AI|LLM) (agents|systems|builds|artifacts|deployments|surfaces)|1,000 senior';
+  // EXCL = disclosure/record notes that NAME a retired metric in a "removed"
+  // context (not a live claim). "No retired metrics: <list>" is the
+  // ai-detection sidecar's record that the metric was scrubbed — same class as
+  // "corrected or dropped" / "Metric-hardened". A real leak never carries it.
+  const EXCL = 'quarantine|zzz-polish|unsupported|dropped|Metric-hardened|corrected or dropped|No retired metrics';
   // Superset of the old verifier's surfaces PLUS the REAL popout render dirs the old one omitted.
   const surfaces = [
     'cv.md', 'article-digest.md', 'config/profile.yml', 'modes/_profile.md',

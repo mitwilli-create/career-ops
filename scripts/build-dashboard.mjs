@@ -1155,10 +1155,20 @@ function renderBaseCell(reportPath, floors, locationRaw, company, role) {
     return `<span class="base-chip base-chip-empty pill-popover-trigger" aria-label="${htmlEscape(tip)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">—</span>`;
   }
   const { min, max, currency, isTotalComp } = parsed;
+  // ── 2026-05-31 GATE 2 — color the BASE column against a realistic BASE-salary
+  // floor, DECOUPLED from floors.targetMin. targetMin is parsed from
+  // profile.yml compensation.target_range, which now encodes Mitchell's
+  // TOTAL-COMP target ($300K–$340K TC). Using a TC figure as the base-green
+  // threshold falsely flagged strong bases (e.g. row #48's $255K) yellow and
+  // penalized pre-IPO roles whose equity upside never appears in the scraped
+  // base range. These thresholds match the documented column-header intent:
+  // green = $130K+ base · amber = $120K–$199K · red = below the $120K floor.
+  const BASE_GREEN_MIN = 200;                          // strong base salary (USD $K)
+  const BASE_AMBER_MIN = floors.seattleFloor || 180;   // acceptable base (Seattle floor)
   let cls = 'base-chip-unknown';
   if (currency === 'USD') {
-    if (min >= floors.targetMin) cls = 'base-chip-strong';
-    else if (min >= 150) cls = 'base-chip-mid';
+    if (min >= BASE_GREEN_MIN) cls = 'base-chip-strong';
+    else if (min >= BASE_AMBER_MIN) cls = 'base-chip-mid';
     else cls = 'base-chip-weak';
   } else {
     cls = 'base-chip-fx';
@@ -1176,7 +1186,7 @@ function renderBaseCell(reportPath, floors, locationRaw, company, role) {
   const detail = JSON.stringify({
     kind: 'base', empty: false, min, max, currency, isTotalComp,
     range, label, raw: compRaw || '',
-    floors: { target: floors.targetMin, floor: 175 },
+    floors: { target: BASE_GREEN_MIN, floor: BASE_AMBER_MIN },
     researched: researchedTag || null,
   });
   // When the value came from comp-cache (not the JD), add a small "R" badge
@@ -5976,6 +5986,7 @@ async function build() {
             gatesPassed: _ps.gatesPassed,
             gatesFailed: _ps.gatesFailed,
             softGaps: _ps.softGaps,
+            gateLabels: _ps.gateLabels || {},
           };
         } catch (_) { /* per-row, skip */ }
       }
@@ -6181,6 +6192,18 @@ async function build() {
             .map(f => f.replace(/\.html$/, ''))
         : [];
     } catch (_) { _cbData.storyPages = []; }
+
+    // 2026-05-31: per-row full-role narrative pages (interview-prep/stories →
+    // dashboard/stories via generate-narrative-story-pages.mjs). Maps a row num →
+    // its narrative page slug so the drill-in 'story' handler can fall back to the
+    // full-role story when a per-requirement chip page is absent (e.g. row #1, whose
+    // report has no Block F, so the canonical generator produced no chip pages).
+    try {
+      const _narMap = join(ROOT, 'data', 'narrative-story-map.json');
+      _cbData.narrativeStoryPages = existsSync(_narMap)
+        ? JSON.parse(readFileSync(_narMap, 'utf-8'))
+        : {};
+    } catch (_) { _cbData.narrativeStoryPages = {}; }
 
     // P0-2 fix (2026-05-18): previous strategy double-escaped apostrophes
     // (replace(/'/g, "\\'")) which produced JS-valid but JSON-INVALID output —
@@ -16627,18 +16650,32 @@ function openRightRailForDetail(idx, detailRow) {
         var _chipOnclick = function(g) {
           return 'event.stopPropagation();window._openHChipPopout && window._openHChipPopout(' + SQ_chip + g + SQ_chip + ',' + num + ',this)';
         };
+        // GATE 1.1 (2026-05-31): descriptive chip labels. _ps5.gateLabels maps
+        // gate id → human gate name (baked server-side from THIS row report).
+        // Visible chip text truncates long names; the title tooltip is full.
+        var _gateLabels5 = _ps5.gateLabels || {};
+        var _gateChipLabel = function(g) {
+          var nm = _gateLabels5[g];
+          if (!nm) return g;
+          var shortNm = nm.length > 34 ? nm.slice(0, 33) + '…' : nm;
+          return g + ' — ' + shortNm;
+        };
+        var _gateChipTitle = function(g) {
+          var nm = _gateLabels5[g];
+          return nm ? (g + ' — ' + nm) : g;
+        };
         var _passedChips = '';
         if (_ps5.gatesPassed && _ps5.gatesPassed.length) {
           _passedChips = _ps5.gatesPassed.map(function(g) {
             var oc = _chipOnclick(g);
-            return '<span class="why-chip why-chip-pass" role="button" tabindex="0" style="cursor:pointer" title="' + g + ' cleanly hit — click for the alignment details" onclick="' + oc + '">✅ ' + g + '</span>';
+            return '<span class="why-chip why-chip-pass" role="button" tabindex="0" style="cursor:pointer" title="' + _gateChipTitle(g) + ' — cleanly hit; click for the alignment details" onclick="' + oc + '">✅ ' + _gateChipLabel(g) + '</span>';
           }).join('');
         }
         var _gateChips = '';
         if (_ps5.gatesFailed && _ps5.gatesFailed.length) {
           _gateChips += _ps5.gatesFailed.map(function(g) {
             var oc = _chipOnclick(g);
-            return '<span class="why-chip why-chip-fail" role="button" tabindex="0" style="cursor:pointer" title="' + g + ' fired — click for the rationale + your next move" onclick="' + oc + '">⚠️ ' + g + '</span>';
+            return '<span class="why-chip why-chip-fail" role="button" tabindex="0" style="cursor:pointer" title="' + _gateChipTitle(g) + ' — fired; click for the rationale + your next move" onclick="' + oc + '">⚠️ ' + _gateChipLabel(g) + '</span>';
           }).join('');
         }
         if (_ps5.softGaps && _ps5.softGaps.length) {
@@ -18711,9 +18748,20 @@ _drillInRegister('story', function(id) {
   // Fail-open: if storyPages isn't loaded yet, show the button (race-condition safe).
   var _spArr = (cb.storyPages && Array.isArray(cb.storyPages)) ? cb.storyPages : null;
   var _pageExists = !_spArr || (_spArr.indexOf(storySlug) !== -1);
-  var _storyBtn = _pageExists
-    ? '<a href="' + storyHref + '" target="_blank" rel="noopener" style="display:inline-block;padding:6px 14px;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;color:var(--fg)">Open full story &rarr;</a>'
-    : '<span style="font-size:11px;color:var(--text-3);font-style:italic">Full story page not yet generated. Story pages are rebuilt with each dashboard refresh.</span>';
+  // 2026-05-31: fall back to the row's full-role narrative page when a per-requirement
+  // chip page is absent (rows whose report has no Block F never get chip pages).
+  var _rowId = (parts.length > 1) ? parts[0] : '';
+  var _narMap = (cb.narrativeStoryPages && typeof cb.narrativeStoryPages === 'object') ? cb.narrativeStoryPages : {};
+  var _narSlug = (_rowId && _narMap[_rowId]) ? _narMap[_rowId] : '';
+  var _btnStyle = 'display:inline-block;padding:6px 14px;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;color:var(--fg)';
+  var _storyBtn;
+  if (_pageExists) {
+    _storyBtn = '<a href="' + storyHref + '" target="_blank" rel="noopener" style="' + _btnStyle + '">Open full story &rarr;</a>';
+  } else if (_narSlug) {
+    _storyBtn = '<a href="stories/' + _narSlug + '.html" target="_blank" rel="noopener" style="' + _btnStyle + '">Open full role story &rarr;</a>';
+  } else {
+    _storyBtn = '<span style="font-size:11px;color:var(--text-3);font-style:italic">Full story page not yet generated. Story pages are rebuilt with each dashboard refresh.</span>';
+  }
   var html = '<div style="padding:4px 0">'
     + '<p style="font-size:13px;font-weight:600;margin:0 0 8px">' + title + '</p>'
     + '<p style="font-size:12px;color:var(--text-3);margin:0 0 12px">' + excerpt + '</p>'

@@ -106,16 +106,24 @@ async function summarize(org, name, text) {
     const firstPara = text.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean)[0] || excerpt;
     return { summary: firstPara.slice(0, 300), proof_points: [] };
   }
+  const deterministic = () => {
+    const firstPara = text.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean)[0] || excerpt;
+    return firstPara.replace(/\s+/g, ' ').slice(0, 320);
+  };
   try {
     const prompt = `This is a Google work artifact authored or produced by Mitchell Williams (${org === 'xge' ? 'Office of Cross-Google Engineering' : 'Corporate Engineering'}). Write a neutral THIRD-PERSON summary for a career corpus index.\n\nReturn ONLY JSON: {"summary":"2-3 sentences on what this artifact is and its purpose","proof_points":["concrete achievement or metric","..."]}\n\nArtifact: ${name}\n---\n${excerpt}`;
-    const r = await cc({ prompt, models: ['anthropic:claude-haiku-4-5-20251001'], opts: { timeoutMs: 60000, maxTokens: 400 } });
-    const raw = (r?.responses?.[0]?.text || r?.text || r?.summary || '').trim();
+    const r = await cc({ prompt, models: ['anthropic:claude-haiku-4-5'], opts: { maxTokens: 400 } });
+    const out = r?.results?.[0];
+    const raw = (out?.content || '').trim();
+    if (!raw || out?.error) {
+      // empty/capped/errored → graceful deterministic fallback (respects vendor caps)
+      return { summary: deterministic(), proof_points: [], _summary_src: out?.error ? `fallback:${String(out.error).slice(0, 40)}` : 'fallback:empty' };
+    }
     const m = raw.match(/\{[\s\S]*\}/);
-    if (m) { const j = JSON.parse(m[0]); return { summary: j.summary || '', proof_points: Array.isArray(j.proof_points) ? j.proof_points.slice(0, 4) : [] }; }
-    return { summary: raw.slice(0, 300), proof_points: [] };
+    if (m) { const j = JSON.parse(m[0]); return { summary: j.summary || deterministic(), proof_points: Array.isArray(j.proof_points) ? j.proof_points.slice(0, 4) : [], _summary_src: 'llm' }; }
+    return { summary: raw.slice(0, 320), proof_points: [], _summary_src: 'llm-raw' };
   } catch (e) {
-    const firstPara = text.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean)[0] || excerpt;
-    return { summary: firstPara.slice(0, 300), proof_points: [], _llm_error: e.message?.slice(0, 80) };
+    return { summary: deterministic(), proof_points: [], _summary_src: `fallback:${e.message?.slice(0, 40)}` };
   }
 }
 
@@ -138,7 +146,7 @@ async function main() {
       count++;
       const name = basename(f);
       const text = extractText(f);
-      const { summary, proof_points, _llm_error } = await summarize(org, name, text);
+      const { summary, proof_points, _summary_src } = await summarize(org, name, text);
       const kind = inferKind(name);
       const tags = inferArchetypes(org, name);
       const slug = citationSlug(name);
@@ -158,7 +166,7 @@ async function main() {
         `title: ${JSON.stringify(name.replace(/_/g, ' '))}`,
         `summary: ${JSON.stringify(summary)}`,
         `proof_points:${yamlList(proof_points)}`,
-        _llm_error ? `_llm_error: ${JSON.stringify(_llm_error)}` : null,
+        `_summary_src: ${_summary_src || 'llm'}`,
         '---',
         '',
         `# ${name}`,

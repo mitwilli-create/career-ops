@@ -41,6 +41,13 @@ try {
 
 import { callCouncil } from '../../lib/council.mjs';
 import { installRunRecord } from '../../lib/job-runs-ledger.mjs';
+// Canonical slug builder — the SAME function the il/hc writer agents resolve
+// through (resolveRow → row.slug || buildSlug). Imported so the post-write
+// verifier targets the byte-identical on-disk path the writer produced, instead
+// of the local slice-60 slugify() which truncated long role slugs and caused
+// false "no-disk-artifact-after-exit-0" negatives. See bug class
+// slug-truncation-contract-drift-writer-verifier-reader (2026-06-01).
+import { buildSlug } from '../lib/row-resolver.mjs';
 
 const __jobRun = installRunRecord('intel-refresh');
 
@@ -607,7 +614,7 @@ async function refreshRoleEnrichment(row, opts = {}) {
 
 /* -------- SLOT 8: hm-chance — companion-agent chip popout (--deep only by default) -------- */
 async function refreshHmChance(row, opts = {}) {
-  const slug = `${String(row.num).padStart(3, '0')}-${slugify(row.company)}-${slugify(row.role)}`;
+  const slug = row.slug || buildSlug(row.num, row.company, row.role);
   const target = join(ROOT, 'data', 'hm-chance', `${slug}.json`);
   if (!opts.force && isCacheFresh(target)) {
     emit({ slot: 'hm-chance', row: row.num, cache: 'hit', path: target });
@@ -630,7 +637,7 @@ async function refreshHmChance(row, opts = {}) {
 
 /* -------- SLOT 9: interview-likelihood — companion-agent chip popout (--deep only by default) -------- */
 async function refreshInterviewLikelihood(row, opts = {}) {
-  const slug = `${String(row.num).padStart(3, '0')}-${slugify(row.company)}-${slugify(row.role)}`;
+  const slug = row.slug || buildSlug(row.num, row.company, row.role);
   const target = join(ROOT, 'data', 'interview-likelihood', `${slug}.json`);
   if (!opts.force && isCacheFresh(target)) {
     emit({ slot: 'interview-likelihood', row: row.num, cache: 'hit', path: target });

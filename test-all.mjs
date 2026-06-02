@@ -543,6 +543,30 @@ try {
   }
 }
 
+// ── 16. SLUG CONTRACT (il/hc writer === verifier === reader) ──
+
+console.log("\n16. Slug contract — il/hc artifact slug is byte-identical across writer / verifier / reader");
+
+try {
+  // Runs tests/slug-contract-il-hc.test.mjs — exits 1 if the canonical
+  // buildSlug (row-resolver) diverges from any surface on a >60-char role
+  // fixture (#2708 Amazon AWS). Closes slug-truncation-contract-drift-writer-
+  // verifier-reader (intel-refresh slice-60 verifier + apply-pack-dir-only
+  // reader resolution, 2026-06-01).
+  execFileSync('node', ['tests/slug-contract-il-hc.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+  });
+  pass('Slug contract — writer === verifier === reader on the long-titled fixture');
+} catch (err) {
+  fail('Slug contract VIOLATED — il/hc slug diverges across writer/verifier/reader');
+  const out = (err.stdout || '') + (err.stderr || '');
+  for (const line of out.split('\n').slice(0, 40)) {
+    if (line.trim()) console.log(`     ${line}`);
+  }
+}
+
 // ── SUMMARY ─────────────────────────────────────────────────────
 
 console.log('\n' + '='.repeat(50));

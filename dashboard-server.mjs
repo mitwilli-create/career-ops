@@ -15,6 +15,12 @@ import { marked } from 'marked';
 import { tierCostEstimates as _tierCostEstimates, resolveTier as _resolveTier } from './lib/process-all-tiers.mjs';
 import { parseApplicationsFile } from './lib/parse-applications.mjs';
 import { resolveRowToPackInput } from './lib/build-pack-stage-input.mjs';
+// Canonical row→slug resolver (same buildSlug the il/hc writer agents use) —
+// lets /api/intel-chips, /api/interview-likelihood, /api/hm-chance resolve a
+// ?row=N request to the on-disk artifact slug even when the row has no
+// apply-pack dir (e.g. #2708). See slug-truncation-contract-drift-writer-
+// verifier-reader (2026-06-01).
+import { resolveRow } from './scripts/lib/row-resolver.mjs';
 import { statusKey, statusBadgeClass } from './lib/status-key.mjs';
 import { getCachedUrl } from './lib/resolve-ats-url.mjs';
 import {
@@ -9385,6 +9391,11 @@ async function generatePack(){
                 if (hit) { slug = hit; packDir = join(base, hit); break; }
               } catch {}
             }
+            // Fallback: rows without an apply-pack dir (e.g. #2708) still resolve
+            // to the canonical writer slug via row-resolver buildSlug.
+            if (!slug) {
+              try { const _rr = resolveRow(rowParam); if (_rr && _rr.slug) slug = _rr.slug; } catch { /* best-effort */ }
+            }
           }
         } else {
           if (!/^[A-Za-z0-9_.-]+$/.test(slug)) return json({ ok: false, error: 'invalid slug' }, 400);
@@ -9452,7 +9463,17 @@ async function generatePack(){
         }
 
         // ─── interview_likelihood ───
-        const ilJsonRole = _readJsonSafe(join(ROOT, 'data', 'interview-likelihood', slug + '.json'));
+        // Canonical il/hc slug (slug-truncation-contract-drift-writer-verifier-
+        // reader): il/hc files are keyed by the writer's buildSlug (resolveRow),
+        // which can differ from the apply-pack-derived `slug` above (legacy or
+        // truncated dir forms). Try canonical first, fall back to apply-pack slug.
+        let _canonSlug = slug;
+        try {
+          const _rnum = (String(query.row || '').match(/^\d+$/) || [])[0] || (String(slug).match(/^(\d+)-/) || [])[1];
+          if (_rnum) { const _rr = resolveRow(_rnum); if (_rr && _rr.slug) _canonSlug = _rr.slug; }
+        } catch { /* best-effort */ }
+        const ilJsonRole = _readJsonSafe(join(ROOT, 'data', 'interview-likelihood', _canonSlug + '.json'))
+                        || _readJsonSafe(join(ROOT, 'data', 'interview-likelihood', slug + '.json'));
         const ilJsonPack = packDir ? _readJsonSafe(join(packDir, 'interview-likelihood.json')) : null;
         const il = ilJsonRole || ilJsonPack;
         let interview_likelihood;
@@ -9559,7 +9580,8 @@ async function generatePack(){
         // Council-adjudicated "chance HM will see the application" with
         // competitive-edges-first framing (Q-8.53.32). Populated out-of-band by
         // scripts/agents/hm-chance.mjs (3d cache TTL).
-        const hcJsonRole = _readJsonSafe(join(ROOT, 'data', 'hm-chance', slug + '.json'));
+        const hcJsonRole = _readJsonSafe(join(ROOT, 'data', 'hm-chance', _canonSlug + '.json'))
+                        || _readJsonSafe(join(ROOT, 'data', 'hm-chance', slug + '.json'));
         const hcJsonPack = packDir ? _readJsonSafe(join(packDir, 'hm-chance.json')) : null;
         const hc = hcJsonRole || hcJsonPack;
         let hm_chance;
@@ -9660,11 +9682,31 @@ async function generatePack(){
                 if (hit) { slug = hit; break; }
               } catch {}
             }
+            // Fallback: rows without an apply-pack dir (e.g. #2708) still resolve
+            // to the canonical writer slug via row-resolver buildSlug.
+            if (!slug) {
+              try { const _rr = resolveRow(rowParam); if (_rr && _rr.slug) slug = _rr.slug; } catch { /* best-effort */ }
+            }
           }
         }
         if (!slug) return json({ ok: false, error: 'slug or row required' }, 400);
         if (!/^[A-Za-z0-9_.-]+$/.test(slug)) return json({ ok: false, error: 'invalid slug' }, 400);
-        const p = join(ROOT, 'data', 'interview-likelihood', slug + '.json');
+        let p = join(ROOT, 'data', 'interview-likelihood', slug + '.json');
+        // Canonical-slug reconciliation (slug-truncation-contract-drift): if the
+        // requested slug (e.g. a legacy apply-pack dir form) has no file but the
+        // row resolves to the writer's canonical buildSlug that does, serve that.
+        if (!existsSync(p)) {
+          const _rnum = (String(query.row || '').match(/^\d+$/) || [])[0] || (String(slug).match(/^(\d+)-/) || [])[1];
+          if (_rnum) {
+            try {
+              const _rr = resolveRow(_rnum);
+              if (_rr && _rr.slug && _rr.slug !== slug) {
+                const _p2 = join(ROOT, 'data', 'interview-likelihood', _rr.slug + '.json');
+                if (existsSync(_p2)) { slug = _rr.slug; p = _p2; }
+              }
+            } catch { /* best-effort */ }
+          }
+        }
         if (!existsSync(p)) return json({
           ok: false,
           error: 'not-found',
@@ -9705,11 +9747,31 @@ async function generatePack(){
                 if (hit) { slug = hit; break; }
               } catch {}
             }
+            // Fallback: rows without an apply-pack dir (e.g. #2708) still resolve
+            // to the canonical writer slug via row-resolver buildSlug.
+            if (!slug) {
+              try { const _rr = resolveRow(rowParam); if (_rr && _rr.slug) slug = _rr.slug; } catch { /* best-effort */ }
+            }
           }
         }
         if (!slug) return json({ ok: false, error: 'slug or row required' }, 400);
         if (!/^[A-Za-z0-9_.-]+$/.test(slug)) return json({ ok: false, error: 'invalid slug' }, 400);
-        const p = join(ROOT, 'data', 'hm-chance', slug + '.json');
+        let p = join(ROOT, 'data', 'hm-chance', slug + '.json');
+        // Canonical-slug reconciliation (slug-truncation-contract-drift): if the
+        // requested slug (e.g. a legacy apply-pack dir form) has no file but the
+        // row resolves to the writer's canonical buildSlug that does, serve that.
+        if (!existsSync(p)) {
+          const _rnum = (String(query.row || '').match(/^\d+$/) || [])[0] || (String(slug).match(/^(\d+)-/) || [])[1];
+          if (_rnum) {
+            try {
+              const _rr = resolveRow(_rnum);
+              if (_rr && _rr.slug && _rr.slug !== slug) {
+                const _p2 = join(ROOT, 'data', 'hm-chance', _rr.slug + '.json');
+                if (existsSync(_p2)) { slug = _rr.slug; p = _p2; }
+              }
+            } catch { /* best-effort */ }
+          }
+        }
         if (!existsSync(p)) return json({
           ok: false,
           error: 'not-found',

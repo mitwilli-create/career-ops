@@ -567,6 +567,31 @@ try {
   }
 }
 
+// ── 16b. APPLY-PACK NO-SCAFFOLD INVARIANT (finished answers, not worksheets) ──
+
+console.log("\n16b. Apply-pack content — finished paste-ready answers, zero scaffolds/placeholders/instructions/leaked-CLI");
+
+try {
+  // Runs tests/apply-pack-no-scaffold-invariant.test.mjs (apply-now scope) — exits 1
+  // if any user-facing apply-now artifact carries worksheet/scaffold/placeholder/
+  // instruction/leaked-CLI content instead of a finished, paste-ready answer.
+  // Closes the 2026-06-03 "instructions for me to action vs useful information"
+  // incident. See feedback_apply_pack_finished_not_worksheet.
+  execFileSync('node', ['tests/apply-pack-no-scaffold-invariant.test.mjs'], {
+    cwd: ROOT,
+    env: { ...process.env, APPLY_PACK_INVARIANT_APPLY_NOW_ONLY: '1' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+  });
+  pass('Apply-pack content — apply-now packs are finished answers (no scaffold/placeholder/instruction/CLI)');
+} catch (err) {
+  fail('Apply-pack content VIOLATED — worksheet/scaffold/instruction content in apply-now artifacts');
+  const out = (err.stdout || '') + (err.stderr || '');
+  for (const line of out.split('\n').slice(0, 30)) {
+    if (line.trim()) console.log(`     ${line}`);
+  }
+}
+
 // ── 17. PROCESS ALL DRAIN CONTROLLER (bounded termination) ──
 
 console.log("\n17. Process All drain controller — bounded loop terminates with the correct reason on every branch");

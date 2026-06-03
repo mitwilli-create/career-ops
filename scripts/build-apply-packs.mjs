@@ -50,6 +50,7 @@ import { execSync } from 'child_process';
 import { runCheck as humanizeCheck } from './humanize-check.mjs';
 import { SONNET } from '../lib/models.mjs';
 import { scrubArtifactsOrThrow } from './lib/scrub-gate.mjs';
+import { resolveRow } from './lib/row-resolver.mjs';
 
 const ROOT = process.cwd();
 const args = process.argv.slice(2);
@@ -553,16 +554,6 @@ Thank you for considering me.
 
 Mitchell Williams
 Seattle, WA · mitwilli@gmail.com · linkedin.com/in/mitwilli · github.com/mitwilli-create · thestorytellermitch.com
-
----
-
-## Notes for the candidate (not part of the letter)
-
-- Length target: ~500 words. If the form has a 300-word cap, drop two of the three transparency notes and keep the strongest gap mitigation.
-- The "${ledFraming(role)}" framing is the central reframe — keep it in any version.
-- For a 50–100-word short pitch field, use the **Verdict** from the eval report:
-
-  > *${oneLineVerdict(report, role)}*
 `;
 }
 
@@ -628,7 +619,7 @@ Score: ${role.score}/5
 GOLD-STANDARD REFERENCE (match this quality and voice — do not copy it):
 The central challenge of the Engineering Editorial Lead role is one I've spent a career solving: how do you encode editorial discipline into production systems that serve a deeply technical audience allergic to spin?
 
-For the past two years at Google's Office of Cross-Google Engineering (xGE), I've architected and shipped production AI systems for an audience of ~1,000 senior engineers. My Executive RAG pipeline functions as a digital twin for VP-level communications, achieving 99% stylistic fidelity and a 90% reduction in drafting latency. Its discipline comes from a unique architecture: a curated Voice DNA corpus paired with a "Kill List" of rejected drafts that taught the agent risk tolerance. Next to it, my autonomous Communications Triage Agent recaptures ~160 operational hours per year at >90% classification accuracy.
+For the past two years at Google's Office of Cross-Google Engineering (xGE), I've architected and shipped production AI systems for an audience of 1,000+ L8+ Senior Technical ICs. My Executive RAG pipeline functions as a digital twin for VP-level communications, achieving high stylistic fidelity with a substantial reduction in drafting latency. Its discipline comes from a unique architecture: a curated Voice DNA corpus paired with a "Kill List" of rejected drafts that taught the agent risk tolerance. Next to it, my autonomous Communications Triage Agent recaptures ~160 operational hours per year, auto-handling ~60% of inbound.
 
 This work is a direct translation of the operating discipline I built in high-stakes newsrooms. Before Google, I spent eight years inside the four properties that rewired digital journalism. I was on the founding team of Al Jazeera's 'The Stream' (RTS Most Innovative Programme), a segment producer at HuffPost Live (Webby Award, Pew Research case study), a line producer for 'America With Jorge Ramos' during its 179% primetime viewership growth, and a senior producer at AJ+. There, I designed a third production line that became a de facto talent pipeline — three producers I coached became on-air principals with subsequent Webbys, a Daytime Emmy, and a James Beard award.
 
@@ -680,9 +671,13 @@ CHECK EACH SENTENCE FOR:
    "robust," "delve," "I'd be happy to," "It's worth noting," "In conclusion"
 
 2. FABRICATION (hard remove):
-   Any metric not in this list must be removed or replaced with a canonical one:
-   ~160 ops hours/yr | >90% accuracy | 99% fidelity | 90% latency reduction |
-   300%+ capacity scaling | 179% viewership growth | 50M+ views | 27.5M desktop views
+   Use ONLY these VERIFIED metrics; everything else is fabrication — remove it:
+   ~160 ops hrs/yr recaptured | ~60% of inbound auto-handled (~55% Low-Touch) |
+   high stylistic fidelity (QUALITATIVE — no number) | substantial drafting-latency reduction (QUALITATIVE — no number) |
+   1,000+ L8+ Senior Technical ICs | 58% AI-adoption vs 37% Google avg (AI-Champions) |
+   179% primetime viewership growth | 50M+ views | 1.7M+ | 250M | 75,000+ (88%)
+   HARD-BANNED (retired/fabricated — never emit, delete on sight): 99% fidelity, 90% latency reduction,
+   >90% accuracy, >90% classification accuracy, 300% / 300%+ scaling, 348 attendees, 93% CSAT, 180,000-person, 600+ L8+.
 
 3. VAGUE CLAIMS (rewrite with specifics):
    "improved results" → add metric
@@ -736,22 +731,15 @@ OUTPUT: Full corrected cover letter. Final word count on the last line: [N words
 
   let output = `# Cover Letter — ${role.company}, ${role.role}
 
-> LLM-generated (claude-sonnet-4-6) · Voice-critic reviewed · Fabrication-gated
-> Add salutation ("Dear [Name]," or "Dear ${guessTeamName(report)} team,") and signature block before submitting.
-> Signature: Mitchell Williams · Seattle, WA · mitwilli@gmail.com · linkedin.com/in/mitwilli · github.com/mitwilli-create · thestorytellermitch.com
-
 ---
+
+Dear ${role.company} Hiring Team,
 
 ${draft}
 
----
-
-## Notes for the candidate
-
-- The "${ledFraming(role)}" framing is the central reframe — keep it in any version.
-- For a 50–100-word short pitch field, use the **Verdict** from the eval report:
-
-  > *${oneLineVerdict(report, role)}*
+Best,
+Mitchell Williams
+Seattle, WA · mitwilli@gmail.com · linkedin.com/in/mitwilli · github.com/mitwilli-create · thestorytellermitch.com
 `;
 
   if (!fabResult.passed) {
@@ -1244,7 +1232,60 @@ Lead with your most recent production project that a developer audience would re
   return '';
 }
 
-function buildFormFields(role, report) {
+// Finished, paste-ready application answers — LLM-generated and grounded in the
+// canonical corpus, NOT a worksheet. Replaces the legacy static scaffold (kept
+// below as buildFormFieldsTemplate, used only when no API key is present). See
+// feedback_apply_pack_finished_not_worksheet (2026-06-03): every user-facing
+// field must be a COMPLETE answer with zero placeholders / instructions / CLI,
+// and zero fabricated metrics.
+async function buildFormFields(role, report) {
+  if (!API_KEY) return buildFormFieldsTemplate(role, report);
+  const matches = (report.matches || []).slice(0, 4);
+  const systemPrompt = `You write FINISHED, paste-ready job-application answers for Mitchell Williams, in his own first-person voice. The reader pastes your output VERBATIM into an application form.
+
+HARD RULES (violations are failures):
+- COMPLETE answers only. NEVER emit a scaffold, worksheet, "risk legend", bracket placeholder ([X], [YOUR …], [INSERT …], [SPECIFIC …]), "HUMAN REWRITE REQUIRED", "see eval report", or any sentence instructing the reader to rewrite/edit/research/verify. No notes section, no footer, no CLI commands.
+- Every factual claim must trace to the CANONICAL SOURCES below. Do NOT invent or inflate metrics. NEVER use these retired/unverified figures: "99% fidelity", "90% latency reduction", ">90% classification accuracy", "300% scaling", "348 attendees", "93% CSAT", "180,000-person", or any "L8+ / senior IC" headcount not present verbatim in the sources.
+- Voice: first person, Mitchell's. His arc is journalist → communications/content strategist → builder (use that order). Concrete and specific; no "I admire your mission", no LinkedIn-corporate filler.
+
+OUTPUT: GitHub markdown. For each field, a "## <question>" header followed by the finished answer in plain prose (2–6 sentences each; salary 1–2). Fields, in order:
+1. "Why this role / company?"
+2. "Tell us about yourself"
+3. "What excites you most about this role?"
+4. "Salary / compensation expectations"
+5. "How did you hear about this role?"
+6. "What questions would you ask us?"
+Nothing else — no preamble, no legend, no notes.`;
+  const userPrompt = `CANONICAL SOURCES (every claim must trace here):
+
+CV SUMMARY: ${report.tldr || '(see role matches below)'}
+
+TOP MATCHES (role requirement → Mitchell's real evidence):
+${matches.map((m, i) => `${i + 1}. ${m.requirement} — ${(m.evidence || '').replace(/<br\s*\/?>/gi, ' ').replace(/\s+/g, ' ').slice(0, 280)}`).join('\n')}
+
+JOB: ${role.company} — ${role.role} (career-ops fit score ${typeof role.score === 'number' ? role.score.toFixed(2) : role.score}/5)
+COMP SIGNAL: ${report.salary || 'open on total comp incl. equity; not anchored to a single number; the right role + team weigh more than a ~10% delta'}
+HOW MITCHELL HEARD: via career-ops — a job-search automation system he built and open-sourced (github.com/mitwilli-create/career-ops); it scored this role ${typeof role.score === 'number' ? role.score.toFixed(2) : role.score}/5 against his profile.
+
+Write the six finished answers now. The reader pastes them verbatim — no placeholders, no instructions, no invented numbers.`;
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: SONNET, max_tokens: 1800, temperature: 1, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }] }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const body = (data.content || []).map(c => c.text || '').join('').trim();
+    if (!body || body.length < 200) throw new Error('empty/short generation');
+    return `# Application Form Fields — ${role.company}, ${role.role}\n\n> Finished, paste-ready answers grounded in Mitchell's CV and corpus.\n\n---\n\n${body}\n`;
+  } catch (e) {
+    console.error(`  ⚠️ form-fields LLM gen failed for ${role.company}/${role.role}: ${e.message} — template fallback`);
+    return buildFormFieldsTemplate(role, report);
+  }
+}
+
+function buildFormFieldsTemplate(role, report) {
   return `# Application Form Fields — ${role.company}, ${role.role}
 
 > Pre-drafted answers for the most common application essay fields. Sections marked ⚠️ HUMAN REWRITE REQUIRED carry high AI-detection risk — rewrite in your own voice before pasting. See [formatting-guide.md](formatting-guide.md) for spacing, length, and structure rules.
@@ -1369,7 +1410,52 @@ Honest, references the OSS, signals technical sophistication. Only use if the fo
 `;
 }
 
-function buildOnePager(role, report) {
+// Finished one-page audition artifact — LLM-generated + grounded, NOT a worksheet.
+// Old static scaffold kept as buildOnePagerTemplate (no-API-key fallback only).
+// See feedback_apply_pack_finished_not_worksheet (2026-06-03).
+async function buildOnePager(role, report) {
+  if (!API_KEY) return buildOnePagerTemplate(role, report);
+  const matches = (report.matches || []).slice(0, 3);
+  const systemPrompt = `You write a FINISHED one-page audition artifact for Mitchell Williams — a "proof of work" he attaches to an application or shares with a hiring manager. First person, his voice.
+
+HARD RULES (violations are failures):
+- A COMPLETE, opinionated artifact, NOT a worksheet. NEVER use bracket placeholders ([SPECIFIC …], [YOUR …]), "HUMAN REWRITE REQUIRED", "see eval report", or any instruction telling the reader to write/edit/add/research. He shares it as-is.
+- Every claim traces to the CANONICAL SOURCES. No fabricated metrics. NEVER use: 99% fidelity, 90% latency reduction, >90% accuracy/classification, 300% scaling, 348 attendees, 93% CSAT, 180,000-person, or any L8+ headcount not present verbatim in the sources.
+- Voice: first person, Mitchell. Arc journalist → comms/content strategist → builder. Specific and opinionated, no filler, no "I admire your mission".
+
+OUTPUT (GitHub markdown), exactly these sections, ALL fully written:
+## The problem I see at ${role.company}
+(2–4 sentences: a specific, opinionated read of the real challenge in this role's domain — a point of view, not a JD paraphrase.)
+## What I'd do in the first 90 days
+**Month 1 — Diagnosis:** 2–3 concrete bullets.
+**Month 2 — First proof point:** 1–2 concrete bullets with a concrete deliverable and how he'd know it works.
+**Month 3 — System, not project:** 1 concrete bullet on durable infrastructure/process.
+## Why me
+(2–3 sentences tying his real proof to this problem.)
+Nothing else — no notes, no format instructions, no CLI, no file-name guidance.`;
+  const userPrompt = `CANONICAL SOURCES (every claim traces here):
+CV SUMMARY: ${report.tldr || ''}
+TOP MATCHES (role requirement → Mitchell's real evidence):
+${matches.map((m, i) => `${i + 1}. ${m.requirement} — ${(m.evidence || '').replace(/<br\s*\/?>/gi, ' ').replace(/\s+/g, ' ').slice(0, 260)}`).join('\n')}
+ROLE: ${role.company} — ${role.role}
+Write the finished one-pager now. No placeholders, no instructions, no invented numbers.`;
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', headers: { 'x-api-key': API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: SONNET, max_tokens: 1500, temperature: 1, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }] }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const body = (data.content || []).map(c => c.text || '').join('').trim();
+    if (!body || body.length < 200) throw new Error('empty/short generation');
+    return `# Audition Artifact — ${role.company}, ${role.role}\n\n> A one-page point of view Mitchell can attach to the application or share with the hiring manager.\n\n---\n\n${body}\n`;
+  } catch (e) {
+    console.error(`  ⚠️ one-pager LLM gen failed for ${role.company}/${role.role}: ${e.message} — template fallback`);
+    return buildOnePagerTemplate(role, report);
+  }
+}
+
+function buildOnePagerTemplate(role, report) {
   const companyProblem = report.tldr
     ? report.tldr.split(/\.\s*/)[0].slice(0, 300)
     : `${role.company}'s ${role.role} brief`;
@@ -1890,12 +1976,16 @@ async function buildPack(role) {
   writeFileSync(join(dir, 'README.md'), buildReadme(role, report));
   const coverLetterContent = await buildCoverLetter(role, report);
   const humanize = humanizeCheck(coverLetterContent);
-  writeFileSync(join(dir, 'cover-letter.md'), coverLetterContent + buildHumanizeSection(humanize));
+  // Cover-letter.md is the paste-ready letter ONLY. The AI-detection/humanize QA
+  // (which carries flagged-phrase notes + a re-score CLI line) goes to a sidecar
+  // so it never leaks into the content Mitchell sends. (2026-06-03)
+  writeFileSync(join(dir, 'cover-letter.md'), coverLetterContent);
+  writeFileSync(join(dir, 'cover-letter.ai-detection.md'), buildHumanizeSection(humanize));
   writeFileSync(join(dir, 'pre-application-checklist.md'), buildPreApplicationChecklist(role, report));
   writeFileSync(join(dir, 'grok-intel.md'), buildGrokIntel(role, report));
   writeFileSync(join(dir, 'interview-prep-teaser.md'), buildInterviewPrep(role, report));
-  writeFileSync(join(dir, 'form-fields.md'), buildFormFields(role, report));
-  writeFileSync(join(dir, 'one-pager.md'), buildOnePager(role, report));
+  writeFileSync(join(dir, 'form-fields.md'), await buildFormFields(role, report));
+  writeFileSync(join(dir, 'one-pager.md'), await buildOnePager(role, report));
   writeFileSync(join(dir, 'interview-prep-full.md'), buildInterviewPrepFull(role, report));
   writeFileSync(join(dir, 'formatting-guide.md'), buildFormattingGuide(role, report));
   writeFileSync(join(dir, 'ats-check.md'), buildAtsCheck(role, report));
@@ -2020,8 +2110,58 @@ async function main() {
   let queue;
   if (SPECIFIC_NUM) {
     queue = tracker.filter(r => String(r.num) === SPECIFIC_NUM);
+    // Num-collision guard (2026-06-03): applications.md and the apply-now queue
+    // are independent num-spaces, so the same num can point at DIFFERENT roles in
+    // each (e.g. #2253 = LangChain in applications.md but Ema in the queue). When
+    // the applications.md row's company disagrees with row-resolver's, prefer the
+    // queue/resolver intent (clear the queue → the fallback below rebuilds the
+    // role the apply-now surface actually points at, not a same-num stranger).
+    if (queue.length > 0) {
+      try {
+        const _rr = resolveRow(SPECIFIC_NUM);
+        if (_rr && _rr.company && queue[0].company &&
+            _rr.company.toLowerCase().slice(0, 6) !== queue[0].company.toLowerCase().slice(0, 6)) {
+          console.log(`  num-collision: applications.md #${SPECIFIC_NUM}=${queue[0].company} ≠ queue ${_rr.company} — preferring queue intent`);
+          queue = [];
+        }
+      } catch { /* keep tracker row */ }
+    }
     if (queue.length === 0) {
-      console.error(`No row with #${SPECIFIC_NUM} in applications.md`);
+      // Num-space fallback (2026-06-03): queue / reports/ / applications.md are
+      // INDEPENDENT num-spaces, so a pack-dir/queue num is not always an
+      // applications.md row num. Resolve company/role via row-resolver, find the
+      // eval report by role-slug (any num), and pull the score from
+      // apply-now-queue.json — so the pack regenerates with grounded, finished
+      // content instead of being skipped (which left it as a stale worksheet,
+      // the dominant cause of the 2026-06-03 "instructions not answers" tail).
+      try {
+        const rr = resolveRow(SPECIFIC_NUM);
+        if (rr && rr.company && rr.role) {
+          const tail = String(rr.slug || '').replace(/^\d+-/, '');
+          const repDir = join(ROOT, 'reports');
+          const norm = f => f.replace(/^\d+-/, '').replace(/-\d{4}-\d{2}-\d{2}\.md$/, '').replace(/\.md$/, '');
+          const repFile = (existsSync(repDir) && tail.length >= 12)
+            ? readdirSync(repDir).find(f => {
+                if (!f.endsWith('.md')) return false;
+                const rn = norm(f);
+                return rn.length >= 12 && (rn === tail || rn.startsWith(tail) || tail.startsWith(rn));
+              })
+            : null;
+          let score = 4.0;
+          try {
+            const aq = JSON.parse(readFileSync(join(ROOT, 'data/apply-now-queue.json'), 'utf8'));
+            const qr = (aq.ranked || []).find(r => String(r.num) === SPECIFIC_NUM);
+            if (qr && typeof qr.eval_score === 'number') score = qr.eval_score;
+          } catch { /* keep default */ }
+          if (repFile) {
+            queue = [{ num: SPECIFIC_NUM, company: rr.company, role: rr.role, score, status: 'Evaluated', reportPath: `reports/${repFile}` }];
+            console.log(`  num-space fallback: #${SPECIFIC_NUM} → ${rr.company} / ${rr.role} via reports/${repFile}`);
+          }
+        }
+      } catch { /* fall through to the error below */ }
+    }
+    if (queue.length === 0) {
+      console.error(`No row with #${SPECIFIC_NUM} in applications.md (and no row-resolver + report fallback)`);
       process.exit(1);
     }
   } else {

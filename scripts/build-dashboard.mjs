@@ -71,6 +71,7 @@ import { resolveCooldownContext } from '../lib/cooldown-context.mjs';
 // Provides build-time staleness badges for drawer cache surfaces.
 // See lib/cache-freshness.mjs for the threshold registry + tone-safe badge renderer.
 import { cacheAgeBucket, renderCacheStalenessInline } from '../lib/cache-freshness.mjs';
+import { gateRow as _gateRow } from '../lib/apply-now-queue-gate.mjs';
 const parseYaml = yaml.load;
 
 // ── Phase 4.1 (2026-05-22 closure / P8) — credentials cache for chip + modal ──
@@ -966,9 +967,22 @@ function getEquityForCompany(company) {
 
 // Render the equity-stage badge (table cell content). Returns either an em-dash
 // span (no entry) or a colored chip with hover tooltip showing posture + as-of.
-function equityBadge(company) {
-  const data = getEquityForCompany(company);
+function equityBadge(company, factors) {
+  let data = getEquityForCompany(company);
   const { updated } = parseOverpaySignals();
+  // Fallback (2026-06-03): when overpay-signals/CURRENT.md has no entry for this
+  // company, use the equity posture already computed on the apply-now queue row
+  // (factors.equity_stage). This is the dominant fix for the "rows with no equity
+  // information" complaint — the posture existed on each row, but the badge only
+  // read the sparse, weekly-refreshed overpay-signals cache and rendered "—".
+  if (!data && factors && typeof factors.equity_stage === 'string' && factors.equity_stage.trim()) {
+    data = {
+      stage: classifyEquityStage(factors.equity_stage),
+      posture: factors.equity_stage.trim(),
+      confidence: '',
+      sources: [],
+    };
+  }
   if (!data) {
     // BRAVO 2026-05-19 (content sweep): the prior tooltip leaked a file
     // path + command into user-facing text. Tooltip now reads as plain
@@ -3798,8 +3812,10 @@ function renderRow(r, idx) {
   // Equity / IPO posture — primary filter signal. Empty when no overpay-signals
   // entry exists for this company; rendered as a hairline em-dash.
   const equityData = getEquityForCompany(r.company);
-  const equityStage = equityData ? equityData.stage : 'unknown';
-  const equityCell = equityBadge(r.company);
+  const equityStage = equityData ? equityData.stage
+    : (r.factors && typeof r.factors.equity_stage === 'string' && r.factors.equity_stage.trim()
+        ? classifyEquityStage(r.factors.equity_stage) : 'unknown');
+  const equityCell = equityBadge(r.company, r.factors);
 
   // Wave H: Base salary + Location chips. Both render as muted em-dash when
   // the report doesn't carry parseable signal — never crashes.
@@ -4365,16 +4381,33 @@ async function build() {
   // (LEDGER-026 audit-2026-05-23 Part 3)
   try {
     const aQ = JSON.parse(readFileSync(join(ROOT, 'data', 'apply-now-queue.json'), 'utf-8'));
-    const canonByNum = new Map();
+    const qByNum = new Map();
     for (const r of (aQ.ranked || [])) {
-      if (r && r.canonical_url) canonByNum.set(String(r.num), r.canonical_url);
+      if (r && r.num != null) qByNum.set(String(r.num), r);
     }
-    let hydrated = 0;
+    let hydrated = 0, gated = 0;
     for (const r of apps) {
-      const c = canonByNum.get(String(r.num));
-      if (c) { r.canonical_url = c; hydrated++; }
+      const qr = qByNum.get(String(r.num));
+      if (!qr) continue;
+      if (qr.canonical_url) { r.canonical_url = qr.canonical_url; hydrated++; }
+      // Attach the queue's equity/tier posture so renderRow's equity badge can
+      // fall back to factors.equity_stage when overpay-signals lacks the company.
+      if (qr.factors) r.factors = qr.factors;
+      // Re-run the apply-now gate at build time (recalibrated 2026-06-03 TTLs) so
+      // the widget gates on CURRENT disk state, not the stale _gate_* fields baked
+      // into the queue at its last rebuild (canonical incident: queue verdict was
+      // 3 days old and predated the il/hc backfill, so "il/hc missing" was false).
+      try {
+        const g = _gateRow({ ...qr, ...r });
+        r._gate_pass = g.pass;
+        r._gate_bucket = g.bucket;
+        r._gate_reasons = g.reasons;
+        r._gate_missing = g.missing_repositories;
+        gated++;
+      } catch { /* gate best-effort — leave row ungated */ }
     }
     if (hydrated > 0) console.log(`  canonical_url hydrated: ${hydrated} rows from apply-now-queue.json`);
+    if (gated > 0) console.log(`  apply-now gate verdict (fresh) computed for ${gated} rows`);
   } catch (e) { /* queue file missing or unparseable — leave apps as-is */ }
   // Cluster A7 (2026-05-22): pre-load pipeline activity state for the
   // top-of-dashboard health strip. Build-time snapshot; SSE refreshes
@@ -5567,7 +5600,20 @@ async function build() {
   } catch (e) { /* never break the build */ }
 
   // Apply-now table rows
-  const applyNowRows = applyNowSorted.map((r, i) => renderRow(r, `apply-${i}`)).join('\n');
+  // Gate the Apply-Now widget (spec-apply-now-gate-and-popout-grounding Gap A,
+  // 2026-06-03): render fully-enriched rows ("ready to apply") first, then a
+  // transparent "still enriching" divider, then the in-progress rows. Every row
+  // stays VISIBLE — nothing is hidden — but an incomplete row is never presented
+  // as ready-to-apply. Rows carry _gate_pass from the build-time gate hydration.
+  const _anReady = applyNowSorted.filter(r => r._gate_pass === true);
+  const _anPending = applyNowSorted.filter(r => r._gate_pass !== true);
+  let _anIdx = 0;
+  const _anReadyHtml = _anReady.map(r => renderRow(r, `apply-${_anIdx++}`)).join('\n');
+  const _anPendingDivider = _anPending.length
+    ? `<tr class="apply-now-enriching-divider"><td colspan="20" style="padding:10px 14px;background:rgba(210,153,34,0.08);border-top:2px solid rgba(210,153,34,0.35);border-bottom:1px solid rgba(210,153,34,0.2);font-size:12px;color:#d29922;font-weight:600">⏳ Still enriching (${_anPending.length}) — gathering hiring-manager intel, tailored CV, and live-posting checks. Listed below so nothing is hidden; held out of “ready to apply” until complete.</td></tr>`
+    : '';
+  const _anPendingHtml = _anPending.map(r => renderRow(r, `apply-${_anIdx++}`)).join('\n');
+  const applyNowRows = [_anReadyHtml, _anPendingDivider, _anPendingHtml].filter(Boolean).join('\n');
   const allRows = sortedByScore.map((r, i) => renderRow(r, `all-${i}`)).join('\n');
 
   // ── Layer-3 stale-row inventory for the section-header CTA + bulk modal ──

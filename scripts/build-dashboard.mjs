@@ -831,13 +831,30 @@ function loadRoleEnrichment() {
     return out;
   };
   // Second pass — sanitize people fields, key + store.
+  // On duplicate company|role keys, keep the RICHER entry. A barren export
+  // (no top-level benefits/sentiment/people — e.g. a nested-schema file) must
+  // NOT clobber a fully-researched sibling. Canonical incident (2026-06-02):
+  // data/role-enrichment/exampleco-*.json (nested role_enrichment, richness 0)
+  // was overwriting bf2606-exampleco-*.json (8 benefits keys + sentiment,
+  // richness 5) because readdir order loaded the barren file last → ExampleCo
+  // benefits cell rendered an empty em-dash despite the data being on disk.
+  const _enrichRichness = (o) => {
+    let s = 0;
+    if (o.benefits && Object.keys(o.benefits).length) s += 2;
+    if (o.sentiment && Object.keys(o.sentiment).length) s += 2;
+    if (o.people && (o.people.likely_recruiter?.name || o.people.likely_hiring_manager?.name)) s += 1;
+    return s;
+  };
   for (const obj of raws) {
     if (obj.people) {
       obj.people.likely_recruiter = sanitizePerson(obj.people.likely_recruiter, obj.company);
       obj.people.likely_hiring_manager = sanitizePerson(obj.people.likely_hiring_manager, obj.company);
     }
     const key = (obj.company + '|' + obj.role).toLowerCase();
-    map.set(key, obj);
+    const existing = map.get(key);
+    if (!existing || _enrichRichness(obj) > _enrichRichness(existing)) {
+      map.set(key, obj);
+    }
   }
   _roleEnrichmentCache = map;
   return map;
@@ -1392,8 +1409,32 @@ function _teamHealthSlugForCompany(company) {
 // Benefits cell: shows a single primary signal (toxicity grade or "—") with
 // a popover that expands to the full breakdown (401k, healthcare, sentiment,
 // mental health, etc.). Empty when no data/role-enrichment/{slug}.json exists.
+// Find a same-company role-enrichment that carries a valid team-toxicity grade.
+// Team health + benefits are COMPANY-level signals, so when a specific req has
+// no role-enrichment of its own yet, a sibling req's real, on-disk grade is an
+// honest stand-in (tagged company-level in the popover) rather than a bare
+// em-dash. Canonical incident (2026-06-02): Databricks "Sr Technical Program
+// Manager" (#2601) had no enrichment file of its own; sibling Databricks reqs
+// carried Blind 3.8/5 → toxicity grade 2.
+function _companyLevelBenefitsEnrichment(company) {
+  if (!company) return null;
+  const map = loadRoleEnrichment();
+  const cLower = String(company).toLowerCase();
+  for (const [k, v] of map.entries()) {
+    if (!k.startsWith(cLower + '|')) continue;
+    const tox = parseInt(v.sentiment?.team_toxicity_grade, 10);
+    if (Number.isFinite(tox) && tox >= 1 && tox <= 5) return v;
+  }
+  return null;
+}
+
 function renderBenefitsCell(company, role) {
-  const enrich = getRoleEnrichment(company, role);
+  let enrich = getRoleEnrichment(company, role);
+  let companyLevel = false;
+  if (!enrich || (!enrich.benefits && !enrich.sentiment)) {
+    const cl = _companyLevelBenefitsEnrichment(company);
+    if (cl) { enrich = cl; companyLevel = true; }
+  }
   if (!enrich || (!enrich.benefits && !enrich.sentiment)) {
     // BRAVO 2026-05-19 (content sweep): the tooltip used to read "No
     // benefits data yet" — accurate but uninformative. Tell the user what
@@ -1432,12 +1473,16 @@ function renderBenefitsCell(company, role) {
     toxIcon = tox <= 1 ? '🟢' : tox <= 2 ? '🟢' : tox <= 3 ? '🟡' : tox <= 4 ? '🟠' : '🔴';
   }
   const label = toxValid ? `${toxIcon} ${tox}/5` : `${toxIcon} ?/5`;
-  const tip = `Team health: ${toxValid ? tox + '/5 (1=healthy, 5=avoid)' : 'unknown'} · click for full benefits breakdown`;
+  const tip = `Team health: ${toxValid ? tox + '/5 (1=healthy, 5=avoid)' : 'unknown'}${companyLevel ? ' · company-level (no role-specific grade for this req yet)' : ''} · click for full benefits breakdown`;
   const detail = JSON.stringify({
     kind: 'benefits',
     empty: false,
     company,
     role,
+    company_level: companyLevel,
+    company_level_note: companyLevel
+      ? `Company-wide team-health signal for ${company}; this exact requisition has no role-specific enrichment yet, so the grade + benefits shown are the company-level read.`
+      : null,
     benefits: enrich.benefits || {},
     sentiment: enrich.sentiment || {},
     social: enrich.social_corroboration || null,
@@ -1483,7 +1528,7 @@ function renderPeopleCell(company, role) {
       hint: emptyTip,
       populateCmd: 'node scripts/enrich-roles.mjs --top=5',
     });
-    return `<span class="people-chip people-chip-empty pill-popover-trigger" aria-label="${htmlEscape(emptyTip)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">—</span>`;
+    return `<span class="people-chip people-chip-empty pill-popover-trigger" aria-label="${htmlEscape(emptyTip)}" tabindex="0" role="button" data-pill='${htmlEscape(detail)}' onclick="openPillPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openPillPopover(this)}">no contact</span>`;
   }
   const rec = people?.likely_recruiter?.name && people.likely_recruiter.name !== 'unknown' ? '👤' : '';
   const hm  = people?.likely_hiring_manager?.name && people.likely_hiring_manager.name !== 'unknown' ? '👔' : '';
@@ -9556,6 +9601,7 @@ async function build() {
   .people-chip-empty {
     background: transparent; border-color: transparent;
     color: var(--text-4); padding: 2px 4px;
+    font-size: 10px; font-style: italic; white-space: nowrap;
   }
 
   /* Popover sub-section labels for the new richer kinds */

@@ -30,6 +30,9 @@ import { randomBytes } from 'crypto';
 // session recurring ask about Process All not draining the queue.
 import { writeProcessState, writeResumeState, shouldResume, clearResumeState } from '../lib/process-all-state.mjs';
 import { runBatchStateRepairSweep } from '../lib/batch-state-repair-sweep.mjs';
+// 2026-06-02 — bounded drain controller: chain triage→batch cycles until the
+// pipeline drains to 0 or a governor trips. Pure + unit-tested.
+import { runDrainLoop } from '../lib/process-all-drain-controller.mjs';
 
 try {
   const { config } = await import('dotenv');
@@ -651,18 +654,63 @@ async function main() {
   process.on('exit', _stopHeartbeat);
 
   const phases = {};
-  _setHeartbeatPhase('triage');
-  phases.triage  = await phaseTriage();
-  if (!phases.triage.ok) {
-    updateJob({ status: 'failed', failed_at: new Date().toISOString(), failure_phase: 'triage' });
-    process.exit(2);
-  }
-  _setHeartbeatPhase('batch');
-  phases.batch   = await phaseBatch();
-  if (!phases.batch.ok) {
-    updateJob({ status: 'failed', failed_at: new Date().toISOString(), failure_phase: 'batch' });
-    process.exit(2);
-  }
+  // ── Bounded drain controller (2026-06-02) ───────────────────────────────
+  // Chain triage→batch cycles, re-verifying pipeline depth after EACH cycle,
+  // until the queue drains to 0 (drained-to-zero) OR a full cycle makes no
+  // progress (no-progress: residual is undrainable — dead postings, hard-
+  // disqualified, or a triage skip-without-mark gap) OR a governor trips
+  // (max-cycles / wall-clock / a phaseBatch self-abort). Makes "Process All
+  // chains batches until the queue reaches 0" an explicit, auto-verified
+  // contract instead of a single triage→batch pass.
+  //
+  // NOT an uncapped loop-until-exactly-0: "exactly 0" is the GOAL, reached
+  // when reachable. The queue routinely contains URLs that can never drain
+  // (dead postings, terminal-errored/expired batches) plus continuous scanner
+  // ingress, so the no-progress + cycle + wall-clock guards prevent the
+  // infinite re-batch loop the 179-stuck-URL incident produced (CLAUDE.md
+  // Session Notes 2026-05-27/29). Safe because batch-runner-batches.mjs polls
+  // each batch to terminal state, marks pipeline.md, and dequeues triage-
+  // advance.tsv BEFORE returning — so a later cycle never re-submits an
+  // in-flight URL.
+  const MAX_DRAIN_CYCLES = Math.max(1, Math.min(50,
+    parseInt(process.env.PROCESS_ALL_MAX_DRAIN_CYCLES || '12', 10)));
+  // Shared 90-min wall-clock anchor with phaseBatch (both off STARTED_AT_MS),
+  // so the whole run — every cycle combined — is wall-clock-bounded.
+  const DRAIN_WALLCLOCK_CAP_MS = Math.max(10 * 60 * 1000, Math.min(6 * 60 * 60 * 1000,
+    parseInt(process.env.PROCESS_ALL_MAX_WALLCLOCK_MS || String(90 * 60 * 1000), 10)));
+  // Loop logic + every termination branch live in (unit-tested)
+  // lib/process-all-drain-controller.mjs. main() supplies the side-effectful
+  // wiring: phaseTriage + phaseBatch per cycle, with the hard-failure exits.
+  const _drain = await runDrainLoop({
+    countPending: countPendingPipeline,
+    maxCycles: MAX_DRAIN_CYCLES,
+    wallclockCapMs: DRAIN_WALLCLOCK_CAP_MS,
+    startedAtMs: STARTED_AT_MS,
+    log,
+    runCycle: async (cycle) => {
+      _setHeartbeatPhase('triage');
+      phases.triage = await phaseTriage();
+      if (!phases.triage.ok) {
+        updateJob({ status: 'failed', failed_at: new Date().toISOString(), failure_phase: 'triage', drain_cycles_completed: cycle });
+        process.exit(2);
+      }
+      _setHeartbeatPhase('batch');
+      phases.batch = await phaseBatch();
+      if (!phases.batch.ok) {
+        updateJob({ status: 'failed', failed_at: new Date().toISOString(), failure_phase: 'batch', drain_cycles_completed: cycle });
+        process.exit(2);
+      }
+      // Real-time SSE progress (full cycle_log is returned + persisted once below).
+      updateJob({ drain_cycles_completed: cycle, pending_current: countPendingPipeline() });
+      return { ok: true, aborted: phases.batch.aborted || null };
+    },
+  });
+  const drainReason = _drain.reason;
+  const drainCycle = _drain.cyclesRun;
+  const drainCycleLog = _drain.cycleLog;
+  const _pendingAtDrainEnd = countPendingPipeline();
+  updateJob({ drain_reason: drainReason, drain_cycles_used: drainCycle, drain_cycle_log: drainCycleLog, pending_after_drain: _pendingAtDrainEnd });
+  log(`✓ drain controller halted: ${drainReason} — ${drainCycle} cycle(s) run, ${_pendingAtDrainEnd} pending remaining`);
   // 2026-05-27 — phasePolish + phasePregen removed from Process All orchestrator
   // per Mitchell's directive (separation of concerns: pipeline drainage vs
   // pack refinement). Polish stays reachable via /api/polish + row-drawer
@@ -720,6 +768,25 @@ async function main() {
     );
     log(`⚠ NO-OP DETECTED — ${_warnings[0]}`);
   }
+  // ── Drain-residual surfacing (2026-06-02) ──────────────────────────────────
+  // The bounded drain controller halts at 0 (clean) OR on a residual it could
+  // not drain. Surface a non-clean stop as a warning so the run reads as
+  // "drained N, M remain (reason)" instead of a green ✓ that hides the residual.
+  // 'drained-to-zero' / 'already-empty' are the only clean stops.
+  const _drainClean = (drainReason === 'drained-to-zero' || drainReason === 'already-empty');
+  if (!_drainClean && pendingAfter > 0 && !_didNoWork) {
+    const reasonHelp = {
+      'no-progress':   'a full triage+batch cycle drained 0 — the residual is undrainable this run (dead postings, hard-disqualified roles, terminal-errored/expired batches, or a triage skip-without-mark gap).',
+      'max-cycles':    'hit PROCESS_ALL_MAX_DRAIN_CYCLES — raise it (or re-run) to keep draining a very large queue.',
+      'wallclock-cap': 'hit the wall-clock cap — re-run (Process All resumes) to continue draining.',
+    }[drainReason] || (drainReason.startsWith('batch-')
+      ? `phaseBatch self-aborted (${drainReason.slice(6)}) — investigate batch/batches-api-state.json.`
+      : drainReason);
+    _warnings.push(
+      `Partial drain: ${processed} item(s) drained across ${drainCycle} cycle(s); ${pendingAfter} still pending (stop reason: ${drainReason}). ${reasonHelp}`
+    );
+    log(`⚠ PARTIAL DRAIN — ${_warnings[_warnings.length - 1]}`);
+  }
   updateJob({
     status:           _didNoWork ? 'completed_no_op' : 'completed',
     no_op:            _didNoWork,
@@ -728,6 +795,10 @@ async function main() {
     pending_after:    pendingAfter,
     processed,
     published_count:  publishedCount,
+    drain_reason:     drainReason,
+    drain_cycles_used: drainCycle,
+    drain_cycle_log:  drainCycleLog,
+    partial_drain:    !_drainClean && pendingAfter > 0,
     phases,
     phase:            'done',
   });

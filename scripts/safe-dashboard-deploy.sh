@@ -178,7 +178,16 @@ if [ -f "$LIVE_HTML" ]; then
   cp "$LIVE_HTML" "$BACKUP_HTML"
   echo "  ✓ backup written: $BACKUP_HTML"
 fi
-cp "$SOURCE_WORKTREE/dashboard/index.html" "$LIVE_HTML"
+# When the deploy runs FROM the main repo, build-dashboard.mjs already wrote
+# the HTML directly to $LIVE_HTML. `cp X X` errors "identical (not copied)"
+# under `set -e` and aborts the deploy BEFORE the restart+canary (silent until
+# 2026-06-02). `-ef` = same device+inode, so the self-copy is skipped only when
+# source and live are literally the same file; cross-worktree deploys still cp.
+if [ "$SOURCE_WORKTREE/dashboard/index.html" -ef "$LIVE_HTML" ]; then
+  echo "  (build wrote in place: source path == live path — no self-copy needed)"
+else
+  cp "$SOURCE_WORKTREE/dashboard/index.html" "$LIVE_HTML"
+fi
 NEW_SIZE=$(wc -c < "$LIVE_HTML" | tr -d ' ')
 echo "  ✓ swapped: $LIVE_HTML (${NEW_SIZE} bytes)"
 

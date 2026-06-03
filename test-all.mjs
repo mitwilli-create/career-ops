@@ -567,6 +567,30 @@ try {
   }
 }
 
+// ── 17. PROCESS ALL DRAIN CONTROLLER (bounded termination) ──
+
+console.log("\n17. Process All drain controller — bounded loop terminates with the correct reason on every branch");
+
+try {
+  // Runs tests/process-all-drain-controller.test.mjs — exits 1 if the bounded
+  // drain loop fails to terminate or picks a wrong stop reason (already-empty /
+  // drained-to-zero / no-progress / max-cycles / wallclock-cap / batch-abort /
+  // cycle-failed). Guards convergence-impossible-runaway-without-cap for the
+  // 2026-06-02 "chain batches until queue == 0" controller.
+  execFileSync('node', ['tests/process-all-drain-controller.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+  });
+  pass('Process All drain controller — all termination branches bounded + correct');
+} catch (err) {
+  fail('Process All drain controller — loop termination is WRONG (runaway risk)');
+  const out = (err.stdout || '') + (err.stderr || '');
+  for (const line of out.split('\n').slice(0, 40)) {
+    if (line.trim()) console.log(`     ${line}`);
+  }
+}
+
 // ── SUMMARY ─────────────────────────────────────────────────────
 
 console.log('\n' + '='.repeat(50));

@@ -17,7 +17,7 @@
  *   node triage.mjs --dry-run                    # show what would happen, no writes
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync } from 'fs';
+import { readFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { spawnSync } from 'child_process';
@@ -30,6 +30,7 @@ try {
   config({ path: join(dirname(fileURLToPath(import.meta.url)), '.env'), override: true });
 } catch { /* dotenv optional */ }
 
+import { safeWriteFileSync, safeAppendFileSync, safeReadFileSync } from './lib/icloud-safe-fs.mjs';
 import { isCircuitOpen, withRetryBackoff, recordSuccess, recordFailure } from './lib/provider-client.mjs';
 import { HAIKU, SONNET } from './lib/models.mjs';
 import { readCached, poolMap } from './lib/fetch-utils.mjs';
@@ -109,7 +110,7 @@ function saveUrlCacheEntry(url, score, decision, archetype) {
   if (score >= 3.0 && score <= 4.0) return;
   const date = new Date().toISOString().slice(0, 10);
   const header = !existsSync(URL_CACHE_FILE) ? 'url\tdate\tscore\tdecision\tarchetype\n' : '';
-  appendFileSync(URL_CACHE_FILE, header + [url, date, score, decision, archetype].join('\t') + '\n');
+  safeAppendFileSync(URL_CACHE_FILE, header + [url, date, score, decision, archetype].join('\t') + '\n');
   _urlCache.set(url, { date, score, decision, archetype });
 }
 loadUrlCache();
@@ -189,20 +190,47 @@ function logZombieDecision(url, result, ageDays, clusterN) {
     clusterN,
     result.breakdown.evergreen,
   ].join('\t') + '\n';
-  try { appendFileSync(ZOMBIE_DECISIONS_FILE, header + line); } catch {}
+  try { safeAppendFileSync(ZOMBIE_DECISIONS_FILE, header + line); } catch {}
 }
 
 // ── Daily quota ─────────────────────────────────────────────────
+// 2026-07-02 EDEADLK hardening: quota reads/writes go through the
+// iCloud-safe wrappers (fileproviderd can hold the file mid-sync — see
+// docs/BUG-CLASSES.md § icloud-fileprovider-edeadlk-on-hot-state-file),
+// AND saveQuota is throttled to every TRIAGE_QUOTA_SAVE_EVERY_N calls
+// (default 10) + a flush on exit/SIGINT/SIGTERM, so the file churns ~10x
+// less and gives the sync daemon room to finish. Worst case on a hard
+// crash: the last <N quota increments are lost, which under-counts today's
+// quota and allows a few extra triages tomorrow — acceptable vs. dying.
+const QUOTA_SAVE_EVERY_N = Math.max(1, parseInt(process.env.TRIAGE_QUOTA_SAVE_EVERY_N ?? '10'));
+let _quotaPendingSaves = 0;
+let _quotaLast = null;
+
 function getQuota() {
   const today = new Date().toISOString().slice(0, 10);
   if (existsSync(QUOTA_FILE)) {
-    const q = JSON.parse(readFileSync(QUOTA_FILE, 'utf8'));
+    const q = JSON.parse(safeReadFileSync(QUOTA_FILE, 'utf8'));
     if (q.date === today) return q;
   }
   return { date: today, triaged: 0, advanced: 0, skipped: 0, dead: 0 };
 }
-function saveQuota(q) {
-  if (!DRY_RUN) writeFileSync(QUOTA_FILE, JSON.stringify(q, null, 2));
+function flushQuota() {
+  if (DRY_RUN || !_quotaLast) return;
+  safeWriteFileSync(QUOTA_FILE, JSON.stringify(_quotaLast, null, 2));
+  _quotaPendingSaves = 0;
+}
+function saveQuota(q, { force = false } = {}) {
+  if (DRY_RUN) return;
+  _quotaLast = q;
+  _quotaPendingSaves++;
+  if (force || _quotaPendingSaves >= QUOTA_SAVE_EVERY_N) flushQuota();
+}
+process.on('exit', () => { try { flushQuota(); } catch { /* best-effort on exit */ } });
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => {
+    try { flushQuota(); } catch { /* best-effort */ }
+    process.exit(sig === 'SIGINT' ? 130 : 143);
+  });
 }
 
 // ── Pipeline parser ─────────────────────────────────────────────
@@ -224,19 +252,19 @@ export function parsePipeline(content) {
 // Mark a URL as [x] in pipeline.md
 function markChecked(url) {
   if (DRY_RUN) return;
-  const content = readFileSync(PIPELINE_FILE, 'utf8');
+  const content = safeReadFileSync(PIPELINE_FILE, 'utf8');
   const updated = content.replace(`- [ ] ${url}`, `- [x] ${url}`);
-  if (updated !== content) writeFileSync(PIPELINE_FILE, updated);
+  if (updated !== content) safeWriteFileSync(PIPELINE_FILE, updated);
 }
 
 // Mark multiple URLs in one read/write pass (efficient for concurrent results)
 function markCheckedBatch(urls) {
   if (DRY_RUN || urls.length === 0) return;
-  let content = readFileSync(PIPELINE_FILE, 'utf8');
+  let content = safeReadFileSync(PIPELINE_FILE, 'utf8');
   for (const url of urls) {
     content = content.replace(`- [ ] ${url}`, `- [x] ${url}`);
   }
-  writeFileSync(PIPELINE_FILE, content);
+  safeWriteFileSync(PIPELINE_FILE, content);
 }
 
 // Write a SKIP tracker entry (for dashboard visibility)
@@ -246,7 +274,7 @@ function writeSkip(url, reason) {
   const date = new Date().toISOString().slice(0, 10);
   const company = guessCompany(url);
   const line = `\t${date}\t${company}\t—\tSKIP\t—\t❌\t—\t${reason.slice(0, 120)}\n`;
-  appendFileSync(SKIPS_TSV, line);
+  safeAppendFileSync(SKIPS_TSV, line);
 }
 
 // In-memory dedup index — URLs already in ADVANCE_FILE at session start +
@@ -280,7 +308,7 @@ function writeAdvance(url, tier, score, archetype, reason) {
   if (_advanceUrlIndex.has(url)) return;  // dedup — already queued
   _advanceUrlIndex.add(url);
   const header = !existsSync(ADVANCE_FILE) ? 'url\ttier\tscore\tarchetype\treason\n' : '';
-  appendFileSync(ADVANCE_FILE, header + [url, tier, score, archetype, reason].join('\t') + '\n');
+  safeAppendFileSync(ADVANCE_FILE, header + [url, tier, score, archetype, reason].join('\t') + '\n');
 }
 
 // guessCompany and HTTP liveness now live in lib/ats-utils.mjs and lib/http-liveness.mjs.
@@ -982,6 +1010,10 @@ async function main() {
       saveQuota(quota);
     }
   }
+
+  // Throttled saveQuota may still hold unflushed increments — force the
+  // final write here (the exit hook is the backstop, not the primary path).
+  saveQuota(quota, { force: true });
 
   console.log(`\n${'─'.repeat(60)}`);
   console.log(`Processed:   ${processed}`);

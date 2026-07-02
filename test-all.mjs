@@ -616,6 +616,31 @@ try {
   }
 }
 
+// ── 18. ICLOUD-SAFE FS (EDEADLK retry on hot state files) ──
+
+console.log('\n18. iCloud-safe fs — bounded EDEADLK retry wrappers for hot state-file writes');
+
+try {
+  // Runs tests/icloud-safe-fs.test.mjs — exits non-zero if the retry helper
+  // stops matching the EDEADLK / "Unknown system error -11" shapes, breaks
+  // the 250ms/1s/3s backoff schedule, or starts retrying non-EDEADLK errors.
+  // Guards the 2026-07-02 fileproviderd crash (triage.mjs died mid Process All
+  // opening batch/daily-quota.json). See docs/BUG-CLASSES.md
+  // § icloud-fileprovider-edeadlk-on-hot-state-file.
+  execFileSync('node', ['--test', 'tests/icloud-safe-fs.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+  });
+  pass('iCloud-safe fs — EDEADLK retry helper contract holds (matcher + backoff + no over-retry)');
+} catch (err) {
+  fail('iCloud-safe fs — EDEADLK retry helper contract BROKEN');
+  const out = (err.stdout || '') + (err.stderr || '');
+  for (const line of out.split('\n').slice(0, 40)) {
+    if (line.trim()) console.log(`     ${line}`);
+  }
+}
+
 // ── SUMMARY ─────────────────────────────────────────────────────
 
 console.log('\n' + '='.repeat(50));

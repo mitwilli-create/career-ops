@@ -11,7 +11,17 @@
  *
  * Each mapping rewrites a forbidden phrase to its approved, grammar-safe, honest form
  * (mirrors cv.md hardened framing: two deployed xGE agents + forked career-ops pipeline;
- * scope = 1,000+ L8+ Senior Technical ICs; triage ~60% auto-handled).
+ * scope = a community of 1,000+ Principal, Distinguished, and Fellow engineers; triage
+ * ~60% auto-handled).
+ *
+ * RULES RECALIBRATED 2026-06-11 (task_72ce7b66): the 2026-05-31 rules mapped retired
+ * metrics to forms that the 2026-06-04 grounding invariant
+ * (tests/apply-pack-no-scaffold-invariant.test.mjs) has since BANNED — "high stylistic
+ * fidelity", "substantial reduction in drafting latency" — and one rule actively
+ * INSERTED "1,000+ L8+ Senior Technical IC" into clean text. Because this scrubber runs
+ * inside scripts/lib/scrub-gate.mjs on every fresh apply-pack/popout/story build, the
+ * stale rules were a SEED of banned content, not a guard against it. All replacement
+ * targets now comply with lib/grounding-guard.mjs.
  *
  * SAFETY: after scrubbing, re-greps each file with the EXACT verify-dashboard-real PAT
  * (+ EXCL). If any leak SURVIVES (a novel phrase no mapping covers), exits 1 and prints
@@ -44,22 +54,64 @@ const RULES = [
   // The prior rule already converted the AI/LLM-token forms, so this only catches the leftovers.
   // Honest fix: correct the count to two and drop the inaccurate voice descriptor.
   [/\b(?:three|3) production (?:AI voice |AI |LLM |voice )?agents\b/gi, 'two production agents'],
-  [/\b99%\s+stylistic\s+fidelity\b/gi, 'high stylistic fidelity'],
-  [/\b99%\s+fidelity\b/gi, 'high fidelity'],
-  [/(?:>\s*|greater than\s+|over\s+)90%\s+classification(?:\s+accuracy)?/gi, 'reliable classification accuracy'],
-  // retired triage-latency metric (seed: "DROP 90% latency"). Existing scrub-target script maps to "substantial".
-  [/\b90%\s+reduction\s+in\s+(drafting\s+latency|latency|drafting)/gi, 'substantial reduction in $1'],
-  [/\b90%\s+(drafting[- ]latency|latency|drafting)\s+reduction/gi, 'substantial $1 reduction'],
-  [/\b300%\+?\s+(active capacity|active|capacity|scaling|deployment)\b/gi, 'substantial $1'],
-  [/\b348\s+(attendees|senior eng\w*|senior tech\w*|of them)\b/gi, 'hundreds of $1'],
-  [/\b93%\s+CSAT\b/gi, 'high CSAT'],
+  // ── stylistic-fidelity family. "stylistic fidelity" is itself banned post-2026-06-04,
+  //    so the old "99% → high stylistic fidelity" rewrite re-created a banned string.
+  //    Canonical: cv.md's digital-twin bullet carries NO fidelity metric — the agent
+  //    "drafts high-stakes executive communications in a consistent voice".
+  [/\bat\s+(?:99%|high)\s+stylistic\s+fidelity\b/gi, 'in a consistent, verified voice'],
+  [/\b(?:99%|high)\s+stylistic\s+fidelity\b/gi, 'a consistent, verified voice'],
+  [/\bstylistic[- ]fidelity\b/gi, 'voice fidelity'],
+  [/\bat\s+99%\s+fidelity\b/gi, 'in a verified voice'],
+  [/\b99%\s+fidelity\b/gi, 'a verified voice'],
+  // ── classification-accuracy family → canonical cv.md outcome (~60% auto-handled) ──
+  [/\bat\s+(?:>\s*|greater than\s+|over\s+)90%\s+classification(?:\s+accuracy)?/gi, 'with ~60% of inbound auto-handled'],
+  [/(?:>\s*|greater than\s+|over\s+)90%\s+classification(?:\s+accuracy)?/gi, '~60% of inbound auto-handled'],
+  // ── drafting-latency family. Both the 90% form AND the old "substantial …" rewrite
+  //    target are banned now — every form maps to "marked … drafting time".
+  [/\b90%\s+reduction\s+in\s+(?:drafting\s+latency|latency|drafting)\b/gi, 'a marked reduction in drafting time'],
+  [/\b90%\s+(?:drafting[- ]latency|latency|drafting)\s+(?:reduction|cut)\b/gi, 'a marked drafting-time reduction'],
+  [/\b(?:a\s+)?substantial\s+reduction\s+in\s+drafting(?:\s+latency)?\b/gi, 'a marked reduction in drafting time'],
+  [/\bsubstantial\s+drafting[- ]latency\s+reduction\b/gi, 'a marked drafting-time reduction'],
+  // ── mentorship-program family: outcome metrics retired; cv.md frames the program as
+  //    designed + in prototyping (no realized result yet) ──
+  [/\b90%\s+admin(?:istrative)?[- ]time\s+reduction\b/gi, 'a projected admin-time reduction'],
+  [/\b90%\s+reduction\s+in\s+administrative\s+processing\s+time\b/gi, 'a projected reduction in administrative processing time'],
+  [/\s*\((?:3\.5\s+(?:hours|hrs)\s*(?:→|->)\s*(?:under\s+20|<\s*20)\s*min(?:utes)?(?:\s+per\s+match)?)\)/gi, ''],
+  [/\b300%\+?\s+(active capacity|active|capacity|scaling|deployment)\b/gi, 'projected $1'],
+  [/\b348\s+(attendees|senior eng\w*|senior tech\w*|of them)\b/gi, '300+ $1'],
+  [/\b93%\s+(?:participant\s+)?CSAT\b/gi, 'strong participant feedback'],
   [/\btop\s+0\.5%\b/gi, 'most senior engineering tier'],
   [/\b9,000\s+machines?\s+and\s+9,500\s+\w+/gi, 'company-wide devices and hotspots'],
-  // "1,000 senior" WITHOUT the +/L8+ qualifier is the retired over-count form
-  [/\b1,000\s+senior\b/gi, '1,000+ L8+ Senior Technical IC'],
-  // STALE-but-conservative scope: cv.md:21 canonical = "1000+ L8+". "600+ L8+" was the
-  // interim recalled value (v5.1 claimed it swept to 0, but 1,791 files still carry it).
-  [/\b600\+\s*L8\+/gi, '1,000+ L8+'],
+  // ── L8-family. The old rules INSERTED "L8+" (banned since 2026-06-04) — now every
+  //    known L8 shape maps to the canonical rank-name phrasing from cv.md. ──
+  [/\b1,000\+?\s*L8\+?(?:\s*[–—-]\s*L10)?\s+Senior\s+Technical\s+ICs?\b/gi, '1,000+ Principal, Distinguished, and Fellow engineers'],
+  [/\b1,000\+?\s*L8\+?\s+senior\s+(?:technical\s+)?(?:ICs?|engineers?)\b/gi, '1,000+ Principal, Distinguished, and Fellow engineers'],
+  [/\b600\+\s*L8\+\s*(?:Senior\s+Technical\s+ICs?)?/gi, '1,000+ Principal, Distinguished, and Fellow engineers'],
+  [/\bL8\+?(?:\s*[–—-]\s*L10)?\s+Senior\s+Technical\s+ICs?\b/gi, 'Principal, Distinguished, and Fellow engineers'],
+  [/\bL8\+\s+senior\s+ICs?\b/gi, 'Principal/Distinguished/Fellow ICs'],
+  [/\bat\s+L8\s*[–—-]\s*L10\s+tiers\b/gi, 'at Principal, Distinguished, and Fellow tiers'],
+  [/enterprise-wide\s+L8\+\s+engineering\s+cohort/gi, 'enterprise-wide Principal/Distinguished cohort'],
+  // Generic L8 fallbacks (run AFTER the specific shapes above). "L8+" is
+  // Google-internal and meaningless externally — drop the token and keep the
+  // noun phrase ("1,000+ L8+ ICs" → "1,000+ ICs"); hyphen/dash ranges become
+  // the canonical external descriptor.
+  [/\b1,000\+\s*L8\+\s*/g, '1,000+ '],
+  [/\bL8\+\s*/g, ''],
+  [/\bL8\s*[–—-]\s*L10\b/g, 'principal-tier'],
+  [/\bL8\s+(engineers?|ICs?|reviewers?)\b/gi, 'principal-level $1'],
+  [/\bL6[–—-]L8\s+engineering\b/gi, 'senior engineering'],
+  [/\bL8[ -]through[ -]L10\b/gi, 'Principal-through-Fellow'],
+  // retired summit headcount in compound-adjective + plain forms
+  [/\b348-engineer summit\b/gi, 'senior-IC summit'],
+  [/\b348\s+engineers?\b/gi, '300+ engineers'],
+  [/\b90%\s+admin\s+reduction\b/gi, 'a projected admin-time reduction'],
+  // "1,000 senior" WITHOUT the + is the retired over-count form — add the + only.
+  [/\b1,000\s+senior\b/gi, '1,000+ senior'],
+  // ── banned branding + banned-word shapes (feedback_banned_word_kill) ──
+  [/["“”']?[Kk]ill[ -][Ll]ist["“”']?/g, 'banned-phrase checklist'],
+  [/\bOsama bin Laden was killed\b/g, 'Osama bin Laden died'],
+  // verified-fact correction: the coached producer's James Beard credit is a NOMINATION
+  [/James Beard [Aa]ward\b(?!\s+nominat)/g, 'James Beard nomination'],
   // ── 180K headcount claim (HARDENED-CV-SPEC retired "180K-person"; added 2026-05-31).
   //    Drop the retired headcount, keep the org/Google framing. NEVER matches "$180" comp
   //    figures — every form requires person/employee/eng-org/Google/workforce after 180K|180,000. ──
@@ -71,7 +123,7 @@ const RULES = [
 ];
 
 // ── EXACT verify-dashboard-real-2026-05-31 PAT + EXCL (source of truth for "forbidden") ──
-const PAT = '99% stylistic fidelity|99% fidelity|>90% classification|greater than 90% classification|over 90% classification|300%\\+ (active|capacity|scaling|deployment)|348 (attendees|senior eng|senior tech|of them)|93% CSAT|9,000 machines and 9,500|top 0\\.5%|(three|3) (shipped |deployed |distinct |production-grade )?production (AI|LLM) (agents|systems|builds|artifacts|deployments|surfaces)|(three|3) production (AI voice |AI |LLM |voice )?agents|1,000 senior|180(,?000|K)[ -]?(person|people|employee|eng|engineering|Google|workforce)';
+const PAT = '99% stylistic fidelity|stylistic[- ]fidelity|99% fidelity|>90% classification|greater than 90% classification|over 90% classification|substantial (reduction in drafting|drafting[- ]latency)|90% (reduction in )?(admin|administrative|drafting|latency)|300%\\+ (active|capacity|scaling|deployment)|348 (attendees|senior eng|senior tech|of them)|93% CSAT|9,000 machines and 9,500|top 0\\.5%|(three|3) (shipped |deployed |distinct |production-grade )?production (AI|LLM) (agents|systems|builds|artifacts|deployments|surfaces)|(three|3) production (AI voice |AI |LLM |voice )?agents|1,000 senior|180(,?000|K)[ -]?(person|people|employee|eng|engineering|Google|workforce)|L8\\+|L8[–-]L10|[Kk]ill[ -][Ll]ist';
 const EXCL = 'quarantine|zzz-polish|unsupported|dropped|Metric-hardened|corrected or dropped|No retired metrics';
 
 function resolveSlugFiles(slug) {

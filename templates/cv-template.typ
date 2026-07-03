@@ -13,7 +13,7 @@
 //   Page:           US Letter
 //   Ligatures:      OFF (ATS-parser safety)
 //   Section heads:  11.5pt UPPERCASE bold + 0.5pt rule beneath
-//   Role headers:   single-line "Title — Company · Location · Dates" with #h(1fr)
+//   Role headers:   single-line "Title · Company · Location · Dates" with #h(1fr)
 //
 // Section order (2026 AI/tech recruiter scan-optimized):
 //   Header band > Summary (no heading) > Skills (above-the-fold) >
@@ -85,7 +85,9 @@
 
 // ── Job entry macro ──────────────────────────────────────────────────────────
 // Single-line role header (council+dealbreaker D1):
-//   "Role Title — Company"            (bold, ink)        ┃   Location · Dates  (italic, muted)
+//   "Role Title · Company"            (bold, ink)        ┃   Location · Dates  (italic, muted)
+// Separator is "·", NOT an em dash — em dashes are banned in rendered materials
+// (feedback_no_em_dashes_in_materials, 2026-06-11: they read as an AI tell).
 // Optional team-context paragraph (1-2 lines, muted) — only shown when present.
 // Bullets follow with hanging indent.
 
@@ -107,7 +109,7 @@
     columns: (1fr, auto),
     gutter: 8pt,
     align: (left, right),
-    text(size: 10.5pt, weight: "bold", fill: ink)[#role — #company],
+    text(size: 10.5pt, weight: "bold", fill: ink)[#role · #company],
     text(size: 9.5pt, style: "italic", fill: muted)[#right-text],
   )
 

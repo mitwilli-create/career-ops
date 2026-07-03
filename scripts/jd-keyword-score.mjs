@@ -7,9 +7,13 @@
  * terms.
  *
  * Per-pack workflow:
- *   1. Read JD body from apply-pack/<slug>/grok-intel.md (Block A excerpt) or
- *      apply-pack/<slug>/README.md (role context); fall back to the eval
- *      report at reports/<num>-<slug>-<date>.md if those are sparse.
+ *   1. Read JD body. PRIMARY source: apply-pack/<slug>/jd.md (the verbatim
+ *      posting), used ALONE when present. FALLBACK (no usable jd.md):
+ *      grok-intel.md (Block A excerpt) + README.md (role context) +
+ *      one-pager.md, plus the eval report — passed explicitly via --report,
+ *      or resolved by ROLE SLUG (never by bare numeric prefix: report numbers
+ *      and tracker row numbers are independent num spaces — see
+ *      resolveEvalReport).
  *   2. Tokenize, lowercase, drop stopwords + numeric-only tokens, count.
  *      Sort by raw frequency; cap at top-20 (configurable).
  *   3. For each artifact (cv / cover-letter / form-fields / one-pager),
@@ -22,14 +26,15 @@
  *   node scripts/jd-keyword-score.mjs --all                  # every apply-pack dir
  *   node scripts/jd-keyword-score.mjs --slug <slug> --top 30 # custom keyword cap
  *   node scripts/jd-keyword-score.mjs --slug <slug> --dry-run # print to stdout
+ *   node scripts/jd-keyword-score.mjs --slug <slug> --report reports/2730-….md  # explicit JD report
  *
  * Exit code: 0 if every artifact hits the alignment floor (default ≥50%),
  *            1 if any pack falls below.
  */
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'node:fs';
-import { join, dirname, basename } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join, dirname, basename, isAbsolute } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -75,44 +80,126 @@ function topN(counts, n) {
 }
 
 function parseArgs(argv) {
-  const a = { slug: null, all: false, top: 20, dryRun: false, threshold: 0.5 };
+  const a = { slug: null, all: false, top: 20, dryRun: false, threshold: 0.5, report: null };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--slug' && argv[i + 1]) { a.slug = argv[++i]; continue; }
     if (argv[i] === '--all') { a.all = true; continue; }
     if (argv[i] === '--top' && argv[i + 1]) { a.top = Number(argv[++i]); continue; }
     if (argv[i] === '--dry-run') { a.dryRun = true; continue; }
     if (argv[i] === '--threshold' && argv[i + 1]) { a.threshold = Number(argv[++i]); continue; }
+    if (argv[i] === '--report' && argv[i + 1]) { a.report = argv[++i]; continue; }
   }
   return a;
 }
 
 /**
- * Load and concatenate JD-source text for a pack. Tries grok-intel.md,
- * README.md, then the eval report linked in applications.md.
+ * Resolve a pack slug to its eval report — NEVER by bare numeric prefix.
+ *
+ * Report numbers and tracker row numbers are INDEPENDENT num spaces (see
+ * AGENTS.md § "Two num spaces"). The old fallback matched reports/ by the
+ * pack's leading number, so pack 2729-lovable-* read report #2729 (Perplexity)
+ * instead of the Lovable row's actual report #2730 — keyword-alignment.md then
+ * scored artifacts against the WRONG JD (canonical incident 2026-06-10).
+ *
+ * Resolution order:
+ *   1. Exact role-slug match against reports/<num>-<roleSlug>-<date>.md
+ *      (both names derive from canonical buildSlug, so equality is exact;
+ *      newest date wins when the same role was re-evaluated).
+ *   2. Unique prefix match (slug-truncation tolerance, either direction) —
+ *      only when every candidate agrees on a single role slug.
+ *   3. The applications.md row's report-link column, accepted only when the
+ *      linked filename shares the pack's company token (defends against the
+ *      queue-num vs applications-num collision).
+ *
+ * Returns { path: 'reports/<file>.md', via } or null. Exported for tests.
  */
-function loadJdText(packDir, slug) {
+export function resolveEvalReport(packSlug, { root = ROOT } = {}) {
+  const m = String(packSlug || '').match(/^(\d+)-(.+)$/);
+  if (!m) return null;
+  const [, rowNum, roleSlug] = m;
+  const reportsDir = join(root, 'reports');
+  let files = [];
+  try { files = readdirSync(reportsDir).filter(f => f.endsWith('.md')); } catch { /* no reports dir */ }
+  const slugOf = f => f.replace(/^\d+-/, '').replace(/-\d{4}-\d{2}-\d{2}\.md$/, '').replace(/\.md$/, '');
+
+  let candidates = files.filter(f => slugOf(f) === roleSlug);
+  if (candidates.length === 0) {
+    candidates = files.filter(f => {
+      const s = slugOf(f);
+      return s.length >= 12 && roleSlug.length >= 12 && (s.startsWith(roleSlug) || roleSlug.startsWith(s));
+    });
+    // Prefix tolerance must be unambiguous: every candidate must be the SAME
+    // role slug (e.g. a truncated pack slug must not span "…-industries" AND
+    // "…-commercial" reports).
+    if (new Set(candidates.map(slugOf)).size > 1) candidates = [];
+  }
+  if (candidates.length > 0) {
+    candidates.sort(); // same slug → ISO date suffix sorts oldest→newest
+    return { path: join('reports', candidates[candidates.length - 1]), via: 'slug-match' };
+  }
+
+  // applications.md report-link column, with company-token sanity check.
+  try {
+    const tracker = readFileSync(join(root, 'data', 'applications.md'), 'utf-8');
+    const row = tracker.match(new RegExp(`^\\| *${rowNum} *\\|.*$`, 'm'))?.[0];
+    const link = row && row.match(/\((reports\/[^)]+\.md)\)/)?.[1];
+    if (link) {
+      const companyToken = roleSlug.split('-')[0];
+      if (companyToken && basename(link).toLowerCase().includes(companyToken.toLowerCase())) {
+        return { path: link, via: 'applications-md-report-link' };
+      }
+    }
+  } catch { /* tracker unavailable — fall through to null */ }
+  return null;
+}
+
+// jd.md (and the assembled fallback corpus) must clear this floor before the
+// term extraction runs — a stub file shouldn't starve the keyword gate.
+const MIN_JD_CHARS = 200;
+
+/**
+ * Load JD-source text for a pack. Returns { text, source } where source is
+ * 'jd.md' or 'intel-concat'. Exported for tests.
+ *
+ * PRIMARY — apply-pack/<slug>/jd.md (the verbatim posting), used ALONE.
+ * Mixing in the intel files dilutes the term distribution with
+ * meta-vocabulary (`inferred`, `https`, `www`, `recruiter`, `bullet`…) until
+ * the "JD top terms" stop describing the job and the ≥50% gate scores
+ * artifacts against noise (canonical incident: pack 049-perplexity-*,
+ * 2026-06-10 — tailored-cv.md scored 30% against terms like `linkedin`/
+ * `comp`/`https` while the real JD sat unused in jd.md). jd.md also wins
+ * over --report: the eval report is an ANALYSIS of the JD, not the JD.
+ *
+ * FALLBACK (jd.md absent or under MIN_JD_CHARS) — concatenate grok-intel.md,
+ * README.md, one-pager.md, then the eval report (explicit --report override
+ * first, slug-based resolution otherwise — see resolveEvalReport).
+ */
+export function loadJdText(packDir, slug, reportOverride = null, { root = ROOT } = {}) {
+  const jdPath = join(packDir, 'jd.md');
+  if (existsSync(jdPath) && statSync(jdPath).isFile()) {
+    const jd = readFileSync(jdPath, 'utf-8');
+    if (jd.trim().length >= MIN_JD_CHARS) return { text: jd, source: 'jd.md' };
+  }
   const parts = [];
   for (const name of ['grok-intel.md', 'README.md', 'one-pager.md']) {
     const p = join(packDir, name);
     if (existsSync(p)) parts.push(readFileSync(p, 'utf-8'));
   }
-  // Fallback: eval report. Slug pattern: <padded-rowid>-<roleSlug>; the
-  // report is reports/<rowid>-<slug>-<date>.md OR reports/<num>-<slug>-<date>.md.
-  const m = slug.match(/^(\d+)-(.+)$/);
-  if (m) {
-    const rowid = m[1];
-    const reportsDir = join(ROOT, 'reports');
-    if (existsSync(reportsDir)) {
-      const reports = readdirSync(reportsDir).filter(f =>
-        f.startsWith(`${rowid}-`) || f.startsWith(`${String(Number(rowid)).padStart(3, '0')}-`)
-      );
-      for (const r of reports) {
-        const p = join(reportsDir, r);
-        if (existsSync(p) && statSync(p).isFile()) parts.push(readFileSync(p, 'utf-8'));
-      }
+  let reportLoaded = false;
+  if (reportOverride) {
+    const p = isAbsolute(reportOverride) ? reportOverride : join(root, reportOverride);
+    if (existsSync(p) && statSync(p).isFile()) {
+      parts.push(readFileSync(p, 'utf-8'));
+      reportLoaded = true;
+    } else {
+      console.error(`WARN: --report ${reportOverride} not found — falling back to slug resolution`);
     }
   }
-  return parts.join('\n\n');
+  if (!reportLoaded) {
+    const resolved = resolveEvalReport(slug, { root });
+    if (resolved) parts.push(readFileSync(join(root, resolved.path), 'utf-8'));
+  }
+  return { text: parts.join('\n\n'), source: 'intel-concat' };
 }
 
 function loadArtifact(packDir, filename) {
@@ -136,12 +223,15 @@ function scoreOverlap(jdTopTerms, artifactText) {
   };
 }
 
-function buildReport(slug, jdTopTerms, artifactScores, threshold) {
+function buildReport(slug, jdTopTerms, artifactScores, threshold, jdSource) {
   const lines = [];
   lines.push(`# Keyword alignment — ${slug}`);
   lines.push('');
   lines.push(`Generated by \`scripts/jd-keyword-score.mjs\` on ${new Date().toISOString().slice(0, 10)}.`);
   lines.push(`Threshold: ${Math.round(threshold * 100)}%. Below threshold = ATS-filter risk.`);
+  lines.push(`JD source: \`${jdSource}\`${jdSource === 'jd.md'
+    ? ' (verbatim posting)'
+    : ' (grok-intel + README + one-pager + eval report — add jd.md to the pack for clean JD terms)'}`);
   lines.push('');
   lines.push('## JD top terms');
   lines.push('');
@@ -175,34 +265,42 @@ function buildReport(slug, jdTopTerms, artifactScores, threshold) {
   return lines.join('\n') + '\n';
 }
 
-function processPack(packSlug, opts) {
-  const packDir = join(ROOT, 'apply-pack', packSlug);
+export function processPack(packSlug, opts, { root = ROOT } = {}) {
+  const packDir = join(root, 'apply-pack', packSlug);
   if (!existsSync(packDir) || !statSync(packDir).isDirectory()) {
     return { slug: packSlug, ok: false, error: 'pack_dir_not_found' };
   }
 
-  const jdText = loadJdText(packDir, packSlug);
-  if (!jdText || jdText.trim().length < 200) {
+  const { text: jdText, source: jdSource } = loadJdText(packDir, packSlug, opts.report, { root });
+  if (!jdText || jdText.trim().length < MIN_JD_CHARS) {
     return { slug: packSlug, ok: false, error: 'jd_text_too_short' };
   }
   const jdTokens = tokenize(jdText);
   const jdCounts = frequency(jdTokens);
   const jdTopTerms = topN(jdCounts, opts.top);
 
-  const artifactNames = ['tailored-cv.md', 'cover-letter.md', 'form-fields.md', 'one-pager.md'];
-  const cvMdFallback = readFileSync(join(ROOT, 'cv.md'), 'utf-8'); // for cv fallback
+  // CV slot: cv-tailored.md is the L6 schema-typed artifact that renders to
+  // the shipped PDF — score it FIRST so the gate callers' find() lands on it;
+  // legacy tailored-cv.md is also scored when present (the two render
+  // surfaces can drift independently). Master cv.md is the fallback only
+  // when NEITHER pack-local CV exists.
+  const artifactNames = ['cv-tailored.md', 'tailored-cv.md', 'cover-letter.md', 'form-fields.md', 'one-pager.md'];
   const artifactScores = [];
+  let cvCovered = false;
   for (const name of artifactNames) {
-    let a = loadArtifact(packDir, name);
-    if (!a && name === 'tailored-cv.md') {
-      // Fall back to master cv.md so we can still score.
-      a = { path: 'cv.md (fallback)', text: cvMdFallback };
-    }
+    const a = loadArtifact(packDir, name);
     if (!a) continue;
+    if (name === 'cv-tailored.md' || name === 'tailored-cv.md') cvCovered = true;
     artifactScores.push({ path: a.path, ...scoreOverlap(jdTopTerms, a.text) });
   }
+  if (!cvCovered) {
+    try {
+      const cvMdFallback = readFileSync(join(root, 'cv.md'), 'utf-8');
+      artifactScores.unshift({ path: 'cv.md (fallback)', ...scoreOverlap(jdTopTerms, cvMdFallback) });
+    } catch { /* no master cv.md (CI / fixture root) — score what exists */ }
+  }
 
-  const report = buildReport(packSlug, jdTopTerms, artifactScores, opts.threshold);
+  const report = buildReport(packSlug, jdTopTerms, artifactScores, opts.threshold, jdSource);
   const allOk = artifactScores.every(a => a.score >= opts.threshold);
 
   if (opts.dryRun) {
@@ -215,6 +313,8 @@ function processPack(packSlug, opts) {
   return {
     slug: packSlug,
     ok: allOk,
+    jd_source: jdSource,
+    jd_terms: jdTopTerms.map(t => t.term),
     jdTopTerms: jdTopTerms.length,
     artifacts: artifactScores.map(a => ({ path: a.path, score: Math.round(a.score * 100), misses: a.misses.length })),
   };
@@ -258,7 +358,12 @@ async function main() {
   process.exit(summary.packs_failed > 0 ? 1 : 0);
 }
 
-main().catch(err => {
-  console.error('FATAL:', err);
-  process.exit(2);
-});
+// Import-guard: only run the CLI when executed directly (tests import
+// resolveEvalReport without triggering main()).
+const _isCli = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (_isCli) {
+  main().catch(err => {
+    console.error('FATAL:', err);
+    process.exit(2);
+  });
+}

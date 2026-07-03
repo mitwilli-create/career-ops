@@ -592,6 +592,139 @@ try {
   }
 }
 
+// ── 16c. APPLY-PACK FABRICATED-EMPLOYER INVARIANT (no invented employers) ──
+
+console.log("\n16c. Apply-pack content — zero first-person employment claims outside cv.md's employer set");
+
+try {
+  // Runs tests/apply-pack-fabricated-employer-invariant.test.mjs — unit tests on
+  // lib/employer-claims.mjs plus a local-only census of every pack's prose trio
+  // (cover-letter / form-fields / one-pager) against the cv.md-derived employer
+  // allowlist. Closes the 2026-06-10 row-2729 incident: a generated cover letter
+  // claimed Mitchell worked "At Replit" with the target company's metrics as
+  // personal history, and the verification subprocesses were being swallowed as
+  // warnings. See docs/BUG-CLASSES.md § fabricated-employer-in-generated-prose.
+  execFileSync('node', ['tests/apply-pack-fabricated-employer-invariant.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+  });
+  pass('Apply-pack content — zero fabricated-employer claims (unit + census)');
+} catch (err) {
+  fail('Apply-pack content VIOLATED — fabricated-employer claim(s) in user-facing prose or lib regression');
+  const out = (err.stdout || '') + (err.stderr || '');
+  for (const line of out.split('\n').slice(0, 30)) {
+    if (line.trim()) console.log(`     ${line}`);
+  }
+}
+
+// ── 16d. JD-REPORT RESOLUTION (slug-match, never bare num across num spaces) ──
+
+console.log("\n16d. JD keyword score — eval-report resolution matches by role slug / report-link, never bare numeric prefix");
+
+try {
+  // Runs tests/jd-report-resolution.test.mjs — pure-fixture unit tests on
+  // scripts/jd-keyword-score.mjs::resolveEvalReport. Report numbers and tracker
+  // row numbers are independent num spaces (AGENTS.md § "Two num spaces"); the
+  // pre-2026-06-10 numeric-prefix fallback scored pack 2729-lovable against the
+  // Perplexity report that happened to share the number.
+  execFileSync('node', ['tests/jd-report-resolution.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+  });
+  pass('JD-report resolution — slug-match + report-link column, num-space collision guarded');
+} catch (err) {
+  fail('JD-report resolution REGRESSED — pack reports can resolve across num spaces again');
+  const out = (err.stdout || '') + (err.stderr || '');
+  for (const line of out.split('\n').slice(0, 30)) {
+    if (line.trim()) console.log(`     ${line}`);
+  }
+}
+
+// ── 16e. JD-KEYWORD SOURCE (jd.md primary; intel-concat only as fallback) ──
+
+console.log("\n16e. JD keyword score — jd.md is the sole JD-term source when present; cv-tailored.md (L6) scored as primary CV row");
+
+try {
+  // Runs tests/jd-keyword-source.test.mjs — pure-fixture unit tests on
+  // scripts/jd-keyword-score.mjs::loadJdText + processPack. Pins that a pack
+  // carrying jd.md extracts top terms from the verbatim posting — never the
+  // grok-intel/README/eval-report meta-vocabulary (`https`, `www`, `inferred`,
+  // `recruiter`) that made the ≥50% gate meaningless (pack 049 scored 30%
+  // against noise, 2026-06-10) — and that cv-tailored.md, the L6 artifact
+  // that renders to the shipped PDF, is scored ahead of legacy tailored-cv.md.
+  execFileSync('node', ['tests/jd-keyword-source.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+  });
+  pass('JD keyword source — jd.md-present packs extract real JD terms; L6 CV artifact scored');
+} catch (err) {
+  fail('JD keyword source REGRESSED — intel noise back in JD top terms or CV artifact coverage lost');
+  const out = (err.stdout || '') + (err.stderr || '');
+  for (const line of out.split('\n').slice(0, 30)) {
+    if (line.trim()) console.log(`     ${line}`);
+  }
+}
+
+// ── 16f. APPLY-PACK GROUNDING INVARIANT (retired metrics / L8 / flags / CV link / em dashes) ──
+
+console.log("\n16f. Apply-pack grounding — zero retired metrics, level jargon, unresolved fabrication flags, wrong-artifact CV links, or em dashes (full tree)");
+
+try {
+  // Runs tests/apply-pack-no-scaffold-invariant.test.mjs with the opt-in
+  // grounding checks FLIPPED ON, full tree (no apply-now scoping). Gated
+  // permanently on 2026-06-11 (task_72ce7b66) after the tree-wide sweep via
+  // scripts/scrub-apply-pack-grounding-debt.mjs drove the census from 601
+  // violations across 288 artifacts to zero. Patterns are shared with the
+  // generation tollbooth via lib/grounding-guard.mjs, so what the generator
+  // blocks and what this invariant counts cannot drift apart. CI-safe: with
+  // no local apply-pack/ tree the census scans zero files and passes.
+  // APPLY_PACK_EMDASH_INVARIANT flipped on 2026-06-12 after the em-dash sweep
+  // (scripts/scrub-em-dashes.mjs) drove the artifact census from 8,804 em
+  // dashes across 605 files to zero — em dashes read as an AI tell and are
+  // banned in submitted/spoken materials (feedback_no_em_dashes_in_materials;
+  // en dashes in date ranges are allowed; record packs + google packs exempt).
+  execFileSync('node', ['tests/apply-pack-no-scaffold-invariant.test.mjs'], {
+    cwd: ROOT,
+    env: { ...process.env, APPLY_PACK_GROUNDING_INVARIANT: '1', APPLY_PACK_EMDASH_INVARIANT: '1' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+  });
+  pass('Apply-pack grounding — full-tree census clean (retired metrics / L8 / fabrication flags / CV links / em dashes)');
+} catch (err) {
+  fail('Apply-pack grounding VIOLATED — retired metric / L8 jargon / fabrication flag / wrong CV link / em dash in pack artifacts');
+  const out = (err.stdout || '') + (err.stderr || '');
+  for (const line of out.split('\n').slice(0, 30)) {
+    if (line.trim()) console.log(`     ${line}`);
+  }
+}
+
+// ── 16g. GROUNDING-GUARD UNIT FIXTURES (lib behavior pinned) ──
+
+console.log("\n16g. Grounding guard — retired-metric/product-claim/chatter/branding rules behave (fixtures)");
+
+try {
+  // Runs tests/grounding-guard.test.mjs — CI-safe fixtures pinning
+  // lib/grounding-guard.mjs: retired-metric probes + clean-claim passes,
+  // L8 jargon, Kill-List→banned-phrase-checklist replacement, editorial-chatter
+  // stripping (rows 2527/2373), and the target-company product-claim guard
+  // (row 2582: "I built Ramp Glass, Inspect, Dojo, Sensei").
+  execFileSync('node', ['tests/grounding-guard.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+  });
+  pass('Grounding guard — all unit fixtures green');
+} catch (err) {
+  fail('Grounding guard REGRESSED — lib/grounding-guard.mjs fixtures failing');
+  const out = (err.stdout || '') + (err.stderr || '');
+  for (const line of out.split('\n').slice(0, 30)) {
+    if (line.trim()) console.log(`     ${line}`);
+  }
+}
+
 // ── 17. PROCESS ALL DRAIN CONTROLLER (bounded termination) ──
 
 console.log("\n17. Process All drain controller — bounded loop terminates with the correct reason on every branch");

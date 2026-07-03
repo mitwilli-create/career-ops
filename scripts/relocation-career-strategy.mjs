@@ -2,8 +2,8 @@
 /**
  * relocation-career-strategy.mjs
  *
- * Multi-model strategic analysis: optimal career + wealth path for
- * Thailand (short-term) and Taiwan (long-term) relocation.
+ * Multi-model strategic analysis: optimal career + wealth path for a
+ * user-defined international relocation plan.
  *
  * Fires simultaneously across:
  *   - xAI Grok (web_search + x_search)
@@ -11,13 +11,24 @@
  *   - Gemini 2.5 Pro (Google Search grounded)
  *   - OpenAI GPT-5 / o3 fallback
  *
- * Usage: node scripts/relocation-career-strategy.mjs
+ * PERSONAL-DATA CONTRACT (why this file is safe to track in a fork):
+ *   This script contains NO personal data. The subject's profile — identity,
+ *   compensation, relocation plan, political filters — is loaded at RUNTIME
+ *   from a gitignored JSON file, so it never enters version control or a
+ *   cross-fork PR.
+ *     - Real profile (yours, gitignored):  data/relocation-profile.json
+ *     - Committed placeholder scaffold:     data/relocation-profile.example.json
+ *   If the real file is absent, the example is used with a loud warning.
+ *   Do NOT inline a profile back into this file — see AGENTS.md Data Contract
+ *   and lib/leak-guard.mjs (data/relocation-profile.json is a sensitive path).
+ *
+ * Usage:  node scripts/relocation-career-strategy.mjs
  * Output: /tmp/relocation-career-strategy-YYYY-MM-DD.md
  */
 
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -33,62 +44,80 @@ try {
 const TODAY = new Date().toISOString().slice(0, 10);
 const OUT = `/tmp/relocation-career-strategy-${TODAY}.md`;
 
-const PROMPT = `
+// --- profile loader: real (gitignored) first, committed example as fallback ---
+const REAL_PROFILE = join(ROOT, 'data', 'relocation-profile.json');
+const EXAMPLE_PROFILE = join(ROOT, 'data', 'relocation-profile.example.json');
+
+function loadProfile() {
+  if (existsSync(REAL_PROFILE)) {
+    return { profile: JSON.parse(readFileSync(REAL_PROFILE, 'utf8')), source: 'data/relocation-profile.json' };
+  }
+  if (existsSync(EXAMPLE_PROFILE)) {
+    console.warn('⚠️  data/relocation-profile.json not found — using the committed PLACEHOLDER example.');
+    console.warn('    The output will be generic. To run against your real profile:');
+    console.warn('    cp data/relocation-profile.example.json data/relocation-profile.json   # the real file is gitignored');
+    return { profile: JSON.parse(readFileSync(EXAMPLE_PROFILE, 'utf8')), source: 'data/relocation-profile.example.json (PLACEHOLDER)' };
+  }
+  console.error('❌ No profile found. Create data/relocation-profile.json (copy data/relocation-profile.example.json).');
+  process.exit(1);
+}
+
+function bulletize(arr) {
+  return (arr || []).map(s => `- ${s}`).join('\n');
+}
+
+/**
+ * Build the research prompt entirely from a profile object. No personal data
+ * is hard-coded here — every person- or destination-specific value comes from
+ * the loaded profile.
+ */
+function buildPrompt(p) {
+  const ind = p.individual || {};
+  const tr = p.target_roles || {};
+  const rel = p.relocation || {};
+  const st = rel.short_term || {};
+  const lt = rel.long_term || {};
+  const filters = rel.political_filters || [];
+  const stRegion = st.region || st.country || 'the destination region';
+
+  return `
 You are conducting rigorous strategic career and financial planning for a specific individual.
-Read every detail of his profile carefully — the analysis must be tailored to him, not generic.
+Read every detail of his profile carefully: the analysis must be tailored to him, not generic.
 
 ---
 
 ## THE INDIVIDUAL
 
-**Name:** Mitchell Williams, 41, gay white American male, US citizen
-**Current role:** Internal Communications Lead + Program Manager, Google xGE (Office of Cross-Google Engineering)
-**Current location:** Seattle, WA
-**Total comp target:** $140K–$240K USD
-**Minimum floor:** $110K (fully remote / international preferred)
+**Name:** ${ind.name}, ${ind.age}, ${ind.descriptors}
+**Current role:** ${ind.current_role}
+**Current location:** ${ind.current_location}
+**Total comp target:** ${ind.comp_target_usd}
+**Minimum floor:** ${ind.comp_floor_usd}
 
 **Core skills and demonstrated production:**
-- AI agent engineering at production scale: shipped three LLM agents for Google's top 0.5% of 180,000 engineers
-  - Autonomous Communications Triage Agent (three-prompt architecture: triage/revise/escalate, conditional KB loading) — ~160 operational hours/year recaptured at >90% classification accuracy for ~1,000 Principal/Distinguished/Fellow engineers
-  - Executive RAG Pipeline / "Voice DNA" — 90% drafting latency reduction, 99% stylistic fidelity for VP-level communications
-  - AI-driven senior engineering mentorship platform — 90% admin reduction (3.5hrs → 20min/match), 300%+ deployment capacity scaling
-  - All three run unattended; triage system maintained 100% operational continuity through a multi-month absence
-- LLM orchestration, MCP (Model Context Protocol), RAG pipelines, prompt engineering, autonomous agents, Claude Code
-- Executive and principal-level communications at engineering scale — ghostwriting and briefing for VP/L8-L10 audience
-- 13 years in broadcast journalism before Google: Al Jazeera English (The Stream founding team), HuffPost Live, Fusion (ABC/Univision), AJ+, CNN
-- Live broadcast production under active litigation exposure (Scientology coverage), multi-stakeholder OPSEC, crisis comms
-- Applied AI certifications: Anthropic AI Fluency, Claude 101, Introduction to Agent Skills, Introduction to MCP (all March 2026)
-- Personal projects: career-ops (agentic job-search pipeline, public GitHub), Voice OS (1.08M-word personal corpus analysis), Tax Verification Agent ($19K error caught)
-- Node.js, Apps Script, Python (learning), Playwright, YAML, Markdown
+${(p.skills_and_production || []).map(s => `- ${s}`).join('\n')}
 
 **Target roles:**
-- Primary: AI Solutions Architect, Forward Deployed Engineer, Applied AI Engineer, AI Enablement Lead, AI Program Manager / Technical Program Manager
-- Secondary: Communications Manager (AI-native), Developer Education Lead, Engineering Editorial Lead
+- Primary: ${tr.primary}
+- Secondary: ${tr.secondary}
 
 **CV notes relevant to career strategy:**
-- He produced an investigative segment at AJ+ exposing Senate co-sponsors of a BDS criminalization bill who had not read the bill they signed. This is documented on his public CV. He is openly pro-Palestinian and views Israel's conduct as a dealbreaker in evaluating governments and employers.
-- He has documented connections to LGBTQ advocacy journalism going back to 2012 (trans military panel, PrEP coverage ahead of mainstream, Jazz episode pre-TLC). His identity and values are public.
-- He has NO interest in roles at companies with significant Israel defense/surveillance contracts, pro-Israel political alignment, or cultures where his public political positions would create employment risk.
+${bulletize(p.cv_notes)}
 
 ---
 
 ## HIS RELOCATION PLAN
 
-**Short-term destination (2026–2032): Bangkok, Thailand**
-- Reasons: Buddhist cultural foundation (non-Abrahamic), same-sex marriage now law (effective January 2025), world-class international hospitals (Bumrungrad, Bangkok Hospital, Samitivej — JCI-accredited), not Western, not Israel-aligned, not Christian nationalist
-- He is plant-based/vegan — needs embedded food culture, not just restaurant options
-- He will NOT be returning to the United States permanently
+**Short-term destination (${st.window}): ${st.place}**
+${bulletize(st.reasons)}
+${bulletize(st.notes)}
 
-**Long-term destination (2032–2045+): Taipei, Taiwan**
-- Taiwan passes all his filters — Buddhist/Taoist culture, full marriage equality, National Health Insurance, EU-level food safety, functioning democracy
-- Taiwan on hold 2026–2032 due to PRC conflict risk (2027–2030 danger window per CSIS/RAND analysis)
-- Once the danger window resolves favorably, Taiwan becomes his permanent home
+**Long-term destination (${lt.window}): ${lt.place}**
+${bulletize(lt.reasons)}
+${bulletize(lt.notes)}
 
 **Political filters (non-negotiable, affects employer selection too):**
-- No Christian nationalist, Muslim majority, or Israel-aligned governance or employer culture
-- No Western/European country as a permanent base
-- He can speak freely about Israel-Palestine, US foreign policy, and his values without employment or legal risk
-- He will not compromise his political voice for an employer
+${bulletize(filters)}
 
 ---
 
@@ -96,95 +125,94 @@ Read every detail of his profile carefully — the analysis must be tailored to 
 
 Answer each of the following with specificity, current data, and honest tradeoff analysis. Do not give him generic expat advice. Apply his exact profile.
 
-### QUESTION 1: TIMING — How many more years in the US optimizes lifetime wealth?
+### QUESTION 1: TIMING. How many more years in the US optimizes lifetime wealth?
 
-Given his current Google total comp likely in the $195K–$250K range (Seattle market, senior IC/PgM L5-L6), what is the mathematical case for staying in the US for 1, 2, 3, or 5 more years before Bangkok?
+Given ${ind.current_comp_estimate}, what is the mathematical case for staying in the US for 1, 2, 3, or 5 more years before ${st.place}?
 
 Factor in:
-- US tech AI market comp trajectory for his archetype (AI Solutions Architect / Forward Deployed Engineer / Applied AI PgM) in 2026–2028
-- The cost-of-living differential between Seattle and Bangkok (his spending power multiplies dramatically — what does this mean for net wealth accumulation per year?)
-- What savings/runway amount makes Bangkok livable as a fully independent operator without US-employer dependency?
-- Tax implications of the move (FEIE, Foreign Tax Credit, US worldwide taxation of citizens — he cannot escape US taxes by moving)
-- At what savings number does the Bangkok move become self-sustaining regardless of employment?
+- US tech AI market comp trajectory for his archetype (${tr.primary}) in 2026–2028
+- The cost-of-living differential between ${ind.current_location} and ${st.place} (his spending power multiplies dramatically: what does this mean for net wealth accumulation per year?)
+- What savings/runway amount makes ${st.place} livable as a fully independent operator without US-employer dependency?
+- Tax implications of the move (FEIE, Foreign Tax Credit, US worldwide taxation of citizens: he cannot escape US taxes by moving)
+- At what savings number does the ${st.place} move become self-sustaining regardless of employment?
 
-### QUESTION 2: LEGAL STRUCTURE — What entity and tax structure maximizes his income from Bangkok?
+### QUESTION 2: LEGAL STRUCTURE. What entity and tax structure maximizes his income from ${st.place}?
 
-He will be working remotely — either as an employee of a US/global company or as an independent operator. Analyze:
+He will be working remotely, either as an employee of a US/global company or as an independent operator. Analyze:
 
-**Option A: Remain a US employee (W-2) while living in Bangkok**
-- Which companies and roles allow full remote from Southeast Asia?
-- What does US tech comp look like for remote roles at his level when the employer knows he's in Thailand?
-- HR/legal risk of working US W-2 while resident in Thailand — permanent establishment risk, payroll tax issues, benefits cliff
+**Option A: Remain a US employee (W-2) while living in ${st.place}**
+- Which companies and roles allow full remote from ${stRegion}?
+- What does US tech comp look like for remote roles at his level when the employer knows he's in ${st.country}?
+- HR/legal risk of working US W-2 while resident in ${st.country}: permanent establishment risk, payroll tax issues, benefits cliff
 
 **Option B: US LLC / S-Corp structure with client contracts**
 - Wyoming or Delaware LLC for freelance/consulting
 - Self-employment tax burden vs. W-2
-- FEIE ($126,500 exempt in 2024, adjusts annually) — how much of his income is shielded?
-- Thai tax implications: does Thailand tax foreign-sourced income for residents? What changed with Thailand's 2024 tax rule update (Revenue Department Ruling P.161/2566)?
+- FEIE ($126,500 exempt in 2024, adjusts annually): how much of his income is shielded?
+- ${st.country} tax implications: does ${st.country} tax foreign-sourced income for residents?
 - What consulting rate does his profile support? ($200–$400/hr range? What's realistic for his archetype?)
 
-**Option C: Thailand BOI / SMART Visa / LTR Visa structure**
-- Thailand's Long-Term Resident (LTR) Visa: "Work-From-Thailand Professional" category — does he qualify? What income/employer requirements apply?
-- Thailand's SMART Visa for tech talent — eligibility for his profile
-- What tax exemptions apply under LTR status? (LTR holders reportedly pay 17% flat tax on Thai-sourced income)
-- What's the practical visa path for someone at his level moving to Bangkok to work remotely for non-Thai clients?
+**Option C: ${st.country} residency / talent-visa structures**
+${bulletize(st.research_anchors)}
+- What's the practical visa path for someone at his level moving to ${st.place} to work remotely for non-${st.country} clients?
 
-**Option D: Singapore/Hong Kong/UK entity for Asia-based billing**
+**Option D: Regional entity for Asia-based billing (e.g. Singapore/Hong Kong)**
 - Pros/cons of billing through a Singapore Pte. Ltd. vs. keeping everything US-structured
-- Singapore's tax treaty with the US; territorial tax system benefits
+- The relevant US tax treaty; territorial tax system benefits
 - Is this worth the overhead for someone at his income level?
 
 What is the optimal structure, and what are the realistic after-tax income scenarios under each?
 
-### QUESTION 3: EMPLOYER + CLIENT TARGETING — Which companies and client types are Bangkok-compatible at his comp level?
+### QUESTION 3: EMPLOYER + CLIENT TARGETING. Which companies and client types are ${st.place}-compatible at his comp level?
 
 Name specific companies, not categories. Consider:
 
 **Remote-first or remote-friendly AI companies that:**
-- Hire internationally / allow SEA-based employees or contractors
-- Do NOT have significant Israel defense/surveillance contracts (he will not work there)
-- Are building the kinds of AI systems his archetype fits (Forward Deployed, AI Enablement, Solutions Architect)
-- Pay at or above his $110K floor even for remote/international work
-- Have cultures where his political positions (pro-Palestinian, anti-Christian nationalism) are not employment-liabilities
+- Hire internationally / allow ${stRegion}-based employees or contractors
+- Respect his political filters (listed above) — he will not work where they are violated
+- Are building the kinds of AI systems his archetype fits (${tr.primary})
+- Pay at or above his floor (${ind.comp_floor_usd}) even for remote/international work
+- Have cultures where his public positions are not employment-liabilities
 
 **Consulting/freelance client types that:**
 - Pay $200–$400/hr or equivalent project rates
 - Need AI agent architecture, executive comms AI, or LLM pipeline work
-- Can be served entirely remotely from Bangkok
-- Are not in the Israel-defense/surveillance space
+- Can be served entirely remotely from ${st.place}
+- Respect his political filters
 
 Name specific companies. Name what his consulting positioning should be. Name what his rate ceiling realistically is.
 
-### QUESTION 4: CAREER POSITIONING — What should he build in the next 12–24 months to maximize earning power from Bangkok?
+### QUESTION 4: CAREER POSITIONING. What should he build in the next 12–24 months to maximize earning power from ${st.place}?
 
-Given that he is already shipping production agents at Google and has a public GitHub, what specific moves in 2026–2027 materially increase his Bangkok-independent income ceiling?
+Given that he is already shipping production agents and has a public GitHub, what specific moves in 2026–2027 materially increase his ${st.country}-independent income ceiling?
 
-- Should he stay at Google for another 1–2 years specifically to acquire credentials/projects that command higher freelance rates?
+- Should he stay at his current employer for another 1–2 years specifically to acquire credentials/projects that command higher freelance rates?
 - What certifications, publications, or public work would most move his consulting rate?
-- What is the "minimum viable exit" from Google that still gives him Bangkok-level income independence?
-- How should he position his public identity (thestorytellermitch.com, LinkedIn, GitHub) for the Bangkok-based operator persona?
+- What is the "minimum viable exit" from his current employer that still gives him ${st.place}-level income independence?
+- How should he position his public identity (site, LinkedIn, GitHub) for the ${st.place}-based operator persona?
 
-### QUESTION 5: TAIWAN LONG-TERM — What does the career path look like from Bangkok to Taipei?
+### QUESTION 5: LONG-TERM. What does the career path look like from ${st.place} to ${lt.place}?
 
-Assuming he moves to Taipei around 2032–2038:
-- Taiwan Employment Gold Card: does his profile qualify under the "Digital" or "Special Professions" category? What are current (2026) income and credential requirements?
-- What Taiwan-based companies or regional roles would be natural next steps from his Bangkok consulting base?
-- What should he be building from 2026–2032 in Bangkok that sets up a Taipei career or consulting practice for the second half of his life?
-- Is there a scenario where his Bangkok consulting practice evolves into a Southeast Asia / APAC AI consultancy that makes Taiwan a regional hub rather than a fresh start?
+Assuming he moves to ${lt.place} around ${lt.window}:
+${bulletize(lt.research_anchors)}
+- What ${lt.country}-based companies or regional roles would be natural next steps from his ${st.country} consulting base?
+- What should he be building from ${st.window} in ${st.place} that sets up a ${lt.place} career or consulting practice for the second half of his life?
+- Is there a scenario where his ${st.country} consulting practice evolves into a Southeast Asia / APAC AI consultancy that makes ${lt.country} a regional hub rather than a fresh start?
 
-### QUESTION 6: RISK ASSESSMENT — What are the realistic threats to this plan?
+### QUESTION 6: RISK ASSESSMENT. What are the realistic threats to this plan?
 
 Be direct about:
 - US taxation risk: can he actually implement FEIE + LLC structure without triggering IRS scrutiny at his income level?
-- Thailand political risk: the 2017 military-authored constitution is still in effect. What is the realistic scenario where Thailand's political situation becomes untenable for a gay American with public political opinions?
-- Thailand LGBTQ risk: same-sex marriage is now law, but what is the realistic social and legal environment for a visibly gay foreign man living openly in Bangkok in 2026–2030?
-- Employment risk: his CV documents pro-Palestinian editorial work at AJ+ and explicit BDS coverage. What is the realistic risk that this limits his employer options in the US tech market in 2026?
-- The Taiwan timing risk: if the danger window extends past 2032 or Taiwan falls, what is the contingency plan from Bangkok?
+- ${st.country} political risk: what is the realistic scenario where ${st.country}'s political situation becomes untenable for someone of his profile?
+- ${st.country} social/legal risk: what is the realistic social and legal environment for someone of his profile living openly in ${st.place} in 2026–2030?
+- Employment risk: his CV documents politically outspoken editorial work. What is the realistic risk that this limits his employer options in the US tech market in 2026?
+- The ${lt.country} timing risk: if circumstances delay the ${lt.place} move past ${lt.window}, what is the contingency plan from ${st.place}?
 
 ---
 
-Be specific. Use current data (2025–2026). Name actual companies, actual visa categories, actual tax rules, actual numbers. Do not hedge into vague career advice. He has done the research on the relocation side — now he needs the career and financial architecture to make it executable.
+Be specific. Use current data (2025–2026). Name actual companies, actual visa categories, actual tax rules, actual numbers. Do not hedge into vague career advice. He has done the research on the relocation side. Now he needs the career and financial architecture to make it executable.
 `.trim();
+}
 
 async function callGrok(prompt) {
   const key = process.env.XAI_API_KEY;
@@ -285,31 +313,48 @@ async function callGPT(prompt) {
   return { model: 'openai:gpt', error: 'All variants unavailable' };
 }
 
-console.log('🌏  Firing relocation career strategy research across 4 models in parallel...');
-console.log('    Profile: Mitchell Williams — Google AI PgM → Bangkok → Taipei');
-console.log('    Questions: timing, legal structure, employer targeting, positioning, Taiwan path, risk');
-console.log(`    Output: ${OUT}\n`);
+async function main() {
+  const { profile, source } = loadProfile();
+  const PROMPT = buildPrompt(profile);
+  const ind = profile.individual || {};
+  const st = profile.relocation?.short_term || {};
+  const lt = profile.relocation?.long_term || {};
 
-const t0 = Date.now();
-const [grok, perplexity, gemini, gpt] = await Promise.all([
-  callGrok(PROMPT).then(r => { console.log(`  ✓ Grok        ${r.error ? '❌ ' + r.error : '✅ ' + r.ms + 'ms'}`); return r; }),
-  callPerplexity(PROMPT).then(r => { console.log(`  ✓ Perplexity  ${r.error ? '❌ ' + r.error : '✅ ' + r.ms + 'ms'}`); return r; }),
-  callGemini(PROMPT).then(r => { console.log(`  ✓ Gemini      ${r.error ? '❌ ' + r.error : '✅ ' + r.ms + 'ms'}`); return r; }),
-  callGPT(PROMPT).then(r => { console.log(`  ✓ GPT/o3      ${r.error ? '❌ ' + r.error : '✅ ' + r.ms + 'ms'}`); return r; }),
-]);
+  console.log('🌏  Firing relocation career strategy research across 4 models in parallel...');
+  console.log(`    Profile: ${ind.name || 'subject'} → ${st.place || '?'} → ${lt.place || '?'}  [source: ${source}]`);
+  console.log('    Questions: timing, legal structure, employer targeting, positioning, long-term path, risk');
+  console.log(`    Output: ${OUT}\n`);
 
-console.log(`\n  Total: ${((Date.now()-t0)/1000).toFixed(1)}s\n`);
+  const t0 = Date.now();
+  const [grok, perplexity, gemini, gpt] = await Promise.all([
+    callGrok(PROMPT).then(r => { console.log(`  ✓ Grok        ${r.error ? '❌ ' + r.error : '✅ ' + r.ms + 'ms'}`); return r; }),
+    callPerplexity(PROMPT).then(r => { console.log(`  ✓ Perplexity  ${r.error ? '❌ ' + r.error : '✅ ' + r.ms + 'ms'}`); return r; }),
+    callGemini(PROMPT).then(r => { console.log(`  ✓ Gemini      ${r.error ? '❌ ' + r.error : '✅ ' + r.ms + 'ms'}`); return r; }),
+    callGPT(PROMPT).then(r => { console.log(`  ✓ GPT/o3      ${r.error ? '❌ ' + r.error : '✅ ' + r.ms + 'ms'}`); return r; }),
+  ]);
 
-let out = `# Relocation Career Strategy — Mitchell Williams — ${TODAY}\n\n`;
-out += `Profile: Google AI PgM + Agent Builder → Bangkok (2026–2032) → Taipei (2032+)\n`;
-out += `Questions: timing | legal structure | employer targeting | positioning | Taiwan path | risk\n\n---\n\n`;
+  console.log(`\n  Total: ${((Date.now()-t0)/1000).toFixed(1)}s\n`);
 
-for (const r of [grok, perplexity, gemini, gpt]) {
-  out += `## ${r.model}${r.tokens ? ` (${r.tokens} tok, ${r.ms}ms)` : ''}\n\n`;
-  out += r.error ? `> ❌ Error: ${r.error}\n\n` : r.content + '\n\n';
-  if (r.citations?.length) out += `**Citations:**\n${r.citations.map((c,i)=>`${i+1}. ${c}`).join('\n')}\n\n`;
-  out += '---\n\n';
+  let out = `# Relocation Career Strategy: ${ind.name || 'Subject'}, ${TODAY}\n\n`;
+  out += `Profile: ${ind.current_role || ''} → ${st.place || '?'} (${st.window || ''}) → ${lt.place || '?'} (${lt.window || ''})\n`;
+  out += `Questions: timing | legal structure | employer targeting | positioning | long-term path | risk\n\n---\n\n`;
+
+  for (const r of [grok, perplexity, gemini, gpt]) {
+    out += `## ${r.model}${r.tokens ? ` (${r.tokens} tok, ${r.ms}ms)` : ''}\n\n`;
+    out += r.error ? `> ❌ Error: ${r.error}\n\n` : r.content + '\n\n';
+    if (r.citations?.length) out += `**Citations:**\n${r.citations.map((c,i)=>`${i+1}. ${c}`).join('\n')}\n\n`;
+    out += '---\n\n';
+  }
+
+  writeFileSync(OUT, out);
+  console.log(`📄  Results written to: ${OUT}`);
 }
 
-writeFileSync(OUT, out);
-console.log(`📄  Results written to: ${OUT}`);
+// Import guard: only fire the (paid) model calls when run directly, so the
+// module can be imported for testing buildPrompt()/loadProfile() with no spend.
+const isDirectRun = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
+if (isDirectRun) {
+  await main();
+}
+
+export { buildPrompt, loadProfile };

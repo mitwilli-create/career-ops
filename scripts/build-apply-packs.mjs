@@ -50,6 +50,11 @@ import { execSync } from 'child_process';
 import { runCheck as humanizeCheck } from './humanize-check.mjs';
 import { SONNET } from '../lib/models.mjs';
 import { scrubArtifactsOrThrow } from './lib/scrub-gate.mjs';
+import { parseCvEmployers, findEmployerViolations } from '../lib/employer-claims.mjs';
+import {
+  stripEditorialChatter, applyBrandingReplacements,
+  extractTargetProductNames, findGroundingViolations,
+} from '../lib/grounding-guard.mjs';
 import { resolveRow } from './lib/row-resolver.mjs';
 
 const ROOT = process.cwd();
@@ -94,12 +99,14 @@ const VOICE_BRIEF = loadVoiceReferenceBrief();
 // ── Fabrication Guard ─────────────────────────────────────────────────
 function fabricationCheck(text) {
   const HARD_BANS = [
-    { pattern: /Principal.*Distinguished.*Fellow/i, risk: 'tier-claim-not-in-cv', reframe: 'Use "~1,000 senior technical ICs" exactly' },
-    { pattern: /L8\b|L9\b|L10\b/i, risk: 'google-level-fabrication', reframe: 'Remove level claims; not in cv.md' },
+    // NOTE (2026-06-11): the old first entry banned /Principal.*Distinguished.*Fellow/ —
+    // but that is now the CANONICAL cv.md scope phrasing (post HARDENED-CV-SPEC-2026-05-30),
+    // so the ban inverted reality and pushed generations back toward banned "L8+" forms.
+    { pattern: /L8\b|L9\b|L10\b/i, risk: 'google-level-fabrication', reframe: 'Use "Principal, Distinguished, and Fellow engineers" — L-levels are not in cv.md' },
     { pattern: /Node\.js/i, risk: 'stack-fabrication', reframe: 'Remove stack claim; cv.md does not specify production stack' },
     { pattern: /within 30 days/i, risk: 'commitment-fabrication', reframe: 'Remove timeline commitment; never stated in cv.md' },
     { pattern: /zero.token/i, risk: 'api-claim-fabrication', reframe: 'Use "direct ATS API integrations" not "zero-token"' },
-    { pattern: /negative training/i, risk: 'terminology-drift', reframe: 'Use "Kill List of rejected drafts" — his canonical phrasing' },
+    { pattern: /negative training/i, risk: 'terminology-drift', reframe: 'Use "banned-phrase checklist of rejected drafts" — his canonical phrasing' },
     { pattern: /alignment.adjacent/i, risk: 'interpretive-frame', reframe: 'Remove or use "AI-native editorial operations"' },
   ];
   const flags = [];
@@ -520,17 +527,17 @@ function buildCoverLetterTemplate(role, report) {
   const topGaps = report.gaps.slice(0, 3);
   const matchLines = matches.map(m => {
     const evidence = m.evidence.replace(/<br\s*\/?>/gi, ' ').replace(/\s+/g, ' ').slice(0, 400);
-    return `- **${m.requirement}** — ${evidence}`;
+    return `- **${m.requirement}**: ${evidence}`;
   }).join('\n');
   const gapLines = topGaps.map((g, i) =>
-    `${i + 1}. **${g.gap}** — ${g.mitigation.replace(/\s+/g, ' ').slice(0, 400)}`
+    `${i + 1}. **${g.gap}**: ${g.mitigation.replace(/\s+/g, ' ').slice(0, 400)}`
   ).join('\n');
 
-  return `# Cover Letter — ${role.company}, ${role.role}
+  return `# Cover Letter: ${role.company}, ${role.role}
 
 > Drafted from the eval report's strongest matches and gap mitigations. Read through, swap any wording that doesn't sound like you, then paste into the application form.
 >
-> ⚠️ **AI-DETECTION NOTICE:** This draft was generated from the eval report. Before submitting: (1) read it aloud — anything that sounds smooth or corporate needs to be roughened up; (2) add one specific detail only you could know (a project name, a precise date, a tension moment); (3) ensure no paragraph starts with "I". See [formatting-guide.md](formatting-guide.md) for font/spacing spec (Calibri 11pt, 250–400 words, left-aligned, single-spaced).
+> ⚠️ **AI-DETECTION NOTICE:** This draft was generated from the eval report. Before submitting: (1) read it aloud; anything that sounds smooth or corporate needs to be roughened up; (2) add one specific detail only you could know (a project name, a precise date, a tension moment); (3) ensure no paragraph starts with "I". See [formatting-guide.md](formatting-guide.md) for font/spacing spec (Calibri 11pt, 250–400 words, left-aligned, single-spaced).
 
 ---
 
@@ -569,32 +576,40 @@ async function buildCoverLetter(role, report) {
 VOICE REFERENCE
 ${VOICE_BRIEF}
 
-COVER LETTER STRUCTURE (4 blocks, 300-340 words total — hard limit, count before returning)
+COVER LETTER STRUCTURE (4 blocks, 300-340 words total; hard limit, count before returning)
 
-Block 1 — Framing Frame (2-3 sentences):
-Open with a company-specific tension — the exact AI comms, deployment, or enablement challenge this company faces that Mitchell is uniquely positioned to solve.
+Block 1: Framing Frame (2-3 sentences):
+Open with a company-specific tension: the exact AI comms, deployment, or enablement challenge this company faces that Mitchell is uniquely positioned to solve.
 Do NOT open with "I." Do NOT open with "I am writing to express."
 Pattern: State the problem space first, then position Mitchell as someone who has solved it.
 Example shape: "The challenge of [specific company tension] is one I've spent [timeframe] solving: [what that means operationally]."
 
-Block 2 — Signature Move (3-4 sentences):
+Block 2: Signature Move (3-4 sentences):
 State what he has uniquely built that maps directly to their need.
 Lead with the highest-value proof point from the canonical sources.
-Every sentence needs a metric or a named artifact. Use em-dash linking.
+Every sentence needs a metric or a named artifact, linked with a colon or comma (NEVER an em dash).
 No bullet lists. Narrative prose only.
-Pattern: "At [company], [what he built] — [metric]. [How it maps to their need]."
+Pattern: "At [company], [what he built]: [metric]. [How it maps to their need]."
 
-Block 3 — Human Differentiator (1-2 sentences):
+Block 3: Human Differentiator (1-2 sentences):
 Show how his journalism + AI production background gives him unusual leverage for their current phase. Make this about their likely blind spots, not his credentials.
-One em-dash. One specific named credential or show/program.
+One specific named credential or show/program.
 
-Block 4 — Conversational Asymmetry CTA (2-3 sentences):
-Offer a specific, named artifact or working example — give value upfront.
+Block 4: Conversational Asymmetry CTA (2-3 sentences):
+Offer a specific, named artifact or working example; give value upfront.
 Do not say "I'd be happy to" or "please don't hesitate."
 Do not use a generic "let me know if you're interested."
 Pattern: "If [role condition], I'd value [specific time] to walk through [named artifact]. [Why that artifact is directly relevant]."
 
-OUTPUT: Cover letter body only. No salutation. No sign-off. No subject line.
+GROUNDING HARD RULES (violations are failures):
+- NEVER claim employment at ${role.company} or present ${role.company}'s products, tools, or internal systems as Mitchell's own work. First-person past tense describes ONLY work from the canonical sources (Google xGE + his newsroom history). Anything Mitchell would do at ${role.company} is prospective and conditional ("I'd…", "I would…").
+- NEVER use retired metrics: 99% fidelity, any "stylistic fidelity" phrasing, 90% latency / drafting-latency reduction, "substantial reduction in drafting latency", >90% accuracy or classification, 300% scaling, 348 attendees, 93% CSAT, 180,000-person, 90% admin-time reduction, "three production agents" (the verified count is two), or any headcount/level not verbatim in the sources.
+- Google-internal level terms (L8/L9/L10) never appear. The scope phrasing is "a community of 1,000+ Principal, Distinguished, and Fellow engineers".
+- The rejected-drafts layer is called the "banned-phrase checklist"; never "Kill List". The word "kill" never appears in any form.
+- NEVER use an em dash (the "—" character) anywhere: it reads as AI-generated. Use a comma, colon, period, or parentheses instead. En dashes in date ranges ("June 2024 – present") are fine.
+
+OUTPUT: Cover letter body only. No salutation. No sign-off. No subject line. No editorial
+notes, no "Changes made" section, no word-count line.
 Word count: 300-340 words. Count before returning. If over 340, cut Block 2 by one sentence.`;
 
   const matches = report.matches.slice(0, 3);
@@ -616,16 +631,16 @@ Role: ${role.role}
 Archetype: ${ledFraming(role)}
 Score: ${role.score}/5
 
-GOLD-STANDARD REFERENCE (match this quality and voice — do not copy it):
+GOLD-STANDARD REFERENCE (match this quality and voice; do not copy it):
 The central challenge of the Engineering Editorial Lead role is one I've spent a career solving: how do you encode editorial discipline into production systems that serve a deeply technical audience allergic to spin?
 
-For the past two years at Google's Office of Cross-Google Engineering (xGE), I've architected and shipped production AI systems for an audience of 1,000+ L8+ Senior Technical ICs. My Executive RAG pipeline functions as a digital twin for VP-level communications, achieving high stylistic fidelity with a substantial reduction in drafting latency. Its discipline comes from a unique architecture: a curated Voice DNA corpus paired with a "Kill List" of rejected drafts that taught the agent risk tolerance. Next to it, my autonomous Communications Triage Agent recaptures ~160 operational hours per year, auto-handling ~60% of inbound.
+For the past two years at Google's Office of Cross-Google Engineering (xGE), I've built and deployed production AI agents for a community of 1,000+ Principal, Distinguished, and Fellow engineers. My executive-communications digital twin drafts VP-level comms in a consistent, verified voice; its discipline comes from a curated Voice DNA corpus paired with a banned-phrase checklist of rejected drafts that taught the agent risk tolerance. Next to it, my autonomous communications-triage agent recaptures ~160 operational hours per year, auto-handling ~60% of inbound.
 
-This work is a direct translation of the operating discipline I built in high-stakes newsrooms. Before Google, I spent eight years inside the four properties that rewired digital journalism. I was on the founding team of Al Jazeera's 'The Stream' (RTS Most Innovative Programme), a segment producer at HuffPost Live (Webby Award, Pew Research case study), a line producer for 'America With Jorge Ramos' during its 179% primetime viewership growth, and a senior producer at AJ+. There, I designed a third production line that became a de facto talent pipeline — three producers I coached became on-air principals with subsequent Webbys, a Daytime Emmy, and a James Beard award.
+This work is a direct translation of the operating discipline I built in high-stakes newsrooms. Before Google, I spent eight years inside the four properties that rewired digital journalism. I was on the founding team of Al Jazeera's 'The Stream' (launch broadcast reached 250 million households), a segment producer at HuffPost Live (Webby Award, Pew Research case study), a line producer for 'America With Jorge Ramos' during its 179% primetime viewership growth, and a senior producer at AJ+. There, I designed a third production line that became a de facto talent pipeline: three producers I coached became on-air principals with subsequent Webbys, a Daytime Emmy, and a James Beard nomination.
 
 The pattern is consistent: architecting systems that deliver quality at scale, whether the output is a broadcast segment, a viral video, or a VP's technical brief generated by an AI. Most candidates bring either the editorial background or the AI production experience; I have shipped both.
 
-If the role is still open, I would value 15 minutes to walk through the design of the Voice DNA "Kill List" and the AJ+ talent pipeline. Both are direct, working examples of what your JD calls "editorial discipline at engineering scale."
+If the role is still open, I can share a brief write-up of the Voice DNA banned-phrase checklist design and the AJ+ talent pipeline, or walk through either directly. Both are direct, working examples of what your JD calls "editorial discipline at engineering scale."
 
 Generate a cover letter for ${role.company} / ${role.role} at the same quality level.`;
 
@@ -665,19 +680,30 @@ ${draft}
 
 CHECK EACH SENTENCE FOR:
 
-1. KILL LIST violations (hard rewrite):
+1. BANNED-PHRASE-CHECKLIST violations (hard rewrite):
    Banned: "I believe," "I think," "perhaps," "might be," "could potentially," "thrilled,"
    "excited to," "passionate about," "game-changer," "world-class," "synergy," "leverage" (verb),
    "robust," "delve," "I'd be happy to," "It's worth noting," "In conclusion"
+   Also banned: ANY em dash (the "—" character). Replace each with a comma, colon, period,
+   or parentheses, whichever reads most naturally. En dashes in date ranges stay.
 
 2. FABRICATION (hard remove):
    Use ONLY these VERIFIED metrics; everything else is fabrication — remove it:
    ~160 ops hrs/yr recaptured | ~60% of inbound auto-handled (~55% Low-Touch) |
-   high stylistic fidelity (QUALITATIVE — no number) | substantial drafting-latency reduction (QUALITATIVE — no number) |
-   1,000+ L8+ Senior Technical ICs | 58% AI-adoption vs 37% Google avg (AI-Champions) |
-   179% primetime viewership growth | 50M+ views | 1.7M+ | 250M | 75,000+ (88%)
-   HARD-BANNED (retired/fabricated — never emit, delete on sight): 99% fidelity, 90% latency reduction,
-   >90% accuracy, >90% classification accuracy, 300% / 300%+ scaling, 348 attendees, 93% CSAT, 180,000-person, 600+ L8+.
+   a community of 1,000+ Principal, Distinguished, and Fellow engineers |
+   58% AI-adoption vs 37% Google avg (AI-Champions, communicated-results framing) |
+   179% primetime viewership growth | 50M+ views | 1.7M+ | 250M | 75,000+ (88%) | 300+ attendees per forum
+   HARD-BANNED (retired/fabricated — never emit, delete on sight): 99% fidelity, ANY "stylistic fidelity"
+   phrasing, 90% latency reduction, "substantial reduction in drafting latency", >90% accuracy,
+   >90% classification accuracy, 300% / 300%+ scaling, 348 attendees, 93% CSAT, 180,000-person,
+   90% admin-time reduction, "three production agents" (the verified count is two), 600+ L8+, and ANY
+   L8/L9/L10 token — the scope phrasing is "Principal, Distinguished, and Fellow engineers".
+   "Kill List" → "banned-phrase checklist"; the word "kill" never appears in any form.
+
+2b. TARGET-COMPANY PRODUCT CLAIMS (hard remove):
+   Never present ${role.company}'s products, tools, or internal systems as Mitchell's own work.
+   First-person past tense is reserved for canonical-source work (Google xGE + newsrooms).
+   ${role.company}-specific work must read prospective and conditional ("I'd…", "I would…").
 
 3. VAGUE CLAIMS (rewrite with specifics):
    "improved results" → add metric
@@ -688,9 +714,10 @@ CHECK EACH SENTENCE FOR:
    First word is "I" → restructure to lead with context
    First sentence is generic ("I am writing to...") → replace with Framing Frame pattern
 
-5. WORD COUNT: If over 340 words, cut one sentence from Block 2. Report final count.
+5. WORD COUNT: If over 340 words, cut one sentence from Block 2.
 
-OUTPUT: Full corrected cover letter. Final word count on the last line: [N words]`;
+OUTPUT: The full corrected cover letter body and NOTHING else — no preamble, no notes,
+no "Changes made" section, no word-count line.`;
 
     try {
       const criticRes = await fetch('https://api.anthropic.com/v1/messages', {
@@ -727,9 +754,15 @@ OUTPUT: Full corrected cover letter. Final word count on the last line: [N words
     }
   }
 
+  // Deterministic post-pass (2026-06-11): strip critic-pass debris ("Changes
+  // made:" blocks, trailing "[N words]" lines, meta-preambles) and normalize
+  // legacy branding BEFORE any check sees the draft — prompt instructions
+  // alone did not stop either leak (rows 2527 + 2373).
+  draft = applyBrandingReplacements(stripEditorialChatter(draft));
+
   const fabResult = fabricationCheck(draft);
 
-  let output = `# Cover Letter — ${role.company}, ${role.role}
+  let output = `# Cover Letter: ${role.company}, ${role.role}
 
 ---
 
@@ -828,9 +861,9 @@ function buildHiringManager(role, report) {
     network: 'F,S',
   });
 
-  return `# LinkedIn — Hiring Manager outreach
+  return `# LinkedIn: Hiring Manager outreach
 
-> All drafts ≤300 chars (LinkedIn connection-request limit). The hiring manager for this specific req isn't always publicly named — use the search URL below to identify the chain owner before sending.
+> All drafts ≤300 chars (LinkedIn connection-request limit). The hiring manager for this specific req isn't always publicly named; use the search URL below to identify the chain owner before sending.
 
 ---
 
@@ -842,7 +875,7 @@ Heuristic: the chain owner usually has "Head of" / "Director of" / "Lead" in the
 
 1. Opening the JD on LinkedIn → scroll to bottom → check "posted by [employee]" if present.
 2. Reading 2–3 of the candidate's recent posts to confirm they own this brief specifically.
-3. If still unclear, default to the highest-titled person in the function — escalation is structurally better than mis-identification.
+3. If still unclear, default to the highest-titled person in the function: escalation is structurally better than mis-identification.
 
 Paste the identified person here for next time:
 
@@ -856,29 +889,29 @@ Found: ${new Date().toISOString().slice(0, 10)}
 
 ---
 
-## DM Variant A — title-symmetry hook (recommended, ~280 chars)
+## DM Variant A: title-symmetry hook (recommended, ~280 chars)
 
 \`\`\`
-Hi [first name] — I'm a Comms Lead at Google xGE serving 1,000+ Principal/Distinguished/Fellow ICs, and I built a production RAG that drafts VP comms at 99% stylistic fidelity. Applying for ${role.role.slice(0, 60)} this week — would love a 15-min before the recruiter ping.
+Hi [first name], I'm a Comms Lead at Google xGE serving 1,000+ Principal/Distinguished/Fellow ICs. I built a production RAG that drafts VP comms in a verified voice. Applying for ${role.role.slice(0, 60)} this week. Open to a 15-min before the recruiter ping?
 \`\`\`
 
-## DM Variant B — proof-artifact hook (~290 chars)
+## DM Variant B: proof-artifact hook (~290 chars)
 
 \`\`\`
-Hi [first name] — applying for ${role.role.slice(0, 50)}. Built Voice DNA + Kill List at Google xGE: a RAG that drafts VP comms at 99% fidelity for 1,000+ senior engineers. Public OSS at github.com/mitwilli-create/career-ops. Open to a 15-min if useful.
+Hi [first name], applying for ${role.role.slice(0, 50)}. Built Voice DNA + a banned-phrase checklist at Google xGE: a RAG that drafts VP comms in a verified voice for 1,000+ senior engineers. Public OSS at github.com/mitwilli-create/career-ops. Open to a 15-min.
 \`\`\`
 
-## DM Variant C — gap-acknowledgment hook (~295 chars; use if your CV reads as cross-functional rather than direct-fit)
+## DM Variant C: gap-acknowledgment hook (~295 chars; use if your CV reads as cross-functional rather than direct-fit)
 
 \`\`\`
-Hi [first name] — applying for ${role.role.slice(0, 45)}. 18 yrs editorial + 22mo shipping production AI agents at Google xGE for 1,000 senior engineers. Not a standard CV for this role; happy to walk through why the shape works in 15 min.
+Hi [first name], applying for ${role.role.slice(0, 45)}. 18 yrs editorial + 22mo shipping production AI agents at Google xGE for 1,000+ senior engineers. Not a standard CV for this role; happy to walk through why the shape works in 15 min.
 \`\`\`
 
 ---
 
 ## What NOT to do
 
-- ❌ Don't message multiple people at ${role.company} on the same day — looks like spray-and-pray.
+- ❌ Don't message multiple people at ${role.company} on the same day; it looks like spray-and-pray.
 - ❌ Don't pitch the role in the first message ("I'd be a great fit because…"). The hook is *the proof artifact*, not the role-fit narrative.
 - ❌ Don't share phone or email in the connect note.
 - ❌ Don't follow up if they don't accept the connection within 7 days. One nudge max, after the application is in.
@@ -891,17 +924,17 @@ function buildRecruiter(role, report) {
   });
   const postsSearch = `https://www.linkedin.com/search/results/content/?keywords=${encodeURIComponent('"' + role.role.slice(0, 50) + '" ' + role.company)}&datePosted=%22past-month%22&sortBy=%22date_posted%22`;
 
-  return `# LinkedIn — Recruiter outreach
+  return `# LinkedIn: Recruiter outreach
 
 > The recruiter for this specific req isn't always publicly named on the JD. The fastest way to identify them: LinkedIn content search for posters of this exact role.
 
 ---
 
-## Step 1 — Find the recruiter (2 min)
+## Step 1: Find the recruiter (2 min)
 
 1. **Posters of this exact role:** [LinkedIn content search](${postsSearch})
 2. **${role.company} recruiters generally:** [people search](${recruiterSearch})
-3. **Cross-check via the JD page on Greenhouse / LinkedIn** — sometimes the recruiter's name appears in the application questions or "Who referred you?" field.
+3. **Cross-check via the JD page on Greenhouse / LinkedIn**: sometimes the recruiter's name appears in the application questions or "Who referred you?" field.
 
 Paste the identified recruiter here:
 
@@ -913,40 +946,40 @@ Posted role on: [date]
 
 ---
 
-## Step 2 — Send the connect-with-note (≤300 chars)
+## Step 2: Send the connect-with-note (≤300 chars)
 
-### Variant A — fit-first (recommended, ~290 chars)
-
-\`\`\`
-Hi [first name] — saw you posted ${role.role.slice(0, 60)}. Applying this week. 18 yrs editorial (AJ+, HuffPost Live, Fusion) + 22mo shipping production AI at Google xGE for 1,000 senior engineers. Voice DNA RAG drafts VP comms at 99% fidelity. Worth a 15-min?
-\`\`\`
-
-### Variant B — gap-cover (use if your CV reads as cross-functional)
+### Variant A: fit-first (recommended, ~290 chars)
 
 \`\`\`
-Hi [first name] — applying for ${role.role.slice(0, 50)}. The category I actually fit is "${ledFraming(role)}": 18yrs editorial + 4 Anthropic certs Mar 2026 + public OSS career-ops. Happy to share more if useful.
+Hi [first name], saw you posted ${role.role.slice(0, 60)}. Applying now. 18 yrs editorial (AJ+, HuffPost Live, Fusion) + 22mo shipping production AI at Google xGE for 1,000+ senior engineers. Voice DNA RAG drafts VP comms in a verified voice. Worth a 15-min?
+\`\`\`
+
+### Variant B: gap-cover (use if your CV reads as cross-functional)
+
+\`\`\`
+Hi [first name], applying for ${role.role.slice(0, 50)}. The category I actually fit is "${ledFraming(role)}": 18yrs editorial + 4 Anthropic certs Mar 2026 + public OSS career-ops. Happy to share more if useful.
 \`\`\`
 
 ---
 
-## Step 3 — Pre-load screen-call answers
+## Step 3: Pre-load screen-call answers
 
 | Likely question | One-sentence answer |
 |---|---|
-| "Walk me through your background." | "${ledFraming(role)} — 18 years editorial across digital newsrooms (HuffPost Live, Fusion, AJ+, CNN) and Google Comms, 22 months shipping production AI agents at Google xGE for 1,000 senior engineers." |
-| "Why ${role.company}?" | _Pre-load this — read the eval report's Block A (Role Summary) + Block D (company state) for the right specific answer._ |
-| "Why this role specifically?" | "${report.matches[0]?.requirement.slice(0, 80) || 'The strongest match in the JD'} is in production at xGE — I want to do that craft externally for ${role.company}." |
+| "Walk me through your background." | "${ledFraming(role)}: 18 years editorial across digital newsrooms (HuffPost Live, Fusion, AJ+, CNN) and Google Comms, 22 months shipping production AI agents at Google xGE for 1,000+ senior engineers." |
+| "Why ${role.company}?" | _Pre-load this: read the eval report's Block A (Role Summary) + Block D (company state) for the right specific answer._ |
+| "Why this role specifically?" | "${report.matches[0]?.requirement.slice(0, 80) || 'The strongest match in the JD'} is in production at xGE. I want to do that craft externally for ${role.company}." |
 | "What's your comp expectation?" | "The disclosed band ${report.salary || '(see report)'} sits inside my target. I'd want to land toward the top given my tenure, but I'm comfortable across the band if equity is at standard for senior IC." |
-| "Are you flexible on location?" | "${report.locations || 'Open'} works — SF / NYC are on my approved-relocation list. I'm also open to a Seattle-based hybrid that hits the in-office expectation via monthly travel. Whichever fits the team better." |
+| "Are you flexible on location?" | "${report.locations || 'Open'} works. SF / NYC are on my approved-relocation list. I'm also open to a Seattle-based hybrid that hits the in-office expectation via monthly travel. Whichever fits the team better." |
 | "When can you start?" | "Standard 2-week notice; I can be in role within 30 days." |
 
 ---
 
 ## What NOT to do
 
-- ❌ Don't apply through the form *without* messaging the recruiter — both pieces compound.
+- ❌ Don't apply through the form *without* messaging the recruiter; both pieces compound.
 - ❌ Don't send the recruiter your phone number in the first message.
-- ❌ Don't ask the recruiter to "tell you about the role" — read the JD first, lead with what you bring.
+- ❌ Don't ask the recruiter to "tell you about the role"; read the JD first, lead with what you bring.
 `;
 }
 
@@ -954,9 +987,9 @@ function buildPeerReferral(role, report) {
   const peerSearch = linkedinSearchUrl(role, {
     keywords: `${guessTeamName(report).toLowerCase()} OR engineer OR writer OR editor`,
   });
-  return `# LinkedIn — Peer / Referral path
+  return `# LinkedIn: Peer / Referral path
 
-> The referral path is structurally different from cold outreach. **Don't pitch.** Build genuine engagement with current ${role.company} contributors — referrals happen organically if the conversation is real.
+> The referral path is structurally different from cold outreach. **Don't pitch.** Build genuine engagement with current ${role.company} contributors; referrals happen organically if the conversation is real.
 
 ---
 
@@ -968,28 +1001,28 @@ For each substantive candidate, scan their last 10 posts. Pick someone who's pos
 
 ---
 
-## The DM pattern (peer / referral) — ≤300 chars, NO pitch
+## The DM pattern (peer / referral): ≤300 chars, NO pitch
 
 The structure is **3 sentences, no ask**:
 
-1. **Genuine reference** to their work — name a specific post, idea, or comment.
-2. **Light conversational connection** — something you're doing in adjacent territory (not a pitch).
-3. **CTA that opens conversation, not asks for anything** — "would love your take on…"
+1. **Genuine reference** to their work: name a specific post, idea, or comment.
+2. **Light conversational connection**: something you're doing in adjacent territory (not a pitch).
+3. **CTA that opens conversation, not asks for anything**: "would love your take on…"
 
 ### Template (replace [bracketed parts])
 
 \`\`\`
-Hi [name] — read your "[post title]" piece — the [specific point about a specific paragraph] landed for me. I've been working on [adjacent topic — voice DNA RAG / agent-skill design / Kill List training] in production at Google xGE. Would love your take on [specific question].
+Hi [name], read your "[post title]" piece. The [specific point about a specific paragraph] landed for me. I've been working on [adjacent topic: voice DNA RAG / agent-skill design / banned-phrase-checklist training] in production at Google xGE. Would love your take on [specific question].
 \`\`\`
 
 **Why this works:**
 - Specific reference proves you actually read the post (not a template blast).
-- Sharing your own adjacent work establishes peer-level — you're not asking for help, you're swapping notes.
-- Referrals happen *naturally* if the conversation goes well — they think "we should hire this person" without you asking.
+- Sharing your own adjacent work establishes peer-level: you're not asking for help, you're swapping notes.
+- Referrals happen *naturally* if the conversation goes well: they think "we should hire this person" without you asking.
 
 ### What to do AFTER they reply
 
-- **If they engage substantively:** continue the conversation for 2–4 messages on the technical thread. Mention casually in message 3 or 4: "FYI I'm in process for the ${role.role.slice(0, 50)} role over your way — happy to keep the technical convo going either way." Let them volunteer the referral.
+- **If they engage substantively:** continue the conversation for 2–4 messages on the technical thread. Mention casually in message 3 or 4: "FYI I'm in process for the ${role.role.slice(0, 50)} role over your way; happy to keep the technical convo going either way." Let them volunteer the referral.
 - **If they reply briefly:** thank them, exit cleanly. Don't push.
 - **If they don't reply within 14 days:** don't follow up. They saw it.
 
@@ -997,7 +1030,7 @@ Hi [name] — read your "[post title]" piece — the [specific point about a spe
 
 ## What NOT to do
 
-- ❌ **Never lead with "I'm applying to ${role.company} — would you refer me?"** Most common cold-referral mistake.
+- ❌ **Never lead with "I'm applying to ${role.company}, would you refer me?"** Most common cold-referral mistake.
 - ❌ **Don't connect with 5+ ${role.company} employees in the same week.** Anti-spam surfaces flag this.
 - ❌ **Don't reference the role in the first message.** It enters the conversation organically in message 3+ if at all.
 - ❌ **Don't fabricate having read their post if you didn't.** Engineers can tell.
@@ -1125,7 +1158,7 @@ Honest, references the public OSS, signals technical sophistication.
 function buildInterviewPrep(role, report) {
   const stories = report.starStories.slice(0, 5);
   const storyBlocks = stories.length > 0
-    ? stories.map((s, i) => `## Story ${i + 1} — ${s.requirement || 'Pre-loaded story'}
+    ? stories.map((s, i) => `## Story ${i + 1}: ${s.requirement || 'Pre-loaded story'}
 
 | | |
 |---|---|
@@ -1136,9 +1169,9 @@ function buildInterviewPrep(role, report) {
 `).join('\n')
     : '_The eval report didn\'t produce a STAR story table for this role. Run `/career-ops interview-prep` to generate one once you advance past the recruiter screen._';
 
-  return `# Interview prep — ${role.company}, ${role.role}
+  return `# Interview prep: ${role.company}, ${role.role}
 
-> Top 5 STAR stories pulled directly from the eval report's Block F. This is the pre-application teaser — full interview prep happens once you advance.
+> Top 5 STAR stories pulled directly from the eval report's Block F. This is the pre-application teaser; full interview prep happens once you advance.
 
 ---
 
@@ -1148,9 +1181,9 @@ ${storyBlocks}
 
 ## What to do when you advance past the recruiter screen
 
-1. Run \`/career-ops interview-prep\` with company=${role.company} role="${role.role}" — generates the full interview-prep dossier (process intel from Glassdoor / Blind / company-specific question patterns / loop structure).
+1. Run \`/career-ops interview-prep\` with company=${role.company} role="${role.role}". This generates the full interview-prep dossier (process intel from Glassdoor / Blind / company-specific question patterns / loop structure).
 2. Run \`/career-ops contacto\` to refresh hiring-manager / interviewer outreach with names you now have from the loop.
-3. Move row #${role.num} status \`Evaluated → Interview\` in \`data/applications.md\` — this triggers the post-interview follow-up cadence.
+3. Move row #${role.num} status \`Evaluated → Interview\` in \`data/applications.md\`; this triggers the post-interview follow-up cadence.
 `;
 }
 
@@ -1245,7 +1278,9 @@ async function buildFormFields(role, report) {
 
 HARD RULES (violations are failures):
 - COMPLETE answers only. NEVER emit a scaffold, worksheet, "risk legend", bracket placeholder ([X], [YOUR …], [INSERT …], [SPECIFIC …]), "HUMAN REWRITE REQUIRED", "see eval report", or any sentence instructing the reader to rewrite/edit/research/verify. No notes section, no footer, no CLI commands.
-- Every factual claim must trace to the CANONICAL SOURCES below. Do NOT invent or inflate metrics. NEVER use these retired/unverified figures: "99% fidelity", "90% latency reduction", ">90% classification accuracy", "300% scaling", "348 attendees", "93% CSAT", "180,000-person", or any "L8+ / senior IC" headcount not present verbatim in the sources.
+- Every factual claim must trace to the CANONICAL SOURCES below. Do NOT invent or inflate metrics. NEVER use these retired/unverified figures: "99% fidelity", any "stylistic fidelity" phrasing, "90% latency reduction", "substantial reduction in drafting latency", ">90% classification accuracy", "300% scaling", "348 attendees", "93% CSAT", "180,000-person", "90% admin-time reduction", "three production agents" (the verified count is two), or any "L8+ / senior IC" headcount not present verbatim in the sources. Google level tokens (L8/L9/L10) never appear — the scope phrasing is "a community of 1,000+ Principal, Distinguished, and Fellow engineers". Say "banned-phrase checklist", never "Kill List"; the word "kill" never appears.
+- NEVER present ${role.company}'s own products, tools, or internal systems as Mitchell's past work. First-person past tense is reserved for canonical-source work (Google xGE + newsrooms); anything at ${role.company} is prospective ("I'd…").
+- NEVER use an em dash (the "—" character): it reads as AI-generated. Use a comma, colon, period, or parentheses instead. En dashes in date ranges are fine.
 - Voice: first person, Mitchell's. His arc is journalist → communications/content strategist → builder (use that order). Concrete and specific; no "I admire your mission", no LinkedIn-corporate filler.
 
 OUTPUT: GitHub markdown. For each field, a "## <question>" header followed by the finished answer in plain prose (2–6 sentences each; salary 1–2). Fields, in order:
@@ -1255,19 +1290,19 @@ OUTPUT: GitHub markdown. For each field, a "## <question>" header followed by th
 4. "Salary / compensation expectations"
 5. "How did you hear about this role?"
 6. "What questions would you ask us?"
-Nothing else — no preamble, no legend, no notes.`;
+Nothing else: no preamble, no legend, no notes.`;
   const userPrompt = `CANONICAL SOURCES (every claim must trace here):
 
 CV SUMMARY: ${report.tldr || '(see role matches below)'}
 
 TOP MATCHES (role requirement → Mitchell's real evidence):
-${matches.map((m, i) => `${i + 1}. ${m.requirement} — ${(m.evidence || '').replace(/<br\s*\/?>/gi, ' ').replace(/\s+/g, ' ').slice(0, 280)}`).join('\n')}
+${matches.map((m, i) => `${i + 1}. ${m.requirement}: ${(m.evidence || '').replace(/<br\s*\/?>/gi, ' ').replace(/\s+/g, ' ').slice(0, 280)}`).join('\n')}
 
-JOB: ${role.company} — ${role.role} (career-ops fit score ${typeof role.score === 'number' ? role.score.toFixed(2) : role.score}/5)
+JOB: ${role.company}, ${role.role} (career-ops fit score ${typeof role.score === 'number' ? role.score.toFixed(2) : role.score}/5)
 COMP SIGNAL: ${report.salary || 'open on total comp incl. equity; not anchored to a single number; the right role + team weigh more than a ~10% delta'}
-HOW MITCHELL HEARD: via career-ops — a job-search automation system he built and open-sourced (github.com/mitwilli-create/career-ops); it scored this role ${typeof role.score === 'number' ? role.score.toFixed(2) : role.score}/5 against his profile.
+HOW MITCHELL HEARD: via career-ops, a job-search automation system he built and open-sourced (github.com/mitwilli-create/career-ops); it scored this role ${typeof role.score === 'number' ? role.score.toFixed(2) : role.score}/5 against his profile.
 
-Write the six finished answers now. The reader pastes them verbatim — no placeholders, no instructions, no invented numbers.`;
+Write the six finished answers now. The reader pastes them verbatim: no placeholders, no instructions, no invented numbers, no em dashes.`;
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -1276,9 +1311,9 @@ Write the six finished answers now. The reader pastes them verbatim — no place
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    const body = (data.content || []).map(c => c.text || '').join('').trim();
+    const body = applyBrandingReplacements(stripEditorialChatter((data.content || []).map(c => c.text || '').join('').trim()));
     if (!body || body.length < 200) throw new Error('empty/short generation');
-    return `# Application Form Fields — ${role.company}, ${role.role}\n\n> Finished, paste-ready answers grounded in Mitchell's CV and corpus.\n\n---\n\n${body}\n`;
+    return `# Application Form Fields: ${role.company}, ${role.role}\n\n> Finished, paste-ready answers grounded in Mitchell's CV and corpus.\n\n---\n\n${body}\n`;
   } catch (e) {
     console.error(`  ⚠️ form-fields LLM gen failed for ${role.company}/${role.role}: ${e.message} — template fallback`);
     return buildFormFieldsTemplate(role, report);
@@ -1286,7 +1321,7 @@ Write the six finished answers now. The reader pastes them verbatim — no place
 }
 
 function buildFormFieldsTemplate(role, report) {
-  return `# Application Form Fields — ${role.company}, ${role.role}
+  return `# Application Form Fields: ${role.company}, ${role.role}
 
 > Pre-drafted answers for the most common application essay fields. Sections marked ⚠️ HUMAN REWRITE REQUIRED carry high AI-detection risk — rewrite in your own voice before pasting. See [formatting-guide.md](formatting-guide.md) for spacing, length, and structure rules.
 
@@ -1416,29 +1451,31 @@ Honest, references the OSS, signals technical sophistication. Only use if the fo
 async function buildOnePager(role, report) {
   if (!API_KEY) return buildOnePagerTemplate(role, report);
   const matches = (report.matches || []).slice(0, 3);
-  const systemPrompt = `You write a FINISHED one-page audition artifact for Mitchell Williams — a "proof of work" he attaches to an application or shares with a hiring manager. First person, his voice.
+  const systemPrompt = `You write a FINISHED one-page audition artifact for Mitchell Williams: a "proof of work" he attaches to an application or shares with a hiring manager. First person, his voice.
 
 HARD RULES (violations are failures):
 - A COMPLETE, opinionated artifact, NOT a worksheet. NEVER use bracket placeholders ([SPECIFIC …], [YOUR …]), "HUMAN REWRITE REQUIRED", "see eval report", or any instruction telling the reader to write/edit/add/research. He shares it as-is.
-- Every claim traces to the CANONICAL SOURCES. No fabricated metrics. NEVER use: 99% fidelity, 90% latency reduction, >90% accuracy/classification, 300% scaling, 348 attendees, 93% CSAT, 180,000-person, or any L8+ headcount not present verbatim in the sources.
+- Every claim traces to the CANONICAL SOURCES. No fabricated metrics. NEVER use: 99% fidelity, any "stylistic fidelity" phrasing, 90% latency reduction, "substantial reduction in drafting latency", >90% accuracy/classification, 300% scaling, 348 attendees, 93% CSAT, 180,000-person, 90% admin-time reduction, "three production agents" (the verified count is two), or any L8+ headcount not present verbatim in the sources. No Google level tokens (L8/L9/L10) — say "Principal, Distinguished, and Fellow engineers". Say "banned-phrase checklist", never "Kill List"; the word "kill" never appears.
+- Never present ${role.company}'s own products or internal systems as Mitchell's past work. First-person past tense only for canonical-source work; the 90-day plan is prospective ("I'd…").
+- NEVER use an em dash (the "—" character): it reads as AI-generated. Use a comma, colon, period, or parentheses instead. En dashes in date ranges are fine.
 - Voice: first person, Mitchell. Arc journalist → comms/content strategist → builder. Specific and opinionated, no filler, no "I admire your mission".
 
 OUTPUT (GitHub markdown), exactly these sections, ALL fully written:
 ## The problem I see at ${role.company}
-(2–4 sentences: a specific, opinionated read of the real challenge in this role's domain — a point of view, not a JD paraphrase.)
+(2–4 sentences: a specific, opinionated read of the real challenge in this role's domain; a point of view, not a JD paraphrase.)
 ## What I'd do in the first 90 days
-**Month 1 — Diagnosis:** 2–3 concrete bullets.
-**Month 2 — First proof point:** 1–2 concrete bullets with a concrete deliverable and how he'd know it works.
-**Month 3 — System, not project:** 1 concrete bullet on durable infrastructure/process.
+**Month 1 (Diagnosis):** 2–3 concrete bullets.
+**Month 2 (First proof point):** 1–2 concrete bullets with a concrete deliverable and how he'd know it works.
+**Month 3 (System, not project):** 1 concrete bullet on durable infrastructure/process.
 ## Why me
 (2–3 sentences tying his real proof to this problem.)
-Nothing else — no notes, no format instructions, no CLI, no file-name guidance.`;
+Nothing else: no notes, no format instructions, no CLI, no file-name guidance.`;
   const userPrompt = `CANONICAL SOURCES (every claim traces here):
 CV SUMMARY: ${report.tldr || ''}
 TOP MATCHES (role requirement → Mitchell's real evidence):
-${matches.map((m, i) => `${i + 1}. ${m.requirement} — ${(m.evidence || '').replace(/<br\s*\/?>/gi, ' ').replace(/\s+/g, ' ').slice(0, 260)}`).join('\n')}
-ROLE: ${role.company} — ${role.role}
-Write the finished one-pager now. No placeholders, no instructions, no invented numbers.`;
+${matches.map((m, i) => `${i + 1}. ${m.requirement}: ${(m.evidence || '').replace(/<br\s*\/?>/gi, ' ').replace(/\s+/g, ' ').slice(0, 260)}`).join('\n')}
+ROLE: ${role.company}, ${role.role}
+Write the finished one-pager now. No placeholders, no instructions, no invented numbers, no em dashes.`;
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST', headers: { 'x-api-key': API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
@@ -1446,9 +1483,9 @@ Write the finished one-pager now. No placeholders, no instructions, no invented 
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    const body = (data.content || []).map(c => c.text || '').join('').trim();
+    const body = applyBrandingReplacements(stripEditorialChatter((data.content || []).map(c => c.text || '').join('').trim()));
     if (!body || body.length < 200) throw new Error('empty/short generation');
-    return `# Audition Artifact — ${role.company}, ${role.role}\n\n> A one-page point of view Mitchell can attach to the application or share with the hiring manager.\n\n---\n\n${body}\n`;
+    return `# Audition Artifact: ${role.company}, ${role.role}\n\n> A one-page point of view Mitchell can attach to the application or share with the hiring manager.\n\n---\n\n${body}\n`;
   } catch (e) {
     console.error(`  ⚠️ one-pager LLM gen failed for ${role.company}/${role.role}: ${e.message} — template fallback`);
     return buildOnePagerTemplate(role, report);
@@ -1460,7 +1497,7 @@ function buildOnePagerTemplate(role, report) {
     ? report.tldr.split(/\.\s*/)[0].slice(0, 300)
     : `${role.company}'s ${role.role} brief`;
 
-  return `# Audition Artifact / 1-Pager — ${role.company}, ${role.role}
+  return `# Audition Artifact / 1-Pager: ${role.company}, ${role.role}
 
 > Phase 0.5 from the Application Prompt Guide. This is the **pre-application audition artifact** — a 1-page "proof-of-work" you attach alongside the cover letter, share with the hiring manager before the recruiter call, or post on LinkedIn to generate inbound. Its purpose is to demonstrate that you understand the company's problem deeply enough to have a point of view on it, before anyone asks.
 
@@ -1562,7 +1599,7 @@ function buildLoopPattern(role, report) {
 function buildInterviewPrepFull(role, report) {
   const allStories = starStories(report.blockF, 10);
   const storyBlocks = allStories.length > 0
-    ? allStories.map((s, i) => `### Story ${i + 1} — ${s.requirement || 'Pre-loaded story'}
+    ? allStories.map((s, i) => `### Story ${i + 1}: ${s.requirement || 'Pre-loaded story'}
 
 | | |
 |---|---|
@@ -1575,44 +1612,44 @@ function buildInterviewPrepFull(role, report) {
 
   const hardQs = report.gaps.length > 0
     ? report.gaps.map((g, i) =>
-      `${i + 1}. **"You don't have experience in ${g.gap} — how would you approach that?"**\n   → ${g.mitigation.replace(/\s+/g, ' ').slice(0, 300)}`
+      `${i + 1}. **"You don't have experience in ${g.gap}. How would you approach that?"**\n   → ${g.mitigation.replace(/\s+/g, ' ').slice(0, 300)}`
     ).join('\n\n')
-    : '_No material gaps flagged in the eval report — standard behavioral prep applies._';
+    : '_No material gaps flagged in the eval report; standard behavioral prep applies._';
 
   const defenseDrill = report.matches.slice(0, 4).map((m, i) =>
     `**Drill ${i + 1}: "${m.requirement}"**
-- Your 60-second answer: [Fill in — 1 sentence of context, 1 sentence of action, 1 specific result with a number]
-- Most likely follow-up: "Tell me more about [SPECIFIC DETAIL from your answer]" — pre-think this now
+- Your 60-second answer: [Fill in: 1 sentence of context, 1 sentence of action, 1 specific result with a number]
+- Most likely follow-up: "Tell me more about [SPECIFIC DETAIL from your answer]"; pre-think this now
 - Failure mode to avoid: Generalizing. If you can't name a specific project/date/number, the answer is too vague.`
   ).join('\n\n');
 
-  return `# Interview Prep (Full) — ${role.company}, ${role.role}
+  return `# Interview Prep (Full): ${role.company}, ${role.role}
 
-> Full Phase 8 interview preparation. STAR stories come from the eval report. Section 5 (Messy Story Extraction) requires your input — designed to surface the rough-edged specifics that make answers AI-undetectable.
+> Full Phase 8 interview preparation. STAR stories come from the eval report. Section 5 (Messy Story Extraction) requires your input, designed to surface the rough-edged specifics that make answers AI-undetectable.
 
 ---
 
-## Section 1 — Interview loop structure (likely)
+## Section 1: Interview loop structure (likely)
 
 ${buildLoopPattern(role, report)}
 
 ---
 
-## Section 2 — All STAR stories from eval report
+## Section 2: All STAR stories from eval report
 
 ${storyBlocks}
 
 ---
 
-## Section 3 — Hard questions to anticipate
+## Section 3: Hard questions to anticipate
 
-> Based on gaps identified in the eval report. Prepare these before the recruiter screen — they will surface.
+> Based on gaps identified in the eval report. Prepare these before the recruiter screen; they will surface.
 
 ${hardQs}
 
 ---
 
-## Section 4 — CV bullet defense drill
+## Section 4: CV bullet defense drill
 
 > For each top CV claim, prepare a 60-second expansion and anticipate the follow-up. Recruiters test CV bullets in ~40% of screens.
 
@@ -1620,39 +1657,39 @@ ${defenseDrill}
 
 ---
 
-## Section 5 — Messy story extraction (⚠️ requires your input)
+## Section 5: Messy story extraction (⚠️ requires your input)
 
-> AI-generated interview answers are detected because they sound smooth. Real answers have edges — specific failure moments, precise numbers, named people, an admission of something that didn't work. Answer these in a voice note or doc — don't polish the output.
+> AI-generated interview answers are detected because they sound smooth. Real answers have edges: specific failure moments, precise numbers, named people, an admission of something that didn't work. Answer these in a voice note or doc; don't polish the output.
 
-1. **The specific project name** — What's the informal name your team used for the project your strongest story comes from? (Not the official name — the one in Slack.)
-2. **The number that surprised you** — What metric changed in a way you didn't expect? Larger or smaller than you predicted — either is useful.
-3. **The person who pushed back** — Who was the hardest stakeholder to bring along? What was their actual concern (not the diplomatic version)?
-4. **The thing that almost didn't ship** — What nearly derailed the project? What would a dispassionate observer say was the root cause?
-5. **The result you're least proud of** — Where did the numbers land short of your internal target? Why?
-6. **What you'd do differently** — Not "I'd communicate more" — name the specific decision you'd reverse.
+1. **The specific project name.** What's the informal name your team used for the project your strongest story comes from? (Not the official name, the one in Slack.)
+2. **The number that surprised you.** What metric changed in a way you didn't expect? Larger or smaller than you predicted; either is useful.
+3. **The person who pushed back.** Who was the hardest stakeholder to bring along? What was their actual concern (not the diplomatic version)?
+4. **The thing that almost didn't ship.** What nearly derailed the project? What would a dispassionate observer say was the root cause?
+5. **The result you're least proud of.** Where did the numbers land short of your internal target? Why?
+6. **What you'd do differently.** Not "I'd communicate more"; name the specific decision you'd reverse.
 
 Feed your answers into [../../docs/APPLICATION_PROMPT_GUIDE.md](../../docs/APPLICATION_PROMPT_GUIDE.md) Phase 8 for the full interview defense drill.
 
 ---
 
-## Section 6 — Closing questions (one per round)
+## Section 6: Closing questions (one per round)
 
-**Tier 1 — Strongest (specific + researched):**
-- "I noticed [SPECIFIC THING from grok-intel.md — company news, product launch, team change] — how does that intersect with the priorities this role will own?"
-- "What does success in this role look like at 6 months — in concrete terms, what artifact would exist that wouldn't exist today?"
+**Tier 1, Strongest (specific + researched):**
+- "I noticed [SPECIFIC THING from grok-intel.md: company news, product launch, team change]. How does that intersect with the priorities this role will own?"
+- "What does success in this role look like at 6 months? In concrete terms, what artifact would exist that wouldn't exist today?"
 
-**Tier 2 — Strong (shows systems thinking):**
+**Tier 2, Strong (shows systems thinking):**
 - "How does the ${guessTeamName(report)} team get input into product decisions? What's the feedback loop?"
 - "What's the one thing the previous person in this role did that you'd want the next person to continue?"
 
-**Tier 3 — Acceptable:**
+**Tier 3, Acceptable:**
 - "What's the hardest part of this role that doesn't show up in the JD?"
 - "What does onboarding look like for this function specifically?"
 
 **Avoid:**
-- "What does ${role.company} do?" — read the JD
-- "What are the growth opportunities?" — reads as self-interested in a first screen
-- "When will I hear back?" — ask the recruiter separately
+- "What does ${role.company} do?" (read the JD)
+- "What are the growth opportunities?" (reads as self-interested in a first screen)
+- "When will I hear back?" (ask the recruiter separately)
 
 ---
 
@@ -1732,7 +1769,7 @@ function buildFormattingGuide(role, report) {
 
 | Rule | Good | Bad |
 |---|---|---|
-| Start with a strong verb | "Shipped a production RAG that drafted VP comms at 99% fidelity" | "Was responsible for developing a system that helped with communications" |
+| Start with a strong verb | "Shipped a production RAG that drafts VP comms in a consistent, verified voice" | "Was responsible for developing a system that helped with communications" |
 | Include a number | "Reduced turnaround from 4 days to 3 hours for 1,000 engineers" | "Significantly reduced turnaround time" |
 | 1–2 lines max | 15–25 words per bullet | 40-word bullets that wrap to 3 lines |
 | No terminal periods | Fragment structure | Full sentences with periods |
@@ -2023,26 +2060,128 @@ async function buildPack(role) {
     throw err; // exit-2 / infra error → genuine crash, do not mask
   }
 
-  // CV PDF wiring — additive path (audit Item B 2026-05-18):
-  //   1. If `apply-pack/<slug>/tailored-cv.md` exists, render via Typst →
-  //      `tailored-cv.pdf` as a real file (preferred path; reflects the
-  //      tonight's-design Typst template).
+  // ── Employer-fabrication tollbooth (2026-06-10) ───────────────────────────
+  // Deterministic guard against INVENTED EMPLOYERS — canonical incident: the
+  // row-2729 (Lovable) cover letter claimed Mitchell worked "At Replit" with
+  // the target company's own metrics recast as personal history, plus
+  // anonymized variants ("a company on a similar growth trajectory") in
+  // form-fields/one-pager. Scans the prose trio Mitchell pastes for
+  // first-person employment claims whose employer is not in cv.md's
+  // Experience section (allowlist derived at runtime — zero hardcoded
+  // personal data in committed code). Violations mark the row PARTIAL and
+  // halt it — same contract as the scrub tollbooth above.
+  // Kill switch: EMPLOYER_GATE_DISABLED=1. Lib: lib/employer-claims.mjs.
+  const employerGateOn = process.env.EMPLOYER_GATE_DISABLED !== '1';
+  if (employerGateOn) {
+    let allowedEmployers = null;
+    try { allowedEmployers = parseCvEmployers(readFileSync(join(ROOT, 'cv.md'), 'utf-8')); } catch { /* fail-closed below */ }
+    if (!allowedEmployers || allowedEmployers.size === 0) {
+      console.error(`  🔴 PARTIAL #${role.num} ${role.company}: employer gate could not derive an employer allowlist from cv.md — fail-closed, row halted. (Set EMPLOYER_GATE_DISABLED=1 to bypass.)`);
+      return 'PARTIAL';
+    }
+    const employerViolations = [];
+    for (const name of ['cover-letter.md', 'form-fields.md', 'one-pager.md']) {
+      const p = join(dir, name);
+      if (!existsSync(p)) continue;
+      for (const v of findEmployerViolations(readFileSync(p, 'utf-8'), { allowedEmployers })) {
+        employerViolations.push({ artifact: name, ...v });
+      }
+    }
+    if (employerViolations.length) {
+      console.error(`  🔴 PARTIAL #${role.num} ${role.company}: ${employerViolations.length} fabricated-employer claim(s) — pack is NOT apply-ready, row halted.`);
+      for (const v of employerViolations.slice(0, 6)) {
+        console.error(`     ${v.artifact} [${v.pattern}]: "${v.raw.slice(0, 100)}" → "${v.employer}" is not in cv.md's employer set`);
+      }
+      return 'PARTIAL';
+    }
+  }
+
+  // ── Grounding tollbooth (2026-06-11, task_72ce7b66) ───────────────────────
+  // Deterministic guard against the fresh-generation fabrication families the
+  // employer gate cannot see: retired metrics (HARDENED-CV-SPEC-2026-05-30),
+  // Google-internal level jargon, banned branding/words, unresolved
+  // FABRICATION-FLAG comments, and first-person authorship claims over the
+  // TARGET company's own products (canonical incident: row 2582 claimed
+  // Mitchell built "Ramp Glass, Inspect, Dojo, Sensei" — names lifted verbatim
+  // from the JD/eval report). Violations mark the row PARTIAL and halt it —
+  // same contract as the tollbooths above. Kill switch: GROUNDING_GATE_DISABLED=1.
+  // Lib: lib/grounding-guard.mjs.
+  // 2026-06-12: also gates em dashes (checkEmDashes) — banned in materials as
+  // an AI tell (feedback_no_em_dashes_in_materials); prompts forbid them, this
+  // catches a slip-through so regeneration fixes it before the pack ships.
+  const groundingGateOn = process.env.GROUNDING_GATE_DISABLED !== '1';
+  if (groundingGateOn) {
+    let corpusText = '';
+    for (const f of ['cv.md', 'article-digest.md']) {
+      try { corpusText += readFileSync(join(ROOT, f), 'utf-8') + '\n'; } catch { /* optional corpus file */ }
+    }
+    let jdText = '';
+    try { jdText = readFileSync(join(dir, 'jd.md'), 'utf-8'); } catch { /* no JD snapshot in this pack */ }
+    let reportText = '';
+    try { reportText = readFileSync(join(ROOT, role.reportPath), 'utf-8'); } catch { /* report text optional for extraction */ }
+    const productNames = extractTargetProductNames({ jdText, reportText, companyName: role.company, corpusText });
+    const isGoogleTarget = /google/i.test(role.company || '');
+    const groundingViolations = [];
+    for (const name of ['cover-letter.md', 'form-fields.md', 'one-pager.md']) {
+      const p = join(dir, name);
+      if (!existsSync(p)) continue;
+      for (const v of findGroundingViolations(readFileSync(p, 'utf-8'), { productNames, isGoogleTarget, checkEmDashes: true, checkTimeAsk: true })) {
+        groundingViolations.push({ artifact: name, ...v });
+      }
+    }
+    if (groundingViolations.length) {
+      console.error(`  🔴 PARTIAL #${role.num} ${role.company}: ${groundingViolations.length} grounding violation(s) (retired metric / level jargon / banned word / target-product claim / em dash / time-ask) — pack is NOT apply-ready, row halted.`);
+      for (const v of groundingViolations.slice(0, 8)) {
+        console.error(`     ${v.artifact} [${v.kind}]: ${v.label} — "${(v.excerpt || '').slice(0, 110)}"`);
+      }
+      return 'PARTIAL';
+    }
+  }
+
+  // CV PDF wiring — additive path (audit Item B 2026-05-18; dual-name
+  // reconciliation 2026-06-26):
+  //   1. If a tailored-CV markdown exists, render via Typst -> `tailored-cv.pdf`
+  //      as a real file (preferred path; reflects the Typst template).
   //   2. Otherwise fall back to the legacy behavior: symlink to a matching
   //      tailored CV PDF in /output/ if `findCvPdf(role)` resolves one.
   // The HTML/Playwright path (generate-pdf.mjs) and the LaTeX path
-  // (generate-latex.mjs) remain available as alternates — this is additive,
-  // not a deprecation.
-  const tailoredMdPath = join(dir, 'tailored-cv.md');
+  // (generate-latex.mjs) remain available as alternates (this is additive,
+  // not a deprecation).
+  //
+  // TWO markdown names coexist in the tree and must BOTH be accepted here:
+  //   - `tailored-cv.md`  — legacy generator-draft name (the historical reader).
+  //   - `cv-tailored.md`  — the L6 schema-typed CANONICAL artifact written by
+  //     the deep-pack / polish pipeline (jd-keyword-score.mjs:282 calls it "the
+  //     L6 schema-typed artifact that renders to the shipped PDF";
+  //     apply-pack-polish.mjs:77 dataFile). 12 deep packs ship ONLY this name,
+  //     so the old reader (which looked for `tailored-cv.md` alone) never found
+  //     it and silently symlinked a stale, often wrong-role /output/ CV. One
+  //     pack (048) carries a "# SUPERSEDED: use cv-tailored.md" TOMBSTONE as its
+  //     `tailored-cv.md`, which the old reader would have rendered verbatim as a
+  //     "CV". Bug class: contract-drift-across-layers (writer emits
+  //     `cv-tailored.md`, reader expected `tailored-cv.md`).
+  // Precedence keeps `tailored-cv.md` FIRST (zero behavior change for the ~45
+  // packs that have a real one), falls back to `cv-tailored.md`, and skips any
+  // SUPERSEDED tombstone so a deep pack always renders a fresh tailored CV.
   const tailoredPdfPath = join(dir, 'tailored-cv.pdf');
+  const isSupersededTombstone = (p) => {
+    try { return /^\s*#\s*SUPERSEDED\b/i.test(readFileSync(p, 'utf-8')); } catch { return false; }
+  };
+  let tailoredMdPath = '';
+  let tailoredMdName = '';
+  for (const cand of ['tailored-cv.md', 'cv-tailored.md']) {
+    const p = join(dir, cand);
+    if (existsSync(p) && !isSupersededTombstone(p)) { tailoredMdPath = p; tailoredMdName = cand; break; }
+  }
   let cvWired = '';
-  if (existsSync(tailoredMdPath)) {
+  if (tailoredMdPath) {
     try {
       try { unlinkSync(tailoredPdfPath); } catch {}
       execSync(
         `node ${JSON.stringify(join(ROOT, 'scripts', 'render-cv-typst.mjs'))} --input ${JSON.stringify(tailoredMdPath)} --output ${JSON.stringify(tailoredPdfPath)}`,
         { cwd: ROOT, stdio: 'pipe' }
       );
-      cvWired = 'rendered Typst from tailored-cv.md';
+      cvWired = `rendered Typst from ${tailoredMdName}`;
     } catch (err) {
       console.warn(`  ⚠ Typst render failed for ${dirName}: ${(err.message || '').slice(0, 200)} — falling back to symlink path`);
       cvWired = '';
@@ -2067,39 +2206,94 @@ async function buildPack(role) {
   console.log(`  ✓ Built apply-pack/${dirName}/${cvFile ? '  (CV linked: ' + cvFile + ')' : '  (no CV PDF found)'}`);
   console.log(`  ${humanize.risk.emoji} Cover letter AI risk: ${humanize.score}% ${humanize.risk.label}${phraseNote}`);
 
-  // Post-build quality gates (audit Items E + F 2026-05-18): JD-keyword
-  // overlap + claim-consistency. Run as a soft check — failure produces a
-  // warning, not a build error. The two scripts write keyword-alignment.md
-  // and claim-consistency.md into the pack dir; the build log surfaces the
-  // headline score so a reviewer can decide whether to drill in.
-  try {
-    const jdScore = execSync(
-      `node ${JSON.stringify(join(ROOT, 'scripts', 'jd-keyword-score.mjs'))} --slug ${JSON.stringify(dirName)}`,
-      { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] }
-    ).toString();
-    const j = JSON.parse(jdScore.slice(jdScore.indexOf('{')));
-    const cvHit = (j.results?.[0]?.artifacts || []).find(a => a.path.includes('tailored-cv') || a.path.includes('cv.md'));
+  // Post-build quality gates (audit Items E + F 2026-05-18; hardened
+  // 2026-06-10). Both gate scripts exit 1 BY DESIGN when they find problems
+  // (below-threshold overlap / unverified claims) — a non-zero exit is a
+  // FINDINGS signal, not a spawn failure. The pre-2026-06-10 code treated any
+  // non-zero exit as "couldn't run", printed "skipped: Command failed", and
+  // discarded the findings JSON sitting in err.stdout — which is exactly how
+  // the row-2729 fabricated-employer cover letter shipped reported-as-built.
+  // Bug class: findings-exit-code-conflated-with-spawn-failure.
+  const runGateScript = (cmd) => {
+    try {
+      const stdout = execSync(cmd, { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] }).toString();
+      return { stdout, stderr: '', exitCode: 0 };
+    } catch (err) {
+      return {
+        stdout: err.stdout ? err.stdout.toString() : '',
+        stderr: err.stderr ? err.stderr.toString() : (err.message || ''),
+        exitCode: typeof err.status === 'number' ? err.status : null, // null = spawn-level failure
+      };
+    }
+  };
+  const parseGateJson = (stdout) => {
+    const i = (stdout || '').indexOf('{');
+    if (i === -1) return null;
+    try { return JSON.parse(stdout.slice(i)); } catch { return null; }
+  };
+
+  // JD-keyword overlap — advisory (non-blocking), but failures now surface
+  // the real reason instead of a swallowed "Command failed". The eval report
+  // is passed EXPLICITLY (role.reportPath = the tracker row's report-link
+  // column) so the scorer never guesses across the two independent num
+  // spaces (report #2729 = Perplexity vs row #2729 = Lovable, 2026-06-10).
+  const jdGate = runGateScript(
+    `node ${JSON.stringify(join(ROOT, 'scripts', 'jd-keyword-score.mjs'))} --slug ${JSON.stringify(dirName)}` +
+    (role.reportPath ? ` --report ${JSON.stringify(role.reportPath)}` : '')
+  );
+  const jdJson = parseGateJson(jdGate.stdout);
+  if (jdJson) {
+    const jdArts = jdJson.results?.[0]?.artifacts || [];
+    const cvHit = jdArts.find(a => a.path.includes('cv-tailored') || a.path.includes('tailored-cv') || a.path.includes('cv.md'));
     if (cvHit) {
       const icon = cvHit.score >= 50 ? '✓' : '⚠️';
       console.log(`  ${icon} JD keyword overlap (CV): ${cvHit.score}% (${cvHit.misses} misses)`);
     }
-  } catch (err) {
-    console.log(`  ⚠️ JD keyword score skipped: ${(err.message || '').slice(0, 80)}`);
-  }
-  try {
-    const claimResult = execSync(
-      `node ${JSON.stringify(join(ROOT, 'scripts', 'claim-consistency.mjs'))} --slug ${JSON.stringify(dirName)}`,
-      { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] }
-    ).toString();
-    const j = JSON.parse(claimResult.slice(claimResult.indexOf('{')));
-    const totalUnverified = (j.results?.[0]?.artifacts || []).reduce((s, a) => s + (a.unverified || 0), 0);
-    const totalClaims = (j.results?.[0]?.artifacts || []).reduce((s, a) => s + (a.total || 0), 0);
-    if (totalClaims > 0) {
-      const icon = totalUnverified === 0 ? '✓' : '⚠️';
-      console.log(`  ${icon} Claim consistency: ${totalClaims - totalUnverified}/${totalClaims} verified across outbound artifacts`);
+    const below = jdArts.filter(a => a.score < 50);
+    if (below.length) {
+      console.log(`  ⚠️ JD keyword overlap below 50%: ${below.map(a => `${a.path} (${a.score}%)`).join(', ')} — see keyword-alignment.md`);
     }
-  } catch (err) {
-    console.log(`  ⚠️ Claim consistency skipped: ${(err.message || '').slice(0, 80)}`);
+  } else {
+    console.log(`  ⚠️ JD keyword score unavailable (exit ${jdGate.exitCode === null ? 'spawn-fail' : jdGate.exitCode}): ${(jdGate.stderr || 'no output').slice(0, 160)}`);
+  }
+
+  // Claim consistency — BLOCKING (2026-06-10). Halt conditions:
+  //   1. The script could not run / produced no parseable JSON → fail-closed:
+  //      an UNVERIFIABLE pack must never report as built.
+  //   2. Unverified EMPLOYER claims in the prose trio Mitchell pastes
+  //      (cover-letter / form-fields / one-pager) — fabricated-employer class
+  //      (belt-and-braces with the in-process tollbooth above; also covers
+  //      hand-edited packs re-checked via standalone runs).
+  // Unverified NUMERIC claims stay advisory (loud warning, not a halt).
+  const ccGate = runGateScript(
+    `node ${JSON.stringify(join(ROOT, 'scripts', 'claim-consistency.mjs'))} --slug ${JSON.stringify(dirName)}`
+  );
+  const ccJson = parseGateJson(ccGate.stdout);
+  const ccRes = ccJson?.results?.[0];
+  if (!ccRes || ccRes.error) {
+    console.error(`  🔴 PARTIAL #${role.num} ${role.company}: claim-consistency could not verify this pack (${ccRes?.error || (ccGate.stderr || 'no parseable output').slice(0, 160)}) — fail-closed, row halted.`);
+    return 'PARTIAL';
+  }
+  const BLOCKING_PROSE = ['cover-letter.md', 'form-fields.md', 'one-pager.md'];
+  const employerBad = (ccRes.artifacts || []).filter(
+    a => BLOCKING_PROSE.includes(a.name) && (a.unverified_employer || 0) > 0
+  );
+  if (employerBad.length) {
+    const lede = `unverified EMPLOYER claim(s) in outbound prose`;
+    if (employerGateOn) {
+      console.error(`  🔴 PARTIAL #${role.num} ${role.company}: ${lede} — pack is NOT apply-ready, row halted.`);
+      for (const a of employerBad) {
+        for (const v of (a.employer_violations || []).slice(0, 4)) console.error(`     ${a.name}: "${v}"`);
+      }
+      return 'PARTIAL';
+    }
+    console.log(`  ⚠️ ${lede} (halt bypassed via EMPLOYER_GATE_DISABLED=1): ${employerBad.map(a => `${a.name} (${a.unverified_employer})`).join(', ')}`);
+  }
+  const totalUnverified = (ccRes.artifacts || []).reduce((s, a) => s + (a.unverified || 0), 0);
+  const totalClaims = (ccRes.artifacts || []).reduce((s, a) => s + (a.total || 0), 0);
+  if (totalClaims > 0) {
+    const icon = totalUnverified === 0 ? '✓' : '⚠️';
+    console.log(`  ${icon} Claim consistency: ${totalClaims - totalUnverified}/${totalClaims} verified across outbound artifacts${totalUnverified ? ' — unverified list in claim-consistency.md' : ''}`);
   }
 
   return true;

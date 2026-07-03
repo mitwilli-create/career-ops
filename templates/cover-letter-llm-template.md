@@ -1,12 +1,12 @@
-# Cover Letter LLM Template — Mitchell Williams
-**Version:** 1.0 — 2026-05-11
+# Cover Letter LLM Template: Mitchell Williams
+**Version:** 1.0, 2026-05-11
 **Prompt lives in:** `scripts/build-apply-packs.mjs` → `buildCoverLetter()`
 **Voice reference:** `data/voice-reference-brief.md`
-**Gold-standard example:** See `data/design-brief-application-pipeline-2026-05-11.md` §8
+**Gold-standard example:** See the GOLD-STANDARD REFERENCE block in `scripts/build-apply-packs.mjs` (the `buildCoverLetter` function).
 
 ---
 
-## Block 1 — Framing Frame (2-3 sentences)
+## Block 1: Framing Frame (2-3 sentences)
 
 **Purpose:** Establish the company-specific problem Mitchell is solving. Not an introduction. Not enthusiasm. A precise diagnosis.
 
@@ -24,13 +24,13 @@
 
 ---
 
-## Block 2 — Signature Move (3-4 sentences)
+## Block 2: Signature Move (3-4 sentences)
 
 **Purpose:** Prove the claim in Block 1 with the highest-value proof point. Narrative, not bullets. Every sentence has a metric or a named artifact.
 
-**Shape:** `At [company], [what he built] — [metric]. [What that architecture required]. [How it maps to their need].`
+**Shape:** `At [company], [what he built], [metric]. [What that architecture required]. [How it maps to their need].`
 
-**Em-dash rule:** At least one em-dash per sentence. The em-dash expands the claim operationally: `[claim] — [what that means]`.
+**No-em-dash rule:** NEVER use an em dash (the "—" character); it reads as AI-generated (feedback_no_em_dashes_in_materials, 2026-06-11). Expand a claim operationally with a colon or comma instead: `[claim]: [what that means]`.
 
 **Anti-patterns:**
 - ❌ Bullet list of matches (reads like a scraped eval report)
@@ -40,15 +40,15 @@
 
 **What changes per role:** Which proof point leads (triage agent vs. RAG pipeline vs. AJ+ talent pipeline vs. The Stream launch vs. Fusion breaking news production). Which metric is most relevant.
 
-**What stays fixed:** The narrative arc. The em-dash architecture. The metric precision.
+**What stays fixed:** The narrative arc. The colon/comma expansion rhythm (never em dashes). The metric precision.
 
 ---
 
-## Block 3 — Human Differentiator (1-2 sentences)
+## Block 3: Human Differentiator (1-2 sentences)
 
 **Purpose:** The thing most candidates can't say. Journalism + AI production in the same body of work. Make it about their blind spot, not his résumé.
 
-**Shape:** `Before [current role], [historical credential] — [specific institutional name + award if relevant]. [What that era built that directly applies now].`
+**Shape:** `Before [current role], [historical credential], [specific institutional name + award if relevant]. [What that era built that directly applies now].`
 
 **Anti-patterns:**
 - ❌ "My unique background combines journalism and AI"
@@ -57,39 +57,41 @@
 
 **What changes per role:** Which historical credential is most relevant (The Stream for social-first AI; Fusion/CNN for live crisis comms; AJ+ for global scale + editorial discipline; HuffPost Live for real-time engagement systems).
 
-**What stays fixed:** The framing that journalism and AI are not two separate eras — they're a continuous system-building practice.
+**What stays fixed:** The framing that journalism and AI are not two separate eras. They're a continuous system-building practice.
 
 ---
 
-## Block 4 — Conversational Asymmetry CTA (2-3 sentences)
+## Block 4: Conversational Asymmetry CTA (2-3 sentences)
 
 **Purpose:** Lower the cost to engage by offering something specific. Not a request. An exchange.
 
-**Shape:** `If [role condition], I'd value [time] to walk through [named artifact]. [One sentence on why that artifact is directly relevant to their current phase].`
+**Shape:** `If [role condition], I can walk through [named artifact], or send a short write-up of it. [One sentence on why that artifact is directly relevant to their current phase].`
+
+**No-time-box rule:** NEVER offer a duration ("15 minutes", "20 minutes", "a quick call for N minutes"). Offer the artifact or a walkthrough, never a meeting slot (feedback_outreach_drafting_bar). The grounding gate fails the build on any "N minutes ... walk through / chat / call" leak.
 
 **Anti-patterns:**
 - ❌ "Please don't hesitate to reach out"
 - ❌ "I'd love to connect"
 - ❌ "I look forward to hearing from you"
 - ❌ Any generic CTA
-- ❌ Asking for the job — offer the artifact
+- ❌ Asking for the job; offer the artifact
 
-**What changes per role:** The named artifact (Voice DNA Kill List design for editorial roles; career-ops repo architecture for FDE/SA roles; AJ+ talent pipeline pattern for enablement roles; Fusion breaking news infrastructure for live-ops roles).
+**What changes per role:** The named artifact (Voice DNA banned-phrase checklist design for editorial roles; career-ops repo architecture for FDE/SA roles; AJ+ talent pipeline pattern for enablement roles; Fusion breaking news infrastructure for live-ops roles).
 
-**What stays fixed:** The specific time ask (15 minutes). The condition framing ("If the role is still open"). The offer of tangible value.
+**What stays fixed:** No time box (never "N minutes"): offer the artifact, not a meeting slot. The condition framing ("If the role is still open"). The offer of tangible value.
 
 ---
 
 ## Critic Pass Checklist (run after generation)
 
 Before the file is written, the system runs a second LLM call checking:
-- [ ] Kill List violations → hard rewrite
+- [ ] banned-phrase checklist violations → hard rewrite
 - [ ] Fabricated metrics → remove or replace with canonical
 - [ ] Weak opening (starts with "I") → restructure
 - [ ] Word count > 340 → cut one Block 2 sentence
 - [ ] Fabrication guard flag → append `<!-- FABRICATION FLAGS -->` block
 
-The critic does NOT change the structure — only the language.
+The critic does NOT change the structure. Only the language.
 
 ---
 
@@ -101,4 +103,4 @@ The critic does NOT change the structure — only the language.
 
 **If word count keeps running long:** Lower `max_tokens` in the generation call to 1,000 and add an explicit `"Return exactly 300-320 words."` instruction.
 
-**If the critic over-edits:** Reduce the critic prompt's scope. Start by only enforcing the Kill List, not the word count.
+**If the critic over-edits:** Reduce the critic prompt's scope. Start by only enforcing the banned-phrase checklist, not the word count.

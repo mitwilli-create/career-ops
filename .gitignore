@@ -1,5 +1,8 @@
 # Personal data (user fills these)
 cv.md
+# relocation-career-strategy.mjs subject profile (PII: identity, comp, relocation plan, political filters).
+# The script reads this at runtime; the committed scaffold is data/relocation-profile.example.json.
+data/relocation-profile.json
 data/applications.md
 data/pipeline.md
 data/api-cost-audit-*.md
@@ -650,3 +653,14 @@ data/company-pulse-reports/
 data/role-enrichment/
 dashboard/stories/
 interview-prep/stories/
+
+# ── 2026-06-13 voice recalibration — gitignored voice SSOT + skill canonical copy + archives ──
+# - voice-reference-brief.md: the single-source-of-truth voice brief loaded by
+#   build-apply-packs/polish-loop/polish-signals/impact-doc/references/referrals/apply-pack-polish.
+#   Carries canonical metrics + [PERSONAL — DO NOT PUBLISH]. Never commit.
+# - data/voice-skills/: canonical versioned copy of the make-it-sound-like-mitchell skill
+#   (public-fork safety; the installed copy lives in ~/Library and is not tracked).
+# - the audit dir holds pre-edit .bak archives + the decision doc (personal voice prose).
+data/voice-reference-brief.md
+data/voice-skills/
+.claude/audit/voice-recalibration-2026-06-13/

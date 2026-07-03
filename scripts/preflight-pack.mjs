@@ -132,7 +132,7 @@ function checkKeywordAlignment(slug) {
   const r = runShell(`node ${JSON.stringify(join(ROOT, 'scripts', 'jd-keyword-score.mjs'))} --slug ${JSON.stringify(slug)}`);
   if (!r.ok) return { level: 'yellow', detail: `jd-keyword-score failed: ${r.stderr.slice(0, 120)}`, metrics: {} };
   const parsed = parseJsonTail(r.stdout);
-  const cvArt = parsed?.results?.[0]?.artifacts?.find(a => a.path.includes('tailored-cv') || a.path === 'cv.md (fallback)');
+  const cvArt = parsed?.results?.[0]?.artifacts?.find(a => a.path.includes('cv-tailored') || a.path.includes('tailored-cv') || a.path === 'cv.md (fallback)');
   if (!cvArt) return { level: 'yellow', detail: 'no CV artifact in scorer result', metrics: {} };
   const score = cvArt.score;
   let level = 'green';

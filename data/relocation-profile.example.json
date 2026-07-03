@@ -1,0 +1,66 @@
+{
+  "_README": "PLACEHOLDER scaffold for scripts/relocation-career-strategy.mjs. This file is COMMITTED and contains NO real personal data. To use the tool: copy this to data/relocation-profile.json (which is gitignored) and replace every value with your own. The script reads the real file if present, otherwise falls back to this example with a warning.",
+  "individual": {
+    "name": "Alex Example",
+    "age": 35,
+    "descriptors": "a software professional, Country-X citizen",
+    "current_role": "Senior Program Manager, Example Corp",
+    "current_location": "City A, Country X",
+    "comp_target_usd": "$150K–$250K USD",
+    "comp_floor_usd": "$130K (fully remote preferred)",
+    "current_comp_estimate": "current total comp likely in the $140K–$190K range (senior IC/PgM)"
+  },
+  "skills_and_production": [
+    "Primary skill area: built and shipped two production systems at the current employer\n  - System one: short description of what it does and the measurable outcome\n  - System two: short description of what it does and the measurable outcome",
+    "Generic tooling: orchestration, pipelines, prompt engineering, automation",
+    "Prior career: several years in an adjacent field before the current role",
+    "Relevant certifications: list them here",
+    "Languages and stacks: list them here"
+  ],
+  "target_roles": {
+    "primary": "Solutions Architect, Forward Deployed Engineer, Applied AI Engineer, Program Manager",
+    "secondary": "Adjacent role A, Adjacent role B"
+  },
+  "cv_notes": [
+    "A notable public project or credential relevant to career strategy.",
+    "Public values or identity facts relevant to employer fit and risk assessment."
+  ],
+  "relocation": {
+    "short_term": {
+      "window": "2026–2032",
+      "place": "City B, Country Y",
+      "country": "Country Y",
+      "region": "Region Y",
+      "reasons": [
+        "Reasons: why this destination passes your filters (culture, legal, healthcare, cost of living)"
+      ],
+      "notes": [
+        "A hard requirement or constraint.",
+        "A long-term intention (e.g. not returning to the origin country)."
+      ],
+      "research_anchors": [
+        "Country Y long-term-resident or remote-work visa category and its income/employer requirements",
+        "Country Y tax treatment of foreign-sourced income for residents"
+      ]
+    },
+    "long_term": {
+      "window": "2032+",
+      "place": "City C, Country Z",
+      "country": "Country Z",
+      "region": "Region Z",
+      "reasons": [
+        "Why this is the eventual permanent base"
+      ],
+      "notes": [
+        "A timing constraint or risk window that delays the move."
+      ],
+      "research_anchors": [
+        "Country Z talent / skilled-professional visa category and current requirements"
+      ]
+    },
+    "political_filters": [
+      "Example employer/government filter one.",
+      "Example employer/government filter two."
+    ]
+  }
+}

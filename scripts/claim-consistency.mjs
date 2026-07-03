@@ -20,8 +20,18 @@
  *   - Duration phrases         (\d+\+?\s*(?:year|yr|month|mo|week|wk|day|hour|hr)s?)
  *   - Counts of N              (\d+(?:,\d{3})*(?:\.\d+)?[KMB]?\+?\s+(?:engineers|producers|...))
  *
- * Each claim is searched verbatim (and with relaxed normalization) in the
- * trusted source. Misses are reported as 🟠 potential fabrication risks.
+ *   - Employer claims (2026-06-10) — first-person employment phrasing
+ *     ("At X, I led…", "I worked at X", "I've run … at X", "I've run … at a
+ *     company…") via lib/employer-claims.mjs. Verified = the named employer is
+ *     in cv.md's Experience-section employer set; anonymized-descriptor claims
+ *     are never verifiable. Born from the row-2729 (Lovable) incident where a
+ *     generated cover letter claimed Mitchell worked "At Replit".
+ *
+ * Each numeric claim is searched verbatim (and with relaxed normalization) in
+ * the trusted source. Misses are reported as 🟠 potential fabrication risks.
+ * Employer-claim misses are the BLOCKING class consumed by
+ * scripts/build-apply-packs.mjs (unverified_employer / employer_violations in
+ * the JSON summary → row halted as PARTIAL).
  *
  * CLI:
  *   node scripts/claim-consistency.mjs --slug <pack-slug>
@@ -35,9 +45,26 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseCvEmployers, extractEmployerClaims, isAllowedEmployer } from '../lib/employer-claims.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
+
+// Employer allowlist — parsed once per run from MASTER cv.md only (the
+// human-maintained truth; tailored-cv.md is generated and must never widen the
+// set). undefined = not loaded yet; null = unavailable/empty → every employer
+// claim is unverified (fail-closed).
+let _employerAllowlist;
+function getEmployerAllowlist() {
+  if (_employerAllowlist !== undefined) return _employerAllowlist;
+  try {
+    const set = parseCvEmployers(readFileSync(join(ROOT, 'cv.md'), 'utf-8'));
+    _employerAllowlist = set.size > 0 ? set : null;
+  } catch {
+    _employerAllowlist = null;
+  }
+  return _employerAllowlist;
+}
 
 // ── Claim extraction patterns ───────────────────────────────────────────────
 
@@ -235,7 +262,11 @@ function buildReport(slug, artifactResults, crossMismatches = []) {
       lines.push(`### 🟠 Unverified claims (${a.unverified.length})`);
       lines.push('');
       for (const c of a.unverified) {
-        lines.push(`- **${c.raw}** (${c.kind}) — not found in trusted source. Verify against cv.md or rewrite to match a documented metric.`);
+        if (c.kind === 'employer') {
+          lines.push(`- **${c.raw}** (employer) — 🔴 employer is NOT in cv.md's Experience-section employer set. Fabricated-employer claims BLOCK the pack build; name a real cv.md employer or rewrite as prospective/company-context phrasing.`);
+        } else {
+          lines.push(`- **${c.raw}** (${c.kind}) — not found in trusted source. Verify against cv.md or rewrite to match a documented metric.`);
+        }
       }
     }
     if (a.verified.length > 0) {
@@ -268,6 +299,7 @@ function processPack(packSlug, opts) {
     return { slug: packSlug, ok: true, error: 'no_outbound_artifacts', artifacts: [] };
   }
 
+  const employerAllowlist = getEmployerAllowlist();
   const artifactResults = [];
   for (const art of artifacts) {
     const claims = extractClaims(art.text);
@@ -278,9 +310,21 @@ function processPack(packSlug, opts) {
       if (r.verified) verified.push(c);
       else unverified.push(c);
     }
+    // Employer claims (2026-06-10): verified = named employer is in cv.md's
+    // employer set. Anonymized generic-descriptor claims are unverifiable by
+    // construction. No allowlist (cv.md missing/unparseable) → fail-closed.
+    const employerClaims = extractEmployerClaims(art.text);
+    for (const e of employerClaims) {
+      const c = { kind: 'employer', raw: e.raw, key: e.employer, pattern: e.pattern };
+      if (e.pattern !== 'generic-descriptor' && employerAllowlist && isAllowedEmployer(e.employer, employerAllowlist)) {
+        verified.push(c);
+      } else {
+        unverified.push(c);
+      }
+    }
     artifactResults.push({
       name: art.name,
-      total: claims.length,
+      total: claims.length + employerClaims.length,
       verified,
       unverified,
     });
@@ -306,6 +350,11 @@ function processPack(packSlug, opts) {
       total: a.total,
       verified: a.verified.length,
       unverified: a.unverified.length,
+      // Blocking class for build-apply-packs (employer fabrication gate).
+      unverified_employer: a.unverified.filter(c => c.kind === 'employer').length,
+      employer_violations: a.unverified
+        .filter(c => c.kind === 'employer')
+        .map(c => c.raw.slice(0, 140)),
     })),
   };
 }

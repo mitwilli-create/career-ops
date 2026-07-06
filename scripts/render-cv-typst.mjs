@@ -141,6 +141,16 @@ function parseCvMarkdown(cvText) {
         firstH2Consumed = true;
         continue;
       }
+      // Non-standard H2 *inside* an experience section = an experience sub-group
+      // header (e.g. "## Network Newsrooms (2010 – 2018)"). Keep the section as
+      // experience so following ### roles still flow into it; push a group marker
+      // that the experience converter renders as a heading + description.
+      const EXPERIENCE_SECTION = /^(experience|work experience|professional experience|employment)$/i;
+      if (firstH2Consumed && !STANDARD_SECTIONS.test(heading) && EXPERIENCE_SECTION.test(currentSection)) {
+        if (!sectionBuffers[currentSection]) sectionBuffers[currentSection] = [];
+        sectionBuffers[currentSection].push({ type: 'group', text: heading });
+        continue;
+      }
       firstH2Consumed = true;
       currentSection = heading.toLowerCase();
       sectionBuffers[currentSection] = sectionBuffers[currentSection] || [];
@@ -243,7 +253,7 @@ function parseCvMarkdown(cvText) {
       // First pipe-separated segment that looks like "City, XX" wins.
       const segments = rawLine.split('|').map(s => s.trim()).filter(Boolean);
       for (const seg of segments) {
-        if (/^[A-Z][A-Za-z .'-]+,\s*[A-Z][A-Za-z .'-]+$/.test(seg)) {
+        if (/^[A-Z][A-Za-z .'-]+,\s*[A-Z][A-Za-z .'()-]+$/.test(seg)) {
           tokens.LOCATION = seg;
           break;
         }
@@ -257,11 +267,23 @@ function parseCvMarkdown(cvText) {
   const summaryLines = sectionBuffers['professional summary'] ||
                        sectionBuffers['summary'] ||
                        sectionBuffers['about'] || [];
-  tokens.SUMMARY_TEXT = summaryLines
-    .map(l => (typeof l === 'string' ? l : ''))
-    .filter(l => l.trim() && !/^-{3,}$/.test(l.trim()))
-    .join(' ')
-    .trim();
+  // Preserve paragraph breaks: a blank line in the summary starts a new
+  // paragraph, each rendered as its own #par block. Escaped per-paragraph here,
+  // so SUMMARY_TEXT is NOT re-escaped below.
+  const _sumParas = [];
+  let _sumCur = [];
+  for (const _sl of summaryLines.map(l => (typeof l === 'string' ? l : ''))) {
+    if (!_sl.trim() || /^-{3,}$/.test(_sl.trim())) {
+      if (_sumCur.length) { _sumParas.push(_sumCur.join(' ').trim()); _sumCur = []; }
+    } else {
+      _sumCur.push(_sl.trim());
+    }
+  }
+  if (_sumCur.length) _sumParas.push(_sumCur.join(' ').trim());
+  tokens.SUMMARY_TEXT = _sumParas
+    .filter(Boolean)
+    .map(p => `#par(leading: 0.45em)[${escapeTypst(p)}]`)
+    .join('\n#v(4pt)\n');
 
   // ── Highlights → Typst highlights-box (audit Item H 2026-05-18) ───────────
   // Extracts bullets from a `## Highlights` H2 section in cv.md. Each `- text`
@@ -343,24 +365,17 @@ function parseCvMarkdown(cvText) {
 
   // ── Education + Certifications → combined section block ──────────────────
 
+  // Certifications now fold into the Skills section heading below; this block
+  // renders Education only.
   const eduLines = sectionBuffers['education'] || [];
   const certLines = sectionBuffers['certifications'] ||
                     sectionBuffers['licenses & certifications'] || [];
   const eduContent = convertEduToTypst(eduLines);
-  const certContent = convertCertToTypst(certLines);
   const hasEdu  = eduLines.length  && eduContent  !== '(see cv.md)';
-  const hasCert = certLines.length && certContent !== '(see cv.md)';
-  if (hasEdu || hasCert) {
-    const heading = hasEdu && hasCert ? 'Education & Certifications'
-                   : hasEdu           ? 'Education'
-                   :                    'Certifications';
-    let body = '';
-    if (hasEdu)  body += eduContent + '\n';
-    if (hasEdu && hasCert) body += '#v(2pt)\n';
-    if (hasCert) body += certContent + '\n';
+  if (hasEdu) {
     tokens.EDUCATION_CERT_BLOCK =
-      `#section-heading("${heading}")\n` +
-      `${body}` +
+      `#section-heading("Education")\n` +
+      `${eduContent}\n` +
       `#v(2pt)`;
   } else {
     tokens.EDUCATION_CERT_BLOCK = '';
@@ -414,9 +429,18 @@ function parseCvMarkdown(cvText) {
     const items = stripMarkdown(m[2]);
     skillsBody += `#skill-category(label: "${escapeTypstStr(label)}", items: "${escapeTypstStr(items)}")\n`;
   }
+  // Fold certifications into the Skills section as a compact inline line.
+  const certInline = (certLines || [])
+    .map(e => (typeof e === 'string' ? e.trim() : ''))
+    .filter(l => l.startsWith('-') || l.startsWith('*'))
+    .map(l => stripMarkdown(l.replace(/^[-*]\s*/, '')))
+    .join('; ');
+  if (certInline) {
+    skillsBody += `#skill-category(label: "Certifications", items: "${escapeTypstStr(certInline)}")\n`;
+  }
   if (skillsBody) {
     tokens.SKILLS_BLOCK =
-      `#section-heading("Skills & Tech Stack")\n` +
+      `#section-heading("Skills, Tech Stack & Certifications")\n` +
       `${skillsBody}` +
       `#v(4pt)`;
   } else {
@@ -436,7 +460,7 @@ function parseCvMarkdown(cvText) {
   tokens.LOCATION          = escapeTypst(tokens.LOCATION);
   tokens.LINKEDIN_DISPLAY  = escapeTypst(tokens.LINKEDIN_DISPLAY);
   tokens.PORTFOLIO_DISPLAY = escapeTypst(tokens.PORTFOLIO_DISPLAY);
-  tokens.SUMMARY_TEXT      = escapeTypst(tokens.SUMMARY_TEXT);
+  // SUMMARY_TEXT is already escaped per-paragraph above (it carries #par markup).
 
   return tokens;
 }
@@ -514,6 +538,18 @@ function convertSectionToTypst(lines, macroName) {
   let inEntry = false;
   let metaLineSeen = false;
   let bulletsStarted = false;
+  let groupDesc = [];
+  let groupOpen = false;
+
+  function flushGroupDesc() {
+    if (groupOpen && groupDesc.length) {
+      typstBlocks.push(
+        `#text(size: 9pt, style: "italic", fill: muted)[${escapeTypst(groupDesc.join(' '))}]\n#v(4pt)`
+      );
+    }
+    groupDesc = [];
+    groupOpen = false;
+  }
 
   function flush() {
     if (!inEntry || (!company && !role)) return;
@@ -521,7 +557,7 @@ function convertSectionToTypst(lines, macroName) {
     // tuple `(x,)` from a parenthesized expression `(x)`. Always append `,` so
     // any non-empty array renders as a tuple.
     const bulletArgs = bullets.length
-      ? bullets.map(b => `"${escapeTypstStr(b)}"`).join(',\n    ') + ','
+      ? bullets.map(b => `[${b}]`).join(',\n    ') + ','
       : '';
     typstBlocks.push(
       `#${macroName}(\n` +
@@ -541,7 +577,17 @@ function convertSectionToTypst(lines, macroName) {
   }
 
   for (const entry of lines) {
+    if (typeof entry === 'object' && entry.type === 'group') {
+      flush();
+      flushGroupDesc();
+      typstBlocks.push(
+        `#v(5pt)\n#text(size: 10.5pt, weight: "bold", fill: accent)[${escapeTypst(stripMarkdown(entry.text))}]\n#v(2pt)`
+      );
+      groupOpen = true;
+      continue;
+    }
     if (typeof entry === 'object' && entry.type === 'heading') {
+      flushGroupDesc();
       flush();
       role = stripMarkdown(entry.text);
       inEntry = true;
@@ -550,6 +596,13 @@ function convertSectionToTypst(lines, macroName) {
     const rawLine = typeof entry === 'string' ? entry : '';
     const l = rawLine.trim();
     if (!l) continue;
+
+    // Collect an experience sub-group description (plain lines between a group
+    // header and its first ### role entry).
+    if (groupOpen && !inEntry) {
+      groupDesc.push(stripMarkdown(l));
+      continue;
+    }
 
     // Meta line under the H3 — first pipe-bearing line wins.
     if (inEntry && !metaLineSeen && l.includes('|')) {
@@ -571,7 +624,7 @@ function convertSectionToTypst(lines, macroName) {
     }
 
     if (l.startsWith('-') || l.startsWith('*')) {
-      bullets.push(stripMarkdown(l.replace(/^[-*]\s*/, '')));
+      bullets.push(escapeTypst(l.replace(/^[-*]\s*/, '')));
       bulletsStarted = true;
       continue;
     }
@@ -579,7 +632,7 @@ function convertSectionToTypst(lines, macroName) {
     // Wrapped continuation of the previous bullet: original line started with
     // whitespace and we're inside a bullet group.
     if (bulletsStarted && bullets.length > 0 && /^\s/.test(rawLine)) {
-      bullets[bullets.length - 1] += ' ' + stripMarkdown(l);
+      bullets[bullets.length - 1] += ' ' + escapeTypst(l);
       continue;
     }
 
@@ -592,6 +645,7 @@ function convertSectionToTypst(lines, macroName) {
 
     // Otherwise: stray content after bullets — skip.
   }
+  flushGroupDesc();
   flush();
 
   return typstBlocks.join('\n\n') || '(see cv.md)';

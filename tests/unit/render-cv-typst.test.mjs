@@ -72,7 +72,10 @@ describe('render-cv-typst regression (audit Item W)', () => {
   test('critical ATS keywords appear at least once each', () => {
     if (!existsSync(CV_PATH)) return;
     if (!masterText) return;
-    const required = ['FDE', 'Forward Deployed', 'Applied AI', 'Solutions Architect', 'AI Program Manager', 'MCP', 'RAG', 'Claude'];
+    // ATS keywords reflect the post-2026-06-08-calibration positioning (comms / editorial /
+    // enablement + AI-builder), NOT the retired FDE / Solutions-Architect framing
+    // (HARDENED-CV-SPEC 2026-05-30 + the 2026-06-08 §6/§7 pivot). All verified present in the render.
+    const required = ['Claude', 'MCP', 'RAG', 'LangChain', 'LLM orchestration', 'communications', 'AI enablement', 'editorial'];
     // pdftotext may break a phrase across lines; normalize whitespace before scan
     const normalized = masterText.replace(/\s+/g, ' ');
     for (const kw of required) {

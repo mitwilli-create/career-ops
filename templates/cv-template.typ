@@ -59,12 +59,12 @@
 
 // ── Color palette ────────────────────────────────────────────────────────────
 
-#let accent       = rgb("#15803d")  // darkened career-ops green
-#let accent-light = rgb("#f0fdf4")  // very light green tint (highlights box only)
-#let accent-border= rgb("#bbf7d0")  // light green border (highlights box only)
+#let accent       = rgb("#243b53")  // deep slate-navy — refined, neutral, WCAG AAA on white
+#let accent-light = rgb("#f8fafc")  // very light neutral gray (highlights box fill)
+#let accent-border= rgb("#e2e8f0")  // light neutral gray (highlights box border)
 #let ink          = rgb("#111827")
 #let body-gray    = rgb("#1f2937")
-#let muted        = rgb("#4b5563")
+#let muted        = rgb("#374151")  // gray-700 — darkened for print legibility (WCAG AA+)
 #let light-rule   = rgb("#e5e7eb")
 
 // ── Section heading ──────────────────────────────────────────────────────────
@@ -80,7 +80,7 @@
   )
   v(-2pt)
   line(length: 100%, stroke: 0.5pt + accent)
-  v(4pt)
+  v(3pt)
 }
 
 // ── Job entry macro ──────────────────────────────────────────────────────────
@@ -105,17 +105,19 @@
     }
   }
 
-  grid(
-    columns: (1fr, auto),
-    gutter: 8pt,
-    align: (left, right),
-    text(size: 10.5pt, weight: "bold", fill: ink)[#role · #company],
-    text(size: 9.5pt, style: "italic", fill: muted)[#right-text],
-  )
+  text(size: 10.5pt, weight: "bold", fill: ink, role)
+  if company != "" {
+    linebreak()
+    text(size: 10pt, fill: body-gray, company)
+  }
+  if period != "" or location != "" {
+    linebreak()
+    text(size: 9pt, style: "italic", fill: muted)[#right-text]
+  }
 
   if team_context != "" {
-    v(1pt)
-    text(size: 9.5pt, fill: muted, team_context)
+    v(2pt)
+    text(size: 9.5pt, fill: body-gray, team_context)
   }
 
   if bullets.len() > 0 {
@@ -124,7 +126,7 @@
     set text(size: 10pt, fill: ink)
     list(..bullets)
   }
-  v(6pt)
+  v(5pt)
 }
 
 // ── Project entry macro ──────────────────────────────────────────────────────
@@ -202,7 +204,7 @@
     ],
     text(size: 9.5pt, fill: muted, date),
   )
-  v(1pt)
+  v(3pt)
 }
 
 // ── Skills category (inline, not bullet) ──────────────────────────────────────
@@ -232,17 +234,17 @@
 
 #let highlights-box(content) = {
   rect(
-    fill: accent-light,
-    stroke: 0.5pt + accent-border,
+    fill: accent,
     radius: 4pt,
-    inset: (x: 10pt, y: 8pt),
+    inset: (x: 11pt, y: 9pt),
     width: 100%,
   )[
+    #set text(fill: white)
     #text(
       size: 9pt,
       weight: "bold",
-      fill: accent,
-      tracking: 0.05em,
+      fill: white,
+      tracking: 0.08em,
       upper("Highlights")
     )
     #v(3pt)
@@ -255,31 +257,22 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 // ── Header band ──────────────────────────────────────────────────────────────
-// Light 2-col: Name + Tagline (left)  |  Contact + Links (right, right-aligned)
-// Single use of multi-column layout in the entire CV. Confined to the header
-// where ATS parsers handle simple grids reliably.
+// Name + tagline take the FULL content width (no side-by-side contact column),
+// so a long tagline never orphans a word onto a third line or collides with the
+// contact block. Contact prints below as one subtle, single, ATS-safe line.
 
-#grid(
-  columns: (1fr, auto),
-  gutter: 12pt,
-  align: (left, right),
-  [
-    #text(size: 18pt, weight: "bold", fill: ink, "{{NAME}}")
-    #if "{{TAGLINE}}" != "" [
-      #linebreak()
-      #v(1pt)
-      #text(size: 11pt, weight: "medium", fill: body-gray, "{{TAGLINE}}")
-    ]
-  ],
-  [
-    #set text(size: 9.5pt, fill: muted)
-    #align(right)[
-      {{PHONE}} #h(3pt)·#h(3pt) {{EMAIL}} \
-      #link("{{LINKEDIN_URL}}")[{{LINKEDIN_DISPLAY}}] #h(3pt)·#h(3pt) #link("{{PORTFOLIO_URL}}")[{{PORTFOLIO_DISPLAY}}] \
-      {{LOCATION}}
-    ]
-  ]
-)
+#text(size: 18pt, weight: "bold", fill: ink, "{{NAME}}")
+#if "{{TAGLINE}}" != "" [
+  #linebreak()
+  #v(2pt)
+  #text(size: 11pt, weight: "medium", fill: body-gray, "{{TAGLINE}}")
+]
+
+#v(5pt)
+
+#text(size: 9pt, fill: muted)[
+  {{PHONE}} #h(3pt)·#h(3pt) {{EMAIL}} #h(3pt)·#h(3pt) #link("{{LINKEDIN_URL}}")[{{LINKEDIN_DISPLAY}}]#if "{{PORTFOLIO_URL}}" != "" [ #h(3pt)·#h(3pt) #link("{{PORTFOLIO_URL}}")[{{PORTFOLIO_DISPLAY}}]]#if "{{LOCATION}}" != "" [ #h(3pt)·#h(3pt) {{LOCATION}}]
+]
 
 #v(6pt)
 
@@ -294,7 +287,7 @@
 // the block visual emphasis without burning vertical space on a heading + rule.
 
 #set text(weight: "medium", fill: ink)
-#par(leading: 0.45em)[{{SUMMARY_TEXT}}]
+{{SUMMARY_TEXT}}
 #set text(weight: "regular")
 
 #v(4pt)

@@ -138,7 +138,7 @@ These are not prototypes. Not demos. Production systems.
    Status: Production, deployed
 
 2. EXECUTIVE RAG PIPELINE / VOICE DNA (Google xGE)
-   Architecture: VP-level "digital twin" — curated Voice DNA corpus + Kill List
+   Architecture: VP-level "digital twin" — curated Voice DNA corpus + banned-phrase checklist
    of rejected drafts that teach the agent risk tolerance and rhetorical pace
    Impact: 90% reduction in drafting latency | 99% stylistic fidelity for VP comms
    Status: Production, deployed
@@ -168,7 +168,7 @@ Mitchell is the rare candidate who does both, with measurable production proof.
 • "VP-level writer who ships production AI systems"
 • "I translate complex AI systems into stakeholder action — and I build the systems doing the translating"
 • "Comms × builder hybrid — one hire who does what usually requires two"
-• "Voice DNA / Kill List methodology" (coined; Mitchell's IP)
+• "Voice DNA / banned-phrase checklist methodology" (coined; Mitchell's IP)
 • "Live-broadcast-grade operating discipline" (the no-edit-window analogy to agentic pipelines)
 
 ─── TARGET ROLE ARCHETYPES ───
@@ -322,7 +322,7 @@ Decode this JD as a senior hiring manager who wrote it. Return:
    What does this JD require that I don't clearly demonstrate?
    For each gap: suggest a bridge framing or proof-point substitution.
 
-6. KILLER KEYWORDS (10–15)
+6. POWER KEYWORDS (10–15)
    Exact phrases that must appear naturally in my materials to pass ATS
    and resonate with a human reader.
 
@@ -357,7 +357,7 @@ and makes a pass/fail decision in 6–8 seconds on first scan.
 
 3. THE ONE LINE — what single line in my CV earns the next 30 seconds?
 
-4. THE KILL SHOT — what would cause a recruiter to stop and email me today?
+4. THE CLINCHER — what would cause a recruiter to stop and email me today?
    What is the most unusual and credible signal in my profile for this company?
 
 5. FILTER RISK — what might cause an ATS or first-pass screener to filter me out?
@@ -394,7 +394,7 @@ For each bullet:
 
 Rewrite rules:
 • CAR format — lead with the outcome, not the task
-• Embed killer keywords naturally (from Phase 1 decode)
+• Embed power keywords naturally (from Phase 1 decode)
 • Keep all metrics — never remove a number; add one if missing
 • Maximum 2 lines per bullet — ruthless compression
 • Active voice, strong verbs — no "was responsible for", no "helped with"

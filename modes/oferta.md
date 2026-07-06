@@ -1,6 +1,6 @@
 # Mode: job — Full A-G Evaluation
 
-When the candidate pastes a job (text or URL), ALWAYS deliver the 7 blocks (A-F evaluation + G legitimacy):
+When the candidate pastes a job (text or URL), ALWAYS deliver the 7 blocks (A-F evaluation + G legitimacy) plus the corpus-grounded `Block C — Why This Fits Mitchell` output section (rubric below, between Block B and Block C):
 
 ## Step 0 — Archetype Detection
 
@@ -37,6 +37,27 @@ Read `cv.md`. Create a table with each JD requirement mapped to exact lines in t
 2. Can the candidate demonstrate adjacent experience?
 3. Is there a portfolio project that covers this gap?
 4. Concrete mitigation plan (phrase for cover letter, quick project, etc.)
+
+## Block "Why This Fits" — Mitchell-specific corpus-grounded rationale
+
+Output a section titled exactly `## Block C — Why This Fits Mitchell` immediately after `## B) Match with CV` in the report (this is intentional — it sits BEFORE `## C) Level and Strategy` so the corpus-grounded "why this score" rationale leads the human-readable narrative; the dashboard popout reads from this section, and `tests/eval-report-block-c-invariant.test.mjs` enforces it on every report dated on or after the deploy cutoff).
+
+**Rules — apply strictly:**
+
+1. **3-4 sentences.** No more, no fewer. Tight, dense, Mitchell-readable.
+2. **Every sentence must cite a specific corpus location** — at minimum 3 citations total across the block. Use this format:
+   - `[cv.md: <section heading>]` — e.g. `[cv.md: Google xGE § Editorial Lead]`
+   - `[article-digest: <entry title>]` — e.g. `[article-digest: Voice DNA RAG]`
+   - `[second-brain: <doc>]` — e.g. `[second-brain: personality-strengths-profile]`
+   - `[hm-intel: <field>]` — e.g. `[hm-intel: rejection-pattern]` or `[hm-intel: hiring-manager-priorities]`
+
+   Interactive mode has the full corpus on disk — unlike the Batches API path, you can and should read `data/second-brain-extracted/second brain/` and `data/hm-intel/<company-slug>-<role-slug>.json` (when present) before writing this block, so all 4 citation markers are legitimately available here.
+3. **DO NOT generalize.** "Mitchell's editorial background fits" is rejected.
+   **Specify.** "Mitchell's 2-year stint as Editorial Lead at Google's xGE function shipping the Voice DNA RAG product `[cv.md: Google § Editorial Lead]` is a direct match to this role's 'AI Enablement for content teams' responsibility `[JD § Responsibilities-1]`." is accepted.
+4. **If you cannot find 3 corpus-anchored citations to justify the score**, then **lower the Overall score by 0.3** and append the literal phrase `downscored due to thin corpus support` in the rationale. Do not pad with generic claims to reach 3.
+5. **Voice:** third-person about Mitchell (`Mitchell's …`, `his …`). NEVER first-person Mitchell self-talk. Apply tone-safe framing per `lib/ground-prompt.mjs` rules — no "failed/broken/wrong/bad/poor/weak". Banned vocabulary: leverage, synergy, deep dive, ideate, circle back, touch base, bandwidth, moving forward, reach out.
+
+**Naming note (do not rename in output):** the output section header is `## Block C — Why This Fits Mitchell`. The Level-and-Strategy section that follows continues to be output as `## C) Level and Strategy` — two distinct headings, intentional (same accepted pattern as `batch/batch-prompt.md`). The instruction section below keeps its `## Block C — Level and Strategy` title; downstream consumers only ever parse report OUTPUT headers, never this mode file.
 
 ## Block C — Level and Strategy
 
@@ -173,6 +194,9 @@ Save full evaluation in `reports/{###}-{company-slug}-{YYYY-MM-DD}.md`.
 
 ## B) Match with CV
 (full content of block B)
+
+## Block C — Why This Fits Mitchell
+(full content — 3-4 sentences, ≥3 corpus citations per the Block "Why This Fits" rubric above; downscore Overall by 0.3 if citations are thin)
 
 ## C) Level and Strategy
 (full content of block C)

@@ -3,7 +3,13 @@ cv.md
 # relocation-career-strategy.mjs subject profile (PII: identity, comp, relocation plan, political filters).
 # The script reads this at runtime; the committed scaffold is data/relocation-profile.example.json.
 data/relocation-profile.json
+# relocation strategy briefs (PII: relocation targets, political filters, comp, identity). Personal data — on-disk only.
+data/relocation-*brief*.md
 data/applications.md
+# First-person voice-corpus narratives — Mitchell's full career story + internal
+# Google xGE detail + named colleagues. Personal data; grounds generation locally
+# but should not be fork-public. Kept on disk via `git rm --cached`; never re-track.
+data/human-examples/
 data/pipeline.md
 data/api-cost-audit-*.md
 data/ux-audit-*.md
@@ -96,6 +102,17 @@ data/corpus-audit-spend.jsonl
 data/scan-audit-spend.jsonl
 data/batch-audit-spend.jsonl
 data/eval-ux-audit-spend.jsonl
+# stale-tracker-status-pass (2026-06-14) — guarded, reversible stale-row pass over
+# applications.md. All three outputs carry personal pipeline data (full tracker
+# rows + company/role/scores) and [PERSONAL — DO NOT PUBLISH] frontmatter, so they
+# must never be committed (applications.md itself is gitignored above):
+#   - the dated report under .claude/audit/<date>/
+#   - the append-only action ledger
+#   - the pre-mutation snapshots + purged-row archive
+.claude/audit/*/stale-tracker-status-pass-*.md
+data/stale-tracker-audit.jsonl
+data/applications-archive/
+.stale-liveness-urls.*
 # Panel JSON reveals file paths from .claude/audit/ work-product directories,
 # which can include personal workflow names (e.g. apply-now-clipboard-modal).
 # Agent regenerates this on every scheduled run.
@@ -110,6 +127,8 @@ data/baselines/
 data/triage-batch.tsv
 data/curator-mentions.md
 data/rejection-history.*
+data/rejections.jsonl
+data/rejection-overrides.jsonl
 data/grok-spend.log
 # P1-6 ledger: SQLite job_runs history is per-host runtime telemetry,
 # not data to share across machines. WAL + SHM are sqlite write-ahead files.
@@ -664,3 +683,30 @@ interview-prep/stories/
 data/voice-reference-brief.md
 data/voice-skills/
 .claude/audit/voice-recalibration-2026-06-13/
+
+# ── Bucket D cleanup (2026-07-06): transient backup/artifact dirs + pre-edit
+#    snapshots that accumulated on a long-lived branch. Personal pipeline data
+#    per DATA_CONTRACT.md — never committed. NOTE: data/cv-archives/ is
+#    deliberately NOT ignored (committable audit trail per CLAUDE.md).
+.claude/audit/
+.removed/
+data/ai-worlds-fair-2026/
+data/reordered-scrub-backups-2026-06-01/
+data/scrubbed-roles-2026-06-04/
+data/cv-retailor-backups-2026-06-01/
+data/apply-pack-backups-2026-06-01-phase2/
+data/apply-pack-backups-2026-06-01-phase2-postgen/
+data/orphan-dashboard-htmls-2026-06-05/
+data/job-handovers/
+data/hm-intel-research/
+data/raspberry-ai-pitch/
+data/comp-cache/
+# pre-edit snapshots (applications.md.pre-*, apply-now-queue.json.pre-*, pipeline.md.pre-*)
+data/*.pre-*
+data/**/*.pre-*
+# transient session artifacts / runtime retry-state / logs
+data/*.log
+data/calibration-state.json
+data/cv-tailor-retry-state.json
+data/remote-ai-sweep-report-*.md
+data/prompt-remote-ai-company-sweep-*.md

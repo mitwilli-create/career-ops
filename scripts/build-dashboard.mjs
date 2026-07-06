@@ -33,6 +33,7 @@ import { getProvenance, renderProvenanceCard, renderProvenanceSummary } from '..
 import { applyWealthLens, renderWealthLensCard }                   from '../lib/wealth-lens.mjs';
 import { rankCompaniesByWealth }                                   from '../lib/wealth-ranking.mjs';
 import { resolveDeepApplyUrl }                                     from '../lib/ats-deep-apply.mjs';
+import { KNOWN_ATS_HOSTS }                                         from '../lib/jd-url-canonicalizer.mjs';
 import { getIndustryGapRanking, renderIndustryGapTable }           from '../lib/industry-gap.mjs';
 import { assessTravelTradeoff, renderTravelChip }                  from '../lib/travel-cap.mjs';
 import { computeStrategyCeiling, renderStrategyCard }              from '../lib/strategy-ceiling.mjs';
@@ -5655,7 +5656,7 @@ async function build() {
   let _anIdx = 0;
   const _anReadyHtml = _anReady.map(r => renderRow(r, `apply-${_anIdx++}`)).join('\n');
   const _anPendingDivider = _anPending.length
-    ? `<tr class="apply-now-enriching-divider"><td colspan="20" style="padding:10px 14px;background:rgba(210,153,34,0.08);border-top:2px solid rgba(210,153,34,0.35);border-bottom:1px solid rgba(210,153,34,0.2);font-size:12px;color:#d29922;font-weight:600">⏳ Still enriching (${_anPending.length}) — gathering hiring-manager intel, tailored CV, and live-posting checks. Listed below so nothing is hidden; held out of “ready to apply” until complete.</td></tr>`
+    ? `<tr class="apply-now-enriching-divider"><td colspan="20" style="padding:10px 14px;background:rgba(210,153,34,0.08);border-top:2px solid rgba(210,153,34,0.35);border-bottom:1px solid rgba(210,153,34,0.2);font-size:12px;color:#d29922;font-weight:600"><span style="display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap;line-height:1.5">⏳ ${_anPending.length} not yet apply-ready — missing a tailored CV and/or hiring-manager intel. <button type="button" onclick="window._enrichPendingApplyNow(event)" title="Generate the tailored apply-pack (CV + cover letter + form fields) for the top pending roles" style="background:#d29922;color:#161616;border:none;border-radius:6px;padding:4px 11px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">Create materials →</button> Held out of “ready to apply” until each pack is built — or discard rows you don't want.</span></td></tr>`
     : '';
   const _anPendingHtml = _anPending.map(r => renderRow(r, `apply-${_anIdx++}`)).join('\n');
   const applyNowRows = [_anReadyHtml, _anPendingDivider, _anPendingHtml].filter(Boolean).join('\n');
@@ -11921,6 +11922,29 @@ async function build() {
     color: var(--text);
   }
   .drawer-action-bar .drawer-btn-skip[disabled] { opacity: .5; cursor: not-allowed; }
+  /* 2026-06-10 — I Applied button. Green accent; two-tap confirm arms the
+     button (filled green) before the status POST commits. Done-state stays
+     filled so the drawer shows the applied signal at a glance. */
+  .drawer-action-bar .drawer-btn-applied {
+    background: var(--surface-2);
+    border-color: var(--green-fg, #4ade80);
+    color: var(--green-fg, #4ade80);
+  }
+  .drawer-action-bar .drawer-btn-applied:hover {
+    background: var(--green-fg, #4ade80);
+    color: #06140a;
+  }
+  .drawer-action-bar .drawer-btn-applied.drawer-btn-applied-armed {
+    background: var(--green-fg, #4ade80);
+    color: #06140a;
+    font-weight: 600;
+  }
+  .drawer-action-bar .drawer-btn-applied.drawer-btn-applied-done {
+    background: var(--green-fg, #4ade80);
+    color: #06140a;
+    opacity: .85;
+  }
+  .drawer-action-bar .drawer-btn-applied[disabled] { cursor: default; }
   /* Polish-mount highlight flash — fired when the action-bar Polish button is
      clicked. Brief amber pulse draws the eye to the polish sub-section in the
      drawer body where the actual polish-mode pickers live. */
@@ -16622,7 +16646,9 @@ function openRightRailForDetail(idx, detailRow) {
   // dropped row #48 to https://www.anthropic.com/jobs instead of the
   // Greenhouse posting. Explicit priority: role-link → ATS-host action-cell
   // anchor → company-link → any action-cell anchor.
-  const KNOWN_ATS_HOSTS = ['greenhouse.io', 'lever.co', 'ashbyhq.com', 'workday.com', 'myworkdayjobs.com', 'jobvite.com', 'smartrecruiters.com', 'icims.com', 'taleo.net', 'bamboohr.com', 'eightfold.ai', 'oraclecloud.com', 'successfactors.com'];
+  // Injected at build time from lib/jd-url-canonicalizer.mjs (single source of
+  // truth) — do not hand-edit a host list here. contract-drift-across-layers guard.
+  const KNOWN_ATS_HOSTS = ${JSON.stringify(KNOWN_ATS_HOSTS)};
   function _looksLikeAtsUrl(u) {
     if (!u) return false;
     try {
@@ -16943,7 +16969,15 @@ function openRightRailForDetail(idx, detailRow) {
     const skipBtnHtml = num
       ? '<button type="button" class="drawer-btn-skip" data-drawer-action="skip" data-drill="drawer-action:skip:' + num + '" title="Discard role — choose Today only or Permanently in the next dialog">Discard Role</button>'
       : '<button type="button" class="drawer-btn-skip" data-drill="drawer-action:skip:" disabled title="No row number — needs a tracker row">Discard Role</button>';
-    actionsEl.innerHTML = applyBtnHtml + materialsBtnHtml + polishBtnHtml + dispatchBtnHtml + skipBtnHtml;
+    // 2026-06-10 — APPLIED: signal that the application was submitted.
+    // Two-tap confirm in place (no modal), then POST /api/status flips the
+    // tracker row to Applied, pulls it from the Apply-Now queue server-side,
+    // and schedules a dashboard rebuild. Tracker notes are preserved (no note
+    // field is sent — /api/status replaces notes when one is present).
+    const appliedBtnHtml = num
+      ? '<button type="button" class="drawer-btn-applied" data-drawer-action="mark-applied" data-drill="drawer-action:mark-applied:' + num + '" title="I applied to this role — sets tracker status to Applied and removes it from the Apply-Now queue">✅ I Applied</button>'
+      : '<button type="button" class="drawer-btn-applied" data-drill="drawer-action:mark-applied:" disabled title="No row number — needs a tracker row">✅ I Applied</button>';
+    actionsEl.innerHTML = applyBtnHtml + materialsBtnHtml + polishBtnHtml + appliedBtnHtml + dispatchBtnHtml + skipBtnHtml;
     // Wire actions after innerHTML — keeps the HTML-as-string clean of
     // nested-quote escaping and lets us close the rail in one place.
     const applyBtnEl = actionsEl.querySelector('button[data-drawer-action="apply"]');
@@ -16992,6 +17026,12 @@ function openRightRailForDetail(idx, detailRow) {
           window.toast('Polish controls not found — try reopening the drawer', 'warn');
         }
       });
+    }
+    // 2026-06-10 — APPLIED: two-tap confirm, then status POST via
+    // drawerMarkApplied. Wired before SKIP so tab order matches visual order.
+    const appliedBtnEl = actionsEl.querySelector('button[data-drawer-action="mark-applied"]');
+    if (appliedBtnEl && num) {
+      appliedBtnEl.addEventListener('click', () => drawerMarkApplied(num, appliedBtnEl));
     }
     // 2026-05-24 — SKIP: opens a 2-radio modal (Today only / Permanently).
     // Routes Confirm to /api/dismiss-row OR /api/discard-with-reason based on
@@ -17512,6 +17552,56 @@ let _drawerMaterialsPollers = {};  // jobId → setTimeout handle
 // GAP-RES-14 (2026-05-24) — Dispatch handoff: POST /api/handoffs/dispatch
 // returns a ready-to-paste Claude Code prompt for the row. We copy it to
 // clipboard and surface a 1.5s "✓ Copied" affordance on the button.
+// 2026-06-10 — Mark a row Applied from the drawer. Two-tap confirm: first
+// click arms the button for 5 seconds, second click commits. POST /api/status
+// flips the tracker row, removes it from the Apply-Now queue, and schedules a
+// dashboard rebuild server-side. No note field is sent so existing tracker
+// notes survive (the endpoint replaces notes when one is present).
+async function drawerMarkApplied(num, btnEl) {
+  if (!btnEl) return;
+  if (btnEl.dataset.armed !== '1') {
+    btnEl.dataset.armed = '1';
+    btnEl.dataset.prevLabel = btnEl.textContent;
+    btnEl.textContent = 'Confirm — I applied';
+    btnEl.classList.add('drawer-btn-applied-armed');
+    setTimeout(() => {
+      if (btnEl.dataset.armed === '1') {
+        btnEl.dataset.armed = '';
+        btnEl.textContent = btnEl.dataset.prevLabel || '✅ I Applied';
+        btnEl.classList.remove('drawer-btn-applied-armed');
+      }
+    }, 5000);
+    return;
+  }
+  btnEl.dataset.armed = '';
+  btnEl.disabled = true;
+  btnEl.textContent = 'Saving…';
+  try {
+    const r = await fetch('/api/status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ num: parseInt(num, 10), status: 'Applied' }),
+    });
+    const data = await r.json().catch(() => null);
+    if (r.ok && data && data.ok) {
+      btnEl.textContent = '✓ Applied';
+      btnEl.classList.remove('drawer-btn-applied-armed');
+      btnEl.classList.add('drawer-btn-applied-done');
+      const pill = document.querySelector('.status-pill[data-num="' + num + '"]');
+      if (pill) pill.textContent = 'Applied';
+      if (typeof showToast === 'function') showToast('Row #' + num + ' marked Applied — removed from Apply-Now', 'success');
+    } else {
+      btnEl.disabled = false;
+      btnEl.textContent = btnEl.dataset.prevLabel || '✅ I Applied';
+      if (typeof showToast === 'function') showToast('Mark-Applied did not save: ' + ((data && data.error) || ('HTTP ' + r.status)), 'warn');
+    }
+  } catch (err) {
+    btnEl.disabled = false;
+    btnEl.textContent = btnEl.dataset.prevLabel || '✅ I Applied';
+    if (typeof showToast === 'function') showToast('Mark-Applied failed: ' + err.message, 'warn');
+  }
+}
+
 async function drawerDispatchHandoff(num, company, role, btnEl) {
   if (!btnEl) return;
   const origLabel = btnEl.textContent;
@@ -23342,6 +23432,10 @@ async function _openSkipModal(num, company, role) {
       if (window.toast) window.toast('Row #' + num + ' dismissed until midnight PT', 'info');
     } else {
       const reason = (reasonEl && reasonEl.value ? reasonEl.value : '').trim();
+      // Optimistically dim the Apply-Now row(s) for this num so the click feels
+      // instant; we hard-remove on success or restore on failure below.
+      const _anRows = [...document.querySelectorAll('#apply-now-tbody tr.row[data-num="' + num + '"]')];
+      _anRows.forEach(el => { el.style.transition = 'opacity .2s'; el.style.opacity = '0.35'; });
       if (reason) {
         try {
           await fetch('/api/discard-with-reason', {
@@ -23354,16 +23448,104 @@ async function _openSkipModal(num, company, role) {
           // Don't block the status change on reason-persist failure
         }
       }
-      _close();
+      // Write Discarded directly. The server clears the row from
+      // apply-now-queue.json even when the row has no applications.md entry
+      // (queue num ≠ tracker num), so this no longer 404s on orphan rows.
+      let ok = false, errMsg = '';
       try {
-        await drawerQuickStatus(num, 'Discarded');
+        const r = await fetch('/api/status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ num: parseInt(num, 10), status: 'Discarded' }),
+        });
+        let d = {};
+        try { d = await r.json(); } catch (_) {}
+        ok = !!(r.ok && d && d.ok);
+        if (!ok) errMsg = (d && d.error) ? d.error : ('HTTP ' + r.status);
       } catch (e) {
-        console.warn('drawerQuickStatus failed:', e);
+        errMsg = (e && e.message) || 'network error';
+      }
+      _close();
+      if (ok) {
+        // Reflect Discarded on every visible status pill for this row.
+        document.querySelectorAll('.status-pill[data-num="' + num + '"]').forEach(p => {
+          p.textContent = 'Discarded';
+          if (typeof clearStatusClasses === 'function') clearStatusClasses(p);
+          if (typeof statusClassFor === 'function') p.classList.add(statusClassFor('Discarded'));
+          const ptr = p.closest('tr'); if (ptr) ptr.dataset.status = 'discarded';
+        });
+        // Drop the row(s) from Apply-Now (no longer apply-eligible). The
+        // "Still enriching (N)" divider count is authoritative from the build,
+        // and the server schedules a dashboard rebuild on every discard, so the
+        // count corrects on the next load — we don't mutate it client-side here.
+        _anRows.forEach(el => {
+          el.style.transition = 'opacity .25s'; el.style.opacity = '0';
+          setTimeout(() => { try { el.remove(); } catch (_) { el.style.display = 'none'; } }, 260);
+        });
+        try {
+          document.dispatchEvent(new CustomEvent('careerops:status-changed', { detail: { num: parseInt(num, 10), status: 'Discarded' } }));
+        } catch (_) {}
+        if (window.toast) window.toast('#' + num + ' discarded — removed from Apply-Now', 'success');
+        if (typeof closeRightRail === 'function') closeRightRail();
+      } else {
+        // Discard failed — restore the row and surface the reason.
+        _anRows.forEach(el => { el.style.opacity = ''; });
+        if (window.toast) window.toast('Discard failed: ' + errMsg, 'error');
       }
     }
   });
 }
 window._openSkipModal = _openSkipModal;
+
+// Bulk "Create materials" for the not-yet-apply-ready rows. Generates the
+// tailored apply-pack (CV + cover letter + form fields) — the dominant
+// readiness-gate gap — for the highest-fit pending roles so they clear into
+// "ready to apply." Bounded per click (protects spend + machine load) and
+// idempotent server-side (build-apply-pack skips packs that already exist, for
+// free). Discard remains the alternative for rows you don't want.
+async function _enrichPendingApplyNow(ev) {
+  if (ev && ev.stopPropagation) ev.stopPropagation();
+  const body = document.querySelector('#apply-now-tbody');
+  if (!body) return;
+  let seen = false;
+  const nums = [];
+  for (const tr of body.children) {
+    if (tr.classList && tr.classList.contains('apply-now-enriching-divider')) { seen = true; continue; }
+    if (seen && tr.classList && tr.classList.contains('row')) {
+      const n = tr.getAttribute('data-num');
+      if (n && tr.style.display !== 'none' && tr.style.opacity !== '0') nums.push(n);
+    }
+  }
+  if (!nums.length) { if (window.toast) window.toast('Nothing pending to enrich', 'info'); return; }
+  const BATCH = 5;
+  const batch = nums.slice(0, BATCH);
+  const NL = String.fromCharCode(10);
+  const estCost = (batch.length * 2.5).toFixed(0);
+  const more = nums.length > BATCH ? (NL + NL + '(' + (nums.length - BATCH) + ' more — run again for the next batch.)') : '';
+  const ok = window.confirm(
+    'Create materials (tailored CV + cover letter + form fields) for the top ' + batch.length + ' of ' + nums.length + ' not-yet-ready roles?' + NL + NL
+    + '- Runs in the background (~2-5 min each)' + NL
+    + '- Roughly $' + estCost + ' total (about $2.50/role; already-built packs are skipped free)' + NL
+    + '- Each role moves to ready-to-apply once its pack is built' + more
+  );
+  if (!ok) return;
+  let started = 0;
+  for (const n of batch) {
+    try {
+      const r = await fetch('/api/pipeline/build-apply-pack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ row: parseInt(n, 10) }),
+      });
+      if (r.ok) { const d = await r.json().catch(() => ({})); if (d && d.ok) started++; }
+    } catch (_) {}
+    await new Promise(res => setTimeout(res, 400)); // small stagger — avoid spawning all at once
+  }
+  if (window.toast) {
+    window.toast('Started materials for ' + started + ' role' + (started === 1 ? '' : 's') + ' — each moves to ready once built', started ? 'success' : 'error');
+  }
+}
+window._enrichPendingApplyNow = _enrichPendingApplyNow;
 
 function _renderApplyClipboardModal(modal, formFieldsText, slug, applyHref, backdrop, jsonData) {
   function _esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -24863,7 +25045,7 @@ async function _openPreApplyCheckModal(num) {
     var voice = (checks && checks.voice) || {};
     var failures = Array.isArray(voice.rule_failures) ? voice.rule_failures : [];
     if (failures.length === 0) {
-      return _paemptyState('No voice rule failures detected. (12 rules: lead architecture, em-dash density, banned vocab, hedge words, therapy-speak, etc.)');
+      return _paemptyState('No voice rule failures detected. (12 rules: lead architecture, no em dashes, banned vocab, hedge words, therapy-speak, etc.)');
     }
     var parts = ['<ul style="margin:0;padding:0;list-style:none">'];
     for (var i = 0; i < failures.length; i++) {
@@ -31600,7 +31782,7 @@ function _beRenderGap(skillKey) {
   const opportunityMap = {
     'agent-framework':  { personal: 'Wrap an existing career-ops agent (cv-tailor, council, or apply-pack-polish) as a stateful LangGraph workflow — public trace URL counts as proof.', work: 'xGE: rebuild the comms-triage agent as a multi-node LangGraph state machine; documented trace replaces the hand-wired 3-prompt pipeline.' },
     'observability':    { personal: 'Pair LangSmith with the LangGraph rewrite — every council call ships a public trace.', work: 'xGE: pipe internal agents through LangSmith for trace replay during postmortems.' },
-    'vector-db':        { personal: 'Build a Pinecone/pgvector index over cv.md + article-digest.md; replace career-ops grep with semantic retrieval. ~2h.', work: 'xGE: index the curated comms corpus; A/B retrieval-augmented drafts vs the existing kill-list pipeline.' },
+    'vector-db':        { personal: 'Build a Pinecone/pgvector index over cv.md + article-digest.md; replace career-ops grep with semantic retrieval. ~2h.', work: 'xGE: index the curated comms corpus; A/B retrieval-augmented drafts vs the existing banned-phrase-checklist pipeline.' },
     'web-framework':    { personal: 'Spin a Next.js subdomain (e.g., agents.careers-ops.com) hosting a Vercel-AI-SDK chat UI over the career-ops council.', work: 'xGE: ship the Voice DNA RAG as a Next.js internal tool with a chat-with-tools front-end.' },
     'workflow-engine':  { personal: 'Deploy cv-tailor-batch as a Temporal workflow — uses the multi-step retry semantics for real.', work: 'xGE: convert the apply-pack-polish flow to Temporal so each artifact stage is a durable activity.' },
     'eval-platform':    { personal: 'Wire Braintrust into the council; every multi-LLM run logs to a public eval dataset.', work: 'xGE: track drafting-quality regressions across model upgrades with Braintrust scoreboards.' },

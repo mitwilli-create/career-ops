@@ -3946,6 +3946,37 @@ function _scheduleDashboardRebuild(reason) {
   }, 500);
 }
 
+// Remove a row (by num) from data/apply-now-queue.json so a discard / reject /
+// skip immediately clears it from the Apply-Now widget — even when the row has
+// NO applications.md entry (queue num ≠ tracker num; see AGENTS.md "Two num
+// spaces"). Returns true iff the queue file was modified. Best-effort: any
+// error returns false rather than throwing into the status-write path.
+function removeNumFromApplyNowQueue(targetNum, meta = {}) {
+  try {
+    const queuePath = join(ROOT, 'data/apply-now-queue.json');
+    if (!existsSync(queuePath)) return false;
+    const queueRaw = JSON.parse(readFileSync(queuePath, 'utf8'));
+    const before = (queueRaw.ranked || []).length;
+    queueRaw.ranked = (queueRaw.ranked || []).filter(r => String(r.num) !== String(targetNum));
+    if (queueRaw.ranked.length === before) return false;
+    queueRaw.ranked.forEach((r, i) => { r.rank = i + 1; });
+    queueRaw.total_rows = queueRaw.ranked.length;
+    if (!queueRaw.qa_cleanup) queueRaw.qa_cleanup = {};
+    queueRaw.qa_cleanup.last_auto_remove = {
+      ts: new Date().toISOString(),
+      num: parseInt(targetNum, 10),
+      company: meta.company || '',
+      reason: meta.reason || '',
+    };
+    const queueTmp = queuePath + '.tmp.' + process.pid + '.' + Date.now();
+    writeFileSync(queueTmp, JSON.stringify(queueRaw, null, 2));
+    renameSync(queueTmp, queuePath);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 function updateApplicationStatus({ num, status, note }) {
   if (num === undefined || num === null || Number.isNaN(parseInt(num, 10))) {
     return { ok: false, code: 400, error: 'num is required and must be an integer' };
@@ -4007,7 +4038,36 @@ function updateApplicationStatus({ num, status, note }) {
   }
 
   if (!updatedRow) {
-    // AGENTS.md rule: NEVER create new entries — update only.
+    // AGENTS.md rule: NEVER create new entries — update only. EXCEPTION: a
+    // discard / reject / skip of an Apply-Now row whose queue num is not in
+    // applications.md (queue num ≠ tracker num — see AGENTS.md "Two num
+    // spaces") must STILL clear the row from the Apply-Now queue. Otherwise
+    // "Discard" 404s, the optimistic pill reverts, and the row is permanently
+    // undismissable (canonical incident: Anthropic Applied AI Architect rows
+    // #2059 / #2194 / #2211, surfaced 2026-06-06).
+    const canonLc = canonical.toLowerCase();
+    if (canonLc === 'discarded' || canonLc === 'rejected' || canonLc === 'skip' || canonLc === 'applied') {
+      if (removeNumFromApplyNowQueue(targetNum, { reason: canonical })) {
+        // Applied (2026-06-10) is a positive queue exit — no discard entry.
+        if (canonLc !== 'applied') {
+          try {
+            appendDiscardEntry({
+              ts: new Date().toISOString(),
+              num: parseInt(targetNum, 10),
+              company: '', role: '', status: canonical, reason: '',
+            });
+          } catch (_) {}
+        }
+        _scheduleDashboardRebuild(`discard-orphan:${targetNum}→${canonical}`);
+        return {
+          ok: true,
+          row: { num: targetNum, status: canonical },
+          tracker_updated: false,
+          queue_removed: true,
+          note: 'No applications.md row — removed from Apply-Now queue',
+        };
+      }
+    }
     return { ok: false, code: 404, error: `Row #${targetNum} not found in applications.md (refusing to create)` };
   }
 
@@ -4037,6 +4097,10 @@ function updateApplicationStatus({ num, status, note }) {
 
   // Write to discard log when transitioning to a terminal negative status
   const discardStatuses = new Set(['discarded', 'rejected', 'skip']);
+  // Statuses that take a row OUT of the Apply-Now queue. Applied (2026-06-10)
+  // is a positive exit — the role is no longer "to apply", it moves down the
+  // tracker funnel (Applied → Responded → Interview) with no discard entry.
+  const queueLeavingStatuses = new Set(['discarded', 'rejected', 'skip', 'applied']);
   let queueUpdated = false;
   if (discardStatuses.has(canonical.toLowerCase()) && updatedRow) {
     try {
@@ -4049,29 +4113,13 @@ function updateApplicationStatus({ num, status, note }) {
         reason:  (typeof note === 'string' && note.trim()) ? note.trim() : '',
       });
     } catch (_) {}
+  }
 
-    // Remove from apply-now-queue.json so all surfaces stay in sync
-    try {
-      const queuePath = join(ROOT, 'data/apply-now-queue.json');
-      if (existsSync(queuePath)) {
-        const queueRaw = JSON.parse(readFileSync(queuePath, 'utf8'));
-        const before = (queueRaw.ranked || []).length;
-        queueRaw.ranked = (queueRaw.ranked || []).filter(r => String(r.num) !== targetNum);
-        if (queueRaw.ranked.length !== before) {
-          queueRaw.ranked.forEach((r, i) => { r.rank = i + 1; });
-          queueRaw.total_rows = queueRaw.ranked.length;
-          if (!queueRaw.qa_cleanup) queueRaw.qa_cleanup = {};
-          queueRaw.qa_cleanup.last_auto_remove = {
-            ts: new Date().toISOString(), num: parseInt(targetNum, 10),
-            company: updatedRow.company, reason: canonical,
-          };
-          const queueTmp = queuePath + '.tmp.' + process.pid + '.' + Date.now();
-          writeFileSync(queueTmp, JSON.stringify(queueRaw, null, 2));
-          renameSync(queueTmp, queuePath);
-          queueUpdated = true;
-        }
-      }
-    } catch (_) {}
+  // Remove from apply-now-queue.json so all surfaces stay in sync
+  if (queueLeavingStatuses.has(canonical.toLowerCase()) && updatedRow) {
+    if (removeNumFromApplyNowQueue(targetNum, { company: updatedRow.company, reason: canonical })) {
+      queueUpdated = true;
+    }
   }
 
   // 2026-05-26 — Auto-trigger dashboard rebuild so the next page load

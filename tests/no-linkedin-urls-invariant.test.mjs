@@ -87,6 +87,7 @@ if (existsSync(QUEUE_PATH)) {
     for (const r of bogusCanonical.slice(0, 5)) {
       printed.push(`    #${r.num} ${r.company} — canonical_url=${(r.canonical_url || '').slice(0, 110)}`);
     }
+    if (bogusCanonical.length > 5) printed.push(`    … and ${bogusCanonical.length - 5} more`);
   }
 
   // ── Sanity assertion: isLinkedInJobUrl recognises the canonical pattern ──

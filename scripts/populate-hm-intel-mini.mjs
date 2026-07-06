@@ -35,6 +35,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseApplicationsText } from '../lib/parse-applications.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = process.env.CAREER_OPS_ROOT || join(__dirname, '..');
@@ -44,17 +45,55 @@ try {
   config({ path: join(ROOT, '.env'), override: true });
 } catch { /* dotenv optional */ }
 
-const ARGS = Object.fromEntries(
-  process.argv.slice(2)
-    .filter(a => a.startsWith('--'))
-    .map(a => { const [k, v = true] = a.slice(2).split('='); return [k, v]; })
-);
+/**
+ * Parse `--key=value`, `--key value` (space-separated), and bare `--flag`
+ * (boolean) argv forms.
+ *
+ * The previous parser only understood `--key=value`, so the space form that
+ * scripts/agents/intel-refresh.mjs uses to invoke this script (`--rows <num>`)
+ * AND the header's documented standalone `--rows "858,2198,2188"` form both
+ * silently dropped the value — ARGS['rows'] became boolean `true`, the row
+ * number was never read, and `--max-cost-usd 50` collapsed to Number(true)=1.
+ * (role-enrichment worked only because intel-refresh invokes ITS child with the
+ * equals form `--rows=<num>` at intel-refresh.mjs:608.) Exported for
+ * tests/hm-intel-mini-targets.test.mjs.
+ */
+export function parseArgs(argv) {
+  const out = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (!a.startsWith('--')) continue;
+    const body = a.slice(2);
+    const eq = body.indexOf('=');
+    if (eq >= 0) {
+      out[body.slice(0, eq)] = body.slice(eq + 1);
+      continue;
+    }
+    const next = argv[i + 1];
+    if (next !== undefined && !next.startsWith('--')) {
+      out[body] = next;
+      i++;
+    } else {
+      out[body] = true;
+    }
+  }
+  return out;
+}
+
+const ARGS = parseArgs(process.argv.slice(2));
 
 const DRY_RUN = ARGS['dry-run'] === true || ARGS['dry-run'] === 'true';
 const BUDGET_CAP_USD = Number(ARGS['max-cost-usd'] || process.env.HM_INTEL_MINI_BUDGET || '80');
 
 function slugify(s) {
-  return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  // Per-field truncate to 60 so this WRITER agrees with the canonical READERS:
+  // lib/intel-refresh-state.mjs (disk-derived dashboard state), the parent verifier
+  // in scripts/agents/intel-refresh.mjs, and scripts/build-dashboard.mjs all read
+  // data/hm-intel/<slugify60(company)>-<slugify60(role)>.json. Without the slice,
+  // roles whose slug exceeds 60 chars (e.g. rows 2708/2510/2517) were written to an
+  // UNtruncated path the system never reads — the slug-truncation-contract-drift bug
+  // class (already fixed for the il/hc slots via buildSlug; this closes the hm-intel arm).
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
 }
 
 function emit(obj) {
@@ -245,34 +284,119 @@ function targetsFromAudit(auditPath) {
   return out;
 }
 
-function targetsFromRows(rowNumsStr, auditPath) {
-  const audit = JSON.parse(readFileSync(auditPath, 'utf-8'));
-  const allRows = [...(audit.auto_enrich || []), ...(audit.pass || [])];
-  const wanted = new Set(rowNumsStr.split(',').map(s => s.trim()));
-  return allRows
-    .filter(r => wanted.has(String(r.num)))
-    .filter(r => r.company && r.company !== 'Unknown' && r.role)
-    .map(r => {
-      const slug = `${slugify(r.company)}-${slugify(r.role)}`;
-      return { num: r.num, company: r.company, role: r.role, slug,
-        hmPath: join(ROOT, 'data', 'hm-intel', `${slug}.json`),
-        url: r.url || '',
-      };
+/**
+ * Resolve { num, company, role, url, slug, hmPath } for an explicit row-number
+ * list WITHOUT hard-depending on the dated queue-gate-audit file.
+ *
+ * Resolution priority per row num (graceful degradation — first source that
+ * has the row wins):
+ *   1. queue-gate-audit-<today>-pre-enrich.json  (scheduled-pipeline path; used ONLY if present)
+ *   2. data/apply-now-queue.json :: ranked[]      (canonical for the intel-refresh --row path)
+ *   3. data/applications.md                        (rows aged out of the queue; no url column)
+ *
+ * Closes the bug where targeted hm-intel (`--rows`, the path intel-refresh.mjs
+ * shells out to via `--row <N> --slots hm-intel`) hard-crashed ENOENT whenever
+ * the dated audit file was absent — which is EVERY manual / targeted run, since
+ * that file is only produced by the nightly gate. Now the audit file is optional
+ * and the row is resolved from the canonical queue/tracker instead. See bug class
+ * targeted-hm-intel-hard-depends-on-scheduled-audit-file (2026-06-04).
+ *
+ * @param {string} rowNumsStr  comma-separated row numbers, e.g. "2722,2723"
+ * @param {object} [io]        path overrides for testing: { root, auditPath, queuePath, appsPath }
+ * @returns {Array<{num:(number|string),company:string,role:string,slug:string,hmPath:string,url:string}>}
+ */
+export function resolveRowTargets(rowNumsStr, io = {}) {
+  const root = io.root || ROOT;
+  const auditPath = io.auditPath !== undefined
+    ? io.auditPath
+    : join(root, 'data', `queue-gate-audit-${new Date().toISOString().slice(0, 10)}-pre-enrich.json`);
+  const queuePath = io.queuePath || join(root, 'data', 'apply-now-queue.json');
+  const appsPath = io.appsPath || join(root, 'data', 'applications.md');
+
+  const wanted = new Set(
+    String(rowNumsStr || '').split(',').map(s => s.trim()).filter(Boolean)
+  );
+  if (!wanted.size) return [];
+
+  const resolved = new Map(); // num(string) -> { num, company, role, url }
+  const isUsable = (r) => r && r.company && r.company !== 'Unknown' && r.role;
+  const take = (r, url) => {
+    if (!r) return;
+    const key = String(r.num);
+    if (wanted.has(key) && !resolved.has(key) && isUsable(r)) {
+      resolved.set(key, { num: r.num, company: r.company, role: r.role, url: url || '' });
+    }
+  };
+
+  // Source 1 — dated queue-gate audit (scheduled path). NEVER throws on absence.
+  if (auditPath && existsSync(auditPath)) {
+    try {
+      const audit = JSON.parse(readFileSync(auditPath, 'utf-8'));
+      for (const r of [...(audit.auto_enrich || []), ...(audit.pass || [])]) take(r, r.url);
+    } catch (e) {
+      emit({ slot: 'hm-intel-mini', step: 'audit-read-failed', path: auditPath, error: String(e.message || e) });
+    }
+  }
+
+  // Source 2 — apply-now-queue.json (the row intel-refresh --row passes is always here).
+  if (resolved.size < wanted.size && existsSync(queuePath)) {
+    try {
+      const q = JSON.parse(readFileSync(queuePath, 'utf-8'));
+      for (const r of (q.ranked || [])) take(r, r.canonical_url || r.url);
+    } catch (e) {
+      emit({ slot: 'hm-intel-mini', step: 'queue-read-failed', path: queuePath, error: String(e.message || e) });
+    }
+  }
+
+  // Source 3 — applications.md (rows aged out of the queue; no url available).
+  if (resolved.size < wanted.size && existsSync(appsPath)) {
+    try {
+      for (const r of parseApplicationsText(readFileSync(appsPath, 'utf-8'))) take(r, '');
+    } catch (e) {
+      emit({ slot: 'hm-intel-mini', step: 'apps-read-failed', path: appsPath, error: String(e.message || e) });
+    }
+  }
+
+  // Build target descriptors in the caller's requested order. Unresolved nums
+  // are surfaced (NDJSON) and skipped — never crash the whole run for one bad num.
+  const out = [];
+  for (const key of wanted) {
+    const r = resolved.get(key);
+    if (!r) {
+      emit({ slot: 'hm-intel-mini', step: 'row-unresolved', row: key });
+      continue;
+    }
+    const slug = `${slugify(r.company)}-${slugify(r.role)}`;
+    out.push({
+      num: r.num,
+      company: r.company,
+      role: r.role,
+      slug,
+      hmPath: join(root, 'data', 'hm-intel', `${slug}.json`),
+      url: r.url || '',
     });
+  }
+  return out;
 }
 
 async function main() {
   let targets = [];
-  let auditDefault = ARGS['from-audit'] ||
-    `data/queue-gate-audit-${new Date().toISOString().slice(0, 10)}-pre-enrich.json`;
   if (ARGS['from-audit']) {
-    targets = targetsFromAudit(join(ROOT, auditDefault));
+    targets = targetsFromAudit(join(ROOT, String(ARGS['from-audit'])));
   } else if (ARGS['rows']) {
-    targets = targetsFromRows(String(ARGS['rows']), join(ROOT, auditDefault));
+    // --rows resolves num → {company, role, url} from canonical sources
+    // (apply-now-queue.json / applications.md), with the dated queue-gate audit
+    // used ONLY when present. Graceful-degradation fix for the ENOENT crash that
+    // hit every targeted / intel-refresh-driven hm-intel run (2026-06-04).
+    targets = resolveRowTargets(String(ARGS['rows']));
+    if (!targets.length) {
+      console.error(`[hm-intel-mini] no resolvable targets for --rows "${ARGS['rows']}" — none found in audit / apply-now-queue.json / applications.md`);
+      process.exit(2);
+    }
   } else {
     console.error('Usage:');
     console.error('  --from-audit <path>   read targets from queue-gate audit JSON');
-    console.error('  --rows "N1,N2,N3"     explicit row-number list');
+    console.error('  --rows "N1,N2,N3"     explicit row-number list (resolved from queue/applications.md)');
     console.error('  --dry-run             plan only, no API calls');
     console.error('  --max-cost-usd N      cap (default $80)');
     process.exit(2);
@@ -317,8 +441,13 @@ async function main() {
   }
 }
 
-main().catch(e => {
-  console.error('[hm-intel-mini] FATAL:', e.message);
-  console.error(e.stack);
-  process.exit(2);
-});
+// Only run main() when invoked as the entry point — guard so the module can be
+// imported (e.g. by tests/hm-intel-mini-targets.test.mjs) without executing.
+const isMain = import.meta.url === `file://${process.argv[1]}`;
+if (isMain) {
+  main().catch(e => {
+    console.error('[hm-intel-mini] FATAL:', e.message);
+    console.error(e.stack);
+    process.exit(2);
+  });
+}

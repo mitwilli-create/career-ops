@@ -196,7 +196,12 @@ for (const p of files) {
   try {
     const out = execSync(`grep -nE "${PAT}" "${p}" 2>/dev/null | grep -vE "${EXCL}" || true`, { encoding: 'utf8' }).trim();
     if (out) { survived++; console.log(`  🔴 SURVIVING LEAK in ${p.replace(ROOT + '/', '')}:\n${out.split('\n').map(l => '     ' + l.slice(0, 160)).join('\n')}`); }
-  } catch {}
+  } catch (err) {
+    // a grep exec failure means this surface was NOT verified — count it as a failure,
+    // never a silent PASS (bug class: findings-exit-code-conflated-with-spawn-failure)
+    survived++;
+    console.log(`  🔴 VERIFY FAILED (grep exec error, surface unverified) in ${p.replace(ROOT + '/', '')}: ${err.message}`);
+  }
 }
 
 console.log(`\n${DRY ? 'DRY-RUN' : 'APPLIED'}: ${totalRepl} replacement(s) across ${filesChanged} file(s). ${survived === 0 ? '✅ verifier-clean' : `🔴 ${survived} file(s) still leaking — HAND-FIX`}`);

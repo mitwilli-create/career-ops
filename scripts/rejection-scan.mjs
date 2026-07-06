@@ -153,6 +153,7 @@ if (has('--queries')) {
 } else if (has('--add')) {
   const company = val('--company'), role = val('--role'), date = val('--date');
   if (!company || !role || !date) { console.error('ERROR: --add needs --company, --role, --date YYYY-MM-DD'); process.exit(2); }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { console.error(`ERROR: --date must be YYYY-MM-DD (got "${date}")`); process.exit(2); }
   if (loadLedger().some((r) => norm(r.company) === norm(company) && norm(r.role) === norm(role))) {
     console.log(`Already on ledger: ${company} — ${role}`); process.exit(0);
   }

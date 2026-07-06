@@ -37,6 +37,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync } from
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
+import { PAT, EXCL } from '../lib/retired-metric-pattern.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
@@ -63,24 +64,47 @@ const RULES = [
   [/\bstylistic[- ]fidelity\b/gi, 'voice fidelity'],
   [/\bat\s+99%\s+fidelity\b/gi, 'in a verified voice'],
   [/\b99%\s+fidelity\b/gi, 'a verified voice'],
+  // "99% voice fidelity" — "voice" sits between 99% and fidelity, so the rules above (which
+  // need "stylistic", or "99% fidelity" adjacent) all miss it. Also catches the rule above
+  // that maps "stylistic-fidelity" → "voice fidelity" (cascade: "99% stylistic-fidelity"
+  // → "99% voice fidelity" → here).
+  [/\bat\s+99%\s+voice\s+fidelity\b/gi, 'in a consistent, verified voice'],
+  [/\b99%\s+voice\s+fidelity\b/gi, 'a consistent, verified voice'],
   // ── classification-accuracy family → canonical cv.md outcome (~60% auto-handled) ──
-  [/\bat\s+(?:>\s*|greater than\s+|over\s+)90%\s+classification(?:\s+accuracy)?/gi, 'with ~60% of inbound auto-handled'],
-  [/(?:>\s*|greater than\s+|over\s+)90%\s+classification(?:\s+accuracy)?/gi, '~60% of inbound auto-handled'],
+  // Alternation covers: HTML-entity &gt; (storytellermitch/dashboard HTML uses it), the
+  // "better than" prefix, AND a bare "90% accuracy" with no "classification" — all the
+  // 2026-06-14 survivors. The whole prefix is optional so "90% accuracy"/"90% classification"
+  // match with nothing in front; "classification" stays optional and "accuracy" can stand alone.
+  [/\bat\s+(?:>\s*|&gt;\s*|greater than\s+|over\s+|better than\s+)?90%\s+(?:classification(?:\s+accuracy)?|accuracy)/gi, 'with ~60% of inbound auto-handled'],
+  [/(?:>\s*|&gt;\s*|greater than\s+|over\s+|better than\s+)?90%\s+(?:classification(?:\s+accuracy)?|accuracy)/gi, '~60% of inbound auto-handled'],
   // ── drafting-latency family. Both the 90% form AND the old "substantial …" rewrite
   //    target are banned now — every form maps to "marked … drafting time".
   [/\b90%\s+reduction\s+in\s+(?:drafting\s+latency|latency|drafting)\b/gi, 'a marked reduction in drafting time'],
   [/\b90%\s+(?:drafting[- ]latency|latency|drafting)\s+(?:reduction|cut)\b/gi, 'a marked drafting-time reduction'],
   [/\b(?:a\s+)?substantial\s+reduction\s+in\s+drafting(?:\s+latency)?\b/gi, 'a marked reduction in drafting time'],
   [/\bsubstantial\s+drafting[- ]latency\s+reduction\b/gi, 'a marked drafting-time reduction'],
+  // word-order variant: the 90% comes AFTER the noun ("cut drafting latency 90%" /
+  // "reduced drafting latency by 90 percent") — the rules above only match 90%-before.
+  [/\b(?:cut|cutting|reduced)\s+drafting\s+latency\s+(?:by\s+)?90\s*(?:%|percent)/gi, 'cut drafting time'],
   // ── mentorship-program family: outcome metrics retired; cv.md frames the program as
   //    designed + in prototyping (no realized result yet) ──
   [/\b90%\s+admin(?:istrative)?[- ]time\s+reduction\b/gi, 'a projected admin-time reduction'],
   [/\b90%\s+reduction\s+in\s+administrative\s+processing\s+time\b/gi, 'a projected reduction in administrative processing time'],
   [/\s*\((?:3\.5\s+(?:hours|hrs)\s*(?:→|->)\s*(?:under\s+20|<\s*20)\s*min(?:utes)?(?:\s+per\s+match)?)\)/gi, ''],
+  // prose before→after mentorship time claim (the parenthetical above only catches the
+  // "( … )" form). cv.md:25 = program designed + in prototyping, NO realized 3.5h→20min.
+  // Rewrite the specific "per match → 20 min" span to cv.md's honest framing. This rule also
+  // handles the "dropped from 3.5 hours …" prose form, which the verifier PAT alone CANNOT
+  // fail-loud on (EXCL filters any line containing the word "dropped"). Other prose shapes
+  // ("3.5 hours per match" alone, "3.5 hours of admin work to 20 min") are deliberately left
+  // to fail-loud via the PAT below — varied sentence shapes get hand-fixed, never mangled.
+  [/(?:from\s+)?3\.5\s+(?:hours|hrs)\s+per\s+match\s+to\s+(?:under\s+)?20\s+min(?:utes)?/gi, 'from manual cohort-matching to an AI-driven, self-serve model'],
   [/\b300%\+?\s+(active capacity|active|capacity|scaling|deployment)\b/gi, 'projected $1'],
   [/\b348\s+(attendees|senior eng\w*|senior tech\w*|of them)\b/gi, '300+ $1'],
   [/\b93%\s+(?:participant\s+)?CSAT\b/gi, 'strong participant feedback'],
-  [/\btop\s+0\.5%\b/gi, 'most senior engineering tier'],
+  // no trailing \b: "%" is a non-word char, so "%\b" can't match before a space or end
+  // ("top 0.5% of a large org") — the trailing boundary silently broke the whole rule.
+  [/\btop\s+0\.5%/gi, 'most senior engineering tier'],
   [/\b9,000\s+machines?\s+and\s+9,500\s+\w+/gi, 'company-wide devices and hotspots'],
   // ── L8-family. The old rules INSERTED "L8+" (banned since 2026-06-04) — now every
   //    known L8 shape maps to the canonical rank-name phrasing from cv.md. ──
@@ -122,9 +146,8 @@ const RULES = [
   [/\b180K (Google )?workforce\b/gi, '$1workforce'],         // (full) 180K Google workforce → (full) Google workforce
 ];
 
-// ── EXACT verify-dashboard-real-2026-05-31 PAT + EXCL (source of truth for "forbidden") ──
-const PAT = '99% stylistic fidelity|stylistic[- ]fidelity|99% fidelity|>90% classification|greater than 90% classification|over 90% classification|substantial (reduction in drafting|drafting[- ]latency)|90% (reduction in )?(admin|administrative|drafting|latency)|300%\\+ (active|capacity|scaling|deployment)|348 (attendees|senior eng|senior tech|of them)|93% CSAT|9,000 machines and 9,500|top 0\\.5%|(three|3) (shipped |deployed |distinct |production-grade )?production (AI|LLM) (agents|systems|builds|artifacts|deployments|surfaces)|(three|3) production (AI voice |AI |LLM |voice )?agents|1,000 senior|180(,?000|K)[ -]?(person|people|employee|eng|engineering|Google|workforce)|L8\\+|L8[–-]L10|[Kk]ill[ -][Ll]ist';
-const EXCL = 'quarantine|zzz-polish|unsupported|dropped|Metric-hardened|corrected or dropped|No retired metrics';
+// ── PAT + EXCL: single source of truth in lib/retired-metric-pattern.mjs (imported above).
+//    Re-grepped below with the EXACT shared pattern so any survivor fails loud. ──
 
 function resolveSlugFiles(slug) {
   return [

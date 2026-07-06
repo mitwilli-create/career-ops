@@ -12,13 +12,15 @@
  *        --models perplexity:sonar-deep-research,xai:grok-4,openai:gpt-5
  *   node scripts/run-council.mjs --prompt /tmp/prompt.txt --out /tmp/council.json --max-tokens 8000
  *
- *   # Per-provider timeout override (default 180000ms = 180s, callCouncil clamps to [30s, 30min]).
- *   # The 180s default fits typical 6k-token dispatches. For Sonnet/Opus with
- *   # --max-tokens >= 8000 (dialogue-heavy synthesis, large reasoning chains), bump
- *   # to >= 600000 (10min) — the 2026-05-23 regression-guard run lost Round 2 of
- *   # dialogue because synthesis at 16k tokens needed > 180s and the default tripped.
+ *   # Defaults (2026-07-04): --max-tokens 32000, --timeout-ms 3600000 (60 min —
+ *   # callCouncil's hang-prevention ceiling). Output caps and run-time
+ *   # constraints were removed as defaults per Mitchell's Decision-Maximization
+ *   # Policy after the 2026-07-04 council-brief run truncated Opus + both
+ *   # Perplexity models at 6k tokens and starved gpt-5.5 to an empty
+ *   # completion (reasoning tokens consumed the whole budget). Pass explicit
+ *   # lower values only for cheap smoke tests.
  *   node scripts/run-council.mjs --prompt /tmp/prompt.txt --out /tmp/council.json \
- *        --max-tokens 16000 --timeout-ms 600000
+ *        --max-tokens 4000 --timeout-ms 180000   # smoke-test sizing
  *
  *   # Opt-in: probe each model's year-belief before firing the real prompt.
  *   # Drops any model that answers ≥ tolerance years off from system clock.
@@ -60,8 +62,15 @@ function hasFlag(flag) {
 const promptPath      = arg('--prompt');
 const outPath         = arg('--out', '/tmp/council-report.json');
 const modelsRaw       = arg('--models', '');
-const maxTokens       = parseInt(arg('--max-tokens', '6000'), 10);
-const timeoutMs       = parseInt(arg('--timeout-ms', '180000'), 10);
+// Defaults raised 2026-07-04 per Mitchell's directive: no output cap, no
+// run-time constraint on council runs (quality > speed > cost). 32000 output
+// tokens is at-or-under every wired provider's ceiling (Anthropic/OpenAI/
+// Gemini/xAI/Perplexity) and prevents both reasoning-token starvation
+// (gpt-5.5 empty-completion mode) and mid-section truncation. 3600000ms
+// (60 min) is callCouncil's hang-prevention ceiling — effectively uncapped
+// for any real model call while still hang-proof.
+const maxTokens       = parseInt(arg('--max-tokens', '32000'), 10);
+const timeoutMs       = parseInt(arg('--timeout-ms', '3600000'), 10);
 const doProbe         = hasFlag('--probe');
 const probeTolerance  = parseInt(arg('--probe-tolerance', '1'), 10);
 const retryOnRefusal  = !hasFlag('--no-retry-refusal');
@@ -69,7 +78,7 @@ const retryOnRefusal  = !hasFlag('--no-retry-refusal');
 if (!promptPath) {
   console.error('Usage: node scripts/run-council.mjs --prompt <file> --out <file> [--models a,b]');
   console.error('       [--max-tokens N] [--timeout-ms N] [--probe [--probe-tolerance N]] [--no-retry-refusal]');
-  console.error('       --timeout-ms defaults to 180000 (180s). Use >= 600000 when --max-tokens >= 8000.');
+  console.error('       Defaults: --max-tokens 32000, --timeout-ms 3600000 (60min ceiling). Uncapped by default.');
   process.exit(1);
 }
 

@@ -774,6 +774,80 @@ try {
   }
 }
 
+// ── 19. TARGETED HM-INTEL RESOLUTION (no silent ENOENT on missing audit) ──
+
+console.log("\n19. Targeted hm-intel — `--rows` resolves from queue/applications.md without the dated audit file");
+
+try {
+  // Runs tests/hm-intel-mini-targets.test.mjs — exits 1 if scripts/populate-hm-intel-mini.mjs
+  // ::resolveRowTargets hard-depends on data/queue-gate-audit-<DATE>-pre-enrich.json
+  // again. That dependency made EVERY targeted / intel-refresh-driven hm-intel run
+  // crash ENOENT (exit 2) while role-enrichment succeeded. See bug class
+  // targeted-hm-intel-hard-depends-on-scheduled-audit-file (2026-06-04).
+  execFileSync('node', ['tests/hm-intel-mini-targets.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+  });
+  pass('Targeted hm-intel — resolveRowTargets degrades gracefully when the audit file is absent');
+} catch (err) {
+  fail('Targeted hm-intel — resolveRowTargets crashes / mis-resolves without the audit file (silent-fail regression)');
+  const out = (err.stdout || '') + (err.stderr || '');
+  for (const line of out.split('\n').slice(0, 40)) {
+    if (line.trim()) console.log(`     ${line}`);
+  }
+}
+
+// ── 20. STALE-TRACKER STATUS PASS (guarded, reversible destructive pass) ──
+
+console.log("\n20. Stale-tracker status pass — dry-run safety + apply kill-switch + classification guards");
+
+try {
+  // Runs tests/stale-tracker-status-pass.test.mjs — exits non-zero if the
+  // destructive pass over applications.md loses its guards: dry-run must mutate
+  // NOTHING, --apply must refuse without STALE_STATUS_PASS_ENABLED=true (exit 3),
+  // corrupted + out-of-scope (Applied/Interview) rows must never be touched, and
+  // keeper refresh must map applications.md→queue num space (never blind-pass).
+  // See bug class destructive-auto-mutation-without-reversible-guards (2026-06-14).
+  execFileSync('node', ['--test', 'tests/stale-tracker-status-pass.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+  });
+  pass('Stale-tracker status pass — dry-run safe, apply env-gated, classification guards hold');
+} catch (err) {
+  fail('Stale-tracker status pass — a destructive-pass guard is broken (data-loss risk)');
+  const out = (err.stdout || '') + (err.stderr || '');
+  for (const line of out.split('\n').slice(0, 40)) {
+    if (line.trim()) console.log(`     ${line}`);
+  }
+}
+
+// ── 21. RETIRED-METRIC PATTERN SINGLE SOURCE (PAT/EXCL anti-drift) ──
+
+console.log("\n21. Retired-metric pattern single-source — PAT/EXCL defined once, all verifiers import it");
+
+try {
+  // Runs tests/retired-metric-pattern-single-source.test.mjs — exits 1 if the
+  // retired-metric verifier regex (PAT) or its disclosure allowlist (EXCL) is
+  // hand-copied into more than one place under scripts/+lib/. Canonical copy is
+  // lib/retired-metric-pattern.mjs; scrub-fabrications.mjs + both
+  // verify-*-2026-05-31.mjs must import it, never re-declare. See bug class
+  // contract-drift-across-layers / stale-coupling (docs/BUG-CLASSES.md).
+  execFileSync('node', ['tests/retired-metric-pattern-single-source.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+  });
+  pass('Retired-metric pattern — single source of truth, no drifting copies');
+} catch (err) {
+  fail('Retired-metric pattern — a copied PAT/EXCL has drifted (contract-drift-across-layers)');
+  const out = (err.stdout || '') + (err.stderr || '');
+  for (const line of out.split('\n').slice(0, 40)) {
+    if (line.trim()) console.log(`     ${line}`);
+  }
+}
+
 // ── SUMMARY ─────────────────────────────────────────────────────
 
 console.log('\n' + '='.repeat(50));

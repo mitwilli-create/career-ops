@@ -11,7 +11,7 @@
 // Reports OLDER than the deploy date are skipped (they pre-date Block C).
 //
 // Override: set EVAL_BLOCK_C_INVARIANT_DEPLOY_DATE=YYYY-MM-DD to test against a specific cutoff.
-//           Default cutoff lives in lib/eval-report-block-c-invariant-config.mjs.
+//           Default cutoff is DEFAULT_DEPLOY_DATE below (no separate config file).
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,10 +30,20 @@ const CITATION_PATTERNS = [
   /\[hm-intel/i,
 ];
 
-// Default cutoff: 2026-05-29. Override via env.
+// Default cutoff: 2026-06-10. Override via env.
 // Reports authored before this date are EXEMPT from the Block C requirement
-// because they were produced by the pre-PR eval prompt.
-const DEFAULT_DEPLOY_DATE = '2026-05-29';
+// because they were produced by a prompt path that carried no Block C instruction.
+//
+// HISTORY (cutoff moved 2026-05-29 → 2026-06-10): the 2026-05-29 PR added Block C
+// only to batch/batch-prompt.md, which is consumed by the AGENTIC batch-worker path
+// (headless `claude -p`). The Anthropic Batches API path (batch-runner-batches.mjs)
+// builds its own INLINE prompt templates and never reads batch-prompt.md — so the
+// ~290 reports it produced 2026-05-29 → 2026-06-09 had no Block C instruction at all
+// (contract-drift-across-layers: the fix landed on a surface the active path doesn't
+// read). Block C was added to the inline templates on 2026-06-10; reports from the
+// gap window are pre-fix for their path, exempt for the same reason pre-05-29
+// reports are.
+const DEFAULT_DEPLOY_DATE = '2026-06-10';
 const DEPLOY_DATE = process.env.EVAL_BLOCK_C_INVARIANT_DEPLOY_DATE || DEFAULT_DEPLOY_DATE;
 
 function extractReportDate(content, filename) {
@@ -53,7 +63,10 @@ function isCovered(reportDate) {
 
 function loadCoveredReports() {
   if (!existsSync(REPORTS_DIR)) return [];
-  const files = readdirSync(REPORTS_DIR).filter(f => f.endsWith('.md'));
+  // Eval reports only: `{num}-{company-slug}-{date}.md`. reports/ also holds
+  // non-eval artifacts (e.g. system-audit-YYYY-MM-DD.md) whose filenames match
+  // the date-fallback regex — they are not evaluations and carry no Block C.
+  const files = readdirSync(REPORTS_DIR).filter(f => f.endsWith('.md') && /^\d+-/.test(f));
   const out = [];
   for (const f of files) {
     const full = join(REPORTS_DIR, f);

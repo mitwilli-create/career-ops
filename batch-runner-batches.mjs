@@ -278,6 +278,15 @@ Table with: Detected archetype, Domain, Function, Seniority, Remote policy, Team
 Table mapping each JD requirement to exact lines from the CV above.
 Include a Gaps section.
 
+## Block C — Why This Fits Mitchell
+
+3-4 sentences, third-person about Mitchell ("Mitchell's …", "his …" — never first-person).
+Every sentence cites a specific location in the candidate corpus provided — ≥3 citation markers
+total across the block, exact formats: [cv.md: <section heading>] and [article-digest: <entry title>].
+Tie each cited experience to a specific JD requirement; generic "his background fits" claims are rejected.
+If you cannot ground ≥3 citations, lower the Overall score by 0.3 and append the literal phrase
+"downscored due to thin corpus support". No corporate-speak (leverage, synergy, deep dive, circle back).
+
 ## C) Level and Strategy
 
 1. Level detected in JD vs candidate level
@@ -527,6 +536,15 @@ Table with: Detected archetype, Domain, Function, Seniority, Remote policy, Team
 Table mapping each JD requirement to exact lines from the CV above.
 Include a Gaps section.
 
+## Block C — Why This Fits Mitchell
+
+3-4 sentences, third-person about Mitchell ("Mitchell's …", "his …" — never first-person).
+Every sentence cites a specific location in the candidate corpus provided — ≥3 citation markers
+total across the block, exact formats: [cv.md: <section heading>] and [article-digest: <entry title>].
+Tie each cited experience to a specific JD requirement; generic "his background fits" claims are rejected.
+If you cannot ground ≥3 citations, lower the Overall score by 0.3 and append the literal phrase
+"downscored due to thin corpus support". No corporate-speak (leverage, synergy, deep dive, circle back).
+
 ## C) Level and Strategy
 
 1. Level detected in JD vs candidate level
@@ -684,7 +702,8 @@ async function phaseSubmit(apiKey) {
     const userPrompt  = buildDynamicEvalPrompt(item, text, reportNum, date) + discardBrief;
 
     // Static context in system block with cache_control — API caches this prefix across requests
-    // max_tokens capped at 1,400: eval reports are 500–900 tokens; 4096 wastes money on runaway outputs
+    // max_tokens capped at 1,700: eval reports are 500–900 tokens + ~150-250 for Block C
+    // (Why This Fits, added to this inline template 2026-06-10); 4096 wastes money on runaway outputs
     //
     // NOTE (2026-05-27): `temperature` removed. claude-sonnet-4-6 returns
     // `invalid_request_error: \`temperature\` is deprecated for this model.`
@@ -696,9 +715,10 @@ async function phaseSubmit(apiKey) {
     // verbosity was the only secondary concern + can be controlled via prompt
     // instructions if regressions surface.
     //
-    // QUALITY WARNING (added 2026-05-16): 1400 is set assuming the current
-    // A–F + Block G prompt produces ≤900 token reports. If you add new
-    // report sections (Block H, additional Cultural Signals depth, longer
+    // QUALITY WARNING (added 2026-05-16; bumped 1400→1700 on 2026-06-10 when
+    // `## Block C — Why This Fits Mitchell` was added to the inline template):
+    // 1700 assumes the A–G + Block C prompt produces ≤1,150 token reports. If you
+    // add new report sections (Block H, additional Cultural Signals depth, longer
     // rationale fields), bump this to avoid silent mid-report truncation.
     // Symptoms of truncation: reports missing trailing sections, dashboard
     // shows "—" for late blocks, score-without-rationale rows. Same pattern
@@ -707,7 +727,7 @@ async function phaseSubmit(apiKey) {
     try {
       params = {
         model: MODEL,
-        max_tokens: 1400,
+        max_tokens: 1700,
         system: [{ type: 'text', text: staticBlock, cache_control: { type: 'ephemeral' } }],
         messages: [{ role: 'user', content: userPrompt }],
       };
@@ -716,7 +736,7 @@ async function phaseSubmit(apiKey) {
       console.warn(`[cache] Falling back to flat message for ${customId}: ${cacheErr.message}`);
       params = {
         model: MODEL,
-        max_tokens: 1400,
+        max_tokens: 1700,
         messages: [{ role: 'user', content: `${staticBlock}\n\n${userPrompt}` }],
       };
     }
@@ -769,16 +789,16 @@ async function phaseSubmit(apiKey) {
 
   console.log(`\n${requests.length} requests ready (${fetchErrors} skipped due to fetch errors).`);
   if (DRY_RUN) {
-    // Cost estimate: static block cached (90% hit → $0.15/MTok read), dynamic ~2k tokens input, output capped at 1,400
+    // Cost estimate: static block cached (90% hit → $0.15/MTok read), dynamic ~2k tokens input, output capped at 1,700
     const staticTokens  = 26_715;
     const dynamicTokens = 2_000;
-    const outputTokens  = 900; // p95 actual (max_tokens=1400 hard cap)
+    const outputTokens  = 1_100; // p95 estimate incl. Block C (max_tokens=1700 hard cap)
     const costPerItem = (staticTokens * 0.10 * 1.50 / 1e6)  // cache miss (10%)
                       + (staticTokens * 0.90 * 0.15 / 1e6)  // cache read (90%)
                       + (dynamicTokens * 1.50 / 1e6)         // dynamic input
                       + (outputTokens  * 7.50 / 1e6);        // output
     console.log(`\nDRY RUN — would submit ${requests.length} requests to Batches API.`);
-    console.log(`Estimated cost: ~$${(requests.length * costPerItem).toFixed(3)} (Sonnet+cache, 50% off, max_tokens=1400)`);
+    console.log(`Estimated cost: ~$${(requests.length * costPerItem).toFixed(3)} (Sonnet+cache, 50% off, max_tokens=1700)`);
     return;
   }
 

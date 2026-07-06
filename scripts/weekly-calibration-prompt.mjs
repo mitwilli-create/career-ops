@@ -386,7 +386,7 @@ function composeQuestions({
     questions.push({
       id: 'intel_validation',
       title: 'Hiring-manager intel files needing your sign-off',
-      ask: 'For each, give me one of: `CONFIRM — proceed with this person`, `REPLACE — {name and title of better contact}`, or `KILL — drop this role from the pipeline because {reason}`.',
+      ask: 'For each, give me one of: `CONFIRM — proceed with this person`, `REPLACE — {name and title of better contact}`, or `DROP — drop this role from the pipeline because {reason}`.',
       detail_lines: lines,
     });
   }

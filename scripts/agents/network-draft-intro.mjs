@@ -19,7 +19,7 @@
  *     White space is a rhythm tool. Punchlines / asks land isolated.
  *
  * Mitchell's voice (from writing-samples/voice-reference.md + CLAUDE.md memory):
- *  - Problem-statement openers, em-dash density, metric anchoring
+ *  - Problem-statement openers, no em dashes, metric anchoring
  *  - "The cognitive move is identical" earned-closer pattern
  *  - Agency-first framing, colloquial not corporate
  *  - Root-word discipline (no repeats within ~50 words)
@@ -160,7 +160,7 @@ Voice rules (MANDATORY):
 4. Standalone asks and closing lines get their own paragraph. White space is a rhythm tool.
 5. First mention of a target role includes "role" or "position" after the title.
 6. Problem-statement opener (name the gap, not the concept).
-7. Em-dashes over commas. Agency-first framing. No corporate-speak. No "I'm passionate about."
+7. No em dashes (use commas, colons, or parentheses; en dashes only in date ranges). Agency-first framing. No corporate-speak. No "I'm passionate about."
 8. Root-word discipline: no repeated root word within ~50 words.
 
 Mitchell's canonical voice exemplar (match this register):
@@ -197,7 +197,7 @@ It must feel like a genuine human DM, not a template. It should earn the read.`;
 // for a given run.
 async function callSonnet(prompt, groundingCtx = {}) {
   const { callCouncil } = await import('../../lib/council.mjs');
-  const baseSystem = `You are a voice-matching assistant. You draft LinkedIn messages that sound exactly like Mitchell Williams — a specific human being with a calibrated written voice. You match his register: em-dash density, problem-statement openers, concrete metric anchoring, earned closers. You never write corporate PR language.`;
+  const baseSystem = `You are a voice-matching assistant. You draft LinkedIn messages that sound exactly like Mitchell Williams — a specific human being with a calibrated written voice. You match his register: no em dashes, problem-statement openers, concrete metric anchoring, earned closers. You never write corporate PR language.`;
   const systemPrompt = _groundedSystem(baseSystem, groundingCtx);
 
   const res = await callCouncil({

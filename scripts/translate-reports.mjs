@@ -168,7 +168,7 @@ After the evidence prose, add ONE line beginning with \`→ **How to emphasize:*
 For 3/5 or below, no emphasis line — those aren't strengths.
 
 ### 6. Preserve voice and colloquialisms
-Translate Spanish syntax into native technical English. Keep "Mitchell-shaped", proper nouns (xGE, Voice DNA, Kill List, Comms Triage Agent), and specific phrasings as-is. Don't bureaucratize ("utilize" → "use"). Short sentences, action verbs, no passive voice unless required.
+Translate Spanish syntax into native technical English. Keep "Mitchell-shaped", proper nouns (xGE, Voice DNA, banned-phrase checklist, Comms Triage Agent), and specific phrasings as-is. Don't bureaucratize ("utilize" → "use"). Short sentences, action verbs, no passive voice unless required.
 
 ### 7. Preserve markdown structure
 Same heading levels, same table columns, same list formatting, same code spans. The Block B table stays a markdown table with three columns (JD Requirement | Evidence + emphasis hint | Match score).

@@ -75,7 +75,7 @@ Each reference must:
 - Have a plausible testimonial grounded in the actual work shipped (cite cv.md:N).
 - Include a suggested contact channel (email / LinkedIn / phone — generic placeholder).
 
-Voice constraints: assertive, em-dash linking, NO declared closers, NO exclamation marks, NO "delve / tapestry / passionate", canonical metrics only (see voice brief).
+Voice constraints: assertive, no em dashes (use commas/colons; en dashes only in date ranges), NO declared closers, NO exclamation marks, NO "delve / tapestry / passionate", canonical metrics only (see voice brief).
 
 Output STRICT JSON only — no fences, no prose:
 {

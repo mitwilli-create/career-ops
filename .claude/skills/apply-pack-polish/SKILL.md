@@ -75,7 +75,7 @@ Click the **Polish pack ✨** button on the tonight-pick callout or the right-ra
 
 - Every rewrite cites `cv.md:N` or `article-digest.md:N`. No new claims.
 - Canonical metrics only (per `data/voice-reference-brief.md` — never invent).
-- Voice kill list enforced (no "delve / tapestry / leverage (verb) / passionate / exclamation marks / I'd love / looking forward / excited").
+- Voice banned-phrase checklist enforced (no "delve / tapestry / leverage (verb) / passionate / exclamation marks / I'd love / looking forward / excited").
 - Diff cap per artifact: 35% line-level change vs input (raise via `--allow-major-rewrite`, out of scope by default).
 - Mirrored to apply-pack/<slug>/ ONLY at confidence ≥ target.
 - NEVER auto-sends; NEVER submits applications. Output is a quality verdict, not a transmission.

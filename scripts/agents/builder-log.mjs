@@ -35,6 +35,7 @@ import { execSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installRunRecord } from '../../lib/job-runs-ledger.mjs';
+import { applyBrandingReplacements } from '../../lib/grounding-guard.mjs';
 
 const __jobRun = installRunRecord('builder-log');
 
@@ -117,7 +118,10 @@ function walkGitLog(since) {
       iso: iso.trim(),
       date: iso.slice(0, 10),
       author: author.trim(),
-      subject: subject.trim(),
+      // Sanitize banned legacy branding to the canonical "banned-phrase checklist"
+      // at the source so it cannot re-seed into the fork-public rolling digest
+      // (line ~457), the lexical tagger, or the PM-signal prompt from git history.
+      subject: applyBrandingReplacements(subject.trim()),
       files_changed: parseInt(filesChanged, 10) || 0,
       insertions: parseInt(insertions, 10) || 0,
       deletions: parseInt(deletions, 10) || 0,

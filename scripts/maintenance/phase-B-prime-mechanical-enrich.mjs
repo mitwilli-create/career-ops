@@ -325,12 +325,12 @@ ${JSON.stringify(scraped, null, 2).slice(0, 6000)}
 # Voice rules
 - Lead with the conclusion. Mitchell wants the move, then the reasoning.
 - Cite SPECIFIC posts (URL + actual content from the scrape). "Worth a 20-min call about the X you posted on YYYY-MM-DD?" beats "I noticed your work on X."
-- Kill list — never use: delve, leverage, synergy, tapestry, passionate, robust, comprehensive, "It's worth noting", exclamation marks, em-dashes (use parentheses or commas).
+- Banned-phrase checklist — never use: delve, leverage, synergy, tapestry, passionate, robust, comprehensive, "It's worth noting", exclamation marks, em-dashes (use parentheses or commas).
 - One Mitchell-canonical hook per output. Pull from cv.md verbatim — don't paraphrase his metrics.
 - Activator-friendly: recommended_next_action MUST be ONE specific thing he does this week, not "consider X".
 
 # Authenticity gate (run before finalizing)
-Would Mitchell instinctively trust this, or feel templated? If templated → rewrite. The output should reference at LEAST one specific URL from the scrape, at least one cv.md detail, and have NO kill-list words.
+Would Mitchell instinctively trust this, or feel templated? If templated → rewrite. The output should reference at LEAST one specific URL from the scrape, at least one cv.md detail, and have NO banned-phrase checklist words.
 
 # Refuse-to-commit
 If scraped.recent_posts is empty or scraped.ok is false → return JSON with all fields null/empty and a specific no_data_reason ("LinkedIn profile was visible but no public posts found in the last 90 days" or "scrape failed: " + scraped.reason). Better an honest gap than fabricated positioning.

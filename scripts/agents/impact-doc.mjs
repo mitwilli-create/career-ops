@@ -66,17 +66,17 @@ const DEFAULT_MODEL = 'anthropic:claude-sonnet-4-6';
 const SYSTEM_PROMPT = `Today is 2026-05-19 PT (verified by orchestrator system clock). You are drafting an impact / first-90-days doc for Mitchell Williams.
 
 Voice constraints (MANDATORY — read voice brief carefully):
-- Em-dash linking on 40-50% of long sentences
+- No em dashes anywhere (the — character reads as an AI tell); render expansions as a colon or comma, en dashes only in date ranges
 - Assertive, declarative, no hedging ("I believe / I think / perhaps / it seems" forbidden)
 - Core verbs: Architected, Engineered, Built, Shipped, Drove, Designed, Translated. NEVER: Leveraged, Utilized, Spearheaded, Championed.
-- Kill list: delve, tapestry, leverage (verb), passionate, exclamation marks, "I'm thrilled / I'm excited / I'd love"
+- Banned-phrase checklist: delve, tapestry, leverage (verb), passionate, exclamation marks, "I'm thrilled / I'm excited / I'd love"
 - Canonical metrics only — pull from voice brief. Do NOT invent new numbers.
 - Every claim about Mitchell's experience MUST be grounded in cv.md or article-digest.md with a [cv.md:NN] inline citation.
 
 Output STRICT JSON only — no prose, no fences:
 {
   "title": "Impact and first-90-days — <Role> at <Company>",
-  "opening_paragraph": "3-5 sentences. Frames the bet. Em-dash linking. Cites cv.md.",
+  "opening_paragraph": "3-5 sentences. Frames the bet. No em dashes. Cites cv.md.",
   "wedges": [
     { "wedge_title": "...", "problem": "...", "what_mitchell_does": "...", "citation": "cv.md:NN" }
   ],
@@ -216,7 +216,7 @@ export async function runImpactDoc(input) {
     `## article-digest.md (proof points)`,
     articleDigest,
     '',
-    `## Voice brief (kill list + canonical metrics)`,
+    `## Voice brief (banned-phrase checklist + canonical metrics)`,
     voiceBrief,
     '',
     `## HM intel`,

@@ -88,7 +88,7 @@ ${JSON.stringify(scraped, null, 2).slice(0, 5000)}
 
 **Cite SPECIFIC posts.** Reference the scraped URL or the actual content of a recent post. "Worth a 20-min call about the FDE founding team you posted about 1 week ago?" beats "I noticed your work at Glean."
 
-**Kill list — NEVER use:**
+**Banned-phrase checklist — NEVER use:**
 - delve, leverage, synergy, tapestry, passionate, robust, comprehensive
 - "It's worth noting that", "In today's fast-paced world"
 - Exclamation marks for emphasis
@@ -104,7 +104,7 @@ ${JSON.stringify(scraped, null, 2).slice(0, 5000)}
 **Activator-friendly action.** recommended_next_action MUST be ONE specific thing he does this week, not "consider X".
 
 # Authenticity gate
-Before finalizing: would Mitchell instinctively trust this, or feel templated? If templated → rewrite. Output must reference at LEAST one specific URL from the scrape, at least one cv.md detail, and have NO kill-list words.
+Before finalizing: would Mitchell instinctively trust this, or feel templated? If templated → rewrite. Output must reference at LEAST one specific URL from the scrape, at least one cv.md detail, and have NO banned-phrase checklist words.
 
 # Refuse-to-commit
 If the scrape has 0 substantive recent posts → return JSON with null/empty fields and specific no_data_reason. Better an honest gap than fabricated positioning.

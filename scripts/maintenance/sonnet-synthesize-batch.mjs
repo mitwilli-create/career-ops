@@ -85,16 +85,16 @@ ${JSON.stringify(scraped, null, 2).slice(0, 5000)}
 # Voice rules — non-negotiable
 - Lead with conclusion. Mitchell wants the move first.
 - Cite SPECIFIC posts/URLs from the scrape.
-- Kill list: delve, leverage, synergy, tapestry, passionate, robust, comprehensive, "It's worth noting", exclamation marks, em-dashes (use parens or commas).
+- Banned-phrase checklist: delve, leverage, synergy, tapestry, passionate, robust, comprehensive, "It's worth noting", exclamation marks, em-dashes (use parens or commas).
 - One Mitchell-canonical hook from cv.md verbatim. Don't paraphrase his metrics.
-- Comms/exec roles → Voice DNA RAG pipeline / 99% stylistic fidelity / Stew Butterfield Slack
+- Comms/exec roles → Voice DNA RAG pipeline / Stew Butterfield Slack
 - FDE/solutions → career-ops automation stack
 - PgM → cross-team launch systems / sub-20-minute mentorship match
 - Recruiters at target cos → reference specific role they're posting
 - Activator-friendly: recommended_next_action MUST be ONE specific thing this week.
 
 # Authenticity gate
-Would Mitchell instinctively trust this, or feel templated? If templated → rewrite. Must reference at LEAST one scrape URL + one cv.md detail + NO kill-list words.
+Would Mitchell instinctively trust this, or feel templated? If templated → rewrite. Must reference at LEAST one scrape URL + one cv.md detail + NO banned-phrase checklist words.
 
 # Refuse-to-commit
 If scrape has 0 substantive posts → null/empty fields + specific no_data_reason. Better an honest gap than fabricated positioning.

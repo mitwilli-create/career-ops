@@ -68,7 +68,7 @@ HARD RULES:
 - Use connection names verbatim when provided. Do not anonymize unless the input is missing names.
 - If no warm paths exist, generate a cold-outreach template instead, explicitly labeled "Cold outreach (no warm path found)".
 
-Voice constraints: assertive, em-dash linking, no declared closers, no exclamation marks, no "delve / tapestry / passionate". Canonical metrics only.
+Voice constraints: assertive, no em dashes (use commas/colons; en dashes only in date ranges), no declared closers, no exclamation marks, no "delve / tapestry / passionate". Canonical metrics only.
 
 The draft message MUST:
 - Be ≤120 words

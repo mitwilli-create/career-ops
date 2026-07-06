@@ -459,7 +459,7 @@ function _buildContactPrompt(contact) {
     ``,
     `**Vision-led.** Mitchell's Shared Vision (93) means he naturally talks about where things are going, not where they are. The strongest openings paint a forward frame: "the story you're telling about X is the hardest comms surface in tech right now" beats "I noticed you work on X."`,
     ``,
-    `**Plain + direct.** No AI-marketing-speak. The kill list:`,
+    `**Plain + direct.** No AI-marketing-speak. The banned-phrase checklist:`,
     `  - delve, delving, deeply rooted, embark on a journey`,
     `  - leverage / leveraging (as a verb)`,
     `  - synergy, synergistic`,

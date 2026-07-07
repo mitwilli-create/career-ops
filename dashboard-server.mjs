@@ -2684,8 +2684,17 @@ function batchLive() {
         const phaseIdx = phaseOrder.indexOf(ph);
         const phaseDone = (p) => phaseOrder.indexOf(p) >= 0 && phaseIdx > phaseOrder.indexOf(p);
         const isRunning = activeJob.status === 'running';
-        const triageTotal = activeJob.pending_before || 0;
+        // 2026-07-06 — null-honest triage metrics (Qodo PR #385 finding 2).
+        // A just-queued job has pending_before/triage_advanced === null|undefined
+        // ("not yet computed") — distinct from a genuine 0 ("queue empty /
+        // nothing advanced"). Preserve the distinction so the sidebar renders
+        // "not run" instead of a misleading "0 / 0". `not_computed` flows to
+        // the client stage renderer; do NOT collapse null → 0 with `|| 0`.
+        // Bug class: sentinel-treated-as-truthy (the numeric 0-fill analogue).
+        const triageComputed = activeJob.pending_before != null;
+        const triageTotal = triageComputed ? activeJob.pending_before : null;
         const triageAdv   = activeJob.triage_advanced != null ? activeJob.triage_advanced : triageTotal;
+        const triageNotComputed = activeJob.pending_before == null && activeJob.triage_advanced == null;
         // γ GAMMA: published_count is currently never written by
         // process-all-pipeline.mjs (truth audit found NULL handling that
         // displays 0/0 = pending when the publish stage DID run). Best-effort
@@ -2707,12 +2716,14 @@ function batchLive() {
           stages: {
             triage:   { done: phaseDone('triage') || ph === 'done',
                         active: ph === 'triage' && isRunning,
-                        completed: phaseDone('triage') || ph === 'done' ? triageAdv : 0,
-                        total: triageTotal },
+                        completed: (phaseDone('triage') || ph === 'done') ? triageAdv : (triageComputed ? 0 : null),
+                        total: triageTotal,
+                        not_computed: triageNotComputed },
             sort:     { done: phaseDone('batch') || ph === 'done',
                         active: false,
-                        completed: phaseDone('batch') || ph === 'done' ? triageAdv : 0,
-                        total: triageAdv || triageTotal },
+                        completed: (phaseDone('batch') || ph === 'done') ? triageAdv : (triageComputed ? 0 : null),
+                        total: (triageAdv != null ? triageAdv : triageTotal),
+                        not_computed: triageNotComputed },
             process:  { done: phaseDone('rebuild') || ph === 'done',
                         active: ph === 'batch' && isRunning,
                         completed,

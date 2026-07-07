@@ -27144,6 +27144,14 @@ function _renderBatchData(data) {
           cnt = ttl > 0 ? (ttl + ' / ' + ttl) : '✓';
         } else if (st.active) {
           cnt = ttl > 0 ? (done + ' / ' + ttl) : '—';
+        } else if (st.not_computed) {
+          // 2026-07-06 — server preserved null ("not yet computed") rather than
+          // 0-filling the metric. Distinct from a genuine empty queue below, so
+          // a just-queued run reads honestly instead of claiming "0 / 0".
+          // Label kept as compact as the sibling "pending" cell (single line in
+          // the narrow sidebar column). Qodo PR #385 finding 2 (sentinel-
+          // treated-as-truthy, numeric analogue).
+          cnt = '<span style="opacity:0.45;font-style:italic;white-space:nowrap" title="metric not yet computed">not run</span>';
         } else if (!st.active && ttl === 0 && done === 0) {
           cnt = '<span style="opacity:0.45;font-style:italic">pending</span>';
         } else {

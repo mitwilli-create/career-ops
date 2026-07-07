@@ -848,6 +848,32 @@ try {
   }
 }
 
+// ── 22. PROCESS-ALL STATE NULL DISTINGUISHABILITY (0 vs not-computed) ──
+
+console.log("\n22. Process-all state — genuine-0 vs not-yet-computed count metrics are distinguishable end to end");
+
+try {
+  // Runs tests/process-all-state-null-distinguishability.test.mjs — fails if
+  // writeProcessState 0-fills a not-computed count metric, or if the SSE gating
+  // predicate + client cell renderer collapse null (not run) and 0 (genuine
+  // empty) into the same display. Closes Qodo PR #385 finding 2 / the numeric
+  // analogue of sentinel-string-treated-as-truthy-by-gating-predicate.
+  execFileSync('node', ['--test', 'tests/process-all-state-null-distinguishability.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+    timeout: 120000,   // hang-watchdog: never let a stalled test wedge CI (Qodo compliance 1671681)
+  });
+  pass('Process-all state — not-computed (null) stays distinct from genuine 0 through render');
+} catch (err) {
+  fail('Process-all state — 0-fill lie: not-computed metric indistinguishable from genuine 0');
+  const out = (err.stdout || '') + (err.stderr || '');
+  for (const line of out.split('\n').slice(0, 40)) {
+    if (line.trim()) console.log(`     ${line}`);
+  }
+  console.log(`     → Fix: default not-yet-computed count metrics to null (not 0) in lib/process-all-state.mjs::writeProcessState`);
+}
+
 // ── SUMMARY ─────────────────────────────────────────────────────
 
 console.log('\n' + '='.repeat(50));

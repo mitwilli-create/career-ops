@@ -36,13 +36,10 @@
 set -euo pipefail
 
 MODE="${1:-pre}"
-REPO="/Users/mitchellwilliams/Documents/career-ops"
 # Use session id if available, else a stable default. CLAUDE_SESSION_ID is
 # set by some harness configurations; fall back gracefully.
 SESSION_ID="${CLAUDE_SESSION_ID:-default}"
 STATE_FILE="/tmp/claude-branch-state-${SESSION_ID}.json"
-
-cd "$REPO" 2>/dev/null || exit 0  # not in repo → don't fire
 
 # Read JSON tool input from stdin
 input="$(cat 2>/dev/null || echo '{}')"
@@ -55,6 +52,25 @@ try:
 except Exception:
     print('')
 " 2>/dev/null || echo '')"
+
+# Derive the working tree from the hook payload's cwd — NEVER a hard-coded
+# path. A session running in a worktree must have ITS branch tracked; the
+# old hard-coded main-tree cd meant worktree sessions always captured the
+# MAIN tree's branch, so drift inside a worktree was invisible and sibling
+# main-tree switches fired false warnings. Same class as the PR #385 B7
+# worktree-safe commit-msg fix; per-worktree state already works below via
+# the state_key hash of --show-toplevel.
+hook_cwd="$(printf '%s' "$input" | /usr/bin/env python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(d.get('cwd') or '')
+except Exception:
+    print('')
+" 2>/dev/null || echo '')"
+[ -z "$hook_cwd" ] && hook_cwd="$PWD"
+
+cd "$hook_cwd" 2>/dev/null || exit 0  # cwd gone → don't fire
 
 # Current branch — if not a git repo or detached HEAD, skip gracefully
 current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"

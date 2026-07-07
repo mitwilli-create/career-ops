@@ -964,6 +964,33 @@ try {
   }
 }
 
+// ── 25. HOOKS WORKTREE SAFETY (payload-cwd repo derivation) ─────
+
+console.log("\n25. Hooks worktree safety — commit-ui-verify-gate + branch-invariant-gate derive the repo from hook-payload cwd, never a hard-coded path");
+
+try {
+  // Runs tests/hooks-worktree-safety.test.mjs — fails if a hook inspects the
+  // MAIN tree's index/branch for a commit happening in a worktree (the
+  // 2026-07-07 incident: docs-only worktree commit blocked because a sibling
+  // instance had UI files staged in the main tree), or if any hook script
+  // reintroduces the hard-coded main-tree path literal. Same class as the
+  // PR #385 B7 worktree-safe commit-msg fix.
+  execFileSync('node', ['--test', 'tests/hooks-worktree-safety.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+    timeout: 120000,   // hang-watchdog: never let a stalled test wedge CI
+  });
+  pass('Hooks worktree safety — repo derived from payload cwd; per-worktree index/branch inspected');
+} catch (err) {
+  fail('Hooks worktree safety — a hook is inspecting the wrong tree (hard-coded repo path?)');
+  const out = (err.stdout || '') + (err.stderr || '');
+  for (const line of out.split('\n').slice(0, 40)) {
+    if (line.trim()) console.log(`     ${line}`);
+  }
+  console.log(`     → Fix: derive REPO via git -C "<payload cwd>" rev-parse --show-toplevel in scripts/hooks/*.sh`);
+}
+
 // ── SUMMARY ─────────────────────────────────────────────────────
 
 console.log('\n' + '='.repeat(50));

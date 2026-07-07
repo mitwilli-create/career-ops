@@ -19,9 +19,6 @@
 
 set -euo pipefail
 
-REPO="/Users/mitchellwilliams/Documents/career-ops"
-cd "$REPO" || exit 0  # If we can't even cd to the repo, don't block.
-
 # Read JSON tool input from stdin.
 input="$(cat 2>/dev/null || echo '{}')"
 
@@ -34,6 +31,29 @@ try:
 except Exception:
   print('')
 " 2>/dev/null)"
+
+# Derive the repo from the hook's invocation context — NEVER a hard-coded
+# path. The harness payload carries the session's cwd; a commit issued from
+# a worktree must have ITS index inspected, not the main tree's. Hard-coding
+# the main tree produced both false positives (a docs-only worktree commit
+# blocked because a sibling instance had UI files staged in the main tree,
+# observed 2026-07-07) and false negatives (a worktree commit staging UI
+# files passed while the main-tree index was clean). Same class as the
+# PR #385 B7 worktree-safe commit-msg fix.
+hook_cwd="$(printf '%s' "$input" | /usr/bin/env python3 -c "
+import json, sys
+try:
+  d = json.load(sys.stdin)
+  print(d.get('cwd') or '')
+except Exception:
+  print('')
+" 2>/dev/null)"
+[ -z "$hook_cwd" ] && hook_cwd="$PWD"
+
+REPO="$(git -C "$hook_cwd" rev-parse --show-toplevel 2>/dev/null || echo '')"
+if [ -z "$REPO" ]; then
+  exit 0  # Not inside a git repo — nothing to gate.
+fi
 
 # Only fire on git commit commands. Skip otherwise.
 case "$command_str" in

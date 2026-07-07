@@ -104,16 +104,16 @@ const SCANNERS = [
     successPattern: /\[community-scan\] Done|community-scan starting/,
     ingestPattern: /Added:\s*(\d+)/,
   },
-  {
-    name: 'skill-ingest',
-    label: 'com.mitchell.career-ops.skill-ingest',
-    cadenceHours: 168,       // weekly
-    // fixed 2026-05-26: was data/logs/ which doesn't receive launchd output
-    logPathFn: () => join(LAUNCHD_LOGS, 'skill-ingest-launchd.out'),
-    outputs: [],
-    successPattern: /exit code: 0|skill ingestion complete/i,
-    ingestPattern: /(?:skills|patterns) (?:added|ingested):\s*(\d+)/i,
-  },
+  // skill-ingest PARKED 2026-07-07 per Mitchell — the weekly skill-tracker
+  // drop ritual lapsed after 2026-W24, so the Sunday job was disabled
+  // (launchctl bootout + disable gui/$UID/com.mitchell.career-ops.skill-ingest)
+  // and its scanner entry removed so a deliberately-parked job doesn't hold a
+  // permanent red chip. To resume: re-enable the plist and restore the entry:
+  //   { name: 'skill-ingest', label: 'com.mitchell.career-ops.skill-ingest',
+  //     cadenceHours: 168,
+  //     logPathFn: () => join(LAUNCHD_LOGS, 'skill-ingest-launchd.err'),  // script logs JSON to stderr; .out stays empty
+  //     outputs: [], successPattern: /"ok":true/i,
+  //     ingestPattern: /(?:skills|patterns) (?:added|ingested):\s*(\d+)/i },
   {
     name: 'company-pulse',
     label: 'com.mitchell.career-ops.company-pulse',

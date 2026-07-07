@@ -104,12 +104,17 @@ const extractedDir = resolve(ROOT, 'data', 'skill-tracker', 'extracted');
 const extractedJsonPath = resolve(extractedDir, `${weekIso}.json`);
 
 if (!existsSync(weeklyDropPath)) {
+  // A missing weekly drop is a data signal (the human ritual didn't happen),
+  // not an operational failure — exit 0 so launchd/monitors don't flag the
+  // job as flapping. Exit 1 is reserved for real failures (API/write errors).
+  // See docs/BUG-CLASSES.md § launchd-exit-1-misclassified-as-flapping-on-data-signals.
   console.error(JSON.stringify({
-    ok: false,
-    error: `Weekly drop not found at ${relative(ROOT, weeklyDropPath)}`,
-    hint: `Copy data/skill-tracker/_TEMPLATE.md to ${weekIso}.md and fill it in.`,
+    ok: true,
+    skipped: 'no-drop',
+    detail: `Weekly drop not found at ${relative(ROOT, weeklyDropPath)} — nothing to ingest this week`,
+    hint: `Copy data/skill-tracker/_TEMPLATE.md to ${weekIso}.md and fill it in to resume.`,
   }));
-  process.exit(1);
+  process.exit(0);
 }
 
 const weeklyDropMarkdown = readFileSync(weeklyDropPath, 'utf-8');

@@ -5684,7 +5684,7 @@ async function build() {
   let _anIdx = 0;
   const _anReadyHtml = _anReady.map(r => renderRow(r, `apply-${_anIdx++}`)).join('\n');
   const _anPendingDivider = _anPending.length
-    ? `<tr class="apply-now-enriching-divider"><td colspan="20" style="padding:10px 14px;background:rgba(210,153,34,0.08);border-top:2px solid rgba(210,153,34,0.35);border-bottom:1px solid rgba(210,153,34,0.2);font-size:12px;color:#d29922;font-weight:600"><span style="display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap;line-height:1.5">⏳ ${_anPending.length} not yet apply-ready — missing a tailored CV and/or hiring-manager research.<button type="button" onclick="window._enrichPendingApplyNow(event)" title="Generate the tailored apply-pack (CV + cover letter + form fields) for the top pending roles" style="background:#d29922;color:#161616;border:none;border-radius:6px;padding:4px 11px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">Create materials →</button> Held out of “ready to apply” until each pack is built — or discard rows you don't want.</span></td></tr>`
+    ? `<tr class="apply-now-enriching-divider"><td colspan="20" style="padding:10px 14px;background:rgba(210,153,34,0.08);border-top:2px solid rgba(210,153,34,0.35);border-bottom:1px solid rgba(210,153,34,0.2);font-size:12px;color:#d29922;font-weight:600"><span style="display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap;line-height:1.5">⏳ ${_anPending.length} not yet apply-ready — missing a tailored CV and/or hiring-manager research. <button type="button" onclick="window._enrichPendingApplyNow(event)" title="Generate the tailored apply-pack (CV + cover letter + form fields) for the top pending roles" style="background:#d29922;color:#161616;border:none;border-radius:6px;padding:4px 11px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">Create materials →</button> Held out of “ready to apply” until each pack is built — or discard rows you don't want.</span></td></tr>`
     : '';
   const _anPendingHtml = _anPending.map(r => renderRow(r, `apply-${_anIdx++}`)).join('\n');
   const applyNowRows = [_anReadyHtml, _anPendingDivider, _anPendingHtml].filter(Boolean).join('\n');
@@ -35566,10 +35566,18 @@ window._CONTACTS_DATA = _CONTACTS_DATA;
 window._CONTACTS_STATS = _CONTACTS_STATS;
 window._contactsReadyCallbacks = [];
 window._onContactsReady = function(cb) {
-  if (window._CONTACTS_DATA && window._CONTACTS_DATA.length) { try { cb(); } catch(_){} return; }
+  // "Ready" = the fetch completed successfully (window._contactsLoaded), NOT
+  // "the array is non-empty" — an empty-but-valid payload must still fire
+  // callbacks or late registrations queue forever (Qodo finding on #397).
+  if (window._contactsLoaded) { try { cb(); } catch(_){} return; }
   window._contactsReadyCallbacks.push(cb);
 };
 window._contactsLoaded = false;
+// Client-side tiered timeout constants (compliance rule: predefined tiers,
+// no ad-hoc numeric timeouts). New timeout-sensitive client operations should
+// pick a tier from here instead of introducing literals.
+// fast = quick local retries · medium = network operations · slow = long jobs.
+window.CLIENT_TIMEOUT_TIERS = window.CLIENT_TIMEOUT_TIERS || { fast: 4000, medium: 30000, slow: 120000 };
 function _fetchContacts(attempt) {
   return fetch('/data/contacts.json', { cache: 'no-cache' })
     .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
@@ -35590,7 +35598,7 @@ function _fetchContacts(attempt) {
       // case; a persistent failure leaves the chip on its "—" unloaded state
       // instead of a false 0 (blind-review 2026-07-07 #19).
       console.warn('[contacts] fetch failed (attempt ' + attempt + '):', err.message);
-      if (attempt < 2) return new Promise(function(res){ setTimeout(res, 4000); }).then(function(){ return _fetchContacts(attempt + 1); });
+      if (attempt < 2) return new Promise(function(res){ window.setTimeout(res, window.CLIENT_TIMEOUT_TIERS.fast); }).then(function(){ return _fetchContacts(attempt + 1); });
       if (typeof _updateContactsChip === 'function') _updateContactsChip();
     });
 }
@@ -39055,7 +39063,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
       + '<div class="op-expanded" id="op-expanded" hidden>'
       +   '<div class="op-expanded-header">'
       +     '<h2 class="op-title">Outreach Pulse <span class="op-legend-toggle" data-action="toggle-legend">what do the strategies mean?</span></h2>'
-      +     '<div class="op-counts"><strong>' + awaiting + '</strong> awaiting &middot; <strong>' + dueToday + '</strong> due today &middot; <strong>' + breakup + '</strong> breakup &middot; <strong>' + referral + '</strong> referral angles</div>'
+      +     '<div class="op-counts"><strong>' + awaiting + '</strong> awaiting &middot; <strong>' + dueToday + '</strong> due today &middot; <strong>' + breakup + '</strong> closing follow-up &middot; <strong>' + referral + '</strong> referral openings</div>'
       +   '</div>'
       +   renderLegend()
       +   groups

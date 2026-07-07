@@ -2194,7 +2194,9 @@ function detailApplyNow() {
   const dismissedMap = loadDismissed();
   const nowMs = Date.now();
   const rows = apps
-    .filter(a => a.score >= 4.0 && ['Evaluated','Applied','Interview','Offer'].includes(a.status))
+    // Same definition as computeStats()/build-time Apply-Now — count and
+    // detail rows must describe the same set (Qodo finding on #397).
+    .filter(a => a.score >= 4.0 && ['Evaluated','Responded'].includes(a.status))
     .filter(a => {
       const until = dismissedMap[String(a.num)];
       return !until || new Date(until).getTime() <= nowMs; // include if not dismissed or expired

@@ -9,7 +9,7 @@
 
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -416,6 +416,139 @@ describe('computeStrategyCeiling — data-first mode (POPOUT_DATA_FIRST_MODE=1)'
     assert.ok(Array.isArray(result.open_gaps));
     // Degraded path emits one honest open_gap explaining the LLM didn't respond
     assert.ok(result.open_gaps.length >= 1);
+  });
+
+  test('validator enforces the documented 0-5 cap — over-emitted arrays are truncated with a note', async () => {
+    const evidenceItem = (n) => ({
+      what_data: `source ${n}`,
+      what_it_reveals: `Fact ${n} about the candidate-role fit.`,
+      source_path: `data/fixture-${n}.json`,
+      confidence: 'medium',
+    });
+    const gapItem = (n) => ({
+      what_is_missing: `missing artifact ${n}`,
+      why_it_matters: `Blocks polish step ${n}.`,
+      suggested_agent: 'build-apply-pack',
+    });
+    const overEmittingClient = {
+      call: async () => JSON.stringify({
+        current: 40,
+        ceiling: 70,
+        gap_pct: 30,
+        evidence: Array.from({ length: 7 }, (_, i) => evidenceItem(i + 1)),
+        open_gaps: Array.from({ length: 6 }, (_, i) => gapItem(i + 1)),
+        reasoning: 'Over-emitted on purpose.',
+      }),
+    };
+    const result = await computeStrategyCeiling({
+      rowId: 203,
+      role: 'AI Enablement Lead',
+      company: 'Cohere',
+      metricKey: 'alignment',
+      currentValue: 40,
+      opts: { llmClient: overEmittingClient, maxAgeMs: 0 },
+    });
+    // Not degraded — over-emission is truncated, not rejected
+    assert.notEqual(result._degraded, true);
+    assert.equal(result._mode, 'data-first');
+    assert.equal(result.evidence.length, 5);
+    assert.equal(result.open_gaps.length, 5);
+    // First 5 items kept in order
+    assert.equal(result.evidence[0].what_data, 'source 1');
+    assert.equal(result.evidence[4].what_data, 'source 5');
+    assert.equal(result.open_gaps[4].what_is_missing, 'missing artifact 5');
+    // Truncation note surfaces on the result
+    assert.equal(result._evidence_truncated, true);
+    assert.equal(result._open_gaps_truncated, true);
+  });
+
+  test('validator does not flag truncation when arrays are within the 0-5 cap', async () => {
+    const withinCapClient = {
+      call: async () => JSON.stringify({
+        current: 40,
+        ceiling: 70,
+        gap_pct: 30,
+        evidence: [
+          { what_data: 'cv.md', what_it_reveals: 'Relevant experience.', source_path: 'cv.md', confidence: 'high' },
+        ],
+        open_gaps: [],
+        reasoning: 'Within cap.',
+      }),
+    };
+    const result = await computeStrategyCeiling({
+      rowId: 204,
+      role: 'AI Enablement Lead',
+      company: 'Cohere',
+      metricKey: 'hm_chance',
+      currentValue: 40,
+      opts: { llmClient: withinCapClient, maxAgeMs: 0 },
+    });
+    assert.notEqual(result._degraded, true);
+    assert.equal(result.evidence.length, 1);
+    assert.equal(result._evidence_truncated, undefined);
+    assert.equal(result._open_gaps_truncated, undefined);
+  });
+
+  test('cache hits enforce the 0-5 cap too — pre-cap oversized entries are truncated on read', () => {
+    // Simulate a cache entry written BEFORE the cap existed: 7 evidence + 6 gaps.
+    const staleKey = `test-precap-oversized${TEST_CACHE_SUFFIX}`;
+    const staleEntry = {
+      current: 40,
+      ceiling: 70,
+      gap_pct: 30,
+      evidence: Array.from({ length: 7 }, (_, i) => ({
+        what_data: `cached source ${i + 1}`,
+        what_it_reveals: `Cached fact ${i + 1}.`,
+        source_path: `data/cached-${i + 1}.json`,
+      })),
+      open_gaps: Array.from({ length: 6 }, (_, i) => ({
+        what_is_missing: `cached gap ${i + 1}`,
+        why_it_matters: 'Cached.',
+        suggested_agent: 'intel-refresh',
+      })),
+      _mode: 'data-first',
+      generated_at: Date.now(),
+    };
+    mkdirSync(CACHE_DIR, { recursive: true });
+    const stalePath = join(CACHE_DIR, `${staleKey}.json`);
+    writeFileSync(stalePath, JSON.stringify(staleEntry));
+    try {
+      const cached = getCachedStrategy(staleKey, 60_000);
+      assert.ok(cached, 'fresh cache entry should be served');
+      assert.equal(cached.evidence.length, 5);
+      assert.equal(cached.open_gaps.length, 5);
+      assert.equal(cached.evidence[4].what_data, 'cached source 5');
+      assert.equal(cached._evidence_truncated, true);
+      assert.equal(cached._open_gaps_truncated, true);
+    } finally {
+      rmSync(stalePath, { force: true });
+    }
+  });
+
+  test('cache read cap is a no-op for legacy actions[] entries', () => {
+    const legacyKey = `test-precap-legacy${TEST_CACHE_SUFFIX}`;
+    const legacyEntry = {
+      current: 33,
+      ceiling: 70,
+      gap_pct: 37,
+      actions: [
+        { title: 'A', what: 'W', why: 'Y', effort: 'low', expected_lift_pct: 5 },
+      ],
+      _mode: 'legacy',
+      generated_at: Date.now(),
+    };
+    mkdirSync(CACHE_DIR, { recursive: true });
+    const legacyPath = join(CACHE_DIR, `${legacyKey}.json`);
+    writeFileSync(legacyPath, JSON.stringify(legacyEntry));
+    try {
+      const cached = getCachedStrategy(legacyKey, 60_000);
+      assert.ok(cached, 'fresh legacy entry should be served');
+      assert.equal(cached.actions.length, 1);
+      assert.equal(cached._evidence_truncated, undefined);
+      assert.equal(cached._open_gaps_truncated, undefined);
+    } finally {
+      rmSync(legacyPath, { force: true });
+    }
   });
 
   test('cache key includes mode discriminator (data-first vs legacy)', async () => {

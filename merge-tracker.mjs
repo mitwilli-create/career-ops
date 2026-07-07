@@ -19,6 +19,7 @@ import { join, basename, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execFileSync } from 'child_process';
 import { isLinkedInJobUrl } from './lib/jd-url-canonicalizer.mjs';
+import { escapeTableCell } from './lib/tracker-row.mjs';
 
 const CAREER_OPS = dirname(fileURLToPath(import.meta.url));
 // Support both layouts: data/applications.md (boilerplate) and applications.md (original)
@@ -333,7 +334,14 @@ if (!existsSync(ADDITIONS_DIR)) {
   process.exit(0);
 }
 
-const tsvFiles = readdirSync(ADDITIONS_DIR).filter(f => f.endsWith('.tsv'));
+// Exclude triage-skips.tsv — it is a triage-skip LOG (many appended rows,
+// empty num, deprecated SKIP status), NOT a tracker addition. It lives in this
+// dir only for co-location; feeding it into parseTsvContent (which assumes a
+// single row per file) mangled it into a malformed applications.md row during
+// the 2026-07-06 pipeline reboot (leaked #2756 celonis). audit.mjs:265 already
+// excludes it — this mirrors that convention. See docs/BUG-CLASSES.md §
+// pipeline-ingest-format-drift.
+const tsvFiles = readdirSync(ADDITIONS_DIR).filter(f => f.endsWith('.tsv') && f !== 'triage-skips.tsv');
 if (tsvFiles.length === 0) {
   console.log('✅ No pending additions to merge.');
   // Fall through to post-merge --check (catches pre-existing dupes even on
@@ -432,7 +440,11 @@ for (const file of tsvFiles) {
       console.log(`🔄 Update: #${duplicate.num} ${addition.company} — ${addition.role} (${oldScore}→${newScore})`);
       const lineIdx = appLines.indexOf(duplicate.raw);
       if (lineIdx >= 0) {
-        const updatedLine = `| ${duplicate.num} | ${addition.date} | ${addition.company} | ${addition.role} | ${addition.score} | ${duplicate.status} | ${duplicate.pdf} | ${addition.report} | Re-eval ${addition.date} (${oldScore}→${newScore}). ${addition.notes} |`;
+        // Escape company/role — an unescaped '|' in either shifts every
+        // downstream column (score → status cell). Notes intentionally carry
+        // `field | field` separators and are the trailing column, so pipes
+        // there never shift structure — left unescaped. See lib/tracker-row.mjs.
+        const updatedLine = `| ${duplicate.num} | ${addition.date} | ${escapeTableCell(addition.company)} | ${escapeTableCell(addition.role)} | ${addition.score} | ${duplicate.status} | ${duplicate.pdf} | ${addition.report} | Re-eval ${addition.date} (${oldScore}→${newScore}). ${addition.notes} |`;
         appLines[lineIdx] = updatedLine;
         updated++;
       }
@@ -445,7 +457,7 @@ for (const file of tsvFiles) {
     const entryNum = addition.num > maxNum ? addition.num : ++maxNum;
     if (addition.num > maxNum) maxNum = addition.num;
 
-    const newLine = `| ${entryNum} | ${addition.date} | ${addition.company} | ${addition.role} | ${addition.score} | ${addition.status} | ${addition.pdf} | ${addition.report} | ${addition.notes} |`;
+    const newLine = `| ${entryNum} | ${addition.date} | ${escapeTableCell(addition.company)} | ${escapeTableCell(addition.role)} | ${addition.score} | ${addition.status} | ${addition.pdf} | ${addition.report} | ${addition.notes} |`;
     newLines.push(newLine);
     added++;
     console.log(`➕ Add #${entryNum}: ${addition.company} — ${addition.role} (${addition.score})`);

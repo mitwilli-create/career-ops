@@ -42,6 +42,7 @@ import { detectSurfaceAlias } from './lib/surface-alias-detector.mjs';
 import { recordSurfaceAlias } from './lib/role-surface-aliases.mjs';
 import { canonicalize, isLinkedInJobUrl } from './lib/jd-url-canonicalizer.mjs';
 import { applyHardDisqualifiers } from './lib/triage-hard-disqualifier-filter.mjs';
+import { tsvSafeCell } from './lib/tracker-row.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
@@ -273,7 +274,15 @@ function writeSkip(url, reason) {
   if (!existsSync(dirname(SKIPS_TSV))) mkdirSync(dirname(SKIPS_TSV), { recursive: true });
   const date = new Date().toISOString().slice(0, 10);
   const company = guessCompany(url);
-  const line = `\t${date}\t${company}\t—\tSKIP\t—\t❌\t—\t${reason.slice(0, 120)}\n`;
+  // Sanitize both dynamic fields: strip tab/newline (would corrupt this TSV
+  // log) and replace any '|' (e.g. the `< threshold N | reason` composed at the
+  // score-fail call site) with '/', so the log can never seed a malformed
+  // markdown row if it is ever re-merged. This file is now also excluded from
+  // merge-tracker's glob — belt and suspenders. See docs/BUG-CLASSES.md §
+  // pipeline-ingest-format-drift.
+  const safeCompany = tsvSafeCell(company).replace(/\|/g, '/');
+  const safeReason = tsvSafeCell(reason).replace(/\|/g, '/').slice(0, 120);
+  const line = `\t${date}\t${safeCompany}\t—\tSKIP\t—\t❌\t—\t${safeReason}\n`;
   safeAppendFileSync(SKIPS_TSV, line);
 }
 

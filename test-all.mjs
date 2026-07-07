@@ -899,6 +899,36 @@ try {
   }
 }
 
+// ── 24. APPLICATIONS.MD COLUMN INTEGRITY (note-aware, pipe-in-role guard) ──
+
+console.log("\n24. Applications.md column integrity — no unescaped '|' shifts structural columns (note-aware)");
+
+try {
+  // Runs tests/applications-column-integrity-invariant.test.mjs — exits 2 if any
+  // data row's fixed front columns (num/date/score/status) are corrupted by an
+  // unescaped '|' in company/role, or a leaked non-row (triage-skip shape) was
+  // written as a row. Note-aware: pipes in the trailing notes column are legit
+  // (~114 rows carry a `| triage X.X/5` suffix). Closes the 2026-07-06
+  // pipeline-reboot leaks (#2535 role pipe, #2756 celonis triage-skip). See
+  // docs/BUG-CLASSES.md § pipeline-ingest-format-drift.
+  execFileSync('node', ['tests/applications-column-integrity-invariant.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+  });
+  pass('Applications.md column integrity — all data rows structurally valid');
+} catch (err) {
+  if (err.status === 2) {
+    fail('Applications.md column integrity VIOLATED — malformed row(s) (unescaped pipe or leaked non-row)');
+  } else {
+    fail(`Applications.md column-integrity test crashed: ${err.message}`);
+  }
+  const out = (err.stdout || '') + (err.stderr || '');
+  for (const line of out.split('\n').slice(0, 40)) {
+    if (line.trim()) console.log(`     ${line}`);
+  }
+}
+
 // ── SUMMARY ─────────────────────────────────────────────────────
 
 console.log('\n' + '='.repeat(50));

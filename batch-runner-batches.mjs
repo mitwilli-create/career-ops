@@ -35,6 +35,7 @@ import { checkUrl } from './lib/http-liveness.mjs';
 import { isCdpAvailable, connectToChromeCDP } from './lib/cdp-browser.mjs';
 import { renderDiscardPatternBrief } from './lib/discard-pattern-injector.mjs';
 import { gateCompFloor } from './lib/comp-floor-gate.mjs';
+import { escapeTableCell, tsvSafeCell } from './lib/tracker-row.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
@@ -1030,18 +1031,24 @@ async function phaseProcess(apiKey) {
       noteParts.push(`triage ${meta.triageScore}/5`);
       const noteText = noteParts.join(' | ');
 
-      // Write tracker TSV
+      // Write tracker TSV. Escape company/role at the SOURCE (defense-in-depth
+      // with merge-tracker's markdown-boundary escaping) so an unescaped '|' in
+      // a role like "AI Operations Specialist | Agentic Workflows" can never
+      // shift downstream columns. noteText intentionally uses ` | ` separators
+      // (trailing column — never shifts structure) — keep its pipes, only strip
+      // tab/newline. See lib/tracker-row.mjs + docs/BUG-CLASSES.md §
+      // pipeline-ingest-format-drift.
       trackerNum++;
       const tsvLine = [
         trackerNum,
         date,
-        company,
-        role,
+        escapeTableCell(company),
+        escapeTableCell(role),
         trackerStatus,
         trackerScore,
         '❌',
         `[${numStr}](reports/${filename})`,
-        noteText,
+        tsvSafeCell(noteText),
       ].join('\t');
       appendFileSync(join(TRACKER_DIR, `${numStr}-${slug}.tsv`), tsvLine + '\n');
 

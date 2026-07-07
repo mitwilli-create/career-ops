@@ -114,15 +114,32 @@ function parseCvMarkdown(cvText) {
     // by the renderer's `--highlights "line 1|line 2|..."` CLI flag. When
     // empty, the conditional block in cv-template.typ renders nothing.
     HIGHLIGHTS:            '',
+    // ── resume-mirror architecture tokens (2026-07-06, spec:
+    // data/resume-mirror-spec-2026-07-06.md) ──
+    // FIT_FOR_BLOCK — the spec's key section ("FIT FOR <ROLE>, <COMPANY>" /
+    // "HIGHLIGHTS" as a full section of bolded-lead bullets), placed after the
+    // Summary. PROJECTS_BLOCK_TOP / SKILLS_BLOCK_BOTTOM — role-dependent
+    // placement slots, filled from source order ONLY in spec-mirror mode so
+    // legacy renders (master cv.md, ledger artifacts) are byte-identical.
+    FIT_FOR_BLOCK:         '',
+    PROJECTS_BLOCK_TOP:    '',
+    SKILLS_BLOCK_BOTTOM:   '',
   };
 
   const lines = cvText.split('\n');
   let currentSection = '';
   const sectionBuffers = {};
+  // Original-case H2 text per lowercased section key (the FIT FOR heading
+  // renders verbatim) + encounter order (drives spec-mirror placement).
+  const headingOriginal = {};
+  const sectionOrder = [];
   let firstH2Consumed = false;
   // Standard section names — anything else for the first H2 is treated as a
   // tagline shown under the name.
   const STANDARD_SECTIONS = /^(summary|professional summary|about|contact|header|experience|work experience|professional experience|employment|projects|personal projects|education|certifications|licenses & certifications|skills|technical skills|core competencies|competencies|skills summary|highlights)$/i;
+  // The spec's key section: "Fit for <Role>, <Company>" — dynamic tail, so it
+  // can't live in STANDARD_SECTIONS; match by prefix wherever it appears.
+  const FIT_FOR_SECTION = /^fit for\b/i;
 
   for (const line of lines) {
     // H1 = name
@@ -135,25 +152,42 @@ function parseCvMarkdown(cvText) {
     const h2 = line.match(/^## (.+)/);
     if (h2) {
       const heading = h2[1].trim();
-      if (!firstH2Consumed && !STANDARD_SECTIONS.test(heading)) {
-        // Non-standard first H2 → render as a tagline under the name.
+      if (!firstH2Consumed && !STANDARD_SECTIONS.test(heading) && !FIT_FOR_SECTION.test(heading)) {
+        // Non-standard first H2 → render as a tagline under the name. The
+        // spec-mirror variant headline ("EXECUTIVE COMMUNICATIONS · …") lands
+        // here by design.
         tokens.TAGLINE = heading;
         firstH2Consumed = true;
         continue;
       }
       // Non-standard H2 *inside* an experience section = an experience sub-group
-      // header (e.g. "## Network Newsrooms (2010 – 2018)"). Keep the section as
-      // experience so following ### roles still flow into it; push a group marker
-      // that the experience converter renders as a heading + description.
+      // header (e.g. "## Earlier Career: Live National News (2010 – 2018)").
+      // Keep the section as experience so following ### roles still flow into
+      // it; push a group marker the experience converter renders as a heading +
+      // bridge line + per-outlet bullets.
       const EXPERIENCE_SECTION = /^(experience|work experience|professional experience|employment)$/i;
-      if (firstH2Consumed && !STANDARD_SECTIONS.test(heading) && EXPERIENCE_SECTION.test(currentSection)) {
+      if (firstH2Consumed && !STANDARD_SECTIONS.test(heading) && !FIT_FOR_SECTION.test(heading) && EXPERIENCE_SECTION.test(currentSection)) {
         if (!sectionBuffers[currentSection]) sectionBuffers[currentSection] = [];
         sectionBuffers[currentSection].push({ type: 'group', text: heading });
         continue;
       }
       firstH2Consumed = true;
       currentSection = heading.toLowerCase();
-      sectionBuffers[currentSection] = sectionBuffers[currentSection] || [];
+      if (!sectionBuffers[currentSection]) {
+        sectionBuffers[currentSection] = [];
+        headingOriginal[currentSection] = heading;
+        sectionOrder.push(currentSection);
+      }
+      continue;
+    }
+
+    // H4 = named-initiative sub-headers inside an experience entry (spec-mirror
+    // Problem/Action/Impact triplets live under these). Previously fell through
+    // to the plain-content path and leaked into context/bullet text.
+    const h4 = line.match(/^#### (.+)/);
+    if (h4) {
+      if (!sectionBuffers[currentSection]) sectionBuffers[currentSection] = [];
+      sectionBuffers[currentSection].push({ type: 'subheading', text: h4[1].trim() });
       continue;
     }
 
@@ -285,13 +319,55 @@ function parseCvMarkdown(cvText) {
     .map(p => `#par(leading: 0.45em)[${escapeTypst(p)}]`)
     .join('\n#v(4pt)\n');
 
+  // ── Spec-mirror detection (data/resume-mirror-spec-2026-07-06.md) ─────────
+  // A markdown source is "spec-mirror" when it carries the spec's key section:
+  // a "## Fit for <Role>, <Company>" H2, OR a "## Highlights" H2 alongside an
+  // "Earlier Career" experience group (the DevRel-variant signature — legacy
+  // cv-tailor ledgers also use "## Highlights" but never have the group, so
+  // they keep the legacy pull-quote-box render unchanged).
+  const expKey = ['work experience', 'experience', 'employment'].find(k => (sectionBuffers[k] || []).length);
+  const fitForKey = Object.keys(sectionBuffers).find(k => FIT_FOR_SECTION.test(k));
+  const hasEarlierCareerGroup = (expKey ? sectionBuffers[expKey] : []).some(
+    e => typeof e === 'object' && e.type === 'group' && /earlier career/i.test(e.text)
+  );
+  const specMirror = Boolean(fitForKey) ||
+    (Boolean((sectionBuffers['highlights'] || []).length) && hasEarlierCareerGroup);
+
+  // ── FIT FOR / HIGHLIGHTS key section → full-width section block ───────────
+  // 6-8 bolded-lead bullets mapping JD requirements to evidence. Bold leads
+  // survive (escapeTypst converts **lead** → *lead*); heading renders verbatim
+  // (section-heading upper()s it). Consumes the highlights buffer in
+  // spec-mirror mode so the legacy box does not double-render.
+  const fitKeySection = fitForKey || (specMirror && (sectionBuffers['highlights'] || []).length ? 'highlights' : null);
+  if (fitKeySection) {
+    const fitItems = [];
+    for (const entry of sectionBuffers[fitKeySection]) {
+      const l = typeof entry === 'string' ? entry.trim() : '';
+      if (!l) continue;
+      if (/^[-*]\s/.test(l)) {
+        fitItems.push(escapeTypst(l.replace(/^[-*]\s*/, '')));
+      } else if (fitItems.length) {
+        // wrapped continuation of the previous bullet
+        fitItems[fitItems.length - 1] += ' ' + escapeTypst(l);
+      }
+    }
+    if (fitItems.length) {
+      tokens.FIT_FOR_BLOCK =
+        `#fit-section(\n` +
+        `  title: "${escapeTypstStr(stripMarkdown(headingOriginal[fitKeySection] || 'Highlights'))}",\n` +
+        `  bullets: (${fitItems.map(b => `[${b}]`).join(',\n    ')},)\n` +
+        `)`;
+    }
+  }
+
   // ── Highlights → Typst highlights-box (audit Item H 2026-05-18) ───────────
   // Extracts bullets from a `## Highlights` H2 section in cv.md. Each `- text`
   // becomes a Typst list item inside the pre-experience pull-quote box.
   // Empty section → empty token → template's `{{HIGHLIGHTS}}` substitution
   // emits nothing (no rect, no whitespace). CLI flag --highlights overrides.
+  // In spec-mirror mode the highlights buffer belongs to FIT_FOR_BLOCK above.
 
-  const highlightsLines = sectionBuffers['highlights'] || [];
+  const highlightsLines = fitKeySection === 'highlights' ? [] : (sectionBuffers['highlights'] || []);
   const highlightItems = [];
   for (const entry of highlightsLines) {
     const l = typeof entry === 'string' ? entry.trim() : '';
@@ -351,14 +427,29 @@ function parseCvMarkdown(cvText) {
 
   // ── Projects → wrapped section block ──────────────────────────────────────
 
+  const projKeyUsed = (sectionBuffers['personal projects'] || []).length ? 'personal projects' : 'projects';
   const projLines = sectionBuffers['personal projects'] ||
                     sectionBuffers['projects'] || [];
   const projContent = convertProjectsToTypst(projLines);
   if (projLines.length && projContent !== '(see cv.md)') {
-    tokens.PROJECTS_BLOCK =
+    const projBlock =
       `#section-heading("Selected Projects")\n` +
       `${projContent}\n` +
       `#v(4pt)`;
+    // Role-dependent placement (spec § 7): in spec-mirror mode, a Projects
+    // section that appears BEFORE Experience in the markdown (DevRel/technical
+    // variant) renders above Experience via {{PROJECTS_BLOCK_TOP}}; otherwise
+    // the legacy after-Experience slot is used. Non-spec-mirror sources are
+    // untouched.
+    const projBeforeExp = specMirror && expKey &&
+      sectionOrder.indexOf(projKeyUsed) !== -1 &&
+      sectionOrder.indexOf(projKeyUsed) < sectionOrder.indexOf(expKey);
+    if (projBeforeExp) {
+      tokens.PROJECTS_BLOCK_TOP = projBlock;
+      tokens.PROJECTS_BLOCK = '';
+    } else {
+      tokens.PROJECTS_BLOCK = projBlock;
+    }
   } else {
     tokens.PROJECTS_BLOCK = '';
   }
@@ -439,10 +530,25 @@ function parseCvMarkdown(cvText) {
     skillsBody += `#skill-category(label: "Certifications", items: "${escapeTypstStr(certInline)}")\n`;
   }
   if (skillsBody) {
-    tokens.SKILLS_BLOCK =
+    const skillsBlock =
       `#section-heading("Skills, Tech Stack & Certifications")\n` +
       `${skillsBody}` +
       `#v(4pt)`;
+    // Spec-mirror placement (spec § 8): SKILLS renders LAST (after Education +
+    // Certifications) when the markdown puts it after Experience. Legacy
+    // sources keep the above-the-fold slot (council O3 design for master
+    // cv.md, whose Skills section is last in SOURCE but pinned above the fold
+    // by the template — that pinning is preserved outside spec-mirror mode).
+    const skillsKeyUsed = (sectionBuffers['technical skills'] || []).length ? 'technical skills' : 'skills';
+    const skillsAfterExp = specMirror && expKey &&
+      sectionOrder.indexOf(skillsKeyUsed) !== -1 &&
+      sectionOrder.indexOf(skillsKeyUsed) > sectionOrder.indexOf(expKey);
+    if (skillsAfterExp) {
+      tokens.SKILLS_BLOCK_BOTTOM = skillsBlock;
+      tokens.SKILLS_BLOCK = '';
+    } else {
+      tokens.SKILLS_BLOCK = skillsBlock;
+    }
   } else {
     tokens.SKILLS_BLOCK = '';
   }
@@ -510,6 +616,18 @@ function stripMarkdown(s) {
     .trim();
 }
 
+// Like stripMarkdown but PRESERVES **bold** markers, for text that renders in
+// content mode via escapeTypst (which converts **…** → Typst *…*). Used for
+// job-entry context lines and experience-group bridge lines so the spec's
+// bolded thesis/bridge sentences survive the render.
+function stripMarkdownKeepBold(s) {
+  return String(s)
+    .replace(/<!--[\s\S]*?-->/g, '')                    // HTML comments
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')          // [text](url) → text
+    .replace(/`([^`]+)`/g, '$1')                        // `code` → code
+    .trim();
+}
+
 /**
  * Convert a flat array of markdown lines (from a section buffer) to
  * Typst job-entry() calls.
@@ -535,19 +653,38 @@ function convertSectionToTypst(lines, macroName) {
   let location = '';
   let context = '';
   let bullets = [];
+  // Named-initiative sub-headers (spec-mirror `#### Initiative (stack)` with
+  // Problem/Action/Impact triplets). Each is {title, bullets[]}; rendered as
+  // #initiative-entry() blocks after the owning job-entry.
+  let initiatives = [];
+  let currentInitiative = null;
   let inEntry = false;
   let metaLineSeen = false;
   let bulletsStarted = false;
   let groupDesc = [];
+  let groupBullets = [];
   let groupOpen = false;
 
   function flushGroupDesc() {
-    if (groupOpen && groupDesc.length) {
-      typstBlocks.push(
-        `#text(size: 9pt, style: "italic", fill: muted)[${escapeTypst(groupDesc.join(' '))}]\n#v(4pt)`
-      );
+    if (groupOpen && (groupDesc.length || groupBullets.length)) {
+      // Bridge line: bold survives (escapeTypst keeps **…** as *…*), per the
+      // spec's bolded "The engine of live news…" opener.
+      if (groupDesc.length) {
+        typstBlocks.push(
+          `#text(size: 9.5pt, fill: body-gray)[${escapeTypst(stripMarkdownKeepBold(groupDesc.join(' ')))}]\n#v(2pt)`
+        );
+      }
+      // One-bullet-per-outlet list under the bridge line (spec § 6).
+      if (groupBullets.length) {
+        typstBlocks.push(
+          `#[\n#set list(marker: "•", body-indent: 0.12in, indent: 0.10in)\n#set text(size: 9.5pt, fill: ink)\n` +
+          groupBullets.map(b => `- ${b}`).join('\n') +
+          `\n]\n#v(3pt)`
+        );
+      }
     }
     groupDesc = [];
+    groupBullets = [];
     groupOpen = false;
   }
 
@@ -559,18 +696,34 @@ function convertSectionToTypst(lines, macroName) {
     const bulletArgs = bullets.length
       ? bullets.map(b => `[${b}]`).join(',\n    ') + ','
       : '';
+    // team_context passes as a content block so a bolded scope/bridge line
+    // renders bold; empty stays a plain "" (the macro's skip check).
+    const contextArg = context ? `[${escapeTypst(stripMarkdownKeepBold(context))}]` : '""';
     typstBlocks.push(
       `#${macroName}(\n` +
       `  company: "${escapeTypstStr(company)}",\n` +
       `  role: "${escapeTypstStr(role)}",\n` +
       `  period: "${escapeTypstStr(period)}",\n` +
       `  location: "${escapeTypstStr(location)}",\n` +
-      `  team_context: "${escapeTypstStr(context)}",\n` +
+      `  team_context: ${contextArg},\n` +
       `  bullets: (${bulletArgs})\n` +
       `)`
     );
+    for (const init of initiatives) {
+      const initBullets = init.bullets.length
+        ? init.bullets.map(b => `[${b}]`).join(',\n    ') + ','
+        : '';
+      typstBlocks.push(
+        `#initiative-entry(\n` +
+        `  title: "${escapeTypstStr(stripMarkdown(init.title))}",\n` +
+        `  bullets: (${initBullets})\n` +
+        `)`
+      );
+    }
     company = role = period = location = context = '';
     bullets = [];
+    initiatives = [];
+    currentInitiative = null;
     inEntry = false;
     metaLineSeen = false;
     bulletsStarted = false;
@@ -593,14 +746,36 @@ function convertSectionToTypst(lines, macroName) {
       inEntry = true;
       continue;
     }
+    if (typeof entry === 'object' && entry.type === 'subheading') {
+      // Named-initiative sub-header inside the current entry. Subsequent
+      // bullets belong to this initiative until the next sub-header/role.
+      if (inEntry) {
+        currentInitiative = { title: entry.text, bullets: [] };
+        initiatives.push(currentInitiative);
+        bulletsStarted = true; // context collection ends at the first initiative
+      } else if (groupOpen) {
+        groupDesc.push(`*${entry.text}*`);
+      }
+      continue;
+    }
     const rawLine = typeof entry === 'string' ? entry : '';
     const l = rawLine.trim();
     if (!l) continue;
 
-    // Collect an experience sub-group description (plain lines between a group
-    // header and its first ### role entry).
+    // Collect an experience sub-group block (lines between a group header and
+    // its first ### role entry): prose joins the bridge line, bullets become
+    // the per-outlet list.
     if (groupOpen && !inEntry) {
-      groupDesc.push(stripMarkdown(l));
+      // Bullet = marker + whitespace. A bare startsWith('*') would misread a
+      // bold-leading bridge line ("**The engine of live news…**") as a bullet
+      // and strip its opening emphasis marker.
+      if (/^[-*]\s/.test(l)) {
+        groupBullets.push(escapeTypst(l.replace(/^[-*]\s*/, '')));
+      } else if (groupBullets.length && /^\s/.test(rawLine)) {
+        groupBullets[groupBullets.length - 1] += ' ' + escapeTypst(l);
+      } else {
+        groupDesc.push(l);
+      }
       continue;
     }
 
@@ -623,23 +798,30 @@ function convertSectionToTypst(lines, macroName) {
       continue;
     }
 
-    if (l.startsWith('-') || l.startsWith('*')) {
-      bullets.push(escapeTypst(l.replace(/^[-*]\s*/, '')));
+    if (/^[-*]\s/.test(l)) {
+      const b = escapeTypst(l.replace(/^[-*]\s*/, ''));
+      if (currentInitiative) currentInitiative.bullets.push(b);
+      else bullets.push(b);
       bulletsStarted = true;
       continue;
     }
 
     // Wrapped continuation of the previous bullet: original line started with
     // whitespace and we're inside a bullet group.
-    if (bulletsStarted && bullets.length > 0 && /^\s/.test(rawLine)) {
-      bullets[bullets.length - 1] += ' ' + escapeTypst(l);
-      continue;
+    if (bulletsStarted && /^\s/.test(rawLine)) {
+      const target = currentInitiative && currentInitiative.bullets.length
+        ? currentInitiative.bullets
+        : bullets;
+      if (target.length > 0) {
+        target[target.length - 1] += ' ' + escapeTypst(l);
+        continue;
+      }
     }
 
     // Context paragraph: appears after the meta line and before any bullet.
     // Multiple paragraph lines (separated by blank lines) are joined with a space.
     if (metaLineSeen && !bulletsStarted) {
-      context = context ? `${context} ${stripMarkdown(l)}` : stripMarkdown(l);
+      context = context ? `${context} ${l}` : l;
       continue;
     }
 

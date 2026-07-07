@@ -1,8 +1,15 @@
 # Cover Letter LLM Template: Mitchell Williams
-**Version:** 1.0, 2026-05-11
+**Version:** 1.2, 2026-07-06 (resume-mirror alignment; 1.1 was the 2026-06-12 no-em-dash hardening)
 **Prompt lives in:** `scripts/build-apply-packs.mjs` → `buildCoverLetter()`
 **Voice reference:** `data/voice-reference-brief.md`
+**Resume architecture + forward assets:** `data/resume-mirror-spec-2026-07-06.md` (or the newest `resume-mirror-spec-*.md`). The letter draws on the same forward assets the tailored CV leads with (exec-comms digital twin ~70% review-cycle cut, comms-triage design targets, MEJ, xGE Connects, voice-os, tax-verification-agent) and honors the same exclusions.
 **Gold-standard example:** See the GOLD-STANDARD REFERENCE block in `scripts/build-apply-packs.mjs` (the `buildCoverLetter` function).
+
+**Hard exclusions (spec § Exclusions, enforced by the grounding tollbooth):**
+- No comms-triage continuity claims: never "ran through my leave", "100% operational continuity", "the team relied on it in my absence", "zero degradation". Corrected framing: "documented end-to-end and handed off with a full operator runbook".
+- The triage numbers are DESIGN TARGETS: "designed to auto-handle ~60% of inbound (est.)" / "projected to recapture ~160 operational hours/year (est.)". Achieved-result framing ("auto-handled", "recaptured") fails the build. "~55% Low-Touch" is retired.
+- MEJ keeps "designed to" framing (targets, not measured outcomes).
+- No em dashes anywhere (see Block 2). En dashes in date ranges stay.
 
 ---
 
@@ -38,7 +45,7 @@
 - ❌ "I believe my experience aligns with..."
 - ❌ Two consecutive sentences starting with "I"
 
-**What changes per role:** Which proof point leads (triage agent vs. RAG pipeline vs. AJ+ talent pipeline vs. The Stream launch vs. Fusion breaking news production). Which metric is most relevant.
+**What changes per role:** Which proof point leads (exec-comms digital twin ~70% review-cycle cut vs. triage agent design targets vs. MEJ vs. xGE Connects vs. AJ+ talent pipeline vs. The Stream launch vs. Fusion breaking news production). Which metric is most relevant. Pick the proof point that maps to the JD's #1 requirement, the same requirement the tailored CV's FIT FOR / HIGHLIGHTS section leads with.
 
 **What stays fixed:** The narrative arc. The colon/comma expansion rhythm (never em dashes). The metric precision.
 
@@ -87,9 +94,12 @@
 Before the file is written, the system runs a second LLM call checking:
 - [ ] banned-phrase checklist violations → hard rewrite
 - [ ] Fabricated metrics → remove or replace with canonical
+- [ ] Comms-triage continuity claims or achieved-result framing of the ~60% / ~160-hr design targets → hard rewrite to "designed to … (est.)" framing
 - [ ] Weak opening (starts with "I") → restructure
 - [ ] Word count > 340 → cut one Block 2 sentence
 - [ ] Fabrication guard flag → append `<!-- FABRICATION FLAGS -->` block
+
+After the critic, the deterministic grounding tollbooth (`lib/grounding-guard.mjs`, `checkContinuity: true`) halts the row PARTIAL on any surviving retired metric, continuity claim, achieved-framing triage metric, em dash, time-boxed ask, or target-company product claim.
 
 The critic does NOT change the structure. Only the language.
 

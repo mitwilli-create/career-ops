@@ -176,30 +176,50 @@ async function main() {
       // Closes the renderer side-finding gap where every queue row had url: undefined.
       // ALSO populates canonical_url when the report URL is already a known-ATS host.
       const reportUrl = extractUrlFromReport(app.reportPath);
-      if (!qrow.url && reportUrl) qrow.url = reportUrl;
+      // NEVER persist a LinkedIn wrapper URL onto the row — the §12 invariant
+      // (tests/no-linkedin-urls-invariant.test.mjs) scans every ranked[] entry
+      // INCLUDING _dropped ones, so annotate-then-keep-the-URL trips it.
+      // canonicalize-queue-rows.mjs re-reads the report file for recovery, so
+      // the row doesn't need to carry the wrapper URL. (2026-07-07 — row #2058
+      // incident: transient applications.md resurrection + URL backfill left a
+      // LinkedIn URL in a _dropped row.)
+      if (!qrow.url && reportUrl && !isLinkedInJobUrl(reportUrl)) qrow.url = reportUrl;
       if (!qrow.canonical_url && reportUrl) {
         const cls = classifyUrl(reportUrl);
         if (cls.type === 'already-canonical') qrow.canonical_url = reportUrl;
       }
 
 
-      // LinkedIn defense-in-depth — if the row's only URL is a LinkedIn job
-      // wrapper AND no canonical_url override exists, mark _dropped so
-      // refresh-master demotes to Tier D + the dashboard widget hides it.
-      // Preserves curated factor data; reversible if a canonical_url is later
-      // populated via scripts/canonicalize-queue-rows.mjs.
-      if (qrow.url && isLinkedInJobUrl(qrow.url) && !qrow.canonical_url) {
-        qrow._dropped = true;
-        qrow._dropped_at = today;
-        qrow._dropped_reason = 'linkedin-url-only-no-canonical';
-        stats.droppedFromApplyNow++;
-        process.stderr.write(JSON.stringify({
-          t: new Date().toISOString(),
-          event: 'rebuild-queue-drop-linkedin-existing',
-          num: qrow.num, company: qrow.company, role: qrow.role,
-          url: qrow.url,
-        }) + '\n');
-        log.push(`  ↓ rank ${qrow.rank} (#${qrow.num} ${qrow.company}): LinkedIn-URL-only — dropped (run canonicalize-queue-rows.mjs --rows=${qrow.num} to recover)`);
+      // LinkedIn defense-in-depth — if the row's effective URL (row or report)
+      // is a LinkedIn job wrapper AND no canonical_url override exists, scrub
+      // any wrapper URL off the row and mark _dropped so refresh-master
+      // demotes to Tier D + the dashboard widget hides it. Preserves curated
+      // factor data; reversible if a canonical_url is later populated via
+      // scripts/canonicalize-queue-rows.mjs (which reaches _dropped rows and
+      // falls back to the report file's URL).
+      const effectiveUrl = qrow.url || reportUrl;
+      if (effectiveUrl && isLinkedInJobUrl(effectiveUrl) && !qrow.canonical_url) {
+        // URL scrub is idempotent and runs every rebuild (legacy rows may still
+        // carry a wrapper URL from before the scrub existed).
+        if (qrow.url && isLinkedInJobUrl(qrow.url)) qrow.url = '';
+        // The drop stamp + event log fire ONLY on the first drop (2026-07-07
+        // review finding #4: re-marking every rebuild overwrote _dropped_at,
+        // destroying the original drop-date audit, and appended a duplicate
+        // NDJSON event per row per night). Already-dropped rows (any reason)
+        // keep their original stamp and reason.
+        if (!qrow._dropped) {
+          qrow._dropped = true;
+          qrow._dropped_at = today;
+          qrow._dropped_reason = 'linkedin-url-only-no-canonical';
+          stats.droppedFromApplyNow++;
+          process.stderr.write(JSON.stringify({
+            t: new Date().toISOString(),
+            event: 'rebuild-queue-drop-linkedin-existing',
+            num: qrow.num, company: qrow.company, role: qrow.role,
+            url: effectiveUrl,
+          }) + '\n');
+          log.push(`  ↓ rank ${qrow.rank} (#${qrow.num} ${qrow.company}): LinkedIn-URL-only — dropped (run canonicalize-queue-rows.mjs --rows=${qrow.num} to recover)`);
+        }
       }
     }
 

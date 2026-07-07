@@ -17,7 +17,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { canonicalize } from '../lib/jd-url-canonicalizer.mjs';
+import { canonicalize, isLinkedInJobUrl } from '../lib/jd-url-canonicalizer.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -58,9 +58,13 @@ function logNd(payload) {
 }
 
 const queue = JSON.parse(readFileSync(QUEUE_PATH, 'utf-8'));
+// Explicitly-named rows are reachable even when _dropped — the rebuild's
+// LinkedIn gate drops rows with reason 'linkedin-url-only-no-canonical' and
+// points the operator HERE to recover them, so excluding _dropped rows made
+// that recovery path a dead end (2026-07-07 row #2058 incident).
 const targets = rowNums.map(num => {
-  const row = (queue.ranked || []).find(r => String(r.num) === String(num) && !r._dropped);
-  if (!row) return { num, error: 'row not in apply-now-queue.json (or _dropped)' };
+  const row = (queue.ranked || []).find(r => String(r.num) === String(num));
+  if (!row) return { num, error: 'row not in apply-now-queue.json' };
   const url = row.url || urlFromReport(row.report);
   if (!url) return { num, error: 'no URL in row or report' };
   return { num, url, row };
@@ -106,6 +110,21 @@ for (let i = 0; i < targets.length; i++) {
     t.row.canonical_source = r.source;
     t.row.canonical_confidence = r.confidence;
     t.row.canonical_resolved_at = new Date().toISOString();
+    // Recovery: a LinkedIn wrapper URL must never persist on the row (§12
+    // invariant scans url before canonical_url), and a LinkedIn-reason drop
+    // is reversed by a successful resolve. Other drop reasons (e.g.
+    // status=Discarded) are NOT cleared — canonicalizing must not resurface
+    // discarded rows.
+    // Shared helper, not an inline regex (2026-07-07 review finding #5): the
+    // rebuild's drop gate uses isLinkedInJobUrl(), so recovery must scrub by
+    // the SAME predicate or the two drift apart when the helper widens.
+    if (t.row.url && isLinkedInJobUrl(t.row.url)) t.row.url = r.canonical;
+    if (t.row._dropped && t.row._dropped_reason === 'linkedin-url-only-no-canonical') {
+      delete t.row._dropped;
+      delete t.row._dropped_at;
+      delete t.row._dropped_reason;
+      console.log('  #' + t.num + ' recovered from _dropped (linkedin-url-only-no-canonical)');
+    }
     writes++;
     resolved++;
     report.push({ num: t.num, status: 'resolved', canonical: r.canonical, source: r.source, confidence: r.confidence });

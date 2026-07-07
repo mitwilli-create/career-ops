@@ -75,8 +75,22 @@ const RULES = [
   // "better than" prefix, AND a bare "90% accuracy" with no "classification" — all the
   // 2026-06-14 survivors. The whole prefix is optional so "90% accuracy"/"90% classification"
   // match with nothing in front; "classification" stays optional and "accuracy" can stand alone.
-  [/\bat\s+(?:>\s*|&gt;\s*|greater than\s+|over\s+|better than\s+)?90%\s+(?:classification(?:\s+accuracy)?|accuracy)/gi, 'with ~60% of inbound auto-handled'],
-  [/(?:>\s*|&gt;\s*|greater than\s+|over\s+|better than\s+)?90%\s+(?:classification(?:\s+accuracy)?|accuracy)/gi, '~60% of inbound auto-handled'],
+  //    REWRITE TARGETS RECALIBRATED 2026-07-06 (resume-mirror-spec exclusions +
+  //    project_xge_comms_triage_agent_provenance): the old targets ("~60% of
+  //    inbound auto-handled") stated the triage design target as an ACHIEVED
+  //    result — the agent's outcomes are design targets, never measured. The
+  //    achieved form is now a fresh-build violation (lib/grounding-guard.mjs
+  //    findTriageFramingViolations), so keeping it here would re-seed banned
+  //    content on every scrub-gate pass (bug class:
+  //    stale-scrubber-rewrites-to-banned-forms). "design target" satisfies the
+  //    guard's target-framing requirement and stays grammar-safe in both the
+  //    "at 90% accuracy" and bare "90% accuracy" positions.
+  [/\bat\s+(?:>\s*|&gt;\s*|greater than\s+|over\s+|better than\s+)?90%\s+(?:classification(?:\s+accuracy)?|accuracy)/gi, 'with a ~60% auto-handle design target'],
+  [/(?:>\s*|&gt;\s*|greater than\s+|over\s+|better than\s+)?90%\s+(?:classification(?:\s+accuracy)?|accuracy)/gi, 'a ~60% auto-handle design target'],
+  // ── ~55% Low-Touch share: dropped by the 2026-07-06 cv.md honesty fix. The
+  //    parenthetical form (the shape the old critic allow-list stamped into
+  //    ~386 artifacts) deletes cleanly; bare prose forms fail loud via PAT.
+  [/\s*\(~?\s*55%\s+Low[- ]Touch\)/gi, ''],
   // ── drafting-latency family. Both the 90% form AND the old "substantial …" rewrite
   //    target are banned now — every form maps to "marked … drafting time".
   [/\b90%\s+reduction\s+in\s+(?:drafting\s+latency|latency|drafting)\b/gi, 'a marked reduction in drafting time'],
@@ -144,6 +158,14 @@ const RULES = [
   [/\b180K[ -]employee\b/gi, 'large-enterprise'],            // 180K-employee (compound adj) → large-enterprise IT support
   [/\b180K[ -]employees\b/gi, 'many employees'],             // 180K employees (plural noun) → many employees
   [/\b180K (Google )?workforce\b/gi, '$1workforce'],         // (full) 180K Google workforce → (full) Google workforce
+  // ── comms-triage continuity claims (resume-mirror-spec 2026-07-06 exclusions):
+  //    "100% operational continuity", "ran through my extended leave", "the team
+  //    relied on it in my absence", "zero degradation in classification accuracy"
+  //    are DETECT-ONLY — the sentence subjects vary ("frameworks that
+  //    maintained…" vs "The same agent maintained…"), so no single replacement
+  //    is grammar-safe. They fail loud via PAT below and get hand-fixed; fresh
+  //    builds are blocked at the source by lib/grounding-guard.mjs
+  //    CONTINUITY_CLAIM_PATTERNS (generation tollbooth, checkContinuity).
 ];
 
 // ── PAT + EXCL: single source of truth in lib/retired-metric-pattern.mjs (imported above).

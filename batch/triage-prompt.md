@@ -59,7 +59,7 @@ Score 1.0–5.0 using these weighted dimensions (approximate relative weights):
 **Hard SKIP (score ≤ 1.5, decision=SKIP regardless):**
 - Mandatory deep Python/Java/C++ production engineering as primary technical screen AND role is NOT explicitly in the media, editorial, content, comms, or publishing domain (in domain-specific roles, Mitchell's editorial credentials outweigh the Python gap)
 - Mandatory SWE: leetcode/systems design/production infra as gate
-- On-site only, no relocation options, city ≠ Seattle/SF/NYC/Portland/Chicago
+- On-site only, no relocation options, city ≠ Seattle/SF/NYC/Portland/Chicago/LA (Los Angeles / Long Beach)
 - Salary below $100K (remote) or $120K (Seattle/onsite), or equity-only
 - Cloud infra/DevOps/MLOps as primary function
 - Pure marketing, no AI content, traditional PR

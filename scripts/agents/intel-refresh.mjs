@@ -731,7 +731,16 @@ export async function runIntelRefresh({ row, rowId, slots = ['all'], all = false
 
   let targetRows;
   if (all) {
-    targetRows = ranked.filter(r => r && r.num);
+    // Skip terminal-status rows on --all sweeps: a Discarded/Rejected queue row
+    // (e.g. a DUPE tombstone like #2058, dupe of #2194) must not keep paying
+    // ~$0.30/row/night for enrichment artifacts nobody reads. _dropped-but-Applied
+    // rows stay eligible (interview prep still wants fresh intel). Targeted --row
+    // runs bypass this, so a deliberate refresh of a discarded row stays possible.
+    const TERMINAL = new Set(['Discarded', 'Rejected']);
+    const eligible = ranked.filter(r => r && r.num && !TERMINAL.has(r.status));
+    const skipped = ranked.filter(r => r && r.num).length - eligible.length;
+    if (skipped > 0) emit({ phase: 'init-skip', skipped_terminal_status: skipped });
+    targetRows = eligible;
   } else {
     const id = Number(rowId || row);
     targetRows = ranked.filter(r => r && Number(r.num) === id);

@@ -14,11 +14,13 @@
  * Exit 0 = all pass. Exit 1 = at least one failure (prints each).
  */
 
+import { readFileSync } from 'node:fs';
 import {
   RETIRED_METRIC_PATTERNS, RETIRED_METRIC_PROBES, LEVEL_JARGON_RE,
   applyBrandingReplacements, stripEditorialChatter,
   extractTargetProductNames, findProductClaimViolations, findGroundingViolations,
   TIME_ASK_RE,
+  CONTINUITY_CLAIM_PATTERNS, CONTINUITY_PROBES, findTriageFramingViolations,
 } from '../lib/grounding-guard.mjs';
 
 let passed = 0, failed = 0;
@@ -175,6 +177,49 @@ check('clean aggregate prose still passes with checkTimeAsk: true',
 check('no-time-box close passes the gate with checkTimeAsk: true',
   findGroundingViolations(TIMEASK_CLEAN_CLOSE, { checkTimeAsk: true }).length === 0,
   JSON.stringify(findGroundingViolations(TIMEASK_CLEAN_CLOSE, { checkTimeAsk: true })));
+
+// ── 9. Continuity-claim + triage-framing gate (opt-in, 2026-07-06) ──────────
+// resume-mirror-spec-2026-07-06 exclusions: the comms-triage agent never ran
+// during the 2026 leave; ~60% / ~160 hrs are DESIGN TARGETS. Opt-in
+// (checkContinuity) so the tree-wide no-scaffold invariant + legacy sweeps
+// keep their behavior; the generation tollbooth turns it on.
+console.log('9. continuity-claim + triage-framing gate (checkContinuity)');
+// Weakening canary: every probe must be caught by the pattern family.
+for (const probe of CONTINUITY_PROBES) {
+  check(`continuity probe caught: "${probe.slice(0, 50)}"`,
+    CONTINUITY_CLAIM_PATTERNS.some(p => p.re.test(probe)) || findTriageFramingViolations(probe).length > 0, probe);
+}
+const CONT_DIRTY = 'Engineered autonomous frameworks that maintained 100% operational continuity during a multi-month extended leave of absence.';
+check('gate flags continuity claim when checkContinuity: true',
+  findGroundingViolations(CONT_DIRTY, { checkContinuity: true }).some(v => v.kind === 'continuity-claim'));
+check('gate does NOT flag continuity by default (opt-in only)',
+  findGroundingViolations(CONT_DIRTY, {}).every(v => v.kind !== 'continuity-claim'));
+check('gate flags achieved-result triage framing',
+  findGroundingViolations('The agent recaptures ~160 operational hours per year, auto-handling most inbound.', { checkContinuity: true })
+    .some(v => v.kind === 'triage-achieved-framing'));
+check('design-target framing passes',
+  findGroundingViolations('Documented end-to-end and handed off with a full operator runbook; designed to auto-handle ~60% of inbound (est.) and projected to recapture ~160 operational hours/year (est.).', { checkContinuity: true }).length === 0);
+check('"~60% auto-handle design target" (scrubber rewrite target) passes',
+  findGroundingViolations('The pipeline runs with a ~60% auto-handle design target.', { checkContinuity: true }).length === 0);
+check('~70% VP review metric passes (new verified asset)',
+  findGroundingViolations('An executive-communications digital twin, cutting review back-and-forth with the VP by about 70%.', { checkContinuity: true }).length === 0);
+check('"~55% Low-Touch" flags as retired share',
+  findGroundingViolations('with ~60% designed to auto-handle (~55% Low-Touch)', { checkContinuity: true }).some(v => v.kind === 'continuity-claim'));
+
+// ── 10. Static contracts (2026-07-07 code-review findings #1 + #6) ───────────
+// Pin the tollbooth's artifact coverage and the shared-detector imports so a
+// refactor can't silently narrow either. Source-text assertions over sibling
+// scripts, same pattern as tests/spec5-renderer-contracts.test.mjs. Still
+// CI-safe: reads repo source files only, no personal data.
+console.log('10. static contracts (tollbooth CV coverage + shared detector imports)');
+const bapSrc = readFileSync(new URL('../scripts/build-apply-packs.mjs', import.meta.url), 'utf-8');
+check('tollbooth gates the tailored-CV markdown (finding #1)',
+  /'cover-letter\.md',\s*'form-fields\.md',\s*'one-pager\.md',\s*'tailored-cv\.md',\s*'cv-tailored\.md'/.test(bapSrc));
+check('tollbooth keeps checkContinuity on', /checkContinuity:\s*true/.test(bapSrc));
+const sweepSrc = readFileSync(new URL('../scripts/scrub-continuity-legacy-debt.mjs', import.meta.url), 'utf-8');
+check('sweep imports guard detectors instead of hand-mirroring them (finding #6)',
+  /TRIAGE_METRIC_RE\b[\s\S]{0,80}?TARGET_FRAMING_RE\b[\s\S]{0,200}?from '\.\.\/lib\/grounding-guard\.mjs'/.test(sweepSrc.slice(0, sweepSrc.indexOf('const ROOT')))
+  && !/TRIAGE_METRIC_RE_LOCAL|TARGET_FRAMING_RE_LOCAL/.test(sweepSrc));
 
 console.log(`\ngrounding-guard: ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

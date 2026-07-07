@@ -108,6 +108,10 @@ function fabricationCheck(text) {
     { pattern: /zero.token/i, risk: 'api-claim-fabrication', reframe: 'Use "direct ATS API integrations" not "zero-token"' },
     { pattern: /negative training/i, risk: 'terminology-drift', reframe: 'Use "banned-phrase checklist of rejected drafts" — his canonical phrasing' },
     { pattern: /alignment.adjacent/i, risk: 'interpretive-frame', reframe: 'Remove or use "AI-native editorial operations"' },
+    // resume-mirror-spec-2026-07-06 exclusions: comms-triage continuity claims.
+    // The agent never ran during the 2026 leave; ~60% / ~160 hrs are design targets.
+    { pattern: /100%\s+operational\s+continuity|relied on (it|the agent)[^.]{0,30}absence|\b(?:ran|running|operated|kept running)\b[^.]{0,60}(through|during)[^.]{0,40}extended leave/i, risk: 'continuity-fabrication', reframe: 'Use "documented end-to-end and handed off with a full operator runbook" — the agent never ran during the leave' },
+    { pattern: /55%\s+Low[- ]Touch/i, risk: 'retired-share', reframe: 'Drop "~55% Low-Touch" — retired by the 2026-07-06 cv.md honesty fix' },
   ];
   const flags = [];
   for (const ban of HARD_BANS) {
@@ -603,7 +607,8 @@ Pattern: "If [role condition], I'd value [specific time] to walk through [named 
 
 GROUNDING HARD RULES (violations are failures):
 - NEVER claim employment at ${role.company} or present ${role.company}'s products, tools, or internal systems as Mitchell's own work. First-person past tense describes ONLY work from the canonical sources (Google xGE + his newsroom history). Anything Mitchell would do at ${role.company} is prospective and conditional ("I'd…", "I would…").
-- NEVER use retired metrics: 99% fidelity, any "stylistic fidelity" phrasing, 90% latency / drafting-latency reduction, "substantial reduction in drafting latency", >90% accuracy or classification, 300% scaling, 348 attendees, 93% CSAT, 180,000-person, 90% admin-time reduction, "three production agents" (the verified count is two), or any headcount/level not verbatim in the sources.
+- NEVER use retired metrics: 99% fidelity, any "stylistic fidelity" phrasing, 90% latency / drafting-latency reduction, "substantial reduction in drafting latency", >90% accuracy or classification, 300% scaling, 348 attendees, 93% CSAT, 180,000-person, 90% admin-time reduction, "three production agents" (the verified count is two), "~55% Low-Touch", or any headcount/level not verbatim in the sources.
+- The communications-triage agent's outcomes are DESIGN TARGETS, never measured results. Canonical framing: "documented end-to-end and handed off with a full operator runbook; designed to auto-handle ~60% of inbound (est.) and projected to recapture ~160 operational hours/year (est.)". NEVER write the ~60% / ~160-hour numbers as achieved ("auto-handled", "recaptured"). NEVER claim the agent ran during a leave, "maintained operational continuity", ran "with zero degradation", or that any team "relied on it" in anyone's absence.
 - Google-internal level terms (L8/L9/L10) never appear. The scope phrasing is "a community of 1,000+ Principal, Distinguished, and Fellow engineers".
 - The rejected-drafts layer is called the "banned-phrase checklist"; never "Kill List". The word "kill" never appears in any form.
 - NEVER use an em dash (the "—" character) anywhere: it reads as AI-generated. Use a comma, colon, period, or parentheses instead. En dashes in date ranges ("June 2024 – present") are fine.
@@ -634,7 +639,7 @@ Score: ${role.score}/5
 GOLD-STANDARD REFERENCE (match this quality and voice; do not copy it):
 The central challenge of the Engineering Editorial Lead role is one I've spent a career solving: how do you encode editorial discipline into production systems that serve a deeply technical audience allergic to spin?
 
-For the past two years at Google's Office of Cross-Google Engineering (xGE), I've built and deployed production AI agents for a community of 1,000+ Principal, Distinguished, and Fellow engineers. My executive-communications digital twin drafts VP-level comms in a consistent, verified voice; its discipline comes from a curated Voice DNA corpus paired with a banned-phrase checklist of rejected drafts that taught the agent risk tolerance. Next to it, my autonomous communications-triage agent recaptures ~160 operational hours per year, auto-handling ~60% of inbound.
+For the past two years at Google's Office of Cross-Google Engineering (xGE), I've built and deployed production AI agents for a community of 1,000+ Principal, Distinguished, and Fellow engineers. My executive-communications digital twin drafts VP-level comms in a consistent, verified voice, cutting review back-and-forth with my VP by about 70%; its discipline comes from a curated Voice DNA corpus paired with a banned-phrase checklist of rejected drafts that taught the agent risk tolerance. Next to it, my autonomous communications-triage agent, documented end-to-end and handed off with a full operator runbook, is designed to auto-handle roughly 60% of inbound and projected to recapture ~160 operational hours a year.
 
 This work is a direct translation of the operating discipline I built in high-stakes newsrooms. Before Google, I spent eight years inside the four properties that rewired digital journalism. I was on the founding team of Al Jazeera's 'The Stream' (launch broadcast reached 250 million households), a segment producer at HuffPost Live (Webby Award, Pew Research case study), a line producer for 'America With Jorge Ramos' during its 179% primetime viewership growth, and a senior producer at AJ+. There, I designed a third production line that became a de facto talent pipeline: three producers I coached became on-air principals with subsequent Webbys, a Daytime Emmy, and a James Beard nomination.
 
@@ -689,15 +694,23 @@ CHECK EACH SENTENCE FOR:
 
 2. FABRICATION (hard remove):
    Use ONLY these VERIFIED metrics; everything else is fabrication — remove it:
-   ~160 ops hrs/yr recaptured | ~60% of inbound auto-handled (~55% Low-Touch) |
+   cutting VP review back-and-forth by about 70% (exec-comms digital twin) |
+   designed to auto-handle ~60% of inbound (est.) | projected to recapture ~160 operational hours/year (est.) |
    a community of 1,000+ Principal, Distinguished, and Fellow engineers |
    58% AI-adoption vs 37% Google avg (AI-Champions, communicated-results framing) |
-   179% primetime viewership growth | 50M+ views | 1.7M+ | 250M | 75,000+ (88%) | 300+ attendees per forum
+   xGE Connects Q1-2026 sessions (hosted by Google DeepMind engineers) drew the highest attendance on record |
+   MEJ designed to cut per-match time from ~3 hours to ~20 minutes and lift half-year capacity from ~15 to 50 matches (design targets, "designed to" framing) |
+   179% primetime viewership growth | 50M+ views | 1.7M+ | 250M | 75,000+ (88%) | 300+ attendees per forum |
+   caught a ~$19K multi-state error the filing software pre-filled (tax-verification agent)
    HARD-BANNED (retired/fabricated — never emit, delete on sight): 99% fidelity, ANY "stylistic fidelity"
    phrasing, 90% latency reduction, "substantial reduction in drafting latency", >90% accuracy,
    >90% classification accuracy, 300% / 300%+ scaling, 348 attendees, 93% CSAT, 180,000-person,
-   90% admin-time reduction, "three production agents" (the verified count is two), 600+ L8+, and ANY
-   L8/L9/L10 token — the scope phrasing is "Principal, Distinguished, and Fellow engineers".
+   90% admin-time reduction, "three production agents" (the verified count is two), 600+ L8+, "~55% Low-Touch",
+   and ANY L8/L9/L10 token — the scope phrasing is "Principal, Distinguished, and Fellow engineers".
+   ALSO HARD-BANNED (comms-triage continuity, resume-mirror-spec 2026-07-06 exclusion): the triage agent's
+   ~60% / ~160-hour numbers written as ACHIEVED results ("auto-handled", "recaptured") — they are design
+   targets; any claim the agent ran during a leave, "maintained operational continuity", ran with
+   "zero degradation", or that a team "relied on it" in anyone's absence.
    "Kill List" → "banned-phrase checklist"; the word "kill" never appears in any form.
 
 2b. TARGET-COMPANY PRODUCT CLAIMS (hard remove):
@@ -808,7 +821,7 @@ function guessTeamName(report) {
 }
 
 function oneLineVerdict(report, role) {
-  return `I'm an 18-year editorial principal who shipped production AI agents at Google xGE for 1,000 senior engineers (Comms Triage Agent + Voice DNA). The shape I bring is the ${ledFraming(role)} hybrid — uncommon for ${role.company}'s ${role.role} brief, and the ${report.matches[0]?.requirement.toLowerCase().slice(0, 60) || 'top JD requirement'} is where my evidence is strongest.`;
+  return `I'm an 18-year editorial principal who shipped production AI agents at Google xGE for a community of 1,000+ Principal, Distinguished, and Fellow engineers (comms-triage agent + Voice DNA digital twin). The shape I bring is the ${ledFraming(role)} hybrid: uncommon for ${role.company}'s ${role.role} brief, and the ${report.matches[0]?.requirement.toLowerCase().slice(0, 60) || 'top JD requirement'} is where my evidence is strongest.`;
 }
 
 function buildPreApplicationChecklist(role, report) {
@@ -1278,7 +1291,8 @@ async function buildFormFields(role, report) {
 
 HARD RULES (violations are failures):
 - COMPLETE answers only. NEVER emit a scaffold, worksheet, "risk legend", bracket placeholder ([X], [YOUR …], [INSERT …], [SPECIFIC …]), "HUMAN REWRITE REQUIRED", "see eval report", or any sentence instructing the reader to rewrite/edit/research/verify. No notes section, no footer, no CLI commands.
-- Every factual claim must trace to the CANONICAL SOURCES below. Do NOT invent or inflate metrics. NEVER use these retired/unverified figures: "99% fidelity", any "stylistic fidelity" phrasing, "90% latency reduction", "substantial reduction in drafting latency", ">90% classification accuracy", "300% scaling", "348 attendees", "93% CSAT", "180,000-person", "90% admin-time reduction", "three production agents" (the verified count is two), or any "L8+ / senior IC" headcount not present verbatim in the sources. Google level tokens (L8/L9/L10) never appear — the scope phrasing is "a community of 1,000+ Principal, Distinguished, and Fellow engineers". Say "banned-phrase checklist", never "Kill List"; the word "kill" never appears.
+- Every factual claim must trace to the CANONICAL SOURCES below. Do NOT invent or inflate metrics. NEVER use these retired/unverified figures: "99% fidelity", any "stylistic fidelity" phrasing, "90% latency reduction", "substantial reduction in drafting latency", ">90% classification accuracy", "300% scaling", "348 attendees", "93% CSAT", "180,000-person", "90% admin-time reduction", "three production agents" (the verified count is two), "~55% Low-Touch", or any "L8+ / senior IC" headcount not present verbatim in the sources. Google level tokens (L8/L9/L10) never appear — the scope phrasing is "a community of 1,000+ Principal, Distinguished, and Fellow engineers". Say "banned-phrase checklist", never "Kill List"; the word "kill" never appears.
+- The communications-triage agent's outcomes are DESIGN TARGETS: write "designed to auto-handle ~60% of inbound (est.)" / "projected to recapture ~160 operational hours/year (est.)", never achieved-result framing ("auto-handled", "recaptured"). NEVER claim it ran during a leave, "maintained operational continuity", or that a team "relied on it" in anyone's absence.
 - NEVER present ${role.company}'s own products, tools, or internal systems as Mitchell's past work. First-person past tense is reserved for canonical-source work (Google xGE + newsrooms); anything at ${role.company} is prospective ("I'd…").
 - NEVER use an em dash (the "—" character): it reads as AI-generated. Use a comma, colon, period, or parentheses instead. En dashes in date ranges are fine.
 - Voice: first person, Mitchell's. His arc is journalist → communications/content strategist → builder (use that order). Concrete and specific; no "I admire your mission", no LinkedIn-corporate filler.
@@ -1455,7 +1469,8 @@ async function buildOnePager(role, report) {
 
 HARD RULES (violations are failures):
 - A COMPLETE, opinionated artifact, NOT a worksheet. NEVER use bracket placeholders ([SPECIFIC …], [YOUR …]), "HUMAN REWRITE REQUIRED", "see eval report", or any instruction telling the reader to write/edit/add/research. He shares it as-is.
-- Every claim traces to the CANONICAL SOURCES. No fabricated metrics. NEVER use: 99% fidelity, any "stylistic fidelity" phrasing, 90% latency reduction, "substantial reduction in drafting latency", >90% accuracy/classification, 300% scaling, 348 attendees, 93% CSAT, 180,000-person, 90% admin-time reduction, "three production agents" (the verified count is two), or any L8+ headcount not present verbatim in the sources. No Google level tokens (L8/L9/L10) — say "Principal, Distinguished, and Fellow engineers". Say "banned-phrase checklist", never "Kill List"; the word "kill" never appears.
+- Every claim traces to the CANONICAL SOURCES. No fabricated metrics. NEVER use: 99% fidelity, any "stylistic fidelity" phrasing, 90% latency reduction, "substantial reduction in drafting latency", >90% accuracy/classification, 300% scaling, 348 attendees, 93% CSAT, 180,000-person, 90% admin-time reduction, "three production agents" (the verified count is two), "~55% Low-Touch", or any L8+ headcount not present verbatim in the sources. No Google level tokens (L8/L9/L10) — say "Principal, Distinguished, and Fellow engineers". Say "banned-phrase checklist", never "Kill List"; the word "kill" never appears.
+- The communications-triage agent's outcomes are DESIGN TARGETS: "designed to auto-handle ~60% of inbound (est.)" / "projected to recapture ~160 operational hours/year (est.)", never achieved-result framing. NEVER claim it ran during a leave, "maintained operational continuity", or that a team "relied on it" in anyone's absence.
 - Never present ${role.company}'s own products or internal systems as Mitchell's past work. First-person past tense only for canonical-source work; the 90-day plan is prospective ("I'd…").
 - NEVER use an em dash (the "—" character): it reads as AI-generated. Use a comma, colon, period, or parentheses instead. En dashes in date ranges are fine.
 - Voice: first person, Mitchell. Arc journalist → comms/content strategist → builder. Specific and opinionated, no filler, no "I admire your mission".
@@ -1568,30 +1583,30 @@ function buildLoopPattern(role, report) {
   const archetype = (report.archetype || '').toLowerCase();
   if (/comms|editorial|content|writer|communications/i.test(archetype)) {
     return `**Typical Comms/Editorial loop at a tech company (5–6 rounds):**
-1. **Recruiter screen (30 min)** — Background + motivation + basic comp check
-2. **Hiring manager intro (45–60 min)** — Vision fit + how you work + role scope
-3. **Writing/editorial exercise** — Usually 48–72h take-home. Expect a prompt requiring both craft and strategic judgment, not just clean prose.
-4. **Cross-functional panel (60–90 min)** — 2–4 stakeholders (product, eng, design, legal). They're testing whether you can hold your ground while being collaborative.
-5. **Leadership presentation (30–45 min)** — VP or C-level. Big-picture fit, strategic framing. They're checking whether you think at the right level.
-6. **Reference calls** — Usually 2–3, including one they find independently.
+1. **Recruiter screen (30 min)**: Background + motivation + basic comp check
+2. **Hiring manager intro (45–60 min)**: Vision fit + how you work + role scope
+3. **Writing/editorial exercise**: Usually 48–72h take-home. Expect a prompt requiring both craft and strategic judgment, not just clean prose.
+4. **Cross-functional panel (60–90 min)**: 2–4 stakeholders (product, eng, design, legal). They're testing whether you can hold your ground while being collaborative.
+5. **Leadership presentation (30–45 min)**: VP or C-level. Big-picture fit, strategic framing. They're checking whether you think at the right level.
+6. **Reference calls**: Usually 2–3, including one they find independently.
 
 **Typical duration:** 3–6 weeks from screen to offer.`;
   }
   if (/forward deployed|solutions|customer engineer/i.test(archetype)) {
     return `**Typical Forward Deployed / Solutions Engineering loop:**
-1. **Recruiter screen (30 min)** — Background + motivation
-2. **Technical screen (60 min)** — Coding + system design or a customer scenario
-3. **Customer scenario role-play (60 min)** — You play the account lead, interviewer plays a skeptical customer.
-4. **Behavioral panel (90 min)** — Cross-functional: solutions, product, eng. STAR-format behavioral questions.
-5. **Leadership bar-raiser (30–45 min)** — Culture + strategic fit
+1. **Recruiter screen (30 min)**: Background + motivation
+2. **Technical screen (60 min)**: Coding + system design or a customer scenario
+3. **Customer scenario role-play (60 min)**: You play the account lead, interviewer plays a skeptical customer.
+4. **Behavioral panel (90 min)**: Cross-functional: solutions, product, eng. STAR-format behavioral questions.
+5. **Leadership bar-raiser (30–45 min)**: Culture + strategic fit
 
 **Typical duration:** 4–8 weeks.`;
   }
   return `**Typical loop for this role type at a scaling AI company:**
-1. **Recruiter screen (30 min)** — Background, motivation, comp check
-2. **Hiring manager (45–60 min)** — Vision + role scope + team fit
-3. **Panel / loop (60–90 min)** — 3–4 interviewers, mix of behavioral and craft/technical
-4. **Executive / leadership (30–45 min)** — Strategic fit + ambition signal
+1. **Recruiter screen (30 min)**: Background, motivation, comp check
+2. **Hiring manager (45–60 min)**: Vision + role scope + team fit
+3. **Panel / loop (60–90 min)**: 3–4 interviewers, mix of behavioral and craft/technical
+4. **Executive / leadership (30–45 min)**: Strategic fit + ambition signal
 
 **Typical duration:** 3–6 weeks from screen to offer.`;
 }
@@ -1702,7 +1717,7 @@ Feed your answers into [../../docs/APPLICATION_PROMPT_GUIDE.md](../../docs/APPLI
 }
 
 function buildFormattingGuide(role, report) {
-  return `# Visual Formatting Guide — ${role.company}, ${role.role}
+  return `# Visual Formatting Guide: ${role.company}, ${role.role}
 
 > Sourced from r/resumes, r/cscareerquestions, Blind (AI company threads), Resume Genius 2026 survey, MIT/Columbia career development resources. These are the formatting standards hiring managers and recruiter communities have explicitly called for. Apply across ALL submitted materials: CV, cover letter, form fields, and one-pager.
 
@@ -1710,24 +1725,39 @@ function buildFormattingGuide(role, report) {
 
 ## CV Formatting
 
+### Resume architecture (MANDATORY: mirror data/resume-mirror-spec-2026-07-06.md)
+
+The tailored CV follows the resume-mirror architecture, not the legacy prose-bullet cv.md layout. When a newer \`resume-mirror-spec-*.md\` exists, that file wins.
+
+1. **Name line**, then a **variant headline** in caps: three role-tuned pillars separated by middle dots, derived from THIS JD (shape: \`EXECUTIVE COMMUNICATIONS · HIGH-STAKES EDITORIAL PRODUCTION · PRINCIPAL-VOICE GHOSTWRITING\`).
+2. **Contact line** with a role-targeted relocation parenthetical when relevant: \`Seattle, WA (open to <JD city>)\`. City comes from this JD's location; never a blanket SF note.
+3. **Summary**: 3 short paragraphs, each opening with a bolded thesis sentence: (a) identity claim tuned to the role family, (b) the Google years compressed with the role-relevant slice leading, (c) the newsroom decade as home-turf evidence.
+4. **FIT FOR ${role.role.toUpperCase()}, ${role.company.toUpperCase()}** (comms/exec framing) or **HIGHLIGHTS** (DevRel/technical framing): THE key section. 6-8 bolded-lead bullets, each mapping ONE requirement from this JD to Mitchell evidence in 1-2 sentences. Build it from the JD's own requirement list; this is where the tailoring lives.
+5. **EXPERIENCE**: each role gets a 1-line scope sentence, then **named-initiative sub-headers** (markdown \`####\`, e.g. "Communications-triage agent (Apps Script + Gemini)", "xGE Connects, peer-led technical workshop series"), each with **Problem:** / **Action:** / **Impact:** bullet triplets. No prose bullet walls.
+6. **Earlier Career: live national news (2010 – 2018)** as ONE compressed block: a bolded bridge line ("The engine of live news is the engine of <role family>: ...") then one bullet per outlet.
+7. **PROJECTS** placement flexes by role: DevRel/technical roles put Projects ABOVE Experience; comms/exec roles put Projects after. Include career-ops, voice-os, and tax-verification-agent; add #FreeAhmed for comms/editorial roles.
+8. **EDUCATION**, then **CERTIFICATIONS** (one line), then **SKILLS** in 3 role-tuned category lines.
+
+Hard exclusions (spec § Exclusions): no comms-triage continuity claims; the ~60% / ~160-hr triage numbers are design targets ("designed to auto-handle ~60% of inbound (est.)"), never achieved results. No em dashes anywhere (en dashes in date ranges stay).
+
 ### Font
 
 | Setting | Value | Why |
 |---|---|---|
 | Primary font | **Calibri** (first choice) or Georgia | ATS-safe, clean on screen and print; r/resumes consensus |
-| Alternate safe | Arial, Verdana, Garamond | Acceptable — avoid Times New Roman (reads dated 2026) |
+| Alternate safe | Arial, Verdana, Garamond | Acceptable: avoid Times New Roman (reads dated 2026) |
 | Body size | **11pt** | Below 10pt triggers readability rejection; above 12pt wastes space |
 | Name (header) | **14–16pt, bold** | Must stand out from everything else on the page |
-| Section headers | **11–12pt, bold, ALL CAPS or Title Case** | Pick one style — inconsistency is the #1 amateurism signal |
+| Section headers | **11–12pt, bold, ALL CAPS or Title Case** | Pick one style: inconsistency is the #1 amateurism signal |
 | Job title + company | **11pt, bold** | Visually separates from bullets beneath |
 
 ### Color
 
 | Use | Value |
 |---|---|
-| Body text | **Pure black (#000000)** — not dark gray, not 90% black |
+| Body text | **Pure black (#000000)**: not dark gray, not 90% black |
 | Accent (optional) | ONE color max: dark navy (#1a3a5c) or dark teal (#1a5c4f) for your name or section rules only |
-| Background | **White only** — colored backgrounds fail ATS and print poorly |
+| Background | **White only**: colored backgrounds fail ATS and print poorly |
 
 > Glassdoor and Blind threads consistently flag colored text boxes and shaded section headers as "design-school aesthetic that signals you don't understand enterprise hiring."
 
@@ -1735,10 +1765,10 @@ function buildFormattingGuide(role, report) {
 
 | Setting | Value |
 |---|---|
-| Top / bottom margins | **0.75 in** — slightly tighter than default 1 in; allows more content without looking cramped |
+| Top / bottom margins | **0.75 in**: slightly tighter than default 1 in; allows more content without looking cramped |
 | Left / right margins | **1 in** |
 | Line spacing (body) | **1.0 (single)** |
-| Space after each bullet | **2–3pt** — enough air to separate lines without wasting vertical space |
+| Space after each bullet | **2–3pt**: enough air to separate lines without wasting vertical space |
 | Space between sections | **8–10pt** or a single thin horizontal rule |
 
 ### Page length
@@ -1746,12 +1776,12 @@ function buildFormattingGuide(role, report) {
 | Experience | Pages |
 |---|---|
 | Under 10 years | **1 page** |
-| 10–20 years | **1–2 pages** — page 2 must add a strong signal, not just another job |
+| 10–20 years | **1–2 pages**: page 2 must add a strong signal, not just another job |
 | 20+ years | **2 pages max** outside academia/research |
 
-> Blind consensus (AI company applications, Q1 2026): "Anything over 2 pages gets skimmed at page 1 and discarded. The 3-page resume is a talent-acquisition meme — nobody reads it."
+> Blind consensus (AI company applications, Q1 2026): "Anything over 2 pages gets skimmed at page 1 and discarded. The 3-page resume is a talent-acquisition meme: nobody reads it."
 
-**Mitchell's profile (18+ years):** 2 pages is appropriate. Page 1 must stand alone — if a recruiter prints only page 1, it should be a complete picture.
+**Mitchell's profile (18+ years):** 2 pages is appropriate. Page 1 must stand alone: if a recruiter prints only page 1, it should be a complete picture.
 
 ### Visual hierarchy
 
@@ -1786,9 +1816,9 @@ function buildFormattingGuide(role, report) {
 
 | Rule | Format |
 |---|---|
-| Bullet type | **Standard round (•)** — no dashes, no arrows, no custom glyphs |
-| Nested bullets | **Avoid** — ATS parses them poorly and they signal over-engineering |
-| Em dashes | OK for clarity (e.g., "Google xGE — Office of the CTO") |
+| Bullet type | **Standard round (•)**, no dashes, no arrows, no custom glyphs |
+| Nested bullets | **Avoid**: ATS parses them poorly and they signal over-engineering |
+| Em dashes | **BANNED in all materials** (AI-generation tell). Use a middle dot, colon, comma, or parentheses (e.g., "Google xGE · Office of the CTO"). En dashes in date ranges stay. |
 | Numbers in text | Always **%** not "percent", **$2M** not "two million dollars" |
 
 ---
@@ -1800,7 +1830,7 @@ function buildFormattingGuide(role, report) {
 | Section | Content | Length |
 |---|---|---|
 | Header | Name, Email, LinkedIn, Date | 1–2 lines |
-| Greeting | "Dear [Name] / [Team] team," — never "To Whom It May Concern" | 1 line |
+| Greeting | "Dear [Name] / [Team] team,": never "To Whom It May Concern" | 1 line |
 | Opening | Specific trigger + 1-sentence role alignment | 3–4 sentences |
 | Body | 2–3 paragraphs: evidence, gap acknowledgment, framing | 2–3 sentences each |
 | Close | Clear ask + sign-off | 2 sentences |
@@ -1813,10 +1843,10 @@ function buildFormattingGuide(role, report) {
 
 ### Paragraph grammar rules
 
-- **Left-align only** — justified text creates uneven word spacing that slows scanning
-- **Never start a paragraph with "I"** — standard style rule AND an AI-detection signal
-- **Vary sentence length** — 2–3 short sentences (under 15 words) for impact, 1 longer sentence for complexity. A paragraph of all long sentences reads as AI.
-- **No corporate filler:** "leverage," "synergize," "dynamic team environment," "results-driven" — replace with the specific thing you actually did
+- **Left-align only**: justified text creates uneven word spacing that slows scanning
+- **Never start a paragraph with "I"**: standard style rule AND an AI-detection signal
+- **Vary sentence length**: 2–3 short sentences (under 15 words) for impact, 1 longer sentence for complexity. A paragraph of all long sentences reads as AI.
+- **No corporate filler:** "leverage," "synergize," "dynamic team environment," "results-driven": replace with the specific thing you actually did
 
 ---
 
@@ -1835,8 +1865,8 @@ function buildFormattingGuide(role, report) {
 
 ## One-Pager / Audition Artifact Formatting
 
-- **1 page hard limit** — use 0.7-inch margins and 10.5pt body to fit if needed
-- **Title:** Large, bold, left-aligned — visible within 2 seconds of opening
+- **1 page hard limit**: use 0.7-inch margins and 10.5pt body to fit if needed
+- **Title:** Large, bold, left-aligned: visible within 2 seconds of opening
 - **Structure:** Problem → Diagnosis → 90-day plan → Your evidence → What you're not claiming
 - **Visual accent:** One thin horizontal rule between sections. No borders, no shading.
 - **Footer:** Name · Date · GitHub / portfolio URL
@@ -1845,14 +1875,14 @@ function buildFormattingGuide(role, report) {
 
 ## What NOT to do (community consensus, r/resumes + Blind AI company threads Q1–Q2 2026)
 
-- ❌ **No infographic resumes** — ATS and most enterprise HRMs can't parse them. At Anthropic/OpenAI/Perplexity, design is irrelevant; content wins.
-- ❌ **No columns or text boxes** — ATS reads these as garbled or skips them
-- ❌ **No photos** — US/Canada hiring; adds bias liability for the company
-- ❌ **No "References available upon request"** — wastes space
-- ❌ **No objective statement** — replace with a production-summary section at the top
+- ❌ **No infographic resumes**: ATS and most enterprise HRMs can't parse them. At Anthropic/OpenAI/Perplexity, design is irrelevant; content wins.
+- ❌ **No columns or text boxes**: ATS reads these as garbled or skips them
+- ❌ **No photos**: US/Canada hiring; adds bias liability for the company
+- ❌ **No "References available upon request"**: wastes space
+- ❌ **No objective statement**: replace with a production-summary section at the top
 - ❌ **No colored backgrounds or gradients**
-- ❌ **No 3+ fonts** — every additional font reduces perceived professionalism
-- ❌ **No tables in the CV body** — safe only in a dedicated skills-matrix section, and only if simple
+- ❌ **No 3+ fonts**: every additional font reduces perceived professionalism
+- ❌ **No tables in the CV body**: safe only in a dedicated skills-matrix section, and only if simple
 
 ---
 
@@ -1866,7 +1896,7 @@ function buildFormattingGuide(role, report) {
 - [ ] Length: CV ≤2 pages; cover letter ≤400 words; form fields ≤500 words unless specified
 - [ ] File format: PDF primary, .docx backup
 - [ ] File name: descriptive (\`mitch-williams-${slugify(role.company)}-cv.pdf\`), not \`resume_final_v3.pdf\`
-- [ ] Print test: Print page 1 in black and white — if it's hard to read, it won't survive recruiter printing
+- [ ] Print test: Print page 1 in black and white: if it's hard to read, it won't survive recruiter printing
 `;
 }
 
@@ -2123,10 +2153,20 @@ async function buildPack(role) {
     const productNames = extractTargetProductNames({ jdText, reportText, companyName: role.company, corpusText });
     const isGoogleTarget = /google/i.test(role.company || '');
     const groundingViolations = [];
-    for (const name of ['cover-letter.md', 'form-fields.md', 'one-pager.md']) {
+    // The tailored-CV markdown is gated alongside the prose trio (2026-07-07
+    // review finding #1: the CV is the highest-visibility artifact and was the
+    // only prose artifact outside the tollbooth, so a continuity claim or
+    // achieved-framing metric in it shipped ungated). Both historical names are
+    // checked; SUPERSEDED tombstones are pointers, not prose, and are skipped.
+    for (const name of ['cover-letter.md', 'form-fields.md', 'one-pager.md', 'tailored-cv.md', 'cv-tailored.md']) {
       const p = join(dir, name);
       if (!existsSync(p)) continue;
-      for (const v of findGroundingViolations(readFileSync(p, 'utf-8'), { productNames, isGoogleTarget, checkEmDashes: true, checkTimeAsk: true })) {
+      const body = readFileSync(p, 'utf-8');
+      if (/^\s*#\s*SUPERSEDED\b/i.test(body)) continue;
+      // checkContinuity (2026-07-06): comms-triage continuity claims + achieved-
+      // result framing of the ~60%/~160-hr design targets are resume-mirror-spec
+      // hard exclusions — fresh prose fails closed; legacy tree swept separately.
+      for (const v of findGroundingViolations(body, { productNames, isGoogleTarget, checkEmDashes: true, checkTimeAsk: true, checkContinuity: true })) {
         groundingViolations.push({ artifact: name, ...v });
       }
     }

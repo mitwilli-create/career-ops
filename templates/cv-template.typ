@@ -37,6 +37,16 @@
 //   {{COMPETENCIES_BLOCK}}  Optional Core Competencies section — empty when cv.md has none
 //   {{HIGHLIGHTS}}          (optional, conditional) Highlights box content
 //   {{LEARNING}}            (optional, conditional) Continuous learning blocks
+//
+// Resume-mirror tokens (2026-07-06, data/resume-mirror-spec-2026-07-06.md —
+// all empty outside spec-mirror sources, so legacy renders are unchanged):
+//   {{FIT_FOR_BLOCK}}       "FIT FOR <ROLE>, <COMPANY>" / "HIGHLIGHTS" key
+//                           section: 6-8 bolded-lead bullets after the Summary
+//   {{PROJECTS_BLOCK_TOP}}  Projects section ABOVE Experience (DevRel/technical
+//                           variant; mutually exclusive with PROJECTS_BLOCK)
+//   {{SKILLS_BLOCK_BOTTOM}} Skills section at the document end (spec order:
+//                           Education > Certifications > Skills; mutually
+//                           exclusive with SKILLS_BLOCK)
 
 #set page(
   paper: "us-letter",
@@ -127,6 +137,40 @@
     list(..bullets)
   }
   v(5pt)
+}
+
+// ── Named-initiative sub-header (resume-mirror spec § 5) ─────────────────────
+// Renders inside an Experience role, after the job-entry block: a semibold
+// initiative title ("Communications-triage agent (Apps Script + Gemini)")
+// followed by its Problem: / Action: / Impact: bullet triplet. Bold leads
+// arrive pre-converted to Typst *bold* by the renderer.
+
+#let initiative-entry(title: "", bullets: ()) = {
+  v(1pt)
+  text(size: 10pt, weight: "semibold", fill: ink, title)
+  if bullets.len() > 0 {
+    v(2pt)
+    set list(marker: "•", body-indent: 0.12in, indent: 0.10in)
+    set text(size: 10pt, fill: ink)
+    list(..bullets)
+  }
+  v(3pt)
+}
+
+// ── FIT FOR / HIGHLIGHTS key section (resume-mirror spec § 4) ────────────────
+// Full-width section directly after the Summary: 6-8 bolded-lead bullets, each
+// mapping one JD requirement to evidence. Title renders via section-heading
+// (which uppercases), so "Fit for Senior Manager, CEO Communications, AMD"
+// prints as the spec's caps section header.
+
+#let fit-section(title: "", bullets: ()) = {
+  section-heading(title)
+  if bullets.len() > 0 {
+    set list(marker: "•", body-indent: 0.12in, indent: 0.06in)
+    set text(size: 10pt, fill: ink)
+    list(..bullets)
+  }
+  v(4pt)
 }
 
 // ── Project entry macro ──────────────────────────────────────────────────────
@@ -292,6 +336,12 @@
 
 #v(4pt)
 
+// ── FIT FOR <ROLE>, <COMPANY> / HIGHLIGHTS key section (spec-mirror only) ────
+// THE tailoring section: 6-8 bolded-lead bullets built from the JD's own
+// requirement list. Empty outside resume-mirror sources.
+
+{{FIT_FOR_BLOCK}}
+
 // ── Core Competencies (optional; rendered only when cv.md has the section) ───
 
 {{COMPETENCIES_BLOCK}}
@@ -299,6 +349,10 @@
 // ── Skills / Tech Stack (above-the-fold on page 1 per council O3) ────────────
 
 {{SKILLS_BLOCK}}
+
+// ── Selected Projects ABOVE Experience (spec-mirror DevRel/technical variant) ─
+
+{{PROJECTS_BLOCK_TOP}}
 
 // ── Work Experience ──────────────────────────────────────────────────────────
 
@@ -315,3 +369,7 @@
 // ── Education & Certifications (combined, compact, bottom of page 2) ─────────
 
 {{EDUCATION_CERT_BLOCK}}
+
+// ── Skills at document end (spec-mirror order: Education > Certs > Skills) ───
+
+{{SKILLS_BLOCK_BOTTOM}}

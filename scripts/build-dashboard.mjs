@@ -276,6 +276,17 @@ function loadPipelineActivity() {
   const integrity = tryRead('data/integrity-state.json');
   const ingress   = tryRead('data/pipeline-ingress-state.json');
   const sweep     = tryRead('data/background-sweep-state.json');  // may be absent on day 1
+  // The sweep writer (scripts/background-sweep-daily.mjs) keeps its run stamp
+  // under _meta.{last_run_at,last_run_summary} rather than top-level
+  // generated_at/summary — normalize here so the chip renderer sees one shape.
+  const sweepMeta = (sweep && sweep._meta) || {};
+  const sweepGeneratedAt = (sweep && sweep.generated_at) || sweepMeta.last_run_at || null;
+  const sweepRawSummary = (sweep && sweep.summary) || sweepMeta.last_run_summary || null;
+  const sweepSummary = sweepRawSummary ? {
+    checked: sweepRawSummary.checked ?? sweepRawSummary.items_checked
+      ?? sweepRawSummary.rows_checked ?? sweepRawSummary.rows_swept ?? 0,
+    flagged: sweepRawSummary.flagged ?? sweepRawSummary.deltas_surfaced ?? null,
+  } : null;
   // Compute a single epoch ms for "newest data point" so the runtime UI
   // can show "Updated X min ago" without re-parsing the embedded JSON.
   function asMs(iso) {
@@ -286,7 +297,7 @@ function loadPipelineActivity() {
   const newestMs = Math.max(
     asMs(integrity && integrity.generated_at),
     asMs(ingress && ingress.generated_at),
-    asMs(sweep && sweep.generated_at),
+    asMs(sweepGeneratedAt),
   );
   return {
     integrity: integrity ? {
@@ -301,8 +312,8 @@ function loadPipelineActivity() {
       scanner_count: Array.isArray(ingress.scanners) ? ingress.scanners.length : 0,
     } : null,
     sweep: sweep ? {
-      generated_at: sweep.generated_at || null,
-      summary: sweep.summary || null,
+      generated_at: sweepGeneratedAt,
+      summary: sweepSummary,
     } : null,
     newest_ms: newestMs,
   };

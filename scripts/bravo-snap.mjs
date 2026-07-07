@@ -15,7 +15,7 @@ const browser = await chromium.launch({ headless: true });
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 const page = await ctx.newPage();
 
-const URL = 'http://localhost:3097/';
+const URL = process.env.DASHBOARD_URL || 'http://localhost:3097/';
 
 async function shot(name, fn) {
   await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 });

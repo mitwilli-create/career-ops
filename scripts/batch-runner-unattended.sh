@@ -5,9 +5,13 @@
 # logs to data/logs/batch-{date}.log, exits clean even on partial failure.
 set -uo pipefail
 
-PROJECT_DIR="/Users/mitchellwilliams/Documents/career-ops"
+# Derived defaults (no user-specific absolute paths in committed code):
+# repo root = parent of this script's directory; node dir = wherever node
+# resolves on PATH, falling back to the $HOME nvm layout launchd plists use.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="${CAREER_OPS_DIR:-$(dirname "$SCRIPT_DIR")}"
 SECRETS_FILE="$HOME/.career-ops-secrets"
-NODE_DIR="/Users/mitchellwilliams/.nvm/versions/node/v24.14.0/bin"
+NODE_DIR="${CAREER_OPS_NODE_BIN_DIR:-$(dirname "$(command -v node 2>/dev/null || echo "$HOME/.nvm/versions/node/v24.14.0/bin/node")")}"
 LOG_DIR="$PROJECT_DIR/data/logs"
 DATE=$(date +%Y-%m-%d)
 LOG_FILE="$LOG_DIR/batch-${DATE}.log"

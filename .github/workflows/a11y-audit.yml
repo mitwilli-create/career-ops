@@ -50,13 +50,16 @@ jobs:
           node scripts/build-dashboard.mjs || echo "[a11y-audit] build skipped (expected in CI — using committed dashboard/)"
 
       - name: Serve dashboard locally
+        env:
+          A11Y_PORT: ${{ vars.A11Y_PORT || 3097 }}
         run: |
           # Use Python's built-in HTTP server (always present on ubuntu-latest).
-          # Serve dashboard/ on localhost:3097 in the background.
-          cd dashboard && python3 -m http.server 3097 &
+          # Serve dashboard/ on a CI-local port in the background — this is a
+          # throwaway static server inside the runner, not the production URL.
+          cd dashboard && python3 -m http.server "$A11Y_PORT" &
           # Wait for server to come up.
           for i in 1 2 3 4 5 6 7 8 9 10; do
-            if curl -s -o /dev/null -w "%{http_code}" http://localhost:3097/ | grep -q "200\|304"; then
+            if curl -s -o /dev/null -w "%{http_code}" "http://localhost:$A11Y_PORT/" | grep -q "200\|304"; then
               echo "[a11y-audit] http-server ready"
               break
             fi
@@ -64,7 +67,9 @@ jobs:
           done
 
       - name: Run axe-core audit
-        run: node scripts/a11y-audit.mjs --base http://localhost:3097
+        env:
+          A11Y_PORT: ${{ vars.A11Y_PORT || 3097 }}
+        run: node scripts/a11y-audit.mjs --base "http://localhost:$A11Y_PORT"
 
       - name: Upload audit report
         if: always()

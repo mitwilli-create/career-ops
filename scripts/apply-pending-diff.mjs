@@ -19,8 +19,8 @@
  * surface in tomorrow's heartbeat as still-pending.
  */
 
-import { readFileSync, existsSync, readdirSync, mkdirSync, renameSync, appendFileSync, statSync } from 'fs';
-import { join, dirname } from 'path';
+import { readFileSync, existsSync, readdirSync, mkdirSync, renameSync, appendFileSync, statSync, realpathSync } from 'fs';
+import { join, dirname, resolve, sep, basename } from 'path';
 import { fileURLToPath } from 'url';
 import readline from 'readline';
 
@@ -28,6 +28,30 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const PENDING_DIR = join(ROOT, 'data/pending-diffs');
 const APPLIED_DIR = join(PENDING_DIR, 'applied');
+
+// Resolve `filename` strictly within `dir`. Rejects path separators, `..`
+// traversal, absolute paths, and NUL bytes so a user-supplied --view /
+// --mark-reviewed argument cannot read or move files outside data/pending-diffs.
+// Returns the absolute path on success, or null if the name is unsafe.
+function resolveWithin(dir, filename) {
+  if (typeof filename !== 'string' || !filename || filename.includes('\0')) return null;
+  if (filename === '.' || filename === '..') return null;
+  if (basename(filename) !== filename) return null; // no separators / traversal components
+  const root = resolve(dir);
+  const full = resolve(root, filename);
+  if (full !== join(root, filename) || !full.startsWith(root + sep)) return null;
+  // Symlink containment: a name with no separators can still BE a symlink inside
+  // data/pending-diffs pointing outside it. Canonicalize both sides and re-check
+  // so --view/--mark-reviewed can't follow a link out of the directory.
+  try {
+    const realRoot = realpathSync.native(root);
+    if (existsSync(full)) {
+      const realFull = realpathSync.native(full);
+      if (realFull !== realRoot && !realFull.startsWith(realRoot + sep)) return null;
+    }
+  } catch { return null; } // broken link / race → deny
+  return full;
+}
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a, i, arr) => {
@@ -64,8 +88,8 @@ function listPending() {
 }
 
 function markReviewed(filename) {
-  const src = join(PENDING_DIR, filename);
-  if (!existsSync(src)) {
+  const src = resolveWithin(PENDING_DIR, filename);
+  if (!src || !existsSync(src)) {
     console.error(`Not found: ${filename}`);
     return false;
   }
@@ -75,15 +99,15 @@ function markReviewed(filename) {
   if (!/<!--\s*REVIEWED/i.test(content)) {
     appendFileSync(src, `\n<!-- REVIEWED: ${today} -->\n`);
   }
-  const dst = join(APPLIED_DIR, filename);
+  const dst = join(APPLIED_DIR, basename(filename));
   renameSync(src, dst);
   console.log(`✅ ${filename} → ${dst}`);
   return true;
 }
 
 function viewDiff(filename) {
-  const path = join(PENDING_DIR, filename);
-  if (!existsSync(path)) {
+  const path = resolveWithin(PENDING_DIR, filename);
+  if (!path || !existsSync(path)) {
     console.error(`Not found: ${filename}`);
     return false;
   }

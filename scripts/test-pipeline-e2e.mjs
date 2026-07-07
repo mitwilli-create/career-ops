@@ -18,7 +18,12 @@
  */
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { callCouncil, extractRichContent } from '/Users/mitchellwilliams/Documents/career-ops/lib/council.mjs';
+import { join, resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { homedir } from 'node:os';
+import { callCouncil, extractRichContent } from '../lib/council.mjs';
+
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 // Inline .env loader (override:true per memory rule)
 function loadEnv(path) {
@@ -34,9 +39,12 @@ function loadEnv(path) {
     }
   }
 }
-loadEnv('/Users/mitchellwilliams/Documents/career-ops/.env');
+loadEnv(join(REPO_ROOT, '.env'));
 
-const ROUTING_TREE = '/Users/mitchellwilliams/Documents/council-os/routing-tree.json';
+// council-os lives OUTSIDE this repo (sibling under ~/Documents) — derive from
+// $HOME with an env override rather than baking in a user-specific path.
+const ROUTING_TREE = process.env.COUNCIL_OS_ROUTING_TREE
+  || join(homedir(), 'Documents', 'council-os', 'routing-tree.json');
 const results = [];
 
 async function runTest(name, fn) {

@@ -16,10 +16,11 @@
  *
  * RULES RECALIBRATED 2026-06-11 (task_72ce7b66): the 2026-05-31 rules mapped retired
  * metrics to forms that the 2026-06-04 grounding invariant
- * (tests/apply-pack-no-scaffold-invariant.test.mjs) has since BANNED — "high stylistic
- * fidelity", "substantial reduction in drafting latency" — and one rule actively
- * INSERTED "1,000+ L8+ Senior Technical IC" into clean text. Because this scrubber runs
- * inside scripts/lib/scrub-gate.mjs on every fresh apply-pack/popout/story build, the
+ * (tests/apply-pack-no-scaffold-invariant.test.mjs) has since BANNED (the retired
+ * fidelity- and latency-metric rewrite targets — see lib/retired-metric-pattern.mjs
+ * for the exact forms) — and one rule actively INSERTED level-jargon headcount
+ * phrasing into clean text. Because this scrubber runs inside
+ * scripts/lib/scrub-gate.mjs on every fresh apply-pack/popout/story build, the
  * stale rules were a SEED of banned content, not a guard against it. All replacement
  * targets now comply with lib/grounding-guard.mjs.
  *
@@ -36,7 +37,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync } from 'node:child_process';
 import { PAT, EXCL } from '../lib/retired-metric-pattern.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -55,19 +55,19 @@ const RULES = [
   // The prior rule already converted the AI/LLM-token forms, so this only catches the leftovers.
   // Honest fix: correct the count to two and drop the inaccurate voice descriptor.
   [/\b(?:three|3) production (?:AI voice |AI |LLM |voice )?agents\b/gi, 'two production agents'],
-  // ── stylistic-fidelity family. "stylistic fidelity" is itself banned post-2026-06-04,
-  //    so the old "99% → high stylistic fidelity" rewrite re-created a banned string.
-  //    Canonical: cv.md's digital-twin bullet carries NO fidelity metric — the agent
-  //    "drafts high-stakes executive communications in a consistent voice".
+  // ── fidelity-metric family. The fidelity phrasing itself is banned post-2026-06-04,
+  //    so the old rewrite (99%-metric → adjective+fidelity form) re-created a banned
+  //    string. Canonical: cv.md's digital-twin bullet carries NO fidelity metric — the
+  //    agent "drafts high-stakes executive communications in a consistent voice".
   [/\bat\s+(?:99%|high)\s+stylistic\s+fidelity\b/gi, 'in a consistent, verified voice'],
   [/\b(?:99%|high)\s+stylistic\s+fidelity\b/gi, 'a consistent, verified voice'],
   [/\bstylistic[- ]fidelity\b/gi, 'voice fidelity'],
   [/\bat\s+99%\s+fidelity\b/gi, 'in a verified voice'],
   [/\b99%\s+fidelity\b/gi, 'a verified voice'],
-  // "99% voice fidelity" — "voice" sits between 99% and fidelity, so the rules above (which
-  // need "stylistic", or "99% fidelity" adjacent) all miss it. Also catches the rule above
-  // that maps "stylistic-fidelity" → "voice fidelity" (cascade: "99% stylistic-fidelity"
-  // → "99% voice fidelity" → here).
+  // 99%-metric + "voice fidelity" variant — "voice" sits between the number and
+  // "fidelity", so the rules above (which need the banned adjective, or the number
+  // directly adjacent to "fidelity") all miss it. Also catches the cascade output of
+  // the rule above that rewrites the banned adjective form to "voice fidelity".
   [/\bat\s+99%\s+voice\s+fidelity\b/gi, 'in a consistent, verified voice'],
   [/\b99%\s+voice\s+fidelity\b/gi, 'a consistent, verified voice'],
   // ── classification-accuracy family → canonical cv.md outcome (~60% auto-handled) ──
@@ -189,18 +189,28 @@ for (const p of files) {
   }
 }
 
-// ── fail-loud re-grep with the EXACT verifier pattern ──
+// ── fail-loud re-verify with the EXACT verifier pattern ──
+// In-process regex scan (2026-07-06): the old shell `grep -nE "${PAT}" "${p}"`
+// interpolated the pattern + path into a shell string with no timeout — PAT
+// and file paths could break the quoting, and a stalled grep hung the scrub.
+// PAT/EXCL are authored as JS-compatible EREs (the invariant tests already
+// consume them via `new RegExp`), so scanning in-process is byte-equivalent.
 let survived = 0;
+const patRe = new RegExp(PAT, 'i');
+const exclRe = new RegExp(EXCL, 'i');
 for (const p of files) {
   if (!existsSync(p)) continue;
   try {
-    const out = execSync(`grep -nE "${PAT}" "${p}" 2>/dev/null | grep -vE "${EXCL}" || true`, { encoding: 'utf8' }).trim();
-    if (out) { survived++; console.log(`  🔴 SURVIVING LEAK in ${p.replace(ROOT + '/', '')}:\n${out.split('\n').map(l => '     ' + l.slice(0, 160)).join('\n')}`); }
+    const hits = readFileSync(p, 'utf8').split('\n')
+      .map((line, i) => ({ n: i + 1, line }))
+      .filter(({ line }) => patRe.test(line) && !exclRe.test(line))
+      .map(({ n, line }) => `${n}:${line}`);
+    if (hits.length) { survived++; console.log(`  🔴 SURVIVING LEAK in ${p.replace(ROOT + '/', '')}:\n${hits.map(l => '     ' + l.slice(0, 160)).join('\n')}`); }
   } catch (err) {
-    // a grep exec failure means this surface was NOT verified — count it as a failure,
+    // a read/scan failure means this surface was NOT verified — count it as a failure,
     // never a silent PASS (bug class: findings-exit-code-conflated-with-spawn-failure)
     survived++;
-    console.log(`  🔴 VERIFY FAILED (grep exec error, surface unverified) in ${p.replace(ROOT + '/', '')}: ${err.message}`);
+    console.log(`  🔴 VERIFY FAILED (surface unverified) in ${p.replace(ROOT + '/', '')}: ${err.message}`);
   }
 }
 

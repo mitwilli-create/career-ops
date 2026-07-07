@@ -35,7 +35,7 @@
  *   - --signoff for proper git author attribution
  */
 
-import { execSync, spawnSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import { existsSync, statSync } from 'fs';
 import { resolve, relative, isAbsolute } from 'path';
 import { fileURLToPath } from 'url';
@@ -87,11 +87,11 @@ for (const f of files) {
 // Optional: branch handling
 if (targetBranch) {
   try {
-    execSync(`git checkout -b "${targetBranch}"`, { cwd: ROOT, stdio: 'pipe' });
+    execFileSync("git", ["checkout", "-b", targetBranch], { cwd: ROOT, stdio: "pipe", timeout: 15_000 });
   } catch (e) {
     // Branch may already exist — try plain checkout
     try {
-      execSync(`git checkout "${targetBranch}"`, { cwd: ROOT, stdio: 'pipe' });
+      execFileSync("git", ["checkout", targetBranch], { cwd: ROOT, stdio: "pipe", timeout: 15_000 });
     } catch (e2) {
       fail(`Could not switch to branch ${targetBranch}: ${e2.message}`);
     }
@@ -101,7 +101,7 @@ if (targetBranch) {
 // Stage only the specified files (NEVER use `git add -A`)
 try {
   for (const f of repoFiles) {
-    execSync(`git add "${f}"`, { cwd: ROOT, stdio: 'pipe' });
+    execFileSync("git", ["add", "--", f], { cwd: ROOT, stdio: "pipe", timeout: 15_000 });
   }
 } catch (e) {
   fail(`git add failed: ${e.message}`);
@@ -110,7 +110,7 @@ try {
 // Check if there's actually anything to commit
 let stagedDiff;
 try {
-  stagedDiff = execSync('git diff --cached --shortstat', { cwd: ROOT, encoding: 'utf-8' }).trim();
+  stagedDiff = execFileSync("git", ["diff", "--cached", "--shortstat"], { cwd: ROOT, encoding: "utf-8", timeout: 15_000 }).trim();
 } catch (e) {
   fail(`git diff failed: ${e.message}`);
 }
@@ -140,7 +140,7 @@ if (dryRun) {
     branch: getBranch(),
   }, null, 2));
   // Unstage so dry-run doesn't leave the index dirty
-  try { execSync(`git reset HEAD -- ${repoFiles.map(f => `"${f}"`).join(' ')}`, { cwd: ROOT, stdio: 'pipe' }); } catch {}
+  try { execFileSync("git", ["reset", "HEAD", "--", ...repoFiles], { cwd: ROOT, stdio: "pipe", timeout: 15_000 }); } catch {}
   process.exit(0);
 }
 
@@ -148,6 +148,7 @@ if (dryRun) {
 const r = spawnSync('git', ['commit', '--signoff', '-m', fullMessage], {
   cwd: ROOT,
   encoding: 'utf-8',
+  timeout: 60_000, // commit hooks (UI-audit gate etc.) run here — give them headroom
 });
 
 if (r.status !== 0) {
@@ -156,7 +157,7 @@ if (r.status !== 0) {
 
 let sha = '';
 try {
-  sha = execSync('git rev-parse HEAD', { cwd: ROOT, encoding: 'utf-8' }).trim();
+  sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf-8", timeout: 15_000 }).trim();
 } catch {}
 
 console.log(JSON.stringify({
@@ -171,6 +172,6 @@ console.log(JSON.stringify({
 
 function getBranch() {
   try {
-    return execSync('git rev-parse --abbrev-ref HEAD', { cwd: ROOT, encoding: 'utf-8' }).trim();
+    return execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: ROOT, encoding: "utf-8", timeout: 15_000 }).trim();
   } catch { return 'unknown'; }
 }

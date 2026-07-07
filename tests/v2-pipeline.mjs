@@ -50,7 +50,7 @@
  *   Step 11: Cleanup: revert synthetic queue entry
  */
 
-import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync, appendFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync, appendFileSync, rmSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
@@ -66,6 +66,12 @@ const MOCK_MODE = argv.includes('--mock');
 const HELP = argv.includes('--help');
 const CLEANUP_FLAG = argv.indexOf('--cleanup');
 const CLEANUP_RUN_ID = CLEANUP_FLAG >= 0 ? argv[CLEANUP_FLAG + 1] : null;
+// The run-id feeds a recursive delete under /tmp — allowlist its shape so a
+// hostile/typo'd --cleanup argument can never expand the delete target.
+if (CLEANUP_RUN_ID && !/^[A-Za-z0-9_-]+$/.test(CLEANUP_RUN_ID)) {
+  console.error(`[v2-e2e] invalid --cleanup run-id "${CLEANUP_RUN_ID}" — expected [A-Za-z0-9_-]+`);
+  process.exit(2);
+}
 
 if (HELP) {
   console.log(`
@@ -150,9 +156,9 @@ function cleanup() {
     });
     writeFileSync(V2_FIX_LOG, lines.join('\n') + (lines.length ? '\n' : ''));
   }
-  // Remove scratch dir (best effort)
+  // Remove scratch dir (best effort) — rmSync on a resolved path, no shell
   try {
-    execSync(`rm -rf /tmp/v2-e2e-${targetId}`, { timeout: 5000 });
+    rmSync(join('/tmp', `v2-e2e-${targetId}`), { recursive: true, force: true });
   } catch { /* ok */ }
 }
 
@@ -385,8 +391,8 @@ export default html;
     } else {
       writeFileSync(counterPath(), counterBackup);
     }
-    // Clean scratch dir
-    try { execSync(`rm -rf ${SCRATCH_DIR}`, { timeout: 5000 }); } catch { /* ok */ }
+    // Clean scratch dir — rmSync on the resolved path, no shell
+    try { rmSync(SCRATCH_DIR, { recursive: true, force: true }); } catch { /* ok */ }
   }
 }
 

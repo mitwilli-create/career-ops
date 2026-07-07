@@ -708,7 +708,7 @@ console.log("\n16g. Grounding guard — retired-metric/product-claim/chatter/bra
 try {
   // Runs tests/grounding-guard.test.mjs — CI-safe fixtures pinning
   // lib/grounding-guard.mjs: retired-metric probes + clean-claim passes,
-  // L8 jargon, Kill-List→banned-phrase-checklist replacement, editorial-chatter
+  // L8 jargon, legacy-branding→banned-phrase-checklist replacement, editorial-chatter
   // stripping (rows 2527/2373), and the target-company product-claim guard
   // (row 2582: "I built Ramp Glass, Inspect, Dojo, Sensei").
   execFileSync('node', ['tests/grounding-guard.test.mjs'], {

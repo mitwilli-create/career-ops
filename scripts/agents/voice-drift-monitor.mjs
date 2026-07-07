@@ -34,7 +34,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, readdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { stripHtmlForText } from '../../lib/sanitize.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -147,8 +147,15 @@ function checkFile(filepath) {
 }
 
 function filesFromGitDiff(diffRange) {
+  // --diff / --since flow user input into a git range. Allowlist ref-range
+  // characters (incl. @{date} reflog syntax and A..B ranges); reject
+  // whitespace, shell metacharacters, and a leading '-' (option injection).
+  if (typeof diffRange !== 'string' || !/^[A-Za-z0-9@{}][A-Za-z0-9._/@{}^~-]*$/.test(diffRange)) {
+    console.error(`[voice-drift] unsafe git range "${diffRange}" — skipping`);
+    return [];
+  }
   try {
-    const out = execSync(`git diff --name-only ${diffRange}`, { cwd: REPO_ROOT, encoding: 'utf8' });
+    const out = execFileSync('git', ['diff', '--name-only', diffRange], { cwd: REPO_ROOT, encoding: 'utf8', timeout: 30_000 });
     return out.split('\n').filter(Boolean).filter(f => {
       // Only check Mitchell-voiced files
       return /\.(md|txt)$/.test(f) || f.includes('apply-pack/');

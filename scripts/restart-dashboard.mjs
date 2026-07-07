@@ -30,11 +30,11 @@ import { execSync, spawnSync } from 'child_process';
 
 const NO_VERIFY = process.argv.includes('--no-verify');
 const hostFlag  = process.argv.indexOf('--host');
-const HOST      = hostFlag !== -1 ? process.argv[hostFlag + 1] : 'http://localhost:3097';
+const HOST      = hostFlag !== -1 ? process.argv[hostFlag + 1] : (process.env.DASHBOARD_URL || 'http://localhost:3097');
 const PORT      = 3097;
 
 const PLIST_LABEL = 'com.mitchell.career-ops.dashboard-server-nohup-wrapper';
-const UID         = execSync('id -u', { encoding: 'utf-8' }).trim();
+const UID         = execSync('id -u', { encoding: 'utf-8', timeout: 10_000 }).trim();
 const PLIST_DOMAIN = `gui/${UID}/${PLIST_LABEL}`;
 
 function log(msg)  { console.log(`[restart-dashboard] ${msg}`); }
@@ -43,7 +43,7 @@ function fail(msg) { console.error(`[restart-dashboard] ✗ ${msg}`); process.ex
 
 // ─── Step 1: pkill the running dashboard-server.mjs ──────────────────────────
 log('Step 1 — killing dashboard-server.mjs (SIGTERM)…');
-const pkillTerm = spawnSync('pkill', ['-f', 'dashboard-server.mjs'], { encoding: 'utf-8' });
+const pkillTerm = spawnSync('pkill', ['-f', 'dashboard-server.mjs'], { encoding: 'utf-8', timeout: 10_000 });
 if (pkillTerm.status === 0) {
   log('  SIGTERM sent; waiting 2s for graceful shutdown…');
   await sleep(2000);
@@ -54,10 +54,10 @@ if (pkillTerm.status === 0) {
 }
 
 // Belt + suspenders: SIGKILL if still up
-const stillUp = spawnSync('pgrep', ['-f', 'dashboard-server.mjs'], { encoding: 'utf-8' });
+const stillUp = spawnSync('pgrep', ['-f', 'dashboard-server.mjs'], { encoding: 'utf-8', timeout: 10_000 });
 if (stillUp.status === 0) {
   log('  still alive after SIGTERM — sending SIGKILL…');
-  spawnSync('pkill', ['-9', '-f', 'dashboard-server.mjs'], { encoding: 'utf-8' });
+  spawnSync('pkill', ['-9', '-f', 'dashboard-server.mjs'], { encoding: 'utf-8', timeout: 10_000 });
   await sleep(1000);
 }
 
@@ -67,19 +67,19 @@ const DEAD_TIMEOUT = 8000;
 const DEAD_POLL    = 300;
 const deadDeadline = Date.now() + DEAD_TIMEOUT;
 while (Date.now() < deadDeadline) {
-  const lsof = spawnSync('lsof', ['-nP', `-iTCP:${PORT}`, '-sTCP:LISTEN'], { encoding: 'utf-8' });
+  const lsof = spawnSync('lsof', ['-nP', `-iTCP:${PORT}`, '-sTCP:LISTEN'], { encoding: 'utf-8', timeout: 10_000 });
   if (lsof.status !== 0) { log(`  :${PORT} gone silent — OK`); break; }
   await sleep(DEAD_POLL);
 }
 // If still up, warn but continue (kickstart may overwrite it anyway)
 {
-  const lsof = spawnSync('lsof', ['-nP', `-iTCP:${PORT}`, '-sTCP:LISTEN'], { encoding: 'utf-8' });
+  const lsof = spawnSync('lsof', ['-nP', `-iTCP:${PORT}`, '-sTCP:LISTEN'], { encoding: 'utf-8', timeout: 10_000 });
   if (lsof.status === 0) warn(`  :${PORT} still shows a listener — kickstart may overwrite`);
 }
 
 // ─── Step 3: launchctl kickstart -k ──────────────────────────────────────────
 log(`Step 3 — kickstarting ${PLIST_DOMAIN}…`);
-const kick = spawnSync('launchctl', ['kickstart', '-k', PLIST_DOMAIN], { encoding: 'utf-8' });
+const kick = spawnSync('launchctl', ['kickstart', '-k', PLIST_DOMAIN], { encoding: 'utf-8', timeout: 10_000 });
 if (kick.status === 0) {
   log(`  kickstart OK → ${kick.stdout.trim() || '(no output)'}`);
 } else {
@@ -87,9 +87,9 @@ if (kick.status === 0) {
   warn(`  kickstart returned ${kick.status}: ${kick.stderr.trim()}`);
   log('  attempting launchctl load first (plist may not be bootstrapped)…');
   const plistPath = `${process.env.HOME}/Library/LaunchAgents/${PLIST_LABEL}.plist`;
-  const load = spawnSync('launchctl', ['load', plistPath], { encoding: 'utf-8' });
+  const load = spawnSync('launchctl', ['load', plistPath], { encoding: 'utf-8', timeout: 10_000 });
   if (load.status !== 0) fail(`launchctl load failed: ${load.stderr.trim()}`);
-  const kick2 = spawnSync('launchctl', ['kickstart', PLIST_DOMAIN], { encoding: 'utf-8' });
+  const kick2 = spawnSync('launchctl', ['kickstart', PLIST_DOMAIN], { encoding: 'utf-8', timeout: 10_000 });
   if (kick2.status !== 0) fail(`kickstart after load failed: ${kick2.stderr.trim()}`);
   log(`  kickstart OK (after load) → ${kick2.stdout.trim() || '(no output)'}`);
 }

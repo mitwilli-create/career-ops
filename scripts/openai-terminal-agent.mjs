@@ -36,7 +36,8 @@
 
 import { execSync } from 'node:child_process';
 import { writeFileSync, appendFileSync, existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // ─────────────────────────────────────────────────────────────────────────
 // env loader (override:true per memory rule)
@@ -50,7 +51,7 @@ function loadEnv(path) {
     if (m) process.env[m[1]] = m[2].replace(/^['"]|['"]$/g, '');
   }
 }
-loadEnv('/Users/mitchellwilliams/Documents/career-ops/.env');
+loadEnv(resolve(dirname(fileURLToPath(import.meta.url)), '..', '.env'));
 
 // ─────────────────────────────────────────────────────────────────────────
 // args
@@ -265,6 +266,8 @@ log.cost_estimate_usd = (log.total_tokens * 7 / 1_000_000).toFixed(4); // ~$5/$1
 console.log(`\n📊 Run summary: ${log.turns.length} turns · ${log.total_tokens} tokens · ~$${log.cost_estimate_usd}`);
 
 if (flags.log) {
-  appendFileSync(flags.log, JSON.stringify(log, null, 2) + '\n,\n');
+  // JSONL: one compact object per line. The old `pretty + '\n,\n'` format was
+  // neither JSON nor JSONL — downstream parsers failed on every appended run.
+  appendFileSync(flags.log, JSON.stringify(log) + '\n');
   console.log(`📝 Log appended to ${flags.log}`);
 }

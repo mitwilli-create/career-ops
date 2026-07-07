@@ -73,7 +73,7 @@ page.on('requestfailed', (req) => {
   const text = `${req.method()} ${req.url()} — ${req.failure()?.errorText || 'unknown failure'}`;
   if (IGNORED_PATTERNS.some(p => p.test(text))) return;
   // Only flag if it's an internal API call; external CDN failures are noise.
-  if (!req.url().includes('/api/') && !req.url().includes('localhost:3097')) return;
+  if (!req.url().includes('/api/') && !req.url().includes(new URL(URL_PRIMARY).host)) return;
   errors.push({ kind: 'requestfailed', text });
 });
 

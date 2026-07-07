@@ -4,7 +4,14 @@ const isMac = process.platform === 'darwin';
 const META = isMac ? 'Meta' : 'Control';
 
 async function gotoDashboard(page) {
-  const resp = await page.goto('/');
+  // page.goto throws on connection-refused BEFORE the resp check runs — wrap
+  // it so a down dashboard skips the suite instead of hard-failing CI.
+  let resp = null;
+  try {
+    resp = await page.goto('/');
+  } catch {
+    resp = null;
+  }
   if (!resp || !resp.ok()) {
     test.skip(true, `Dashboard not reachable at ${page.url()} — start it with: node dashboard-server.mjs --port=3000`);
   }

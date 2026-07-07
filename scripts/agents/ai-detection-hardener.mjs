@@ -72,6 +72,7 @@ function runFieldAudit() {
   const res = spawnSync(process.execPath, [join(ROOT, 'scripts', 'delta-field-audit.mjs')], {
     cwd: ROOT,
     stdio: 'inherit',
+    timeout: 600_000,
   });
   return res.status === 0;
 }
@@ -81,6 +82,7 @@ function runRecalibrate() {
   const res = spawnSync(process.execPath, [join(ROOT, 'scripts', 'ai-detection-calibrate-baseline.mjs'), '--refresh'], {
     cwd: ROOT,
     stdio: 'inherit',
+    timeout: 600_000,
   });
   // Exit code 2 = degenerate baseline (sample too small or human-max >= AI-min).
   // That's expected on the current 5+3 corpus — treat as a warning, not a hard fail.

@@ -97,14 +97,16 @@ fi
 # Note: `gh pr create` writes the URL to stdout. We tee it back to our own
 # stdout so callers (lib/bug-resolver/draft-pr.mjs) can still parse it the
 # same way as the legacy path.
-gh_create_out=$(gh pr create --repo "$SAFE_REPO" "${FILTERED_ARGS[@]}")
-gh_create_exit=$?
-echo "$gh_create_out"
-
-if [ "$gh_create_exit" != "0" ]; then
+# `if ! var=$(cmd)` keeps the failure observable even under errexit — the old
+# `var=$(cmd); exit=$?` form would abort the script at the assignment before
+# the exit-code inspection ever ran (Qodo B7, set -e interaction).
+if ! gh_create_out=$(gh pr create --repo "$SAFE_REPO" "${FILTERED_ARGS[@]}"); then
+  gh_create_exit=$?
+  echo "$gh_create_out"
   echo "[safe-gh-pr] gh pr create failed with exit $gh_create_exit; skipping auto-merge" >&2
   exit "$gh_create_exit"
 fi
+echo "$gh_create_out"
 
 pr_url=$(echo "$gh_create_out" | grep -oE 'https://github\.com/[^/]+/[^/]+/pull/[0-9]+' | head -1)
 if [ -z "$pr_url" ]; then

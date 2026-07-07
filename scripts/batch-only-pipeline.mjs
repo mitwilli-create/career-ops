@@ -21,7 +21,8 @@
  *   node scripts/batch-only-pipeline.mjs --cap-override  # skip cap check (server already enforced)
  */
 
-import { readFileSync, writeFileSync, existsSync, appendFileSync, mkdirSync } from 'fs';
+import { readFileSync, existsSync, appendFileSync, mkdirSync } from 'fs';
+import { atomicWriteJson } from '../lib/atomic-write.mjs';
 import { spawn } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -60,8 +61,9 @@ function loadState() {
   catch { return { jobs: {} }; }
 }
 function saveState(s) {
-  if (!existsSync(dirname(STATE_FILE))) mkdirSync(dirname(STATE_FILE), { recursive: true });
-  writeFileSync(STATE_FILE, JSON.stringify(s, null, 2));
+  // tmp+rename via the shared helper — the SSE consumer reads this file hot;
+  // a mid-write crash must never leave it truncated (Qodo B5 sweep).
+  atomicWriteJson(STATE_FILE, s);
 }
 function updateJob(patch) {
   const s = loadState();
@@ -75,6 +77,14 @@ function log(msg) {
   try { appendFileSync(LOG_PATH, line + '\n'); } catch {}
 }
 
+// Per-phase wall-clock watchdog. Batch phases legitimately run a long time
+// (Anthropic Batches API polling), so the ceiling is a hung-process guard,
+// not a pacing knob — mirrors the PROCESS_ALL_MAX_WALLCLOCK_MS philosophy.
+const PHASE_TIMEOUT_MS = Math.min(
+  Math.max(parseInt(process.env.BATCH_ONLY_PHASE_TIMEOUT_MS || '7200000', 10) || 7_200_000, 600_000),
+  21_600_000
+); // default 2h, clamp [10min, 6h]
+
 function runScript(name, args = []) {
   return new Promise((resolve) => {
     log(`▶ ${name} ${args.join(' ')}`);
@@ -83,6 +93,12 @@ function runScript(name, args = []) {
       env: { ...process.env },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    const watchdog = setTimeout(() => {
+      log(`✗ ${name} exceeded BATCH_ONLY_PHASE_TIMEOUT_MS (${PHASE_TIMEOUT_MS}ms) — killing`);
+      try { proc.kill('SIGTERM'); } catch {}
+      setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 10_000).unref();
+    }, PHASE_TIMEOUT_MS);
+    watchdog.unref();
     let outBytes = 0;
     proc.stdout.on('data', (chunk) => {
       outBytes += chunk.length;
@@ -92,6 +108,7 @@ function runScript(name, args = []) {
       try { appendFileSync(LOG_PATH, '[stderr] ' + chunk); } catch {}
     });
     proc.on('close', (code) => {
+      clearTimeout(watchdog);
       log(`◀ ${name} exited ${code} (${outBytes} bytes stdout)`);
       resolve(code);
     });

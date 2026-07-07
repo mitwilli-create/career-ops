@@ -65,7 +65,10 @@ async function checkUrl(page, url) {
     return classifyLiveness({ status, finalUrl, bodyText, applyControls });
 
   } catch (err) {
-    return { result: 'expired', reason: `navigation error: ${err.message.split('\n')[0]}` };
+    // Navigation error = transient/network-level failure — report 'uncertain',
+    // never 'expired' (matches lib/liveness.mjs semantics; a DNS blip must not
+    // be counted as a dead posting). CLI still exits non-zero on uncertain.
+    return { result: 'uncertain', reason: `navigation error: ${err.message.split('\n')[0]}` };
   }
 }
 

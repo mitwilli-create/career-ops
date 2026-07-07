@@ -127,6 +127,7 @@ function findOrchestratorPids() {
   try {
     const out = execSync('ps -ef | grep -E "process-all-pipeline|batch-runner-batches" | grep -v grep', {
       encoding: 'utf-8',
+      timeout: 10_000,
     });
     const pids = out.trim().split('\n').filter(Boolean).map(l => parseInt(l.split(/\s+/)[1], 10)).filter(Number.isFinite);
     return pids;

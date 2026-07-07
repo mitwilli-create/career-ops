@@ -43,7 +43,7 @@ function writeTmpJs(content) {
 }
 
 function runLint(script, file) {
-  const r = spawnSync('node', [script, file], { encoding: 'utf-8' });
+  const r = spawnSync('node', [script, file], { encoding: 'utf-8', timeout: 60_000 });
   return { code: r.status, stdout: r.stdout, stderr: r.stderr };
 }
 
@@ -131,7 +131,7 @@ test('lint-browser-context-refs: browser global (parseInt) → exit 0', () => {
 });
 
 test('lint-browser-context-refs: missing file argument → exit 2', () => {
-  const r = spawnSync('node', [LINT_BROWSER], { encoding: 'utf-8' });
+  const r = spawnSync('node', [LINT_BROWSER], { encoding: 'utf-8', timeout: 60_000 });
   assert.equal(r.status, 2);
 });
 
@@ -194,21 +194,21 @@ test('lint-backtick-in-comment: backtick in comment inside outer template → ex
 });
 
 test('lint-backtick-in-comment: missing file → exit 2', () => {
-  const r = spawnSync('node', [LINT_BACKTICK, '/nonexistent/file.mjs'], { encoding: 'utf-8' });
+  const r = spawnSync('node', [LINT_BACKTICK, '/nonexistent/file.mjs'], { encoding: 'utf-8', timeout: 60_000 });
   assert.equal(r.status, 2);
 });
 
 // --- safe-dashboard-deploy.sh (wrapper) ---
 
 test('safe-dashboard-deploy.sh: missing source worktree → exit 1', () => {
-  const r = spawnSync('bash', [WRAPPER, '/nonexistent/worktree'], { encoding: 'utf-8' });
+  const r = spawnSync('bash', [WRAPPER, '/nonexistent/worktree'], { encoding: 'utf-8', timeout: 120_000 });
   assert.equal(r.status, 1);
   assert.match(r.stderr + r.stdout, /does not exist|not found/);
 });
 
 test('safe-dashboard-deploy.sh: source without build-dashboard.mjs → exit 1', () => {
   const dir = mkdtempSync(join(tmpdir(), 'safe-deploy-test-'));
-  const r = spawnSync('bash', [WRAPPER, dir], { encoding: 'utf-8' });
+  const r = spawnSync('bash', [WRAPPER, dir], { encoding: 'utf-8', timeout: 120_000 });
   assert.equal(r.status, 1);
   assert.match(r.stderr + r.stdout, /build-dashboard\.mjs not found/);
 });
@@ -216,7 +216,7 @@ test('safe-dashboard-deploy.sh: source without build-dashboard.mjs → exit 1', 
 // --- canary script: syntax + import check only ---
 
 test('dashboard-headless-canary: syntax check passes', () => {
-  const r = spawnSync('node', ['--check', CANARY], { encoding: 'utf-8' });
+  const r = spawnSync('node', ['--check', CANARY], { encoding: 'utf-8', timeout: 60_000 });
   assert.equal(r.status, 0, `expected syntax-clean canary, got code ${r.status}.\nstderr:\n${r.stderr}`);
 });
 

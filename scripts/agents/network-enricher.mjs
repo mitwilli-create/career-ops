@@ -300,7 +300,7 @@ async function runPriorityBatch() {
   // Re-run the aggregator so inferred.* lands in data/network-database.json.
   const { spawnSync } = await import('node:child_process');
   console.log(`[enricher] re-running aggregator to materialize enrichments`);
-  const r = spawnSync('node', [join(ROOT, 'scripts/build-network-database.mjs')], { stdio: 'inherit' });
+  const r = spawnSync('node', [join(ROOT, 'scripts/build-network-database.mjs')], { stdio: 'inherit', timeout: 600_000 });
   if (r.status !== 0) console.warn(`[enricher] aggregator returned ${r.status}`);
 
   console.log(`[enricher] batch complete: ${results.filter(r => r.ok).length}/${results.length} ok, $${totalSpentSession().toFixed(2)} spent today`);

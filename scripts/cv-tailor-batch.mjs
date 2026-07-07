@@ -463,8 +463,8 @@ async function processRow(rowSpec, browser, opts) {
     }
     try {
       execSync(
-        `node ${join(__dirname, 'render-cv-typst.mjs')} --input ${consumerMd} --output ${consumerPdf}`,
-        { stdio: 'pipe', cwd: ROOT }
+        `node ${JSON.stringify(join(__dirname, "render-cv-typst.mjs"))} --input ${JSON.stringify(consumerMd)} --output ${JSON.stringify(consumerPdf)}`,
+        { stdio: "pipe", cwd: ROOT, timeout: 180_000 }
       );
       renderOk = true;
     } catch (err) {

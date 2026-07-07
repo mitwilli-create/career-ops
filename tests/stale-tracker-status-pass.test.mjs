@@ -199,7 +199,7 @@ test('DRY-RUN (default) mutates NOTHING + reports correct counts', () => {
   try {
     const tracker = makeFixtureTracker(dir);
     const before = readFileSync(tracker, 'utf-8');
-    const res = spawnSync('node', [SCRIPT, '--tracker', tracker, '--skip-liveness', '--json', '--queue', join(dir, 'nope.json'), '--overrides', join(dir, 'nope.json')], { cwd: ROOT, encoding: 'utf-8' });
+    const res = spawnSync('node', [SCRIPT, '--tracker', tracker, '--skip-liveness', '--json', '--queue', join(dir, 'nope.json'), '--overrides', join(dir, 'nope.json')], { cwd: ROOT, encoding: 'utf-8', timeout: 60_000 });
     assert.equal(res.status, 0, res.stderr);
     const out = JSON.parse(res.stdout);
     assert.equal(out.mode, 'dry-run');
@@ -219,7 +219,7 @@ test('--apply REFUSES without STALE_STATUS_PASS_ENABLED=true (exit 3, no mutatio
     const tracker = makeFixtureTracker(dir);
     const before = readFileSync(tracker, 'utf-8');
     const env = { ...process.env }; delete env.STALE_STATUS_PASS_ENABLED;
-    const res = spawnSync('node', [SCRIPT, '--tracker', tracker, '--skip-liveness', '--apply'], { cwd: ROOT, encoding: 'utf-8', env });
+    const res = spawnSync('node', [SCRIPT, '--tracker', tracker, '--skip-liveness', '--apply'], { cwd: ROOT, encoding: 'utf-8', env, timeout: 60_000 });
     assert.equal(res.status, 3, 'must exit 3 when env gate is off');
     assert.match(res.stderr, /REFUSING --apply/);
     assert.equal(readFileSync(tracker, 'utf-8'), before, 'tracker unchanged when --apply is refused');
@@ -238,7 +238,7 @@ test('--apply WITH env gate flips only in-scope stale rows + snapshots + audits'
       '--archive-dir', archiveDir, '--audit-jsonl', auditJsonl,
       '--queue', join(dir, 'nope.json'), '--overrides', join(dir, 'nope.json'),
       '--report-dir', join(dir, 'report'),
-    ], { cwd: ROOT, encoding: 'utf-8', env });
+    ], { cwd: ROOT, encoding: 'utf-8', env, timeout: 60_000 });
     assert.equal(res.status, 0, res.stderr);
     const out = JSON.parse(res.stdout);
     assert.equal(out.mode, 'apply');

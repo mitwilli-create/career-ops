@@ -301,7 +301,7 @@ test('renderAuditDoc records cap-breach + error states distinctly', () => {
 // T11 — node --check passes (file is parse-valid on disk)
 // --------------------------------------------------------------------------
 test('script file is node --check clean', () => {
-  const res = spawnSync('node', ['--check', SCRIPT_PATH], { encoding: 'utf-8' });
+  const res = spawnSync('node', ['--check', SCRIPT_PATH], { encoding: 'utf-8', timeout: 60_000 });
   assert.equal(res.status, 0, `node --check failed: ${res.stderr || res.stdout}`);
 });
 
@@ -312,7 +312,7 @@ test('script file is node --check clean', () => {
 // uses to decide whether to flip ok:false vs ok:true)
 // --------------------------------------------------------------------------
 test('CLI exits 2 with usage banner when --row is missing', () => {
-  const res = spawnSync('node', [SCRIPT_PATH], { encoding: 'utf-8' });
+  const res = spawnSync('node', [SCRIPT_PATH], { encoding: 'utf-8', timeout: 60_000 });
   assert.equal(res.status, 2, `expected exit 2, got ${res.status}; stderr=${res.stderr}`);
   // Usage banner goes to stderr (per existing scripts convention)
   assert.match(res.stderr, /Usage:/);
@@ -326,6 +326,7 @@ test('CLI exits 2 when --row points at a missing queue row', () => {
   const res = spawnSync('node', [SCRIPT_PATH, '--row', '999999999'], {
     encoding: 'utf-8',
     env: { ...process.env, HM_INTEL_DEEP_BUDGET: '0.01' }, // safety: tiny cap
+    timeout: 60_000,
   });
   // Script either exits 2 (row not found, FATAL caught) or never makes an
   // API call (no row → no work). What MUST be true: it never costs money.

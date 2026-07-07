@@ -27,7 +27,7 @@
 
 const VERBOSE = process.argv.includes('--verbose');
 const hostFlag = process.argv.indexOf('--host');
-const HOST = hostFlag !== -1 ? process.argv[hostFlag + 1] : 'http://localhost:3097';
+const HOST = hostFlag !== -1 ? process.argv[hostFlag + 1] : (process.env.DASHBOARD_URL || 'http://localhost:3097');
 
 let pass = 0;
 let fail = 0;

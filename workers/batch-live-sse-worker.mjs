@@ -42,7 +42,29 @@
  *
  * Env vars required:
  *   INTERNAL_SECRET — shared secret for POST /internal/push authorization
+ *   ALLOWED_ORIGIN  — (optional) origin allowed to read the SSE/JSON
+ *                     endpoints cross-origin. Defaults to the production
+ *                     dashboard origin; was `*` before 2026-07-06 (Qodo B7).
  */
+
+// CORS: reflect only the configured dashboard origin, never `*`. Same-origin
+// requests (the normal path — the worker fronts the dashboard host) send no
+// Origin header and are unaffected.
+function corsOrigin(request, env) {
+  const allowed = env?.ALLOWED_ORIGIN || 'https://dashboard.careers-ops.com';
+  const origin = request.headers.get('Origin');
+  return origin === allowed ? allowed : null;
+}
+
+function withCors(headers, request, env) {
+  const h = { ...headers };
+  const origin = corsOrigin(request, env);
+  if (origin) {
+    h['Access-Control-Allow-Origin'] = origin;
+    h['Vary'] = 'Origin';
+  }
+  return h;
+}
 
 // ── Durable Object: holds state + fan-out to SSE clients ──────────
 export class BatchLiveDurableObject {
@@ -61,8 +83,15 @@ export class BatchLiveDurableObject {
 
     // ── POST /internal/push — receive new batchLive snapshot from runner ──
     if (request.method === 'POST' && url.pathname === '/internal/push') {
+      // A missing/empty INTERNAL_SECRET means the deployment is misconfigured —
+      // deny ALL pushes rather than letting an empty header match an empty
+      // expected value (empty-secret bypass).
+      const expected = this.env.INTERNAL_SECRET;
+      if (!expected) {
+        return new Response('Server misconfigured: INTERNAL_SECRET not set', { status: 503 });
+      }
       const secret = request.headers.get('x-internal-secret');
-      if (secret !== (this.env.INTERNAL_SECRET || '')) {
+      if (secret !== expected) {
         return new Response('Unauthorized', { status: 401 });
       }
       let payload;
@@ -95,12 +124,11 @@ export class BatchLiveDurableObject {
       // For simplicity in this stub, keepalives are driven by the broadcast loop.
 
       return new Response(stream, {
-        headers: {
+        headers: withCors({
           'Content-Type':  'text/event-stream',
           'Cache-Control': 'no-cache',
           'Connection':    'keep-alive',
-          'Access-Control-Allow-Origin': '*',
-        },
+        }, request, this.env),
       });
     }
 
@@ -108,7 +136,7 @@ export class BatchLiveDurableObject {
     if (request.method === 'GET' && url.pathname === '/api/batch-live') {
       const payload = this._lastPayload || { total: 0, completed: 0, failed: 0, running: 0, pending: 0, pct: 0, rows: [], triageItems: [] };
       return new Response(JSON.stringify(payload), {
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+        headers: withCors({ 'Content-Type': 'application/json' }, request, this.env),
       });
     }
 

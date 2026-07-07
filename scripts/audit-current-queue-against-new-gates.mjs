@@ -48,7 +48,7 @@ function resolveDataRoot() {
       : 0;
     if (reportsHere >= 5) return ROOT;
     // Use git to find the main worktree
-    const out = execSync('git worktree list --porcelain', { cwd: ROOT, encoding: 'utf-8' });
+    const out = execSync('git worktree list --porcelain', { cwd: ROOT, encoding: 'utf-8', timeout: 10_000 });
     // First "worktree" entry is the main one
     const m = out.match(/worktree\s+(\S+)/);
     if (m && m[1] !== ROOT && existsSync(join(m[1], 'reports'))) {

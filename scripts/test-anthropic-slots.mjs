@@ -23,7 +23,11 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { callCouncil } from '/Users/mitchellwilliams/Documents/career-ops/lib/council.mjs';
+import { join, resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { callCouncil } from '../lib/council.mjs';
+
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 // Inline .env loader (override:true per memory rule — shell may pre-set ANTHROPIC_API_KEY to empty)
 function loadEnv(path) {
@@ -40,7 +44,7 @@ function loadEnv(path) {
     }
   }
 }
-loadEnv('/Users/mitchellwilliams/Documents/career-ops/.env');
+loadEnv(join(REPO_ROOT, '.env'));
 
 if (!process.env.ANTHROPIC_API_KEY) {
   console.error('FAIL: ANTHROPIC_API_KEY missing from env. Cannot run tests.');

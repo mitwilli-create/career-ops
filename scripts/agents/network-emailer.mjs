@@ -296,7 +296,7 @@ async function runBatch() {
   if (ok > 0) {
     const { spawnSync } = await import('node:child_process');
     console.log(`[emailer] re-running aggregator`);
-    spawnSync('node', [join(ROOT, 'scripts/build-network-database.mjs')], { stdio: 'inherit' });
+    spawnSync('node', [join(ROOT, 'scripts/build-network-database.mjs')], { stdio: 'inherit', timeout: 600_000 });
   }
 
   console.log(`[emailer] done: ${ok} found · ${skipped} skipped · ${fail} failed`);

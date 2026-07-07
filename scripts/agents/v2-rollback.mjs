@@ -26,7 +26,7 @@
 //   3 — cancelled (Ctrl+C during 3s window)
 //   4 — v2 currently frozen (caller must wait for freeze to expire)
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -39,8 +39,10 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(__filename), '..', '..');
 
-function gitRun(cmd, opts = {}) {
-  return execSync(cmd, {
+// argv-array git runner — no shell, so the user-supplied SHA / branch name
+// can never be interpreted as shell metacharacters (git-ref injection).
+function gitRun(args, opts = {}) {
+  return execFileSync('git', args, {
     cwd: REPO_ROOT,
     encoding: 'utf-8',
     timeout: 30_000,
@@ -91,8 +93,12 @@ Exit codes: 0 OK / 1 revert-fail / 2 bad-args / 3 cancelled / 4 frozen
 }
 
 function resolveSha(sha) {
+  // Allowlist first: a commit-ish here must be a plain hex SHA (4-40 chars).
+  // Anything else (refs, ranges, option-shaped strings) is rejected before
+  // any git invocation.
+  if (typeof sha !== 'string' || !/^[0-9a-fA-F]{4,40}$/.test(sha)) return null;
   try {
-    return gitRun(`git rev-parse --verify ${sha}^{commit}`).trim();
+    return gitRun(['rev-parse', '--verify', `${sha}^{commit}`]).trim();
   } catch {
     return null;
   }
@@ -100,7 +106,7 @@ function resolveSha(sha) {
 
 function shaSubject(sha) {
   try {
-    return gitRun(`git log -1 --pretty=format:%s ${sha}`).trim();
+    return gitRun(['log', '-1', '--pretty=format:%s', sha]).trim();
   } catch {
     return '(unable to read subject)';
   }
@@ -147,11 +153,11 @@ async function main() {
   // Validate the sha exists
   const fullSha = resolveSha(opts.sha);
   if (!fullSha) {
-    console.error(`[v2-rollback] sha "${opts.sha}" not found in git`);
+    console.error(`[v2-rollback] sha "${opts.sha}" is not a valid hex commit SHA in this repo`);
     return 2;
   }
   const subject = shaSubject(fullSha);
-  const currentBranch = gitRun('git rev-parse --abbrev-ref HEAD').trim();
+  const currentBranch = gitRun(['rev-parse', '--abbrev-ref', 'HEAD']).trim();
 
   // Plan + 3s cancel window (Q8)
   // eslint-disable-next-line no-console
@@ -177,7 +183,7 @@ async function main() {
 
   // Execute the revert
   try {
-    gitRun(`git revert --no-edit ${fullSha}`);
+    gitRun(['revert', '--no-edit', fullSha]);
     // eslint-disable-next-line no-console
     console.log(`[v2-rollback] revert commit created on ${currentBranch}`);
   } catch (err) {
@@ -187,7 +193,7 @@ async function main() {
 
   // Push (best-effort — caller can push manually if this fails)
   try {
-    gitRun(`git push origin ${currentBranch}`);
+    gitRun(['push', 'origin', currentBranch]);
     // eslint-disable-next-line no-console
     console.log(`[v2-rollback] pushed to origin/${currentBranch}`);
   } catch (err) {

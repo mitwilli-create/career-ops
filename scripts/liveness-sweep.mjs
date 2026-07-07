@@ -35,7 +35,8 @@
  *   node scripts/liveness-sweep.mjs --concurrency=3    # override default 5
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync } from 'fs';
+import { readFileSync, existsSync, mkdirSync, appendFileSync } from 'fs';
+import { atomicWriteJson } from '../lib/atomic-write.mjs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -105,7 +106,7 @@ function saveState(state) {
     log('DRY RUN — would have written liveness-state.json');
     return;
   }
-  writeFileSync(STATE_PATH, JSON.stringify(state, null, 2));
+  atomicWriteJson(STATE_PATH, state);
 }
 
 async function main() {
@@ -245,7 +246,7 @@ async function main() {
       removed: autoRemovals,
       needs_review: reviewFlags,
     });
-    writeFileSync(auditPath, JSON.stringify(existing, null, 2));
+    atomicWriteJson(auditPath, existing);
     log(`  audit: appended ${autoRemovals.length} removal(s) + ${reviewFlags.length} review-flag(s) to ${auditPath}`);
   } else if (DRY_RUN && (autoRemovals.length > 0 || reviewFlags.length > 0)) {
     log(`  DRY-RUN: would audit ${autoRemovals.length} removal(s) + ${reviewFlags.length} review-flag(s)`);

@@ -14,11 +14,20 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 HOOKS_SRC="$SCRIPT_DIR/hooks"
-GIT_HOOKS="$REPO_ROOT/.git/hooks"
+# Worktree-safe: in a linked worktree .git is a FILE and hooks live under the
+# shared git dir — resolve via git itself (as install-git-hooks.sh does).
+GIT_HOOKS="$(cd "$REPO_ROOT" && git rev-parse --git-path hooks 2>/dev/null || echo "$REPO_ROOT/.git/hooks")"
+# --git-path can return a relative path; anchor it to the repo root.
+case "$GIT_HOOKS" in
+  /*) ;;
+  *) GIT_HOOKS="$REPO_ROOT/$GIT_HOOKS" ;;
+esac
 
 if [[ ! -d "$GIT_HOOKS" ]]; then
-  echo "ERROR: $GIT_HOOKS not found — are you in a git repo?" >&2
-  exit 1
+  mkdir -p "$GIT_HOOKS" 2>/dev/null || {
+    echo "ERROR: $GIT_HOOKS not found and could not be created — are you in a git repo?" >&2
+    exit 1
+  }
 fi
 
 if [[ ! -d "$HOOKS_SRC" ]]; then

@@ -23,7 +23,7 @@
  * and HTML/Playwright (generate-pdf.mjs) paths are unchanged.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { resolve, dirname, basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync, spawnSync } from 'node:child_process';
@@ -76,7 +76,7 @@ mkdirSync(dirname(outputPdf), { recursive: true });
 // ── Verify typst is installed ─────────────────────────────────────────────────
 
 function checkTypst() {
-  const r = spawnSync('typst', ['--version'], { encoding: 'utf-8' });
+  const r = spawnSync('typst', ['--version'], { encoding: 'utf-8', timeout: 10_000 });
   if (r.error || r.status !== 0) {
     console.error('typst not found in PATH. Install with: brew install typst');
     process.exit(1);
@@ -891,7 +891,7 @@ export async function renderCvTypst({ cvPath, templatePath, outputPdf, dryRun = 
   );
 
   // Clean up temp .typ (always, even on error)
-  try { execSync(`rm -f "${tmpTypPath}"`); } catch { /* ignore */ }
+  try { rmSync(tmpTypPath, { force: true }); } catch { /* ignore */ }
 
   if (result.status !== 0) {
     const stderr = (result.stderr || '').trim();
@@ -932,7 +932,7 @@ if (fileURLToPath(import.meta.url) === resolve(process.argv[1] || '')) {
       const kb = ((result.sizeBytes || 0) / 1024).toFixed(1);
       console.log(`PDF generated: ${result.outputPath} (${kb} KB)`);
       if (args.open) {
-        execSync(`open "${result.outputPath}"`);
+        execSync(`open "${result.outputPath}"`, { timeout: 10_000 });
       }
     }
   } catch (err) {

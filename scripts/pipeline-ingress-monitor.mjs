@@ -24,7 +24,8 @@
 //   node scripts/pipeline-ingress-monitor.mjs --print-only
 //   node scripts/pipeline-ingress-monitor.mjs --scanner=scan-hn-hiring
 
-import { readFileSync, writeFileSync, existsSync, statSync, readdirSync, mkdirSync } from 'fs';
+import { readFileSync, existsSync, statSync, readdirSync, mkdirSync } from 'fs';
+import { atomicWriteJson } from '../lib/atomic-write.mjs';
 import { execSync } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -299,8 +300,7 @@ const state = {
 
 if (!printOnly) {
   try {
-    mkdirSync(dirname(STATE_FILE), { recursive: true });
-    writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+    atomicWriteJson(STATE_FILE, state);
   } catch (e) {
     process.stderr.write(JSON.stringify({ t: new Date().toISOString(), phase: 'ingress', step: 'write_error', error: e.message }) + '\n');
   }

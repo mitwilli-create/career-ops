@@ -32,7 +32,7 @@ const ROOT = join(__dirname, '..');
 
 const args = process.argv.slice(2);
 const baseFlag = args.find(a => a.startsWith('--base='));
-const BASE = baseFlag ? baseFlag.replace('--base=', '') : 'http://localhost:3097';
+const BASE = baseFlag ? baseFlag.replace('--base=', '') : (process.env.DASHBOARD_URL || 'http://localhost:3097');
 const NO_API = args.includes('--no-api');
 
 function countTriageAdvanceLines() {

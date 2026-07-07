@@ -294,7 +294,7 @@ function assemble(rowId, opts) {
     try {
       execSync(
         `node ${JSON.stringify(join(ROOT, 'scripts', 'render-cv-typst.mjs'))} --input ${JSON.stringify(outPath)} --output ${JSON.stringify(pdfPath)}`,
-        { cwd: ROOT, stdio: 'pipe' }
+        { cwd: ROOT, stdio: 'pipe', timeout: 180_000 }
       );
     } catch (err) {
       return {

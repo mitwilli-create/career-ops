@@ -28,7 +28,7 @@
 // override: true })` before invoking. We re-load defensively at entry.
 
 import { existsSync, appendFileSync, mkdirSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -68,8 +68,19 @@ function parseArgs(argv) {
 
 // ─── Diff harvesting ─────────────────────────────────────────────────────────
 
+// Strict git-ref allowlist for the user-supplied --diff-base. Rejects shell
+// metacharacters, whitespace, leading '-' (option injection), and '..' (range
+// injection — the range is composed here, not by the caller).
+function assertSafeRef(ref) {
+  if (typeof ref !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._/@{}^~-]*$/.test(ref) || ref.includes('..')) {
+    throw new Error(`unsafe --diff-base "${ref}" — expected a plain git ref (e.g. origin/main, HEAD~3, a SHA)`);
+  }
+  return ref;
+}
+
 function harvestDiff(diffBase) {
-  const filesRaw = execSync(`git diff ${diffBase}..HEAD --name-only`, {
+  assertSafeRef(diffBase);
+  const filesRaw = execFileSync('git', ['diff', `${diffBase}..HEAD`, '--name-only'], {
     cwd: REPO_ROOT,
     encoding: 'utf-8',
     timeout: 30_000,
@@ -78,7 +89,7 @@ function harvestDiff(diffBase) {
 
   // Per-file status (added/modified/deleted) — used by conditional personas
   // (DHH fires when proposal mints new agent/plist files).
-  const statusRaw = execSync(`git diff ${diffBase}..HEAD --name-status`, {
+  const statusRaw = execFileSync('git', ['diff', `${diffBase}..HEAD`, '--name-status'], {
     cwd: REPO_ROOT,
     encoding: 'utf-8',
     timeout: 30_000,
@@ -98,14 +109,14 @@ function harvestDiff(diffBase) {
   // keep token budget bounded). Personas pattern-match on the diff text.
   let diff;
   try {
-    diff = execSync(`git diff ${diffBase}..HEAD`, {
+    diff = execFileSync('git', ['diff', `${diffBase}..HEAD`], {
       cwd: REPO_ROOT,
       encoding: 'utf-8',
       timeout: 60_000,
       maxBuffer: 50 * 1024 * 1024, // 50MB
     });
   } catch (e) {
-    // Fallback: empty diff if execSync errored (rare; e.g., very large diff)
+    // Fallback: empty diff if the git call errored (rare; e.g., very large diff)
     diff = `# diff harvest failed: ${String(e?.message || e).slice(0, 200)}`;
   }
   const diffCapped = diff.length > 50_000 ? diff.slice(0, 50_000) + '\n\n[...truncated at 50K chars...]' : diff;

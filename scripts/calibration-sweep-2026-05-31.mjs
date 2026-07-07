@@ -85,7 +85,7 @@ function fixPlanFor(gap, num) {
     case 'scrub':
       return { auto: false, cmd: `# MANUAL: retired metric present in an apply-pack artifact for row ${num} — deterministic scrub required (do NOT rely on LLM polish; see memory feedback_polish_does_not_strip_fabrications)` };
     case 'popout-cache':
-      return { auto: false, cmd: `curl -s "http://localhost:3097/api/drill/percentage/${num}/alignment?refresh=1" >/dev/null  # warm strategy-cache` };
+      return { auto: false, cmd: `curl -s "${process.env.DASHBOARD_URL || "http://localhost:3097"}/api/drill/percentage/${num}/alignment?refresh=1" >/dev/null  # warm strategy-cache` };
     default:
       return { auto: false, cmd: `# MANUAL: unmapped gap "${gap}" for row ${num}` };
   }
@@ -114,7 +114,7 @@ if (!NO_DISCARD) {
 
   if (APPLY && discardCandidates.length) {
     // Archive-first, then mark _dropped (reversible: flip _dropped back to false).
-    const stamp = execSync('date +%Y%m%d-%H%M%S', { encoding: 'utf8' }).trim();
+    const stamp = execSync('date +%Y%m%d-%H%M%S', { encoding: 'utf8', timeout: 10_000 }).trim();
     const archive = path.join(ROOT, 'data', `apply-now-queue.pre-calibration-${stamp}.json`);
     fs.writeFileSync(archive, JSON.stringify(queue, null, 2));
     const discardNums = new Set(discardCandidates.map(d => String(d.num)));
@@ -136,7 +136,7 @@ const sweepRows = live.map(r => String(r.num));
 let gapReport = '';
 if (sweepRows.length) {
   try {
-    gapReport = execSync(`node ${JSON.stringify(VERIFIER)} --rows ${sweepRows.join(',')}`, { encoding: 'utf8', cwd: ROOT });
+    gapReport = execSync(`node ${JSON.stringify(VERIFIER)} --rows ${sweepRows.join(',')}`, { encoding: 'utf8', cwd: ROOT, timeout: 300_000 });
   } catch (e) {
     // verifier exits non-zero = gap count; output still on stdout.
     gapReport = (e.stdout || '').toString();
@@ -182,7 +182,7 @@ if (APPLY && autoCommands.length) {
   }
   console.log('\n-- Re-verifying after dispatch --');
   try {
-    const out = execSync(`node ${JSON.stringify(VERIFIER)} --rows ${sweepRows.join(',')}`, { encoding: 'utf8', cwd: ROOT });
+    const out = execSync(`node ${JSON.stringify(VERIFIER)} --rows ${sweepRows.join(',')}`, { encoding: 'utf8', cwd: ROOT, timeout: 300_000 });
     console.log(out);
   } catch (e) { console.log((e.stdout || '').toString()); }
 } else if (!APPLY && (autoCommands.length || rowsWithGaps.length)) {
@@ -193,7 +193,7 @@ if (APPLY && autoCommands.length) {
 let finalGapCount = rowsWithGaps.length;
 if (APPLY && autoCommands.length) {
   try {
-    execSync(`node ${JSON.stringify(VERIFIER)} --rows ${sweepRows.join(',')} --gaps`, { encoding: 'utf8', cwd: ROOT });
+    execSync(`node ${JSON.stringify(VERIFIER)} --rows ${sweepRows.join(',')} --gaps`, { encoding: 'utf8', cwd: ROOT, timeout: 300_000 });
     finalGapCount = 0;
   } catch (e) { finalGapCount = e.status || 0; }
 }

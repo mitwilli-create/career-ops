@@ -85,12 +85,12 @@ export function detectCdPrefixCollision({ command, cwd, mainRepoPath }) {
   let mainRepoBranch = null;
   let worktreeBranch = null;
   try {
-    mainRepoBranch = execSync('git branch --show-current', { cwd: mainRepo, encoding: 'utf-8' }).trim();
+    mainRepoBranch = execSync('git branch --show-current', { cwd: mainRepo, encoding: 'utf-8', timeout: 10_000 }).trim();
   } catch {
     return result; // Can't determine main repo branch, fail open.
   }
   try {
-    worktreeBranch = execSync('git branch --show-current', { cwd: resolvedCwd, encoding: 'utf-8' }).trim();
+    worktreeBranch = execSync('git branch --show-current', { cwd: resolvedCwd, encoding: 'utf-8', timeout: 10_000 }).trim();
   } catch {
     return result;
   }

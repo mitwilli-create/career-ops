@@ -5,15 +5,17 @@
 
 import { spawnSync } from 'child_process';
 import { existsSync, mkdirSync, openSync, writeSync, closeSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { join, resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { hc } from '../lib/healthchecks-ping.mjs';
 import { startRun, finishRun } from '../lib/job-runs-ledger.mjs';
 
 // P1-12 portability: env overrides let GH Actions Linux runners reuse this
-// script without forking it. Local launchd plists leave the env unset →
-// macOS defaults below apply (status quo).
-const PROJECT_DIR = process.env.CAREER_OPS_DIR || '/Users/mitchellwilliams/Documents/career-ops';
-const NODE_BIN = process.env.CAREER_OPS_NODE || '/Users/mitchellwilliams/.nvm/versions/node/v24.14.0/bin/node';
+// script without forking it. Defaults are now DERIVED (repo root from this
+// file's location, node from the interpreter actually running the script) so
+// no user-specific absolute path is baked into committed code.
+const PROJECT_DIR = process.env.CAREER_OPS_DIR || resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const NODE_BIN = process.env.CAREER_OPS_NODE || process.execPath;
 const LOG_DIR = join(PROJECT_DIR, 'data/logs');
 const DATE = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
 const LOG_PATH = join(LOG_DIR, `scan-${DATE}.log`);
@@ -34,7 +36,8 @@ function run(label, args) {
   const result = spawnSync(NODE_BIN, args, {
     cwd: PROJECT_DIR,
     encoding: 'utf-8',
-    env: { ...process.env, PATH: `${process.env.CAREER_OPS_NODE_BIN_DIR || '/Users/mitchellwilliams/.nvm/versions/node/v24.14.0/bin'}:${process.env.PATH || ''}` },
+    timeout: 1_800_000, // 30 min hung-process guard per scanner/triage child
+    env: { ...process.env, PATH: `${process.env.CAREER_OPS_NODE_BIN_DIR || dirname(process.execPath)}:${process.env.PATH || ''}` },
   });
   if (result.stdout) log(result.stdout.trimEnd());
   if (result.stderr) log('STDERR: ' + result.stderr.trimEnd());
@@ -44,15 +47,20 @@ function run(label, args) {
 
 // Run all three scanners before triage so the batch sees offers from every
 // source. Each scanner writes to the same pipeline.md and shares dedup logic.
-run('scan.mjs', ['scan.mjs']);            // ATS APIs (Greenhouse/Ashby/Lever)
-run('scan-rss.mjs', ['scan-rss.mjs']);    // RemoteOK + WeWorkRemotely RSS/JSON
-run('scan-email.mjs', ['scan-email.mjs']); // Gmail-labelled job alerts (LinkedIn/BuiltIn/Wellfound/Otta)
+// Exit codes are TRACKED for observability (healthchecks + run ledger get an
+// honest status) while the process still exits 0 — partial failure must not
+// flap the launchd job (deliberate: header contract "exits clean").
+const failedSteps = [];
+const step = (label, args) => { if (run(label, args) !== 0) failedSteps.push(label); };
+step('scan.mjs', ['scan.mjs']);            // ATS APIs (Greenhouse/Ashby/Lever)
+step('scan-rss.mjs', ['scan-rss.mjs']);    // RemoteOK + WeWorkRemotely RSS/JSON
+step('scan-email.mjs', ['scan-email.mjs']); // Gmail-labelled job alerts (LinkedIn/BuiltIn/Wellfound/Otta)
 // Limit lowered from 100 → 30 on 2026-05-05: at 100 the nightly batch was
 // spawning 100 claude -p sessions/night (~700/week) and draining the Max cap.
 // 30 is the original limit; raises ~50 min batch runtime. To raise again,
 // add an ANTHROPIC_API_KEY to ~/.career-ops-secrets and port batch-runner.sh
 // to use the API directly so batch costs don't hit the subscription.
-run('triage-pipeline.mjs', ['scripts/triage-pipeline.mjs', '--limit=30']);
+step('triage-pipeline.mjs', ['scripts/triage-pipeline.mjs', '--limit=30']);
 
 // Bridge: triage-batch.tsv (6-col) → batch-input.tsv (4-col) for batch-runner.sh
 const TRIAGE_TSV = join(PROJECT_DIR, 'data/triage-batch.tsv');
@@ -78,9 +86,17 @@ if (existsSync(TRIAGE_TSV)) {
   log('No triage-batch.tsv found — skipping bridge');
 }
 
-log(`=== scan-unattended completed ${new Date().toISOString()} ===`);
+log(`=== scan-unattended completed ${new Date().toISOString()} (failed steps: ${failedSteps.length ? failedSteps.join(', ') : 'none'}) ===`);
 log('');
 closeSync(logFd);
-finishRun(runId, { status: 'ok', urls_found: bridgeCount });
-await ping.success(`bridged ${bridgeCount} rows`);
+// Honest observability: a run with failed steps reports degraded status to the
+// ledger + healthchecks instead of a green "ok" that hides scanner outages.
+// Exit stays 0 either way (launchd flap guard — see header contract).
+if (failedSteps.length) {
+  finishRun(runId, { status: 'error', urls_found: bridgeCount, failed_steps: failedSteps });
+  await ping.fail(`${failedSteps.length} step(s) failed: ${failedSteps.join(', ')} — bridged ${bridgeCount} rows`);
+} else {
+  finishRun(runId, { status: 'ok', urls_found: bridgeCount });
+  await ping.success(`bridged ${bridgeCount} rows`);
+}
 process.exit(0);

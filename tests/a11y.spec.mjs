@@ -76,7 +76,13 @@ test.describe('Accessibility baseline @a11y', () => {
   test('dashboard root — axe scan (baseline only, no enforcement)', async ({ page }) => {
     const url = process.env.DASHBOARD_URL || 'http://localhost:3000';
 
-    await page.goto('/');
+    // page.goto throws on connection-refused — skip (not error) when the
+    // dashboard isn't running so CI reports the suite as skipped, not broken.
+    try {
+      await page.goto('/');
+    } catch {
+      test.skip(true, `Dashboard not reachable at ${url} — start it with: node dashboard-server.mjs --port=3000`);
+    }
     await page.waitForLoadState('networkidle');
 
     const results = await new AxeBuilder({ page })

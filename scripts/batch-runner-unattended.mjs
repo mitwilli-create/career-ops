@@ -6,15 +6,16 @@
 
 import { spawn, spawnSync } from 'child_process';
 import { existsSync, mkdirSync, openSync, writeSync, closeSync, readFileSync, renameSync } from 'fs';
-import { join } from 'path';
+import { join, resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { homedir } from 'os';
 import { installRunRecord } from '../lib/job-runs-ledger.mjs';
 
 const __jobRun = installRunRecord('batch');
 
-const PROJECT_DIR = '/Users/mitchellwilliams/Documents/career-ops';
+const PROJECT_DIR = process.env.CAREER_OPS_DIR || resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SECRETS_FILE = join(homedir(), '.career-ops-secrets');
-const NODE_DIR = '/Users/mitchellwilliams/.nvm/versions/node/v24.14.0/bin';
+const NODE_DIR = process.env.CAREER_OPS_NODE_BIN_DIR || dirname(process.execPath);
 const LOG_DIR = join(PROJECT_DIR, 'data/logs');
 const DATE = new Date().toISOString().slice(0, 10);
 const LOG_PATH = join(LOG_DIR, `batch-${DATE}.log`);
@@ -78,14 +79,33 @@ const child = spawn('/bin/bash', [join(PROJECT_DIR, 'batch/batch-runner.sh'), '-
 child.stdout.on('data', (chunk) => log(chunk.toString().trimEnd()));
 child.stderr.on('data', (chunk) => log('STDERR: ' + chunk.toString().trimEnd()));
 
+let sigkillTimer = null;
 const watchdog = setTimeout(() => {
   log(`TIMEOUT: killing batch-runner PID ${child.pid} after ${TIMEOUT_MS / 1000}s`);
   child.kill('SIGTERM');
-  setTimeout(() => child.kill('SIGKILL'), 5000);
+  // Tracked + unref'd so a child that exits between SIGTERM and SIGKILL
+  // doesn't keep the event loop alive, and signal handlers can clear it.
+  sigkillTimer = setTimeout(() => child.kill('SIGKILL'), 5000);
+  sigkillTimer.unref();
 }, TIMEOUT_MS);
+
+// Forward operator signals: clear both timers, pass the signal to the child,
+// and exit — previously the watchdog + SIGKILL timers survived a Ctrl+C /
+// launchd unload and could fire against a reused PID.
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => {
+    clearTimeout(watchdog);
+    if (sigkillTimer) clearTimeout(sigkillTimer);
+    try { child.kill(sig); } catch {}
+    log(`Received ${sig} — forwarded to batch-runner PID ${child.pid}, exiting`);
+    try { closeSync(logFd); } catch {}
+    process.exit(sig === 'SIGINT' ? 130 : 143);
+  });
+}
 
 child.on('exit', (code, signal) => {
   clearTimeout(watchdog);
+  if (sigkillTimer) clearTimeout(sigkillTimer);
   log(`batch-runner.sh exit code: ${code ?? `signal:${signal}`}`);
 
   // Rebuild the HTML dashboard so it reflects new evaluations + tracker
@@ -97,6 +117,7 @@ child.on('exit', (code, signal) => {
       cwd: PROJECT_DIR,
       env: childEnv,
       encoding: 'utf-8',
+      timeout: 600_000,
     });
     if (dashChild.stdout) log(dashChild.stdout.trimEnd());
     if (dashChild.stderr) log('STDERR: ' + dashChild.stderr.trimEnd());
@@ -117,6 +138,7 @@ child.on('exit', (code, signal) => {
       cwd: PROJECT_DIR,
       env: childEnv,
       encoding: 'utf-8',
+      timeout: 1_800_000,
     });
     if (packChild.stdout) log(packChild.stdout.trimEnd());
     if (packChild.stderr) log('STDERR: ' + packChild.stderr.trimEnd());

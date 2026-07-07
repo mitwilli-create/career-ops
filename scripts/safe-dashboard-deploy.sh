@@ -209,12 +209,15 @@ else
   echo "  WARN: plist not found at $PLIST; cannot bootstrap"
 fi
 
-# Verify server up; retry once with a longer wait.
-HTTP=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3097/" || echo "000")
+# Verify server up; retry once with a longer wait. This is a LOCAL post-restart
+# check of the server this script just bootstrapped, so localhost is the correct
+# default; DASHBOARD_LOCAL_URL overrides for non-standard ports.
+DASH_LOCAL="${DASHBOARD_LOCAL_URL:-http://localhost:3097}"
+HTTP=$(curl -s -o /dev/null -w "%{http_code}" "${DASH_LOCAL}/" || echo "000")
 if [ "$HTTP" != "200" ]; then
   echo "  WARN: server HTTP $HTTP after bootstrap; retrying after 5s..."
   sleep 5
-  HTTP=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3097/" || echo "000")
+  HTTP=$(curl -s -o /dev/null -w "%{http_code}" "${DASH_LOCAL}/" || echo "000")
 fi
 if [ "$HTTP" != "200" ]; then
   echo "✗ ABORT [exit 8]: dashboard server not responding after restart (HTTP $HTTP)"

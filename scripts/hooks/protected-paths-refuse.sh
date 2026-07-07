@@ -40,7 +40,13 @@
 
 set -euo pipefail
 
-REPO="/Users/mitchellwilliams/Documents/career-ops"
+# Derive the repo root (no user-specific absolute path): Claude Code exports
+# CLAUDE_PROJECT_DIR for hooks; fall back to two-dirs-up from this script
+# (scripts/hooks/ → repo root) so manual invocations still resolve correctly.
+REPO="${CLAUDE_PROJECT_DIR:-${CAREER_OPS_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}}"
+# Canonicalize REPO (resolve symlinks) so the comparisons below are real-path vs
+# real-path — the protected-pattern match must not depend on how REPO was spelled.
+REPO="$(/usr/bin/env python3 -c "import os; print(os.path.realpath('$REPO'))" 2>/dev/null || echo "$REPO")"
 
 # Read JSON tool input from stdin.
 input="$(cat 2>/dev/null || echo '{}')"
@@ -84,6 +90,11 @@ esac
 
 # Resolve ~ if present.
 abs="${abs/#\~/$HOME}"
+
+# Canonicalize: collapse ../ traversal AND resolve symlinks BEFORE matching, so a
+# path like data/../.env (or a symlinked component inside the repo) cannot slip
+# past the protected patterns and let an autonomous write reach a secret/no-touch file.
+abs="$(printf '%s' "$abs" | /usr/bin/env python3 -c "import os,sys; print(os.path.realpath(sys.stdin.read()))" 2>/dev/null || echo "$abs")"
 
 # Protected patterns. Use case statements rather than regex for clarity.
 protected_reason=""

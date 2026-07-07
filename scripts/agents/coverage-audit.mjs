@@ -251,7 +251,7 @@ async function main() {
       const parts = c.cmd.split(/\s*&&\s*/);
       for (const part of parts) {
         const argv = part.trim().split(/\s+/);
-        const res = spawnSync(argv[0], argv.slice(1), { cwd: ROOT, stdio: 'inherit' });
+        const res = spawnSync(argv[0], argv.slice(1), { cwd: ROOT, stdio: 'inherit', timeout: 1_800_000 });
         if (res.status !== 0) {
           console.error(`  ✗ exit ${res.status} — stopping`);
           process.exit(res.status || 1);

@@ -116,7 +116,7 @@ function makeInput({ extraOpts = {} } = {}) {
     signals: { hiring_manager_priorities: [], dealbreaker_pruned: [], meta: { cache: 'fresh' } },
     cvText: '# CV\n- Built X.\n- Shipped Y.',
     articleDigest: '# Article digest\n- Proof point Z.',
-    voiceBrief: '# Voice brief\nKill list: delve, tapestry, leverage.',
+    voiceBrief: '# Voice brief\nBanned-phrase checklist: delve, tapestry, leverage.',
     opts: {
       targetConfidence: 0.99,
       // Skip the L1 + L2 gates — they hit external APIs / are unrelated to

@@ -45,24 +45,21 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseCvEmployers, extractEmployerClaims, isAllowedEmployer } from '../lib/employer-claims.mjs';
+import { getCvEmployerAllowlist, extractEmployerClaims, isAllowedEmployer } from '../lib/employer-claims.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 
-// Employer allowlist — parsed once per run from MASTER cv.md only (the
-// human-maintained truth; tailored-cv.md is generated and must never widen the
-// set). undefined = not loaded yet; null = unavailable/empty → every employer
-// claim is unverified (fail-closed).
+// Employer allowlist — loaded once per run via the lib's single fail-closed
+// entry point (Qodo B8), from MASTER cv.md only (the human-maintained truth;
+// tailored-cv.md is generated and must never widen the set). undefined = not
+// loaded yet; null = unavailable/empty → every employer claim is unverified
+// (fail-closed).
 let _employerAllowlist;
 function getEmployerAllowlist() {
   if (_employerAllowlist !== undefined) return _employerAllowlist;
-  try {
-    const set = parseCvEmployers(readFileSync(join(ROOT, 'cv.md'), 'utf-8'));
-    _employerAllowlist = set.size > 0 ? set : null;
-  } catch {
-    _employerAllowlist = null;
-  }
+  const r = getCvEmployerAllowlist({ cvPath: join(ROOT, 'cv.md') });
+  _employerAllowlist = r.ok ? r.allowedEmployers : null;
   return _employerAllowlist;
 }
 

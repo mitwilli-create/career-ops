@@ -640,7 +640,7 @@ const out = build();
 if (ENRICH) {
   console.log('[zeta] --enrich passed; spawning scripts/agents/network-enricher.mjs --priority-batch');
   const { spawnSync } = await import('node:child_process');
-  const r = spawnSync('node', [join(ROOT, 'scripts/agents/network-enricher.mjs'), '--priority-batch'], { stdio: 'inherit' });
+  const r = spawnSync('node', [join(ROOT, 'scripts/agents/network-enricher.mjs'), '--priority-batch'], { stdio: 'inherit', timeout: 1_800_000 });
   if (r.status !== 0) {
     err(`enricher returned ${r.status}`);
     process.exit(r.status || 1);

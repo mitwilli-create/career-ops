@@ -64,6 +64,14 @@ jobs:
         # Actions cache so dedup history survives run-to-run.
         # CAVEAT: 7-day idle eviction. If scans stop firing for 8+ days, the
         # dedup history is lost (re-scan duplicates show up once).
+        #
+        # DELIBERATE run_id key (reviewed 2026-07-06; flagged as "churn"):
+        # actions/cache never re-saves on an exact-key hit, so a stable key
+        # (e.g. -${{ github.ref_name }}) would freeze the state at the first
+        # run and silently drop every later scan's dedup updates. Unique key
+        # per run + restore-keys prefix is the documented rolling-state
+        # pattern: each run restores the newest prior cache and saves a fresh
+        # one; old entries age out via GitHub's LRU eviction.
         uses: actions/cache@v5
         with:
           path: |
@@ -81,7 +89,11 @@ jobs:
         # runner we don't have that file, so we write it from GitHub secrets.
         # The synth file lives only for the duration of this job and is wiped
         # when the runner is recycled.
-        if: env.HC_URL != ''
+        # NOTE: the condition must reference the secrets context directly — a
+        # step's own `env:` block is not yet populated when its `if:` is
+        # evaluated, so `if: env.HC_URL != ''` always saw an empty value and
+        # the step never ran (healthchecks silently dark on CI).
+        if: ${{ secrets.HEALTHCHECKS_PORTAL_SCAN_PING != '' }}
         env:
           HC_URL: ${{ secrets.HEALTHCHECKS_PORTAL_SCAN_PING }}
         run: |

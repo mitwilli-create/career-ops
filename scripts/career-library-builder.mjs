@@ -36,14 +36,15 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs';
-import { join } from 'path';
+import { join, resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { spawnSync } from 'child_process';
 import { OPUS } from '../lib/models.mjs';
 import { installRunRecord } from '../lib/job-runs-ledger.mjs';
 
 const __jobRun = installRunRecord('career-library');
 
-const ROOT = process.cwd();
+const ROOT = process.env.CAREER_OPS_DIR ?? resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const LIB_DIR = join(ROOT, 'corpus/career-library');
 const DATE = new Date().toISOString().slice(0, 10);
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -88,14 +89,14 @@ if (existsSync(bylinesDir)) {
 }
 
 // ── Build the Claude prompt ───────────────────────────────────────
-const PROMPT = `You are the career-library builder for Mitchell Williams. Your job is to extract every distinct portfolio artifact from his existing source files and build a structured, exhaustive archive at /Users/mitchellwilliams/Documents/career-ops/corpus/career-library/.
+const PROMPT = `You are the career-library builder for Mitchell Williams. Your job is to extract every distinct portfolio artifact from his existing source files and build a structured, exhaustive archive at ${LIB_DIR}/.
 
 ## Source files to read in full
 
-${SOURCES.map(s => `- /Users/mitchellwilliams/Documents/career-ops/${s}`).join('\n')}
-- /Users/mitchellwilliams/Documents/career-ops/cv.md
-- /Users/mitchellwilliams/Documents/career-ops/corpus/bylines/ (read every .md file)
-- /Users/mitchellwilliams/Documents/career-ops/corpus/projects/ (read every file you find)
+${SOURCES.map(s => `- ${ROOT}/${s}`).join('\n')}
+- ${ROOT}/cv.md
+- ${ROOT}/corpus/bylines/ (read every .md file)
+- ${ROOT}/corpus/projects/ (read every file you find)
 
 ## What to extract
 
@@ -143,7 +144,7 @@ if (DRY_RUN) {
 const result = spawnSync(
   'claude',
   ['--model', OPUS, '--dangerously-skip-permissions', '-p', PROMPT],
-  { stdio: 'inherit', cwd: ROOT }
+  { stdio: 'inherit', cwd: ROOT, timeout: 3_600_000 }
 );
 
 if (result.status !== 0) {

@@ -41,8 +41,20 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
 
+  // Offline fallback: caches.match resolves undefined on a cache miss, and
+  // respondWith(undefined) breaks the request outright (first-time offline
+  // visitors get a browser-level failure instead of a controlled response).
+  const offlineFallback = (request) =>
+    caches.match(request).then(
+      (hit) => hit || new Response('Offline — no cached copy of this resource yet.', {
+        status: 504,
+        statusText: 'Gateway Timeout (offline)',
+        headers: { 'Content-Type': 'text/plain' },
+      })
+    );
+
   // Network-first for the HTML shell — UI updates must be visible immediately.
-  // Falls back to cache only when offline.
+  // Falls back to cache (or a controlled 504) only when offline.
   if (url.pathname === '/' || url.pathname === '/dashboard/index.html') {
     event.respondWith(
       fetch(req)
@@ -53,7 +65,7 @@ self.addEventListener('fetch', (event) => {
           }
           return res;
         })
-        .catch(() => caches.match(req))
+        .catch(() => offlineFallback(req))
     );
     return;
   }
@@ -69,7 +81,7 @@ self.addEventListener('fetch', (event) => {
           }
           return res;
         })
-        .catch(() => caches.match(req))
+        .catch(() => offlineFallback(req))
     );
     return;
   }

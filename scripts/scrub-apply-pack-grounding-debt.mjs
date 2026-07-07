@@ -5,7 +5,8 @@
  *
  * The pre-2026-06-04 apply-pack tree inherited retired metrics + Google-internal
  * "L8" level jargon from the old cv.md, plus unresolved FABRICATION-FLAGS
- * comment blocks and "Kill List" branding. The grounding invariant
+ * comment blocks and the legacy rejected-drafts branding (now "banned-phrase
+ * checklist" — see lib/grounding-guard.mjs). The grounding invariant
  * (APPLY_PACK_GROUNDING_INVARIANT=1 tests/apply-pack-no-scaffold-invariant.test.mjs)
  * counts every offender; this sweep drives that census to zero so the invariant
  * can gate permanently in test-all.mjs.
@@ -112,7 +113,7 @@ for (let i = 0; i < all.length; i += CHUNK) {
   const args = APPLY ? [SCRUBBER, ...chunk] : [SCRUBBER, '--dry-run', ...chunk];
   let out = '';
   try {
-    out = execFileSync(process.execPath, args, { encoding: 'utf8', cwd: ROOT, maxBuffer: 32 * 1024 * 1024 });
+    out = execFileSync(process.execPath, args, { encoding: 'utf8', cwd: ROOT, maxBuffer: 32 * 1024 * 1024, timeout: 600_000 });
   } catch (err) {
     // exit 1 = survivors reported on stdout (expected for novel shapes); rethrow real spawn faults
     if (typeof err.status !== 'number') throw err;

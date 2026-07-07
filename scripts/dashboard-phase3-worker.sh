@@ -12,7 +12,8 @@
 
 set -euo pipefail
 
-ROOT="/Users/mitchellwilliams/Documents/career-ops"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="${CAREER_OPS_DIR:-$(dirname "$SCRIPT_DIR")}"
 LOG="$ROOT/data/logs/dashboard-phase3.log"
 QUEUE="$ROOT/data/dashboard-phase3-queue.md"
 DRY_RUN=false
@@ -53,7 +54,7 @@ if $DRY_RUN; then
 fi
 
 # Spawn Claude headless to implement the item
-PROMPT="You are the Phase 3 dashboard worker for career-ops. Read /Users/mitchellwilliams/Documents/career-ops/data/dashboard-phase3-queue.md in full. Pick the first item with status [pending] (it is: '$NEXT_TITLE'). Implement that item end-to-end following the worker rules at the top of the queue file. Commit, push the branch, then open a PR via:
+PROMPT="You are the Phase 3 dashboard worker for career-ops. Read $QUEUE in full. Pick the first item with status [pending] (it is: '$NEXT_TITLE'). Implement that item end-to-end following the worker rules at the top of the queue file. Commit, push the branch, then open a PR via:
 
   gh pr create --repo mitwilli-create/career-ops --base main --head <your-branch> --title 'feat(dashboard): $NEXT_TITLE' --body '...'
 

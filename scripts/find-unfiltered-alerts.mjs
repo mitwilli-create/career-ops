@@ -106,7 +106,13 @@ async function main() {
   const senderCounts = {};
   const senderSamples = {};
 
-  for (const mailbox of ['INBOX', '[Gmail]/All Mail']) {
+  // All Mail is the comprehensive box (INBOX is a subset of it) — scan it
+  // first, and only fall back to INBOX if the All Mail scan fails (e.g. a
+  // non-Gmail IMAP server without the [Gmail] namespace). Scanning both would
+  // double-count every sender still in the inbox.
+  let scannedComprehensive = false;
+  for (const mailbox of ['[Gmail]/All Mail', 'INBOX']) {
+    if (scannedComprehensive) break; // All Mail succeeded — INBOX adds nothing
     try {
       const lock = await client.getMailboxLock(mailbox);
       try {
@@ -133,10 +139,10 @@ async function main() {
           if (senderSamples[fromAddr].length < 3) senderSamples[fromAddr].push(subj.slice(0, 80));
         }
       } finally { lock.release(); }
+      if (mailbox === '[Gmail]/All Mail') scannedComprehensive = true;
     } catch (err) {
       console.log(`  ${mailbox}: error - ${err.message.slice(0, 80)}`);
     }
-    if (mailbox === 'INBOX') break;  // INBOX is a subset; All Mail is comprehensive
   }
   await client.logout();
 

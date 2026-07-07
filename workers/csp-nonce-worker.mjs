@@ -68,11 +68,17 @@ function generateNonce() {
  */
 function buildCSP(nonce) {
   const directives = [
-    "default-src 'self' https:",
+    // Tightened 2026-07-06 (Qodo B7): was `'self' https:` — any-HTTPS default
+    // effectively whitelisted the whole web. The dashboard inlines its assets,
+    // so same-origin (+ data:/https: images only) is sufficient.
+    "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https:",
-    "connect-src 'self' http://127.0.0.1:*",
+    // Tightened 2026-07-06 (Qodo B7): was `'self' http://127.0.0.1:*` — a
+    // production page must never be told to connect to the VISITOR's
+    // localhost; the dashboard polls same-origin /api/* through the tunnel.
+    "connect-src 'self'",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -134,26 +140,75 @@ class ScriptNonceHandler {
  * Browser sends: Content-Type: application/csp-report
  *   { "csp-report": { "document-uri": "…", "violated-directive": "…", … } }
  */
+// Cap on the CSP-report body we are willing to read/persist. The endpoint is
+// unauthenticated by spec (browsers POST to it), so without a cap an attacker
+// could pump arbitrary JSON into KV (Qodo B7 finding). Real browser reports
+// are well under 4KB.
+const CSP_REPORT_MAX_BYTES = 16 * 1024;
+
+// Read the body through a reader with a hard byte cap, so an oversized POST is
+// rejected WHILE streaming — request.text() would buffer the whole body before
+// any length check could run (the content-length header is attacker-controlled
+// and may be absent/wrong).
+async function readBodyCapped(request, maxBytes) {
+  if (!request.body) return '';
+  const reader = request.body.getReader();
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      try { await reader.cancel(); } catch { /* stream already errored */ }
+      const err = new Error('payload too large');
+      err.tooLarge = true;
+      throw err;
+    }
+    chunks.push(value);
+  }
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) { merged.set(c, offset); offset += c.byteLength; }
+  return new TextDecoder().decode(merged);
+}
+
 async function handleCspReport(request, env) {
+  const declaredLen = parseInt(request.headers.get('content-length') || '0', 10);
+  if (declaredLen > CSP_REPORT_MAX_BYTES) {
+    return new Response('Payload too large', { status: 413 });
+  }
   let body;
   try {
-    body = await request.json();
-  } catch {
+    const raw = await readBodyCapped(request, CSP_REPORT_MAX_BYTES);
+    body = JSON.parse(raw);
+  } catch (err) {
+    if (err && err.tooLarge) return new Response('Payload too large', { status: 413 });
     return new Response('Bad JSON', { status: 400 });
   }
 
   const report = body['csp-report'] || body;
-  const violated = report['violated-directive'] || 'unknown';
-  const docUri    = report['document-uri']       || 'unknown';
-  const blocked   = report['blocked-uri']         || 'unknown';
+  if (!report || typeof report !== 'object' || Array.isArray(report)) {
+    return new Response('Bad report shape', { status: 400 });
+  }
+  const clip = (v) => String(v ?? 'unknown').slice(0, 512);
+  const violated = clip(report['violated-directive']);
+  const docUri   = clip(report['document-uri']);
+  const blocked  = clip(report['blocked-uri']);
 
   // Always log so `wrangler tail` surfaces violations during the monitoring window.
   console.warn(`[CSP-REPORT] violated="${violated}" doc="${docUri}" blocked="${blocked}"`);
 
-  // Persist to KV if bound (useful for aggregate analysis outside wrangler tail).
+  // Persist to KV if bound — only the clipped, known fields (never the raw
+  // attacker-controlled object), auto-expired after 30 days.
   if (env.KV_CSP_REPORTS) {
     const key = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
-    await env.KV_CSP_REPORTS.put(key, JSON.stringify({ ts: new Date().toISOString(), report }), {
+    await env.KV_CSP_REPORTS.put(key, JSON.stringify({
+      ts: new Date().toISOString(),
+      violated, docUri, blocked,
+      effective: clip(report['effective-directive']),
+      source: clip(report['source-file']),
+    }), {
       // Auto-expire KV entries after 30 days to avoid unbounded storage growth.
       expirationTtl: 60 * 60 * 24 * 30,
     });

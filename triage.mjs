@@ -86,7 +86,7 @@ const SKIPS_TSV            = join(ROOT, 'batch/tracker-additions/triage-skips.ts
 const TRIAGE_PROMPT        = join(ROOT, 'batch/triage-prompt.md');
 const URL_CACHE_FILE       = join(ROOT, 'data/triage-cache.tsv');
 const ZOMBIE_DECISIONS_FILE = join(ROOT, 'data/zombie-decisions.tsv');
-const URL_CACHE_TTL_DAYS = 7;   // re-triage after 7 days
+const URL_CACHE_TTL_DAYS = 3;   // re-triage after 3 days (repo cache-TTL convention; was 7 — Qodo B7, Mitchell-approved 2026-07-06)
 
 // ── Persistent URL dedup cache ───────────────────────────────────
 // Format: url TAB date TAB score TAB decision TAB archetype

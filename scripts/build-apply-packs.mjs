@@ -50,7 +50,7 @@ import { execSync } from 'child_process';
 import { runCheck as humanizeCheck } from './humanize-check.mjs';
 import { SONNET } from '../lib/models.mjs';
 import { scrubArtifactsOrThrow } from './lib/scrub-gate.mjs';
-import { parseCvEmployers, findEmployerViolations } from '../lib/employer-claims.mjs';
+import { getCvEmployerAllowlist, findEmployerViolations } from '../lib/employer-claims.mjs';
 import {
   stripEditorialChatter, applyBrandingReplacements,
   extractTargetProductNames, findGroundingViolations,
@@ -2073,12 +2073,13 @@ async function buildPack(role) {
   // Kill switch: EMPLOYER_GATE_DISABLED=1. Lib: lib/employer-claims.mjs.
   const employerGateOn = process.env.EMPLOYER_GATE_DISABLED !== '1';
   if (employerGateOn) {
-    let allowedEmployers = null;
-    try { allowedEmployers = parseCvEmployers(readFileSync(join(ROOT, 'cv.md'), 'utf-8')); } catch { /* fail-closed below */ }
-    if (!allowedEmployers || allowedEmployers.size === 0) {
-      console.error(`  🔴 PARTIAL #${role.num} ${role.company}: employer gate could not derive an employer allowlist from cv.md — fail-closed, row halted. (Set EMPLOYER_GATE_DISABLED=1 to bypass.)`);
+    // Runtime allowlist via the lib's single fail-closed entry point (Qodo B8).
+    const allowlist = getCvEmployerAllowlist({ cvPath: join(ROOT, 'cv.md') });
+    if (!allowlist.ok) {
+      console.error(`  🔴 PARTIAL #${role.num} ${role.company}: employer gate could not derive an employer allowlist — ${allowlist.error} — fail-closed, row halted. (Set EMPLOYER_GATE_DISABLED=1 to bypass.)`);
       return 'PARTIAL';
     }
+    const allowedEmployers = allowlist.allowedEmployers;
     const employerViolations = [];
     for (const name of ['cover-letter.md', 'form-fields.md', 'one-pager.md']) {
       const p = join(dir, name);
@@ -2179,7 +2180,7 @@ async function buildPack(role) {
       try { unlinkSync(tailoredPdfPath); } catch {}
       execSync(
         `node ${JSON.stringify(join(ROOT, 'scripts', 'render-cv-typst.mjs'))} --input ${JSON.stringify(tailoredMdPath)} --output ${JSON.stringify(tailoredPdfPath)}`,
-        { cwd: ROOT, stdio: 'pipe' }
+        { cwd: ROOT, stdio: 'pipe', timeout: 180_000 }
       );
       cvWired = `rendered Typst from ${tailoredMdName}`;
     } catch (err) {
@@ -2216,7 +2217,7 @@ async function buildPack(role) {
   // Bug class: findings-exit-code-conflated-with-spawn-failure.
   const runGateScript = (cmd) => {
     try {
-      const stdout = execSync(cmd, { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] }).toString();
+      const stdout = execSync(cmd, { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'], timeout: 120_000 }).toString();
       return { stdout, stderr: '', exitCode: 0 };
     } catch (err) {
       return {

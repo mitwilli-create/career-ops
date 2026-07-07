@@ -2934,15 +2934,31 @@ function _computeLastBatchSummary(stateRows) {
   lastBatchRows.reverse();
 
   let lbCompleted = 0, lbFailed = 0, lbRunning = 0;
+  const lbFailedErrors = [];
   for (const r of lastBatchRows) {
     if (r.status === 'completed') lbCompleted++;
-    else if (r.status === 'failed') lbFailed++;
+    else if (r.status === 'failed') { lbFailed++; lbFailedErrors.push(r.error || ''); }
     else if (r.status === 'running') lbRunning++;
   }
   const lbStart = lastBatchRows.length ? lastBatchRows[0].started_at : null;
   const lbEnd   = lastBatchRows.length ? lastBatchRows[lastBatchRows.length - 1].completed_at || null : null;
   const lbDurationMs = (lbStart && lbEnd) ? Math.max(0, new Date(lbEnd) - new Date(lbStart)) : 0;
   const failedRate = (lbCompleted + lbFailed) > 0 ? (lbFailed / (lbCompleted + lbFailed)) : 0;
+  // Blind-review #17-deep (2026-07-07) — dominant failure cause among the
+  // failed rows (batch-state.tsv column 7), so the chip/modal can name WHY,
+  // not just counts. Keep in lockstep with scripts/build-dashboard.mjs
+  // loadLastBatchSummary (same field names).
+  const lbErrTally = new Map();
+  for (const raw of lbFailedErrors) {
+    const msg = String(raw || '').trim();
+    if (!msg || msg === '-') continue;
+    const key = msg.replace(/\s+/g, ' ').slice(0, 200);
+    lbErrTally.set(key, (lbErrTally.get(key) || 0) + 1);
+  }
+  let lbErrCause = null, lbErrCount = 0;
+  for (const [k, v] of lbErrTally) {
+    if (v > lbErrCount) { lbErrCause = k; lbErrCount = v; }
+  }
   return {
     completed:   lbCompleted,
     failed:      lbFailed,
@@ -2953,6 +2969,8 @@ function _computeLastBatchSummary(stateRows) {
     started_at:  lbStart,
     ended_at:    lbEnd,
     state:       lbRunning > 0 ? 'running' : (lbFailed > 0 ? 'partial-fail' : 'completed'),
+    error_cause:       lbErrCause,
+    error_cause_count: lbErrCount,
   };
 }
 
@@ -3504,8 +3522,61 @@ function _buildBatchStatusDetailedUncached() {
     }
   } catch (_) { /* state file unreadable — empty list */ }
 
+  // Blind-review #17-deep (2026-07-07) — most recent Anthropic Batches API
+  // batch that ended with errors, including the persisted cause fields
+  // (error_summary / error_samples, written by batch-runner-batches.mjs at
+  // results-processing time). Batches processed before 2026-07-07 have no
+  // cause fields — the modal renders "cause not recorded" for those.
+  let last_api_batch_error = null;
+  try {
+    const apiStateFp = join(ROOT, 'batch/batches-api-state.json');
+    if (existsSync(apiStateFp)) {
+      const apiState = JSON.parse(readFileSync(apiStateFp, 'utf-8'));
+      // Qodo 2026-07-07 (PR #402 review) — batches-api-state.json ships in two
+      // known shapes: { batches: [...] } and { batches: { id: {...} } }.
+      // Normalize like lib/batch-state-repair-sweep.mjs so the modal section
+      // doesn't silently vanish on the map shape.
+      const batchesField = apiState?.batches;
+      const rawBatches = Array.isArray(batchesField)
+        ? batchesField
+        : (batchesField && typeof batchesField === 'object' ? Object.values(batchesField) : []);
+      // Qodo round-2 (PR #402) — Object.values() carries no ordering guarantee,
+      // so sort by recency instead of scanning from the end. Entries without a
+      // parseable timestamp keep their original relative order as a tiebreaker
+      // (matches the old end-of-array scan for the array shape).
+      const batches = rawBatches
+        .map((b, idx) => ({ b, idx, ts: Date.parse(b?.submitted_at || b?.processed_at || '') || 0 }))
+        .sort((x, y) => (y.ts - x.ts) || (y.idx - x.idx))
+        .map((e) => e.b);
+      for (let i = 0; i < batches.length; i++) {
+        const b = batches[i];
+        if (!b || typeof b !== 'object') continue;
+        const erroredCount = (Number(b?.request_counts?.errored) || 0) + (Number(b?.request_counts?.expired) || 0);
+        const recordedErrors = Number(b?.errors) || 0;
+        if (erroredCount > 0 || recordedErrors > 0) {
+          last_api_batch_error = {
+            batch_id:      b.id || b.batch_id || null,
+            submitted_at:  b.submitted_at || null,
+            processed_at:  b.processed_at || null,
+            model:         b.model || null,
+            total:         Number(b.request_count) || 0,
+            errored:       Math.max(erroredCount, recordedErrors),
+            succeeded:     Number(b?.request_counts?.succeeded) || 0,
+            error_summary: b.error_summary || null,
+            error_samples: Array.isArray(b.error_samples) ? b.error_samples.slice(0, 5) : [],
+          };
+          break;
+        }
+      }
+    }
+  } catch (_) { /* state unreadable — omit section */ }
+
   return {
     ok: true,
+    // #17-deep — worker-level last-batch summary (batch-state.tsv grouping)
+    // incl. error_cause/error_cause_count so the modal can name the failure.
+    last_batch: live.last_batch || null,
+    last_api_batch_error,
     current_summary: {
       completed: live.completed,
       failed:    live.failed,
@@ -8545,8 +8616,18 @@ const server = createServer((req, res) => {
           currentValue, jdText: '', hmIntel,
           opts: refreshRequested ? { maxAgeMs: 0 } : {},
         });
-        const html = renderStrategyCard(result);
-        return json({ ok: true, rowId, key, html, strategy: result, refresh: refreshRequested });
+        // Blind-review #13 (2026-07-07) — live popout content bypassed the
+        // build-time sanitizer pass, so cached strategy text could reach the
+        // drawer with third-person candidate leaks ("his Google xGE role")
+        // and unexpanded "xGE". Same sanitizer the build uses; idempotent.
+        let html = renderStrategyCard(result);
+        let strategyOut = result;
+        try {
+          const { sanitizeDrawerText, sanitizeObjectStrings } = await import(join(ROOT, 'lib/drawer-content-sanitizer.mjs'));
+          html = sanitizeDrawerText(html);
+          strategyOut = sanitizeObjectStrings(result);
+        } catch (_) { /* sanitizer soft-fail — serve unsanitized rather than 500 */ }
+        return json({ ok: true, rowId, key, html, strategy: strategyOut, refresh: refreshRequested });
       } catch (err) {
         _d25Log(`[drill/percentage] ${err.message}`);
         return json({ ok: false, error: err.message }, 500);
@@ -9802,7 +9883,15 @@ async function generatePack(){
         const j = JSON.parse(readFileSync(p, 'utf-8'));
         const ageMs = j.generated_at ? Date.now() - Date.parse(j.generated_at) : null;
         const ageDays = ageMs != null ? Math.floor(ageMs / (1000 * 60 * 60 * 24)) : null;
-        return json({ ok: true, slug, age_days: ageDays, stale: ageDays != null && ageDays > 3, data: j });
+        // Blind-review #13 (2026-07-07) — cached popout JSON is served to the
+        // drawer verbatim, bypassing the build-time sanitizer. Run the same
+        // pass here (second-person voice, xGE expansion, residue cleanup).
+        let dataOut = j;
+        try {
+          const { sanitizeObjectStrings } = await import(join(ROOT, 'lib/drawer-content-sanitizer.mjs'));
+          dataOut = sanitizeObjectStrings(j);
+        } catch (_) { /* sanitizer soft-fail — serve unsanitized rather than 500 */ }
+        return json({ ok: true, slug, age_days: ageDays, stale: ageDays != null && ageDays > 3, data: dataOut });
       } catch (err) {
         return json({ ok: false, error: err.message }, 500);
       }
@@ -9867,7 +9956,15 @@ async function generatePack(){
         const j = JSON.parse(readFileSync(p, 'utf-8'));
         const ageMs = j.generated_at ? Date.now() - Date.parse(j.generated_at) : null;
         const ageDays = ageMs != null ? Math.floor(ageMs / (1000 * 60 * 60 * 24)) : null;
-        return json({ ok: true, slug, age_days: ageDays, stale: ageDays != null && ageDays > 3, data: j });
+        // Blind-review #13 (2026-07-07) — cached popout JSON is served to the
+        // drawer verbatim, bypassing the build-time sanitizer. Run the same
+        // pass here (second-person voice, xGE expansion, residue cleanup).
+        let dataOut = j;
+        try {
+          const { sanitizeObjectStrings } = await import(join(ROOT, 'lib/drawer-content-sanitizer.mjs'));
+          dataOut = sanitizeObjectStrings(j);
+        } catch (_) { /* sanitizer soft-fail — serve unsanitized rather than 500 */ }
+        return json({ ok: true, slug, age_days: ageDays, stale: ageDays != null && ageDays > 3, data: dataOut });
       } catch (err) {
         return json({ ok: false, error: err.message }, 500);
       }
@@ -9916,7 +10013,15 @@ async function generatePack(){
         const synthAt = j.synthesized_at || (j._meta && j._meta.source_as_of) || null;
         const ageMs = synthAt ? Date.now() - Date.parse(synthAt) : null;
         const ageDays = ageMs != null ? Math.floor(ageMs / (1000 * 60 * 60 * 24)) : null;
-        return json({ ok: true, slug, age_days: ageDays, stale: ageDays != null && ageDays > 3, data: j });
+        // Blind-review #13 (2026-07-07) — cached popout JSON is served to the
+        // drawer verbatim, bypassing the build-time sanitizer. Run the same
+        // pass here (second-person voice, xGE expansion, residue cleanup).
+        let dataOut = j;
+        try {
+          const { sanitizeObjectStrings } = await import(join(ROOT, 'lib/drawer-content-sanitizer.mjs'));
+          dataOut = sanitizeObjectStrings(j);
+        } catch (_) { /* sanitizer soft-fail — serve unsanitized rather than 500 */ }
+        return json({ ok: true, slug, age_days: ageDays, stale: ageDays != null && ageDays > 3, data: dataOut });
       } catch (err) {
         return json({ ok: false, error: err.message }, 500);
       }

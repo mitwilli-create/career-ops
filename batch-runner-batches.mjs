@@ -905,6 +905,15 @@ async function phaseProcess(apiKey) {
     const results = text.trim().split('\n').map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
 
     let written = 0, errors = 0;
+    // Blind-review #17-deep (2026-07-07) — persist the failure CAUSE, not just
+    // the count. Previously the per-result vendor error message was console-
+    // logged and discarded, so batches-api-state.json recorded `errors: 179`
+    // with no way to learn why (canonical incident: the 2026-05-28
+    // `temperature`-deprecation batches). error_samples (first 5) +
+    // error_summary (most common message) now land on the batch record and
+    // surface in the dashboard batch-status modal.
+    const errorSamples = [];
+    const errorTally = new Map();
 
     // ── Pipeline mark helper (2026-05-27) ────────────────────────────
     // Centralised so the SUCCESS path AND the terminally-errored/expired path
@@ -928,7 +937,13 @@ async function phaseProcess(apiKey) {
 
       if (result.result?.type !== 'succeeded') {
         const kind = result.result?.type ?? 'unknown';
-        console.log(`  ❌ ${result.custom_id}: ${kind} — ${result.result?.error?.error?.message ?? result.result?.error?.message ?? 'unknown'}`);
+        const errMsg = result.result?.error?.error?.message ?? result.result?.error?.message ?? 'unknown';
+        console.log(`  ❌ ${result.custom_id}: ${kind} — ${errMsg}`);
+        const errKey = `${kind}: ${String(errMsg).replace(/\s+/g, ' ').slice(0, 200)}`;
+        errorTally.set(errKey, (errorTally.get(errKey) || 0) + 1);
+        if (errorSamples.length < 5) {
+          errorSamples.push({ custom_id: result.custom_id, kind, message: String(errMsg).slice(0, 300), url: meta.url });
+        }
         // Terminal-error path: mark `[x]` so the URL doesn't get re-batched
         // forever. `canceled` is the only non-terminal type (user-initiated
         // cancel mid-flight); skip marking for it so a retry can re-run.
@@ -1080,6 +1095,16 @@ async function phaseProcess(apiKey) {
     batchRecord.processed_at = new Date().toISOString();
     batchRecord.written = written;
     batchRecord.errors  = errors;
+    // #17-deep — persist failure causes alongside the count (null-safe: only
+    // set when there were errors, so clean batches keep their old shape).
+    if (errors > 0) {
+      let topCause = null, topCount = 0;
+      for (const [k, v] of errorTally) {
+        if (v > topCount) { topCause = k; topCount = v; }
+      }
+      batchRecord.error_summary = topCause;
+      batchRecord.error_samples = errorSamples;
+    }
 
     console.log(`\n  Written: ${written} reports | Errors: ${errors}`);
     console.log(`  Run: node merge-tracker.mjs   to sync tracker`);

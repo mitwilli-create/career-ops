@@ -351,7 +351,7 @@ function loadLastBatchSummary() {
   // on started_at. Walk forward from latest start; rows within 15min of the
   // previous one belong to the same batch.
   const sorted = recent
-    .map(l => ({ cols: l.split('\t'), started: l.split('\t')[3], completed: l.split('\t')[4], status: (l.split('\t')[2] || '').trim() }))
+    .map(l => ({ cols: l.split('\t'), started: l.split('\t')[3], completed: l.split('\t')[4], status: (l.split('\t')[2] || '').trim(), error: (l.split('\t')[7] || '').trim() }))
     .filter(r => r.started)
     .sort((a, b) => (a.started || '').localeCompare(b.started || ''));
   let lastBatchRows = [];
@@ -367,9 +367,10 @@ function loadLastBatchSummary() {
     lastBatchRows.reverse();
   }
   let lbCompleted = 0, lbFailed = 0, lbRunning = 0;
+  const lbFailedErrors = [];
   for (const r of lastBatchRows) {
     if (r.status === 'completed') lbCompleted++;
-    else if (r.status === 'failed') lbFailed++;
+    else if (r.status === 'failed') { lbFailed++; lbFailedErrors.push(r.error); }
     else if (r.status === 'running') lbRunning++;
   }
   const lbStart = lastBatchRows.length ? lastBatchRows[0].started : null;
@@ -377,6 +378,9 @@ function loadLastBatchSummary() {
   const lbDurationMs = (lbStart && lbEnd) ? Math.max(0, new Date(lbEnd) - new Date(lbStart)) : 0;
   const lbTotal = lastBatchRows.length;
   const failedRate = (lbCompleted + lbFailed) > 0 ? (lbFailed / (lbCompleted + lbFailed)) : 0;
+  // Blind-review #17-deep (2026-07-07) — carry the dominant failure cause
+  // alongside the counts so the chip/panel can say WHY, not just how many.
+  const lbErrTally = tallyBatchErrorCause(lbFailedErrors);
   return {
     completed: lbCompleted,
     failed: lbFailed,
@@ -387,6 +391,8 @@ function loadLastBatchSummary() {
     started_at: lbStart,
     ended_at: lbEnd,
     state: lbRunning > 0 ? 'running' : (lbFailed > 0 ? 'partial-fail' : 'completed'),
+    error_cause: lbErrTally.cause,
+    error_cause_count: lbErrTally.count,
   };
 }
 
@@ -2525,6 +2531,28 @@ function getEnabledPortals() {
 // state ∈ {"running","completed","idle"}. The isIdle flag is true when no
 // running rows remain or the last update was >2h ago. Polled live by the
 // strip JS via /api/batch-live; this is just the build-time seed.
+// Blind-review #17-deep (2026-07-07) — most-common failure CAUSE among a set
+// of batch-state.tsv error strings. The chip/panel previously showed only
+// counts ("0/18 · 18 failed") even though every failed row carries the raw
+// error in column 7 — the viewer had no way to learn WHY without opening the
+// TSV. Returns { cause, count } or { cause: null, count: 0 }.
+function tallyBatchErrorCause(errorStrings) {
+  const tally = new Map();
+  for (const raw of errorStrings) {
+    const msg = String(raw || '').trim();
+    if (!msg || msg === '-') continue;
+    // Normalize trivial variance (trailing whitespace, worker ids) so the
+    // same vendor error groups together.
+    const key = msg.replace(/\s+/g, ' ').slice(0, 200);
+    tally.set(key, (tally.get(key) || 0) + 1);
+  }
+  let cause = null, count = 0;
+  for (const [k, v] of tally) {
+    if (v > count) { cause = k; count = v; }
+  }
+  return { cause, count };
+}
+
 function loadBatchSnapshot() {
   if (!existsSync(BATCH_STATE_PATH)) {
     return { state: 'idle', completed: 0, total: 0, running: 0, failed: 0, pct: 0, startedAtIso: null, isIdle: true };
@@ -2535,17 +2563,19 @@ function loadBatchSnapshot() {
   }
   let completed = 0, running = 0, failed = 0;
   let earliestStart = null;
+  const failedErrors = [];
   for (const l of lines) {
     const cols = l.split('\t');
     const status = (cols[2] || '').trim();
     const startedAt = cols[3] || '';
     if (status === 'completed') completed++;
     else if (status === 'running') running++;
-    else if (status === 'failed') failed++;
+    else if (status === 'failed') { failed++; failedErrors.push(cols[7] || ''); }
     if (status === 'running' && startedAt) {
       if (!earliestStart || startedAt < earliestStart) earliestStart = startedAt;
     }
   }
+  const errTally = tallyBatchErrorCause(failedErrors);
   // Total comes from batch-input.tsv if present; otherwise fall back to state
   // row count. Take the max of the two to handle the case where state has
   // older completed rows than the current input (input got rotated).
@@ -2575,6 +2605,9 @@ function loadBatchSnapshot() {
     startedAtIso: earliestStart ? new Date(earliestStart).toISOString() : null,
     mostRecentIso: mostRecentStart ? new Date(mostRecentStart).toISOString() : null,
     isIdle,
+    // #17-deep — most common failure cause among failed rows (null when clean).
+    error_cause: errTally.cause,
+    error_cause_count: errTally.count,
   };
 }
 
@@ -7338,6 +7371,26 @@ async function build() {
      openMobileSettingsSheet() which already exposes Search / Add role /
      Theme / Demo via the same bottom sheet used by the tab bar. */
   .toolbar-overflow-btn { display: none; font-size: 18px; line-height: 1; padding: 5px 12px; }
+  /* Blind-review #28 (2026-07-07) — 3-state theme control (Dark / Light /
+     Match OS), same segmented pattern as network-database.html so the two
+     surfaces share one preference mechanism (localStorage 'career-ops-theme'). */
+  .theme-toggle {
+    display: inline-flex; gap: 0; border: 1px solid var(--border);
+    border-radius: var(--radius-sm); overflow: hidden; flex-shrink: 0;
+  }
+  .theme-toggle .theme-opt {
+    padding: 5px 10px; font-size: 11.5px; font-weight: 500;
+    background: var(--surface); color: var(--text-3);
+    border: none; cursor: pointer; line-height: 1.2; font-family: inherit;
+  }
+  .theme-toggle .theme-opt + .theme-opt { border-left: 1px solid var(--border); }
+  .theme-toggle .theme-opt:hover { background: var(--surface-2); color: var(--text-2); }
+  .theme-toggle .theme-opt[aria-pressed="true"] {
+    background: var(--blue-bg); color: var(--blue-fg); font-weight: 600;
+  }
+  .theme-toggle .theme-opt:focus-visible {
+    outline: none; box-shadow: inset 0 0 0 2px var(--blue-fg);
+  }
   .cmdk-trigger { display: inline-flex; align-items: center; gap: 8px; padding-right: 6px; min-width: 220px; }
   .cmdk-trigger-label { color: var(--text-3); flex: 1; text-align: left; }
   .cmdk-trigger-kbd {
@@ -9403,6 +9456,23 @@ async function build() {
   .trend-card-sub { font-size: 10.5px; font-weight: 500; color: var(--text-4); }
   .trend-svg { width: 100%; height: auto; display: block; }
   .trend-svg-funnel { height: 36px; }
+  /* Blind-review #23 (2026-07-07) — axis labels so charts are readable
+     without hovering every bar/dot. Y gutter shows max (top) + min (bottom);
+     X strip shows first/last week-start dates of the 12-week window. */
+  .trend-axis-wrap { display: flex; gap: 6px; align-items: stretch; }
+  .trend-y-axis {
+    display: flex; flex-direction: column; justify-content: space-between;
+    font-size: 9.5px; color: var(--text-4); text-align: right;
+    min-width: 28px; padding: 1px 0 14px; flex-shrink: 0;
+    font-variant-numeric: tabular-nums; line-height: 1;
+  }
+  .trend-axis-main { flex: 1; min-width: 0; }
+  .trend-x-axis {
+    display: flex; justify-content: space-between;
+    font-size: 9.5px; color: var(--text-4); margin-top: 2px;
+    font-variant-numeric: tabular-nums; line-height: 1;
+  }
+  .trend-footnote { font-size: 10.5px; color: var(--text-4); margin-top: 6px; line-height: 1.45; }
   .trend-bar { fill: var(--blue-fg); transition: fill .15s; }
   .trend-bar:hover { fill: var(--blue-fg-dark); }
   .trend-line { stroke: var(--green-fg); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
@@ -11434,7 +11504,7 @@ async function build() {
     /* Live ticker now sits inside the mission-control strip (full row),
        so on mobile it doesn't need to collapse to a dot. The strip itself
        collapses via its own media query (see .mc-strip rules). */
-    #dark-toggle { min-height: 44px; min-width: 44px; }
+    .theme-toggle .theme-opt { min-height: 44px; min-width: 44px; }
     #toolbar-overflow-btn { min-height: 44px; min-width: 44px; padding: 10px 14px; font-size: 20px; }
     .rec-btn { min-height: 44px; padding: 12px 18px; display: inline-flex; align-items: center; }
     .filters input, .filters select { min-height: 44px; padding: 10px 12px; font-size: 14px; }
@@ -13973,7 +14043,15 @@ async function build() {
          settings-menu toggle without re-doing the styling. -->
 
     <button class="toolbar-btn toolbar-overflow-btn" onclick="openMobileSettingsSheet()" id="toolbar-overflow-btn" aria-label="More options">···</button>
-    <button class="toolbar-btn" onclick="toggleDark()" id="dark-toggle" aria-label="Toggle dark mode">☀︎ Light</button>
+    <!-- Blind-review #28 (2026-07-07) — replaced the single Light/Dark flip
+         button with the same 3-state Dark / Light / Match OS segmented
+         control the Network page uses. Both write localStorage
+         'career-ops-theme' so the preference follows across pages. -->
+    <div class="theme-toggle" role="group" aria-label="Color theme">
+      <button type="button" class="theme-opt" data-theme-opt="dark" aria-pressed="false" title="Always dark" onclick="setTheme('dark')">◐ Dark</button>
+      <button type="button" class="theme-opt" data-theme-opt="light" aria-pressed="false" title="Always light" onclick="setTheme('light')">☀︎ Light</button>
+      <button type="button" class="theme-opt" data-theme-opt="match-os" aria-pressed="false" title="Match OS preference" onclick="setTheme('match-os')">⏿ Match OS</button>
+    </div>
   </header>
 
   <!-- Mission-control hero strip — 2026-05-18: collapsed from 2 rows to a
@@ -14991,7 +15069,7 @@ async function build() {
     </h2>
     ${batchSnapshot && batchSnapshot.total > 0
       ? `<p style="color:var(--text-2);font-size:13px;margin:0 0 10px">
-          Last batch: <strong>${batchSnapshot.completed}</strong>/${batchSnapshot.total} completed (${batchSnapshot.pct}%)${batchSnapshot.running > 0 ? ` &middot; <strong style="color:var(--blue-fg)">${batchSnapshot.running} running</strong>` : ''}${batchSnapshot.failed > 0 ? ` &middot; <strong style="color:var(--red-fg)">${batchSnapshot.failed} failed</strong>` : ''} &middot; state: <code>${batchSnapshot.state}</code>.
+          Last batch: <strong>${batchSnapshot.completed}</strong>/${batchSnapshot.total} completed (${batchSnapshot.pct}%)${batchSnapshot.running > 0 ? ` &middot; <strong style="color:var(--blue-fg)">${batchSnapshot.running} running</strong>` : ''}${batchSnapshot.failed > 0 ? ` &middot; <strong style="color:var(--red-fg)">${batchSnapshot.failed} failed</strong>` : ''} &middot; state: <code>${batchSnapshot.state}</code>.${batchSnapshot.failed > 0 && batchSnapshot.error_cause ? `<br><span style="color:var(--red-fg)" title="${htmlEscape(batchSnapshot.error_cause)}">Most common failure cause (${batchSnapshot.error_cause_count}/${batchSnapshot.failed}): <code style="font-size:11.5px">${htmlEscape(String(batchSnapshot.error_cause).slice(0, 140))}</code></span> &mdash; open the batch status modal below for the per-item breakdown.` : ''}
           ${batchRuns > 1 ? ` <strong>${batchRuns}</strong> distinct batch runs in <code>batch/batch-state.tsv</code>.` : ''}
         </p>
         <button type="button"
@@ -15166,37 +15244,63 @@ async function build() {
           }
         }
       } catch (_) {}
-      const compTrajCard = compValsNonNull.length >= 2
-        ? `<div class="trend-card">
-            <h3 class="trend-card-title">Comp trajectory <span class="trend-card-sub">last 12w · score ≥ 3.5 · median base</span></h3>
-            <svg class="trend-svg comp-traj-svg" viewBox="0 0 ${CW} ${CH}" role="img" aria-label="Compensation trajectory last 12 weeks">
+      // Blind-review #23 (2026-07-07) — the comp line previously rendered with
+      // zero readable dollar values. Y gutter now carries the chart's actual
+      // min/max ($K), X strip the 12-week window dates. Wrapped via the same
+      // _axisWrap helper used by the two charts below (hoisted function refs
+      // aren't available here, so the card is assembled inside the return).
+      const compTrajCardInner = compValsNonNull.length >= 2
+        ? `<svg class="trend-svg comp-traj-svg" viewBox="0 0 ${CW} ${CH}" role="img" aria-label="Compensation trajectory last 12 weeks — y axis $${compMin}K to $${compMax}K median base">
               <line x1="${CPAD}" y1="${CH - CPAD}" x2="${CW - CPAD}" y2="${CH - CPAD}" class="comp-traj-axis"/>
               ${compTargetLine}
               <path d="${compLinePath}" class="comp-traj-line"/>
               ${compDots}
-            </svg>
-          </div>`
+            </svg>`
         : '';
 
+      // Blind-review #23 (2026-07-07) — visible axis labels. Y gutter carries
+      // the max (top) + min (bottom) of each chart's scale; the X strip under
+      // each SVG carries the first/last week-start dates of the 12-week window.
+      const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const _fmtWk = (label) => {
+        const m = String(label || '').match(/^(\d{2})-(\d{2})$/);
+        return m ? `${MONTH_ABBR[parseInt(m[1], 10) - 1] || m[1]} ${parseInt(m[2], 10)}` : String(label || '');
+      };
+      const firstWk = _fmtWk(trendWeeks[0].label);
+      const lastWk = _fmtWk(trendWeeks[trendWeeks.length - 1].label);
+      const _axisWrap = (svgHtml, yTop, yBot, xLeft, xRight) => `<div class="trend-axis-wrap">
+            <div class="trend-y-axis" aria-hidden="true"><span>${yTop}</span><span>${yBot}</span></div>
+            <div class="trend-axis-main">${svgHtml}
+              <div class="trend-x-axis" aria-hidden="true"><span title="Week starting ${xLeft}">${xLeft}</span><span title="Week starting ${xRight}">${xRight}</span></div>
+            </div>
+          </div>`;
       return `<div class="trends-grid">
         <div class="trend-card">
           <h3 class="trend-card-title">Apps / week <span class="trend-card-sub">last 12w · ${counts.reduce((a, b) => a + b, 0)} total</span></h3>
-          <svg class="trend-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Applications per week, last 12 weeks">${barsSvg}</svg>
+          ${_axisWrap(
+            `<svg class="trend-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Applications per week, last 12 weeks — y axis 0 to ${maxCount}, weeks ${firstWk} through ${lastWk}">${barsSvg}</svg>`,
+            String(maxCount), '0', firstWk, lastWk)}
         </div>
         <div class="trend-card">
           <h3 class="trend-card-title">Avg score / week <span class="trend-card-sub">last 12w · 0–5 scale</span></h3>
-          <svg class="trend-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Average score per week, last 12 weeks">
-            <line x1="${PAD}" y1="${yScore(4).toFixed(1)}" x2="${W - PAD}" y2="${yScore(4).toFixed(1)}" class="trend-axis"/>
+          ${_axisWrap(
+            `<svg class="trend-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Average score per week, last 12 weeks — y axis 0 to 5, weeks ${firstWk} through ${lastWk}">
+            <line x1="${PAD}" y1="${yScore(4).toFixed(1)}" x2="${W - PAD}" y2="${yScore(4).toFixed(1)}" class="trend-axis"><title>4.0 reference line — the apply-ready threshold</title></line>
             <path d="${linePath}" class="trend-line" fill="none"/>
             ${dots}
-          </svg>
+          </svg>`,
+            '5', '0', firstWk, lastWk)}
         </div>
         <div class="trend-card trend-card-wide">
           <h3 class="trend-card-title">Pipeline funnel <span class="trend-card-sub">${funnelTotal} tracked</span></h3>
           <svg class="trend-svg trend-svg-funnel" viewBox="0 0 ${FW} ${FH}" role="img" aria-label="Pipeline funnel by stage">${funnelSegs}</svg>
           <div class="trend-legend">${funnelLegend}</div>
+          <div class="trend-footnote">${funnelTotal} tracked = tracker rows currently at Evaluated, Applied, Interview, Offer, or Rejected — a subset of the ${apps.length} total evaluations (rows Discarded or otherwise out of play are not counted here).</div>
         </div>
-        ${compTrajCard}
+        ${compTrajCardInner ? `<div class="trend-card">
+            <h3 class="trend-card-title">Comp trajectory <span class="trend-card-sub">last 12w · score ≥ 3.5 · median base</span></h3>
+            ${_axisWrap(compTrajCardInner, `$${compMax}K`, `$${compMin}K`, firstWk, lastWk)}
+          </div>` : ''}
       </div>`;
     })()}
   </div>
@@ -15233,25 +15337,60 @@ function initPanelCollapse() {
 }
 document.addEventListener('DOMContentLoaded', initPanelCollapse);
 
-// ── Dark mode ───────────────────────────────────────────────────
-const DARK_KEY = 'career-ops-dark';
-function initDark() {
-  // Default = dark. Only switch to light if the user has explicitly chosen it.
-  // Mission-control / matrix vibe is the brand voice.
-  const saved = localStorage.getItem(DARK_KEY);
-  if (saved === 'light') applyDark(false);
-  else applyDark(true);
+// ── Theme (dark / light / match-os) ─────────────────────────────
+// Blind-review #28 (2026-07-07): the main dashboard previously had a single
+// Light/Dark flip while network-database.html had a 3-state Dark / Light /
+// Match OS control — two mechanisms for the same preference. Both surfaces
+// now persist 'career-ops-theme' (values: dark | light | match-os) so the
+// choice follows across pages. This page's palette is keyed off body.dark
+// (not the data-theme attribute the standalone pages use), so applyTheme
+// resolves match-os via prefers-color-scheme and toggles the class. The
+// pre-existing per-page key 'career-ops-dark' is read once as a migration
+// fallback. Default = dark (mission-control brand voice).
+const THEME_KEY = 'career-ops-theme';
+const LEGACY_DARK_KEY = 'career-ops-dark';
+const THEME_VALUES = ['dark', 'light', 'match-os'];
+const _osDarkMq = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
+function _savedTheme() {
+  let v = null;
+  try { v = localStorage.getItem(THEME_KEY); } catch (e) {}
+  if (THEME_VALUES.indexOf(v) !== -1) return v;
+  let legacy = null;
+  try { legacy = localStorage.getItem(LEGACY_DARK_KEY); } catch (e) {}
+  return legacy === 'light' ? 'light' : 'dark';
 }
-function applyDark(on) {
-  document.body.classList.toggle('dark', on);
-  const btn = document.getElementById('dark-toggle');
-  if (btn) btn.textContent = on ? '☀︎ Light' : '⏾ Dark';
+function _themeResolvesDark(theme) {
+  if (theme === 'light') return false;
+  if (theme === 'match-os') return _osDarkMq ? _osDarkMq.matches : true;
+  return true;
 }
+function applyTheme(theme) {
+  if (THEME_VALUES.indexOf(theme) === -1) theme = 'dark';
+  document.body.classList.toggle('dark', _themeResolvesDark(theme));
+  document.querySelectorAll('.theme-toggle .theme-opt').forEach((btn) => {
+    btn.setAttribute('aria-pressed', btn.getAttribute('data-theme-opt') === theme ? 'true' : 'false');
+  });
+}
+function setTheme(theme) {
+  if (THEME_VALUES.indexOf(theme) === -1) theme = 'dark';
+  try { localStorage.setItem(THEME_KEY, theme); } catch (e) {}
+  applyTheme(theme);
+}
+function initDark() { applyTheme(_savedTheme()); }
+// Match OS live-follow — re-resolve when the OS scheme flips mid-session.
+if (_osDarkMq && _osDarkMq.addEventListener) {
+  _osDarkMq.addEventListener('change', function () {
+    if (_savedTheme() === 'match-os') applyTheme('match-os');
+  });
+}
+// Legacy API — the mobile settings sheet + cmd-K action call toggleDark();
+// keep it as an explicit dark<->light flip (an OS-follow user who flips is
+// choosing an explicit override, matching the old behavior).
 function toggleDark() {
-  const on = !document.body.classList.contains('dark');
-  localStorage.setItem(DARK_KEY, on ? 'dark' : 'light');
-  applyDark(on);
+  setTheme(document.body.classList.contains('dark') ? 'light' : 'dark');
 }
+window.setTheme = setTheme;
+window.toggleDark = toggleDark;
 
 // ── Live scan ticker ────────────────────────────────────────────
 // Rolls through the most recent scan events to prove the dashboard
@@ -19196,6 +19335,16 @@ function _humanizeKey(k) {
   // stay readable — "HM" should pre-register through the explicit defs map).
   return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 }
+// Client-side tiered timeout constants (compliance rule: predefined tiers,
+// no ad-hoc numeric timeouts). Canonical definition — later blocks reuse the
+// window global. fast = quick local retries · medium = network operations ·
+// llm = LLM-synthesis fetches · slow = long jobs.
+window.CLIENT_TIMEOUT_TIERS = window.CLIENT_TIMEOUT_TIERS || { fast: 4000, medium: 30000, llm: 45000, slow: 120000 };
+// Role-tailored strategy fetch rides the llm tier; all loader/terminal copy
+// derives its seconds figure from this so the number can't drift across the
+// three surfaces that mention it.
+var DRILL_STRATEGY_TIMEOUT_MS = window.CLIENT_TIMEOUT_TIERS.llm;
+var DRILL_STRATEGY_TIMEOUT_S = Math.round(DRILL_STRATEGY_TIMEOUT_MS / 1000);
 _drillInRegister('percentage', function(id) {
   // id format: "{rowId}:{key}" — e.g. "42:alignment" or "42:interview" or "42:hmNoticing"
   // 2026-05-18 Wave D: when strategyData isn't baked, fall back to an
@@ -19345,13 +19494,22 @@ _drillInRegister('percentage', function(id) {
       var agentEndpoint = '/api/drill/percentage/' + encodeURIComponent(rowId) + '/' + encodeURIComponent(key);
       gapFallbackHtml = '<div style="margin:14px 0 0;padding:11px 13px;background:var(--surface-2);border:1px solid var(--border);border-radius:6px">'
         + '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-bottom:5px">No tailored synthesis cached for this row</div>'
-        + '<p style="margin:0 0 9px;font-size:12.5px;color:var(--text-2);line-height:1.5">The system reads ' + d.agentLabel + ' from your apply pack, hm-intel, and JD context for this position. None has been generated yet for this row + metric.</p>'
+        + '<p style="margin:0 0 9px;font-size:12.5px;color:var(--text-2);line-height:1.5">The system reads ' + d.agentLabel + ' from your apply pack, hiring-manager intel (hm-intel), and job-description (JD) context for this position. None has been generated yet for this row + metric.</p>'
         + '<button type="button" onclick="(function(btn){btn.textContent=\\'Generating…\\';btn.disabled=true;fetch(\\'' + agentEndpoint + '?refresh=1\\').then(function(r){return r.ok?r.json():null;}).then(function(data){var body=btn.closest(\\'[id=drill-in-body]\\')||document.getElementById(\\'drill-in-body\\');if(data&&data.ok&&data.html&&body){body.innerHTML=\\'<div class=strat-live>\\'+data.html+\\'</div>\\';}else{btn.textContent=\\'Generation queued — refresh in ~30s\\';btn.disabled=false;}}).catch(function(){btn.textContent=\\'Failed — try refresh\\';btn.disabled=false;});})(this)" style="padding:7px 14px;font-size:12.5px;background:var(--text);color:var(--bg,#06070d);border:1px solid var(--text);border-radius:5px;cursor:pointer;font-weight:600">Generate now</button>'
         + '<span style="margin-left:10px;font-size:11.5px;color:var(--text-3)">Runs the ' + d.agentLabel + ' agent against this row\\'s data. Live result swaps in here.</span>'
         + '</div>';
     }
+    // Blind-review #14 (2026-07-07) — when no tailored synthesis is cached
+    // (gapFallbackHtml non-empty), the headline percentage needs provenance:
+    // it comes from the deterministic scorer (score + archetype + comp bands
+    // + prior outcomes), NOT from role-specific research. Label it so the
+    // "where did 18% come from?" question answers itself.
+    var pctProvenance = (pct && gapFallbackHtml)
+      ? '<div style="font-size:11px;color:var(--text-3);margin:-4px 0 10px;line-height:1.45">' + pct + ' is a baseline estimate from the deterministic scorer (fit score + archetype + comp bands + prior outcomes at this company) — no role-tailored synthesis is cached yet. Generate it below to refine this number.</div>'
+      : '';
     cardHtml = '<div style="font-size:13px;line-height:1.55">'
-      + (pct ? '<div style="display:inline-block;background:var(--surface-2);padding:4px 12px;border-radius:999px;font-weight:700;color:var(--text);margin-bottom:10px">Current: ' + pct + '</div>' : '')
+      + (pct ? '<div style="display:inline-block;background:var(--surface-2);padding:4px 12px;border-radius:999px;font-weight:700;color:var(--text);margin-bottom:10px">Current: ' + pct + (gapFallbackHtml ? ' <span style="font-weight:500;font-size:11px;color:var(--text-3)">· baseline</span>' : '') + '</div>' : '')
+      + pctProvenance
       + '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-bottom:4px">What this number means</div>'
       + '<p style="margin:0 0 12px;color:var(--text-2)">' + d.definition + '</p>'
       + polishActionHtml
@@ -19376,33 +19534,62 @@ _drillInRegister('percentage', function(id) {
       if (!bodyEl) return;
       var refreshTag = document.createElement('div');
       refreshTag.style.cssText = 'font-size:10.5px;color:var(--text-4);margin-top:14px;padding-top:8px;border-top:1px dashed var(--border)';
-      refreshTag.textContent = 'Looking for role-specific advice…';
       bodyEl.appendChild(refreshTag);
-      fetch('/api/drill/percentage/' + encodeURIComponent(rowId) + '/' + encodeURIComponent(key), {
-        signal: AbortSignal.timeout(90000),
-      }).then(function (r) { return r.ok ? r.json() : null; })
-        .then(function (data) {
-          if (!data || !data.ok || !data.html) {
-            // 2026-05-20 — Mitchell explicitly flagged that surfacing CLI
-            // commands here defeats the purpose of the popout. Replace the
-            // "run intel-refresh" instruction with content-driven copy.
-            // The general definition rendered above remains visible; this
-            // footer just confirms the popout is showing what we have right
-            // now, without asking the user to take action.
-            refreshTag.textContent = 'Role-tailored strategy is queued — the next dashboard rebuild will replace this with your specific positioning angle, the proof points that map best to this role, and the negotiation floor.';
-            return;
+      // Blind-review #14 (2026-07-07) — the loader previously read "Looking
+      // for role-specific advice…" for up to 90s with no visible progress,
+      // which a first-time viewer reads as a spinner that never resolves.
+      // Now: elapsed-seconds counter after 6s, a hard timeout
+      // (DRILL_STRATEGY_TIMEOUT_MS, shared constant), explicit terminal copy
+      // on timeout/error, and a Retry button on both.
+      var TIMEOUT_MS = DRILL_STRATEGY_TIMEOUT_MS;
+      var loaderTick = null;
+      var stopTick = function () { if (loaderTick) { clearInterval(loaderTick); loaderTick = null; } };
+      var showRetry = function (message) {
+        refreshTag.textContent = message + ' ';
+        var retryBtn = document.createElement('button');
+        retryBtn.type = 'button';
+        retryBtn.textContent = 'Retry';
+        retryBtn.style.cssText = 'font-size:10.5px;padding:2px 10px;margin-left:6px;border:1px solid var(--border);border-radius:4px;background:var(--surface-2);color:var(--text-2);cursor:pointer';
+        retryBtn.onclick = function () { attempt(); };
+        refreshTag.appendChild(retryBtn);
+      };
+      var attempt = function () {
+        var startedAt = Date.now();
+        refreshTag.textContent = 'Looking for role-specific advice…';
+        stopTick();
+        loaderTick = setInterval(function () {
+          if (!refreshTag.isConnected) { stopTick(); return; }
+          var elapsed = Math.round((Date.now() - startedAt) / 1000);
+          if (elapsed >= 6) {
+            refreshTag.textContent = 'Looking for role-specific advice… ' + elapsed + 's elapsed (typical 5-30s; gives up at ' + DRILL_STRATEGY_TIMEOUT_S + 's)';
           }
-          bodyEl.innerHTML = '<div class="strat-live">' + data.html + '</div>'
-            + '<div style="font-size:10.5px;color:var(--text-4);margin-top:14px;padding-top:8px;border-top:1px dashed var(--border)">Tailored to this role + company by lib/strategy-ceiling.mjs. Refreshed live.</div>';
-        })
-        .catch(function (err) {
-          // BRAVO 2026-05-19 (content sweep): the prior copy used a ↻ glyph
-          // and unspecific "live refresh skipped" — read like a debug log.
-          // Be explicit about what failed and what's still useful.
-          refreshTag.textContent = err.name === 'TimeoutError'
-            ? 'Still computing your role-tailored strategy (the council pass can take ~60-90s). Reopen this popout in a moment to see it; the summary above applies meanwhile.'
-            : 'Strategy compute is offline — the general definition above is what I have right now.';
-        });
+        }, 1000);
+        fetch('/api/drill/percentage/' + encodeURIComponent(rowId) + '/' + encodeURIComponent(key), {
+          signal: AbortSignal.timeout(TIMEOUT_MS),
+        }).then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (data) {
+            stopTick();
+            if (!data || !data.ok || !data.html) {
+              // 2026-05-20 — Mitchell explicitly flagged that surfacing CLI
+              // commands here defeats the purpose of the popout. The general
+              // definition rendered above remains visible; this footer just
+              // confirms the popout is showing what we have right now.
+              refreshTag.textContent = 'Role-tailored strategy is queued — the next dashboard rebuild will replace this with your specific positioning angle, the proof points that map best to this role, and the negotiation floor.';
+              return;
+            }
+            bodyEl.innerHTML = '<div class="strat-live">' + data.html + '</div>'
+              + '<div style="font-size:10.5px;color:var(--text-4);margin-top:14px;padding-top:8px;border-top:1px dashed var(--border)">Tailored to this role + company by lib/strategy-ceiling.mjs. Refreshed live.</div>';
+          })
+          .catch(function (err) {
+            stopTick();
+            if (err && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+              showRetry('Timed out after ' + DRILL_STRATEGY_TIMEOUT_S + 's — the role-tailored strategy pass is still computing server-side. The summary above applies meanwhile.');
+            } else {
+              showRetry('Strategy compute is unreachable — the general definition above is what I have right now.');
+            }
+          });
+      };
+      attempt();
     },
   };
 });
@@ -27637,6 +27824,20 @@ function _bsRenderBody(data, changed) {
           '<span title="Temperature setting on batch evals (session notes 2026-05-08)">Temp: <strong>' + _bsEsc(cs.temperature) + '</strong></span>' +
           '<span title="Total items in batch-input.tsv">Total: <strong>' + total + '</strong></span>' +
         '</div>' +
+        // Blind-review #17-deep (2026-07-07) — when the last batch had
+        // failures, name the dominant CAUSE right next to the counts
+        // (plain-language translation + raw string on hover) instead of
+        // making the viewer hunt through logs.
+        (function () {
+          var lb = data.last_batch;
+          if (!lb || !lb.failed || !lb.error_cause) return '';
+          var friendly = (typeof _bsTranslateError === 'function') ? _bsTranslateError(lb.error_cause) : lb.error_cause;
+          return '<div class="batch-status-failcause" style="margin-top:8px;padding:8px 10px;background:var(--red-bg,rgba(220,38,38,0.08));border:1px solid var(--red-border,rgba(220,38,38,0.35));border-radius:6px;font-size:12px;line-height:1.5" title="' + _bsEsc(lb.error_cause) + '">' +
+            '<strong style="color:var(--red-fg,#dc2626)">Why the last batch failed</strong> (' + lb.error_cause_count + ' of ' + lb.failed + ' failures' + (lb.ended_at ? ' · ' + _bsEsc(_bsFmtTimestamp(lb.ended_at)) : '') + '): ' +
+            _bsEsc(friendly) +
+            '<div style="margin-top:4px;font-size:10.5px;color:var(--text-4)">Raw: <code>' + _bsEsc(String(lb.error_cause).slice(0, 160)) + '</code></div>' +
+          '</div>';
+        })() +
       '</div>' +
     '</div>';
 
@@ -27730,6 +27931,34 @@ function _bsRenderBody(data, changed) {
           '<summary>Last ' + fails.length + ' batch-related error(s) from data/errors.log — click to expand</summary>' +
           items +
         '</details>' +
+      '</div>';
+  }
+
+  // Blind-review #17-deep (2026-07-07) — Section D2: vendor-level errors from
+  // the Anthropic Batches API (batch/batches-api-state.json). error_summary /
+  // error_samples are persisted by batch-runner-batches.mjs at results-
+  // processing time; batches processed before 2026-07-07 carry counts only,
+  // so those render an honest "cause not recorded" line. Recency-gated to 7
+  // days so a weeks-old vendor incident doesn't masquerade as current.
+  var sectionD2 = '';
+  var apiErr = data.last_api_batch_error;
+  var apiErrTs = apiErr ? Date.parse(apiErr.processed_at || apiErr.submitted_at || '') : NaN;
+  if (apiErr && apiErr.errored > 0 && isFinite(apiErrTs) && (Date.now() - apiErrTs) < 7 * 86400000) {
+    var apiCause = apiErr.error_summary
+      ? ((typeof _bsTranslateError === 'function') ? _bsTranslateError(apiErr.error_summary) : apiErr.error_summary)
+      : 'Cause not recorded — this batch was processed before per-request causes were persisted (2026-07-07). Causes are captured going forward.';
+    var sampleRows = (apiErr.error_samples || []).map(function (s) {
+      return '<div style="font-size:11px;color:var(--text-3);margin-top:3px"><code>' + _bsEsc(s.custom_id || '') + '</code> — ' + _bsEsc(s.kind || '') + ': ' + _bsEsc(s.message || '') + '</div>';
+    }).join('');
+    sectionD2 =
+      '<div class="batch-status-section">' +
+        '<h4 class="batch-status-section-title">Last Anthropic API batch with errors</h4>' +
+        '<div style="font-size:12px;line-height:1.5">' +
+          '<div><strong>' + apiErr.errored + '</strong> of ' + (apiErr.total || '?') + ' requests errored · batch <code>' + _bsEsc(apiErr.batch_id || '?') + '</code> · ' + _bsEsc(_bsFmtTimestamp(apiErr.processed_at || apiErr.submitted_at)) + (apiErr.model ? ' · ' + _bsEsc(apiErr.model) : '') + '</div>' +
+          '<div style="margin-top:4px" title="' + _bsEsc(apiErr.error_summary || '') + '">Cause: ' + _bsEsc(apiCause) + '</div>' +
+          (apiErr.error_summary && apiErr.error_summary !== apiCause ? '<div style="margin-top:3px;font-size:10.5px;color:var(--text-4)">Raw: <code>' + _bsEsc(String(apiErr.error_summary).slice(0, 160)) + '</code></div>' : '') +
+          sampleRows +
+        '</div>' +
       '</div>';
   }
 
@@ -27949,7 +28178,7 @@ function _bsRenderBody(data, changed) {
       '</div>';
   }
 
-  body.innerHTML = sectionP + sectionR + sectionH + sectionPaC + sectionA + sectionB + sectionC + sectionD;
+  body.innerHTML = sectionP + sectionR + sectionH + sectionPaC + sectionA + sectionB + sectionC + sectionD + sectionD2;
 
   // Wire copy-path buttons inside the handoff section (delegated handler).
   if (sectionH) {
@@ -30333,7 +30562,19 @@ function _renderPipelineActivity(data) {
     } else {
       lbLabel = 'Last batch: ' + lb.completed + '/' + lb.total + ' · ' + lb.failed + ' failed · ' + durLabel;
     }
-    var lbTip = 'Most recent bulk-evaluation run · started ' + (lb.started_at || 'unknown') + (lb.ended_at ? ' · ended ' + lb.ended_at : ' · still running') + (lb.failed > 0 ? ' · click for the per-item breakdown and failure causes' : ' · click for breakdown');
+    // Blind-review #17-deep (2026-07-07) — when the run had failures, name
+    // the dominant cause on the chip itself (translated, truncated) instead
+    // of counts-only. Full raw cause rides in the tooltip.
+    var lbCauseShort = '';
+    if (lb.failed > 0 && lb.error_cause) {
+      var lbFriendly = (typeof window._bsTranslateError === 'function') ? window._bsTranslateError(lb.error_cause) : String(lb.error_cause);
+      lbCauseShort = String(lbFriendly).replace(/\s+/g, ' ').trim();
+      if (lbCauseShort.length > 52) lbCauseShort = lbCauseShort.slice(0, 52).replace(/\s+\S*$/, '') + '…';
+      if (lbCauseShort) lbLabel += ' · ' + lbCauseShort;
+    }
+    var lbTip = 'Most recent bulk-evaluation run · started ' + (lb.started_at || 'unknown') + (lb.ended_at ? ' · ended ' + lb.ended_at : ' · still running')
+      + (lb.failed > 0 && lb.error_cause ? ' · most common failure (' + (lb.error_cause_count || lb.failed) + '/' + lb.failed + '): ' + lb.error_cause : '')
+      + (lb.failed > 0 ? ' · click for the per-item breakdown and failure causes' : ' · click for breakdown');
     html += '<button type="button" class="pa-chip pa-chip-button ' + lbCls + '" title="' + _esc(lbTip) + '" onclick="if(window.openBatchStatusModal)window.openBatchStatusModal();else if(window.location)window.location.hash=\\'#batch-status\\'">' + _esc(lbLabel) + '</button>';
   } else {
     html += _chip('pa-chip-muted', 'Last batch: —', 'batch/batch-state.tsv empty — no batches yet today');
@@ -35577,7 +35818,7 @@ window._contactsLoaded = false;
 // no ad-hoc numeric timeouts). New timeout-sensitive client operations should
 // pick a tier from here instead of introducing literals.
 // fast = quick local retries · medium = network operations · slow = long jobs.
-window.CLIENT_TIMEOUT_TIERS = window.CLIENT_TIMEOUT_TIERS || { fast: 4000, medium: 30000, slow: 120000 };
+window.CLIENT_TIMEOUT_TIERS = window.CLIENT_TIMEOUT_TIERS || { fast: 4000, medium: 30000, llm: 45000, slow: 120000 };
 function _fetchContacts(attempt) {
   return fetch('/data/contacts.json', { cache: 'no-cache' })
     .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
@@ -36415,15 +36656,25 @@ function openMobileSettingsSheet(btn) {
   const bodyEl = document.getElementById('mobile-sheet-body');
   const bd = document.getElementById('mobile-sheet-backdrop');
   if (!titleEl || !bodyEl || !bd) return;
-  const isDark = document.body.classList.contains('dark');
   let demoOn = false;
   try { demoOn = localStorage.getItem('careerOps.demoMode') === '1'; } catch (e) {}
+  // Blind-review #28 (2026-07-07) — the sheet mirrors the toolbar's 3-state
+  // theme control (Dark / Light / Match OS) instead of a 2-state flip.
+  const curTheme = (typeof _savedTheme === 'function') ? _savedTheme() : 'dark';
+  const themeBtn = (value, label) => (
+    '<button type="button" class="toolbar-btn" style="min-height:48px;flex:1;padding:12px 8px' +
+    (curTheme === value ? ';background:var(--blue-bg);color:var(--blue-fg);font-weight:600' : '') +
+    '" aria-pressed="' + (curTheme === value ? 'true' : 'false') +
+    '" onclick="setTheme(\\'' + value + '\\');openMobileSettingsSheet()">' + label + '</button>'
+  );
   titleEl.textContent = 'Settings';
   bodyEl.innerHTML = (
     '<div style="display:grid;gap:10px">' +
-      '<button type="button" class="toolbar-btn" style="min-height:48px;width:100%;text-align:left;padding:12px 14px" onclick="toggleDark();openMobileSettingsSheet()">' +
-        (isDark ? '☀︎  Switch to light mode' : '⏾  Switch to dark mode') +
-      '</button>' +
+      '<div role="group" aria-label="Color theme" style="display:flex;gap:8px">' +
+        themeBtn('dark', '◐ Dark') +
+        themeBtn('light', '☀︎ Light') +
+        themeBtn('match-os', '⏿ Match OS') +
+      '</div>' +
       '<button type="button" class="toolbar-btn" style="min-height:48px;width:100%;text-align:left;padding:12px 14px" onclick="closeMobileSheet();openCmdK()">' +
         '⌕  Open command palette' +
       '</button>' +

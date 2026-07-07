@@ -39,6 +39,28 @@ function run(cmd, args = [], opts = {}) {
   }
 }
 
+// Like run(), but preserves the child's exit code so callers can distinguish
+// "audit found findings" (deliberate non-zero, e.g. dedup-tracker --check
+// exits 2 on dupes) from "crashed". run()'s null-on-any-error shape conflates
+// the two — the findings-exit-code-conflated-with-spawn-failure bug class.
+function runStatus(cmd, args = [], opts = {}) {
+  try {
+    const out = execFileSync(cmd, args, { cwd: ROOT, encoding: 'utf-8', timeout: 30000, ...opts });
+    return { status: 0, out: (out || '').trim() };
+  } catch (e) {
+    // e.status is undefined/null when the process failed to spawn or died on a signal
+    const status = typeof e.status === 'number' ? e.status : null;
+    // Keep stderr — with piped stdio the diagnostics land there, and the
+    // failure reporters elsewhere in this file already concatenate both
+    // streams. Spawn/signal failures have no streams, so carry e.message.
+    const out = [e.stdout, e.stderr, status === null ? e.message : '']
+      .map(s => (s || '').toString().trim())
+      .filter(Boolean)
+      .join('\n');
+    return { status, out };
+  }
+}
+
 function fileExists(path) { return existsSync(join(ROOT, path)); }
 function readFile(path) { return readFileSync(join(ROOT, path), 'utf-8'); }
 
@@ -62,23 +84,36 @@ for (const f of mjsFiles) {
 
 console.log('\n2. Script execution (graceful on empty data)');
 
+// Tracker-mutating scripts run AUDIT-ONLY here. The test suite must never
+// rewrite data/applications.md as a side effect. 2026-07-06 incident: the
+// bare `dedup-tracker.mjs` entry (legacy --delete default) deleted 16 live
+// tracker rows — including the #2058 DUPE-of-#2194 tombstone — during a
+// routine `node test-all.mjs` run. Mirrors the PR #311 decision that moved
+// post-batch-complete.sh from delete to --check. Intentional dedupe cleanup
+// belongs in an operator-invoked `node dedup-tracker.mjs --mark` (tombstones
+// with a DUPE-of-#N note), never inside a test run.
 const scripts = [
-  { name: 'cv-sync-check.mjs', expectExit: 1, allowFail: true }, // fails without cv.md (normal in repo)
-  { name: 'verify-pipeline.mjs', expectExit: 0 },
-  { name: 'normalize-statuses.mjs', expectExit: 0 },
-  { name: 'dedup-tracker.mjs', expectExit: 0 },
-  { name: 'merge-tracker.mjs', expectExit: 0 },
-  { name: 'update-system.mjs check', expectExit: 0 },
+  { name: 'cv-sync-check.mjs', allowFailExits: [1] }, // exits 1 without cv.md (normal in repo); any other exit is a real crash
+  { name: 'verify-pipeline.mjs' },
+  { name: 'normalize-statuses.mjs --dry-run' },
+  { name: 'dedup-tracker.mjs --check', warnExits: { 2: 'duplicate rows detected (audit-only, nothing changed) — review with `node dedup-tracker.mjs --check`, clean up with `--mark`' } },
+  { name: 'merge-tracker.mjs --dry-run' },
+  { name: 'update-system.mjs check' },
 ];
 
-for (const { name, allowFail } of scripts) {
-  const result = run('node', name.split(' '), { stdio: ['pipe', 'pipe', 'pipe'] });
-  if (result !== null) {
+for (const { name, allowFailExits, warnExits } of scripts) {
+  const res = runStatus('node', name.split(' '), { stdio: ['pipe', 'pipe', 'pipe'] });
+  if (res.status === 0) {
     pass(`${name} runs OK`);
-  } else if (allowFail) {
-    warn(`${name} exited with error (expected without user data)`);
+  } else if (warnExits && res.status !== null && warnExits[res.status]) {
+    warn(`${name}: ${warnExits[res.status]}`);
+  } else if (allowFailExits && res.status !== null && allowFailExits.includes(res.status)) {
+    warn(`${name} exited ${res.status} (expected without user data)`);
   } else {
-    fail(`${name} crashed`);
+    // status null = spawn failure or signal death — never "expected", even
+    // for allow-fail scripts. Surface the tail of the child's output.
+    const tail = res.out ? `: ${res.out.split('\n').slice(-3).join(' | ')}` : '';
+    fail(`${name} crashed (exit ${res.status === null ? 'signal/spawn-failure' : res.status})${tail}`);
   }
 }
 

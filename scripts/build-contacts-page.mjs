@@ -1360,6 +1360,12 @@ const mainHTML = `
     <button type="button" class="filter-chip" id="clear-filters" data-clear="1" style="margin-left:auto" title="Clear all filters">✕ Clear</button>
   </div>
 
+  <!-- blind-review 2026-07-07 #27 — persistent legend so warm / tiers / w/✉
+       decode without hovering each chip. -->
+  <div class="meta-line" role="note" style="opacity:0.85">
+    Legend: <strong>warm</strong> = intro-path strength 0–5 (relationship recency + overlap; ≥3 = strong) · <strong>w/✉</strong> = verified professional email · <strong>Tier 1/2/3</strong> = enrichment depth (stub → has email → fully enriched) · <strong>1st-deg</strong> = direct LinkedIn connection · company chips read "<em>connections · with-email</em>"
+  </div>
+
   <div class="meta-line" id="result-meta" aria-live="polite"></div>
 
   <div class="grid" id="grid" data-render-state="skeleton">

@@ -3898,7 +3898,7 @@ function renderRow(r, idx) {
   <td class="company-cell" title="${htmlEscape(r.company)}">${(() => { const careersHref = companyCareersUrl(r.company); return careersHref
     ? `<a href="${htmlEscape(careersHref)}" target="_blank" rel="noopener" class="company-link" onclick="event.stopPropagation()" title="Open ${htmlEscape(r.company)} careers page" data-drill="company:${htmlEscape(companySlug)}"><strong>${htmlEscape(r.company)}</strong></a>`
     : `<strong class="company-link company-link-static" data-drill="company:${htmlEscape(companySlug)}" title="${htmlEscape(r.company)} careers URL not mapped — use the apply link in the action cell to view the role JD">${htmlEscape(r.company)}</strong>`; })()}${archetype ? `<span class="tier-tag" tabindex="0" role="button" data-tooltip="${htmlEscape(tierTooltip(archetype))}" aria-label="Tier ${htmlEscape(archetype)}: ${htmlEscape(tierTooltip(archetype))}" onclick="event.stopPropagation();openTierLegend('${htmlEscape(archetype)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openTierLegend('${htmlEscape(archetype)}')}">${htmlEscape(archetype)}</span>` : ''}</td>
-  <td class="role-cell" title="${htmlEscape(r.role)}">${url ? `<a href="${htmlEscape(url)}" target="_blank" rel="noopener" class="role-link" onclick="event.stopPropagation()" title="${htmlEscape(r.role)} — open original job posting">${htmlEscape(r.role)}</a>` : htmlEscape(r.role)}${cardGapChips}</td>
+  <td class="role-cell" title="${htmlEscape(r.role)}">${url ? `<a href="${htmlEscape(url)}" target="_blank" rel="noopener" class="role-link" onclick="event.stopPropagation()" title="${htmlEscape(r.role)} — opens the original job posting in a new tab (click anywhere else on the row for the in-page detail drawer)">${htmlEscape(r.role)}<span class="role-link-ext" aria-hidden="true">&nbsp;↗</span></a>` : htmlEscape(r.role)}${cardGapChips}</td>
   <td class="status-cell"><span class="badge status-pill ${statusBadgeClass(r.status)} drill-trigger" data-status="${statusKey(r.status)}" data-num="${r.num}" data-drill="status:${htmlEscape(statusKey(r.status))}" role="button" tabindex="0" onclick="openStatusPopover(this);event.stopPropagation()" onkeydown="if(event.key==='Enter'||event.key===' '){openStatusPopover(this);event.preventDefault();event.stopPropagation()}" title="Click to change status">${htmlEscape(r.status)}</span></td>
   <td class="equity-cell">${equityCell}</td>
   <td class="location-cell">${locationCell}</td>
@@ -5496,7 +5496,7 @@ async function build() {
     // shifts, rejection cooldowns may have triggered since. Surface a
     // re-verify nudge instead. 14-20d: keep the original framing.
     const reasonText = age >= 21
-      ? `Evaluated ${age}d ago — re-verify, then apply`
+      ? `Evaluated ${age}d ago — re-verify via the Verify action in the row drawer, then apply`
       : `Evaluated ${age}d ago — ready to apply`;
     topOfPipeItems.push({
       num: r.num,
@@ -5684,7 +5684,7 @@ async function build() {
   let _anIdx = 0;
   const _anReadyHtml = _anReady.map(r => renderRow(r, `apply-${_anIdx++}`)).join('\n');
   const _anPendingDivider = _anPending.length
-    ? `<tr class="apply-now-enriching-divider"><td colspan="20" style="padding:10px 14px;background:rgba(210,153,34,0.08);border-top:2px solid rgba(210,153,34,0.35);border-bottom:1px solid rgba(210,153,34,0.2);font-size:12px;color:#d29922;font-weight:600"><span style="display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap;line-height:1.5">⏳ ${_anPending.length} not yet apply-ready — missing a tailored CV and/or hiring-manager intel. <button type="button" onclick="window._enrichPendingApplyNow(event)" title="Generate the tailored apply-pack (CV + cover letter + form fields) for the top pending roles" style="background:#d29922;color:#161616;border:none;border-radius:6px;padding:4px 11px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">Create materials →</button> Held out of “ready to apply” until each pack is built — or discard rows you don't want.</span></td></tr>`
+    ? `<tr class="apply-now-enriching-divider"><td colspan="20" style="padding:10px 14px;background:rgba(210,153,34,0.08);border-top:2px solid rgba(210,153,34,0.35);border-bottom:1px solid rgba(210,153,34,0.2);font-size:12px;color:#d29922;font-weight:600"><span style="display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap;line-height:1.5">⏳ ${_anPending.length} not yet apply-ready — missing a tailored CV and/or hiring-manager research.<button type="button" onclick="window._enrichPendingApplyNow(event)" title="Generate the tailored apply-pack (CV + cover letter + form fields) for the top pending roles" style="background:#d29922;color:#161616;border:none;border-radius:6px;padding:4px 11px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">Create materials →</button> Held out of “ready to apply” until each pack is built — or discard rows you don't want.</span></td></tr>`
     : '';
   const _anPendingHtml = _anPending.map(r => renderRow(r, `apply-${_anIdx++}`)).join('\n');
   const applyNowRows = [_anReadyHtml, _anPendingDivider, _anPendingHtml].filter(Boolean).join('\n');
@@ -8972,6 +8972,10 @@ async function build() {
     font-feature-settings: "tnum" 1;
   }
   .role-cell { color: var(--text); font-weight: 500; }
+  /* External-link affordance on role titles — the title opens the posting in
+     a new tab while every neighboring cell opens the in-page drawer; without
+     a marker the two identical-looking clicks diverge silently (blind-review #7). */
+  .role-link-ext { font-size: 10px; opacity: 0.55; }
   /* Role + company become primary links — strong visual affordance, no decoration
      until hover so the table stays scannable. */
   a.role-link, a.company-link {
@@ -13781,7 +13785,7 @@ async function build() {
            drawer. Count badge = rows that need polish (never/needs/rejected). -->
       <button type="button" class="pipeline-btn pipeline-btn-polish"
               onclick="(window.openPolishPickerModal||function(){})()"
-              title="Pick a row from the apply-now queue to polish without opening its drawer">
+              title="AI editing pass on generated application materials. The count is apply-now roles whose materials have never been polished or have gone stale. Opens a picker — nothing runs until you choose a row.">
         <span class="pipeline-btn-icon" aria-hidden="true">✨</span>
         <span class="pipeline-btn-label">Polish materials</span>
         <span class="pipeline-btn-count" id="pipeline-btn-polish-count">${polishNeededCount}</span>
@@ -13810,9 +13814,9 @@ async function build() {
          Mouse onclick still fires; keyboard uses the inner button. -->
     <div id="sidebar-readiness" class="sidebar-readiness"
          onclick="window.drillIn('readiness','',event)">
-      <div class="sidebar-readiness-header">
+      <div class="sidebar-readiness-header" title="Product-manager credibility score, 0–100, from the readiness rubric (portfolio evidence, PM signals, interview assets). Arrow = trend since last computed. Click for the full breakdown.">
         <span class="sidebar-readiness-title">PM Readiness</span>
-        <span class="sidebar-readiness-score">${tpgmChipScore}</span>
+        <span class="sidebar-readiness-score">${tpgmChipScore}<span class="sidebar-readiness-scale">/100</span></span>
         <span class="sidebar-readiness-velocity">${tpgmChipArrow}</span>
       </div>
       <div class="sidebar-readiness-band">${htmlEscape(tpgmChipBand)}</div>
@@ -13990,14 +13994,14 @@ async function build() {
         <span class="mc-batch-dot" aria-hidden="true"></span>
         <span class="mc-batch-text" id="mc-batch-text">No batch running</span>
       </div>
-      <div class="mc-health" id="mc-health" data-status="healthy" aria-label="System health — click for full detail" title="Click for launchd jobs · tunnel · server · errors" role="button" tabindex="0" onclick="openSystemHealthModal()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSystemHealthModal()}">
+      <div class="mc-health" id="mc-health" data-status="healthy" aria-label="System health — click for full detail" title="Scheduled background tasks (launchd) that keep this dashboard fed — scanners, batch runs, tunnel, server. The count is tasks currently running; click for the full list with per-task status." role="button" tabindex="0" onclick="openSystemHealthModal()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSystemHealthModal()}">
         <span class="mc-health-dot" aria-hidden="true"></span>
         <span class="mc-health-text" id="mc-health-text">all healthy</span>
       </div>
       <!-- Pre-apply daily spend chip — Worker A deferred-UI ship 2026-05-25.
            Reads /api/pre-apply-spend on dashboard load + 30s timer.
            data-state drives styling (neutral / soft-warn / amber). -->
-      <div class="mc-spend" id="mc-spend" role="status" aria-live="polite" data-state="neutral" aria-label="Pre-apply spend today" title="Loading pre-apply spend">
+      <div class="mc-spend" id="mc-spend" role="status" aria-live="polite" data-state="neutral" aria-label="Pre-apply spend today" title="AI spend today on pre-apply readiness checks (the paid checks offered in each role drawer). Resets daily.">
         <span class="mc-spend-dot" aria-hidden="true"></span>
         <span class="mc-spend-text" id="mc-spend-text">Pre-apply: —</span>
       </div>
@@ -14009,9 +14013,9 @@ async function build() {
       <div class="mc-strip-row mc-strip-row-bottom">
       <span class="mc-strip-group-label">Tracked</span>
       <div class="mc-strip-group">
-        <button type="button" class="mc-sys-chip" onclick="toggleStatPanel('companies')" title="Click to see all tracked companies" aria-label="${portals.tracked} companies tracked">${portals.tracked} companies</button>
-        <button type="button" class="mc-sys-chip" id="mc-scanned-chip" onclick="toggleStatPanel('scanned')" title="Click to see scan activity" aria-label="${scanTotal} URLs scanned">${scanTotal} scanned</button>
-        <button type="button" class="mc-sys-chip" id="mc-batches-chip" onclick="toggleStatPanel('batches')" title="Click to see batch run history" aria-label="${batchRuns} batches run">${batchRuns} batches</button>
+        <button type="button" class="mc-sys-chip" onclick="toggleStatPanel('companies')" title="Companies whose job boards the scanner watches. Click for the list." aria-label="${portals.tracked} companies tracked">${portals.tracked} companies</button>
+        <button type="button" class="mc-sys-chip" id="mc-scanned-chip" onclick="toggleStatPanel('scanned')" title="Job-posting URLs the portal scanner has seen all-time (before de-dup and scoring). Click for scan activity." aria-label="${scanTotal} URLs scanned">${scanTotal} scanned</button>
+        <button type="button" class="mc-sys-chip" id="mc-batches-chip" onclick="toggleStatPanel('batches')" title="Evaluation batch runs today (bulk AI scoring sweeps over queued job URLs). Click for run history." aria-label="${batchRuns} batch run${batchRuns === 1 ? '' : 's'}">${batchRuns} batch${batchRuns === 1 ? '' : 'es'}</button>
       </div>
       <span class="mc-strip-group-sep" aria-hidden="true"></span>
       <span class="mc-strip-group-label">Apply-Now</span>
@@ -14383,7 +14387,7 @@ async function build() {
   <div id="top-of-pipe" role="region" aria-label="Top of your pipe right now" class="top-of-pipe" hidden>
     <div class="top-of-pipe-header">
       <span class="top-of-pipe-title">&#8593; Top of your pipe &mdash; right now</span>
-      <button type="button" class="top-of-pipe-dismiss-all" onclick="topOfPipeDismissAll()" aria-label="Dismiss all top-of-pipe items for this session">Clear all</button>
+      <button type="button" class="top-of-pipe-dismiss-all" onclick="topOfPipeDismissAll()" title="Hides these cards for this browser session only — the roles stay in the queue below." aria-label="Dismiss all top-of-pipe items for this session">Dismiss (roles stay in queue)</button>
     </div>
     <div class="top-of-pipe-list" id="top-of-pipe-list"></div>
   </div>
@@ -14401,7 +14405,7 @@ async function build() {
       <div class="stat-hero-balance ${applyNow.length > 0 ? 'stat-strong' : ''}" onclick="document.getElementById('apply-now-section').scrollIntoView({behavior:'smooth'})" title="Click to scroll to Apply-Now queue" role="button" tabindex="0">
         <div class="hero-sparkline-bg" aria-hidden="true">${heroSparklineSVG(kpiSpark.applyNow.daily, 'Apply-Now')}</div>
         <div class="hero-left">
-          <div class="stat-label">Ready to apply · score 4.0 or above</div>
+          <div class="stat-label" title="Fit score from the automated evaluation, 0–5 scale. Counts open Evaluated/Responded roles only.">Ready to apply · score 4.0+ (of 5)</div>
           <div class="stat-value" id="live-apply-now">${applyNow.length}</div>
         </div>
         <div class="hero-right">
@@ -14419,7 +14423,7 @@ async function build() {
       <div class="stat stat-cell" onclick="(window._openPipelineFlowModal||function(){toggleStatPanel('pending')})()" title="Click to see pipeline flow — 5 stages">
         <div class="stat-label"><span class="label-full">Pipeline pending</span><span class="label-short">Pending</span></div>
         <div class="stat-value" id="live-pipeline">${pipelinePending}</div>
-        <div class="stat-trend"><span class="stat-delta stat-delta-flat" title="Snapshot — pipeline depth has no daily history">— snapshot</span></div>
+        <div class="stat-trend"><span class="stat-delta stat-delta-flat" title="Job URLs waiting to be evaluated, counted at the last rebuild — this number has no trend history">count at last rebuild</span></div>
         <span class="stat-caret" aria-hidden="true">▾</span><span class="sr-only">Click to expand</span>
       </div>
       <!-- Fix 2: replaced system KPI tiles (Companies / Scanned / Batches) with
@@ -14442,7 +14446,7 @@ async function build() {
         return `<div class="stat ${urgencyCls}" onclick="window.drillIn('time-to-offer','',event)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();window.drillIn('time-to-offer','',event);}" role="button" tabindex="0" title="Q3 2026 landing deadline — ${daysLeft} days remaining. Click for burn-down detail.">
           <div class="stat-label"><span class="label-full">Q3 2026 · Days left</span><span class="label-short">Days left</span></div>
           <div class="stat-value" style="font-variant-numeric:tabular-nums">${daysLeft}</div>
-          <div class="stat-trend"><span class="stat-delta ${daysLeft <= 30 ? 'stat-delta-down' : 'stat-delta-flat'}" title="${pctElapsed}% of search window elapsed · ~${appsPerDay} apps/day needed">~${appsPerDay} apps/day</span><span class="stat-caret" aria-hidden="true">▾</span></div>
+          <div class="stat-trend"><span class="stat-delta ${daysLeft <= 30 ? 'stat-delta-down' : 'stat-delta-flat'}" title="Pace REQUIRED (not current pace): clear the ${appsNeeded}-role apply queue over the ${daysLeft} days left in Q3 = ~${appsPerDay} applications/day. ${pctElapsed}% of the search window has elapsed.">~${appsPerDay} apps/day needed</span><span class="stat-caret" aria-hidden="true">▾</span></div>
         </div>`;
       })()}
       <!-- Tile 2: Network leverage — warm-intro paths.
@@ -14563,10 +14567,10 @@ async function build() {
       <button type="button" class="pill be-commits-pill" data-be-stat="commits"
         onclick="event.stopPropagation();openBeStatModal('commits')"
         aria-label="Open commit history drawer: last ${builderCommits.length} commits in the rolling window"
-        aria-haspopup="dialog" aria-controls="be-stat-modal">${L.commits} · ${L.streak}d</button>
+        aria-haspopup="dialog" aria-controls="be-stat-modal" title="${L.commits} commits in the rolling window · ${L.streak}-day commit streak. Click for the commit list.">${L.commits} · ${L.streak}d</button>
       <span class="panel-chevron">▾</span>
     </h2>
-    <p class="panel-subtitle">Skills, APIs, bug classes, PM signals from git history (last ${htmlEscape(sinceLabel)}) · nightly 03:30 PT · <code>scripts/agents/builder-log.mjs</code> · <span class="be-subtitle-hint">click any tile for detail</span></p>
+    <p class="panel-subtitle">Proof-of-work tracker — what you have shipped, mined from your own repos, ready to cite in applications. Window: last ${htmlEscape(String(sinceLabel).replace(/\s+ago\s*$/i, ''))} of git history · regenerates nightly 03:30 PT · <span class="be-subtitle-hint">click any tile for detail</span></p>
 
     <div class="builder-evo-grid">
       <button type="button" class="be-stat-tile be-stat-tile-clickable" data-be-stat="apis" aria-label="Open APIs and tools detail drawer" aria-haspopup="dialog" aria-controls="be-stat-modal" title="Click to open the full Tier-A gating stack and gap-closure plan">
@@ -14599,7 +14603,7 @@ async function build() {
          canonical path. -->
 
     <div class="be-footer">
-      <span class="be-footer-meta">Last generated: ${generatedAt}</span>
+      <span class="be-footer-meta" title="If this date is older than yesterday, the nightly 03:30 PT regeneration task is not running — check System health.">Last generated: ${generatedAt}</span>
       <span class="be-footer-cta">&rarr; See full digest: <code>data/builder-log-rolling-30d.md</code></span>
       <span class="be-footer-cta">&rarr; Resume bullets:
         <button type="button" class="be-copy-btn" data-copy-text="node scripts/agents/builder-log.mjs --export-resume-bullets"
@@ -14838,20 +14842,20 @@ async function build() {
            (Pre-Apply Check is drawer-only because the inline card doesn't have
            the per-row lifecycle context the readiness modal expects.) -->
       <div class="tonight-pick-actions">
-        <button type="button" class="tonight-pick-btn-secondary" onclick="tonightPickLearnMore()" aria-label="Open role detail in right drawer">Learn more</button>
-        <button type="button" id="tonight-pick-create-btn" class="tonight-pick-btn-accent" onclick="tonightPickCreateMaterials()" aria-label="Create apply pack (CV, cover letter, LinkedIn DM, form fields)">Create apply pack</button>
+        <button type="button" class="tonight-pick-btn-secondary" onclick="tonightPickLearnMore()" title="Opens the full evaluation detail in the side drawer — nothing is sent anywhere." aria-label="Open role detail in right drawer">Learn more</button>
+        <button type="button" id="tonight-pick-create-btn" class="tonight-pick-btn-accent" onclick="tonightPickCreateMaterials()" title="Generates a tailored application bundle for this role: CV, cover letter, LinkedIn DM, and form answers. Takes a few minutes; nothing is submitted." aria-label="Create apply pack (CV, cover letter, LinkedIn DM, form fields)">Create apply pack</button>
         ${_tonightPick.polishAlert
           ? `<button type="button" id="tonight-pick-polish-btn" class="tonight-pick-btn-accent tonight-pick-btn-polish" onclick="tonightPickPolish()" aria-label="Run apply-pack polish (4-round critic/author/adjudicator loop) on the generated materials" title="Polish alert surfaced — materials never polished or stale">✨ Polish materials</button>`
           : `<span class="tonight-pick-polish-done" title="Materials are polished + current">✓ Polished</span>`}
-        <button type="button" class="tonight-pick-btn-primary" onclick="tonightPickStart()" aria-label="Open ${htmlEscape(_tonightPick.company)} live job posting in a new tab">Apply now &rarr;</button>
-        <button type="button" class="tonight-pick-btn-ghost" onclick="tonightPickCycle()" aria-label="Pick a different role">Pick another</button>
+        <button type="button" class="tonight-pick-btn-primary" onclick="tonightPickStart()" title="Opens the live job posting in a new tab so you can apply there — nothing is submitted for you." aria-label="Open ${htmlEscape(_tonightPick.company)} live job posting in a new tab">Apply now &rarr;</button>
+        <button type="button" class="tonight-pick-btn-ghost" onclick="tonightPickCycle()" title="Swap this card for the next-highest-scoring role in the queue." aria-label="Pick a different role">Pick another</button>
       </div>
     </div>` : '<!-- tonight-pick: no candidate met criteria -->'}
     <div class="table-scroll" tabindex="0"><table>
       <thead><tr>
         <th class="bulk-th"><input type="checkbox" class="bulk-header-checkbox" data-tbody="apply-now-tbody" aria-label="Select all visible rows in Apply-Now" onclick="handleHeaderCheckbox(this)"></th>
         <th class="sortable" aria-sort="none" data-col-key="score" data-col-type="numeric" onclick="sortTable('apply-now-tbody', 1, 'num', this, event)" title="Composite fit score, 0–5 scale. ≥4.0 means apply-ready by base-fit + comp + freshness. Below 4.0, drill in to see which factor pulled it down.">Score<span class="sort-indicator" aria-hidden="true">↕</span></th>
-        <th class="sortable" aria-sort="none" data-col-key="base" data-col-type="numeric" onclick="sortTable('apply-now-tbody', 2, 'num', this, event)" title="Lower-bound base salary parsed from Block A Comp row. Red pill = below Seattle $120K floor; green = meets target $130K+. Hover the cell for the full disclosed range.">Base<span class="sort-indicator" aria-hidden="true">↕</span></th>
+        <th class="sortable" aria-sort="none" data-col-key="base" data-col-type="numeric" onclick="sortTable('apply-now-tbody', 2, 'num', this, event)" title="Lower-bound base salary parsed from the evaluation. Color vs your comp floor: green = $130K+ target met · amber = between the $120K Seattle floor and $130K · red = below the $120K floor. Non-USD amounts show a USD conversion. Hover the cell for the full disclosed range.">Base<span class="sort-indicator" aria-hidden="true">↕</span></th>
         <th class="sortable" aria-sort="none" data-col-key="company" data-col-type="string" onclick="sortTable('apply-now-tbody', 3, 'str', this, event)" title="Company name + role archetype tier (A1 / A2 / B / C / D). Click the ? for the full tier legend.">Company <button type="button" class="tier-legend-btn" title="Open tier-letter legend (A1 Residency · A2 Builder · B Comms/Editorial · C Adjacent · D Stretch)" aria-label="Show tier badge legend" onclick="event.stopPropagation();openTierLegend()">?</button><span class="sort-indicator" aria-hidden="true">↕</span></th>
         <th class="sortable" aria-sort="none" data-col-key="role" data-col-type="string" onclick="sortTable('apply-now-tbody', 4, 'str', this, event)" title="Posted job title. Click the row to open the JD link + full evaluation drawer.">Role<span class="sort-indicator" aria-hidden="true">↕</span></th>
         <th class="sortable" aria-sort="none" data-col-key="status" data-col-type="status" onclick="sortTable('apply-now-tbody', 5, 'status', this, event)" title="Application state: Evaluated (eval done, not yet applied) · Applied · Responded · Interview · Offer · Rejected · Discarded · SKIP">Status<span class="sort-indicator" aria-hidden="true">↕</span></th>
@@ -14934,7 +14938,7 @@ async function build() {
       <thead><tr>
         <th class="bulk-th"><input type="checkbox" class="bulk-header-checkbox" data-tbody="all-tbody" aria-label="Select all visible rows in All Evaluations" onclick="handleHeaderCheckbox(this)"></th>
         <th class="sortable" aria-sort="none" data-col-key="score" data-col-type="numeric" onclick="sortTable('all-tbody', 1, 'num', this, event)" title="Composite fit score, 0–5 scale. ≥4.0 means apply-ready by base-fit + comp + freshness. Below 4.0, drill in to see which factor pulled it down.">Score<span class="sort-indicator" aria-hidden="true">↕</span></th>
-        <th class="sortable" aria-sort="none" data-col-key="base" data-col-type="numeric" onclick="sortTable('all-tbody', 2, 'num', this, event)" title="Lower-bound base salary parsed from Block A Comp row. Red pill = below Seattle $120K floor; green = meets target $130K+. Hover the cell for the full disclosed range.">Base<span class="sort-indicator" aria-hidden="true">↕</span></th>
+        <th class="sortable" aria-sort="none" data-col-key="base" data-col-type="numeric" onclick="sortTable('all-tbody', 2, 'num', this, event)" title="Lower-bound base salary parsed from the evaluation. Color vs your comp floor: green = $130K+ target met · amber = between the $120K Seattle floor and $130K · red = below the $120K floor. Non-USD amounts show a USD conversion. Hover the cell for the full disclosed range.">Base<span class="sort-indicator" aria-hidden="true">↕</span></th>
         <th class="sortable" aria-sort="none" data-col-key="company" data-col-type="string" onclick="sortTable('all-tbody', 3, 'str', this, event)" title="Company name + role archetype tier (A1 / A2 / B / C / D). Click the ? for the full tier legend.">Company <button type="button" class="tier-legend-btn" title="Open tier-letter legend (A1 Residency · A2 Builder · B Comms/Editorial · C Adjacent · D Stretch)" aria-label="Show tier badge legend" onclick="event.stopPropagation();openTierLegend()">?</button><span class="sort-indicator" aria-hidden="true">↕</span></th>
         <th class="sortable" aria-sort="none" data-col-key="role" data-col-type="string" onclick="sortTable('all-tbody', 4, 'str', this, event)" title="Posted job title. Click the row to open the JD link + full evaluation drawer.">Role<span class="sort-indicator" aria-hidden="true">↕</span></th>
         <th class="sortable" aria-sort="none" data-col-key="status" data-col-type="status" onclick="sortTable('all-tbody', 5, 'status', this, event)" title="Application state: Evaluated (eval done, not yet applied) · Applied · Responded · Interview · Offer · Rejected · Discarded · SKIP">Status<span class="sort-indicator" aria-hidden="true">↕</span></th>
@@ -14976,7 +14980,7 @@ async function build() {
           aria-label="Open pipeline flow modal with ${pipelinePending} pending items">
           Open pipeline flow &rsaquo;
         </button>`
-      : `<p style="color:var(--text-3);font-size:13px;margin:0">No items pending in <code>data/pipeline.md</code>. Pipeline is drained &mdash; next scan will repopulate.</p>`}
+      : `<p style="color:var(--text-3);font-size:13px;margin:0">No job URLs waiting to be evaluated. The scanners add new ones automatically on their next run. (Source file: <code>data/pipeline.md</code>)</p>`}
   </div>
 
   <div class="panel" id="batch-runs-section">
@@ -15837,9 +15841,11 @@ function _mcRenderHealth(health) {
   const inFlight = (health && typeof health.inFlight === 'number') ? health.inFlight : 0;
   const failed24 = (health && health.failed24h) || 0;
   let label;
-  if (status === 'healthy') label = inFlight + ' jobs · all healthy';
-  else if (status === 'warn') label = inFlight + ' jobs · ' + (failed24 ? failed24 + ' recent fail' + (failed24 === 1 ? '' : 's') : 'scan stale');
-  else label = inFlight + ' jobs · scan offline';
+  // "system tasks", never "jobs" — on a job-search dashboard "12 jobs · 18
+  // recent fails" reads as job postings with failed applications (blind-review #3).
+  if (status === 'healthy') label = inFlight + ' system tasks · all healthy';
+  else if (status === 'warn') label = inFlight + ' system tasks · ' + (failed24 ? failed24 + ' recent fail' + (failed24 === 1 ? '' : 's') : 'scan stale');
+  else label = inFlight + ' system tasks · scan offline';
   txt.textContent = label;
 }
 function initMissionControlStrip() {
@@ -16989,7 +16995,7 @@ function openRightRailForDetail(idx, detailRow) {
     // outer template literal get unescaped on emit (see outer-template-unescape
     // bug class in AGENTS.md).
     const dispatchBtnHtml = num
-      ? '<button type="button" class="drawer-btn-dispatch" data-drawer-action="dispatch" data-drill="drawer-action:dispatch:' + num + '" title="Copy a ready-to-paste Claude Code prompt for this row. Paste into a fresh Claude Code session at ~/Documents/career-ops/.">📋 Copy Claude Code prompt</button>'
+      ? '<button type="button" class="drawer-btn-dispatch" data-drawer-action="dispatch" data-drill="drawer-action:dispatch:' + num + '" title="Copies a ready-made prompt for tailoring this application with Claude Code (the AI coding assistant in your terminal). Paste it into a fresh Claude Code session at ~/Documents/career-ops/.">📋 Copy Claude Code prompt</button>'
       : '<button type="button" class="drawer-btn-dispatch" data-drill="drawer-action:dispatch:" disabled title="No row number — needs a tracker row">📋 Copy Claude Code prompt</button>';
     // 2026-05-24 — POLISH (promoted from drawer sub-section to action bar).
     // Always rendered; disabled until pack-existence probe completes on
@@ -30279,10 +30285,10 @@ function _renderPipelineActivity(data) {
     var label = status === 'healthy' && bad === 0
       ? '✓ Integrity (' + (data.integrity.checks_count || 0) + ' checks)'
       : 'Integrity: ' + status + (bad ? ' · ' + bad + ' issue' + (bad === 1 ? '' : 's') : '');
-    var tip = 'data/integrity-state.json · ' + (data.integrity.generated_at || 'no timestamp');
+    var tip = 'Nightly data-integrity checks over the tracker and queue (silent reverts, calibration drift, malformed data) · last run ' + (data.integrity.generated_at || 'unknown');
     html += _chip(cls, label, tip);
   } else {
-    html += _chip('pa-chip-muted', 'Integrity: —', 'data/integrity-state.json not generated yet');
+    html += _chip('pa-chip-muted', 'Integrity: —', 'Nightly data-integrity checks have not produced a report yet');
   }
   // Scanner chip — human-readable label (g/y/r are status tiers: live/lagging/offline)
   if (data.ingress && data.ingress.summary) {
@@ -30304,9 +30310,9 @@ function _renderPipelineActivity(data) {
     var checked = sw.checked || sw.items_checked || sw.rows_checked || 0;
     var swl = 'Overnight sweep: ' + checked + ' checked';
     if (sw.flagged != null) swl += ' · ' + sw.flagged + ' flagged';
-    html += _chip('pa-chip-ok', swl, 'data/background-sweep-state.json · ' + (data.sweep.generated_at || 'no timestamp'));
+    html += _chip('pa-chip-ok', swl, 'Overnight liveness sweep — re-checks tracked job postings so dead links get flagged · last run ' + (data.sweep.generated_at || 'unknown'));
   } else {
-    html += _chip('pa-chip-muted', 'Overnight sweep: scheduled', 'Automated sweep runs nightly at 03:00 PT — data/background-sweep-state.json will appear after first run');
+    html += _chip('pa-chip-muted', 'Overnight sweep: scheduled', 'Nightly 03:00 PT sweep that re-checks tracked job postings for dead links — first report appears after it runs');
   }
   // 4.13 (2026-05-22) — last-batch reliability chip. Click opens the
   // existing batch-status modal for a fuller breakdown.
@@ -30327,7 +30333,7 @@ function _renderPipelineActivity(data) {
     } else {
       lbLabel = 'Last batch: ' + lb.completed + '/' + lb.total + ' · ' + lb.failed + ' failed · ' + durLabel;
     }
-    var lbTip = 'batch/batch-state.tsv · started ' + (lb.started_at || 'unknown') + (lb.ended_at ? ' · ended ' + lb.ended_at : ' · still running') + ' · click for breakdown';
+    var lbTip = 'Most recent bulk-evaluation run · started ' + (lb.started_at || 'unknown') + (lb.ended_at ? ' · ended ' + lb.ended_at : ' · still running') + (lb.failed > 0 ? ' · click for the per-item breakdown and failure causes' : ' · click for breakdown');
     html += '<button type="button" class="pa-chip pa-chip-button ' + lbCls + '" title="' + _esc(lbTip) + '" onclick="if(window.openBatchStatusModal)window.openBatchStatusModal();else if(window.location)window.location.hash=\\'#batch-status\\'">' + _esc(lbLabel) + '</button>';
   } else {
     html += _chip('pa-chip-muted', 'Last batch: —', 'batch/batch-state.tsv empty — no batches yet today');
@@ -38796,7 +38802,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     var statusKind = kind === 'breakup' ? 'breakup' : kind === 'referral' ? 'referral' : urgency;
     // Status pill copy: short verb-phrase, not full word repeat
     var statusLabel = statusKind === 'overdue' ? 'overdue'
-      : statusKind === 'breakup' ? 'breakup window'
+      : statusKind === 'breakup' ? 'closing follow-up window'
       : statusKind === 'referral' ? 'referral'
       : 'due';
     // v3 (ui-redesign-research 2026-05-16): icon + color + text on the badge
@@ -39022,16 +39028,16 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     var bannerKind = breakup > 0 ? 'breakup' : dueToday > 0 ? 'due' : referral > 0 ? 'referral' : 'fresh';
     var headlineParts = [];
     if (dueToday) headlineParts.push('<span class="op-banner-stat op-banner-stat-due"><strong>' + dueToday + '</strong> due today</span>');
-    if (breakup)  headlineParts.push('<span class="op-banner-stat op-banner-stat-breakup"><strong>' + breakup + '</strong> breakup</span>');
-    if (referral) headlineParts.push('<span class="op-banner-stat op-banner-stat-referral"><strong>' + referral + '</strong> referral</span>');
+    if (breakup)  headlineParts.push('<span class="op-banner-stat op-banner-stat-breakup" title="Contacts at 3+ touches with no reply — time to send a graceful closing note and preserve the relationship"><strong>' + breakup + '</strong> closing follow-up</span>');
+    if (referral) headlineParts.push('<span class="op-banner-stat op-banner-stat-referral" title="Contacts eligible to ask for a referral (2nd-degree path to a role you applied to)"><strong>' + referral + '</strong> referral opening' + (referral === 1 ? '' : 's') + '</span>');
     if (!headlineParts.length && awaiting) headlineParts.push('<span class="op-banner-stat"><strong>' + awaiting + '</strong> awaiting reply</span>');
     if (!headlineParts.length) headlineParts.push('<span class="op-banner-stat" style="color:var(--text-3,#94a3b8)">no outreach activity — log a touch to start</span>');
     var headline = headlineParts.join('<span class="op-banner-dot">·</span>');
 
     var groups = renderGroup('Due today', summary.due_today, 'due_today') +
-                 renderGroup('Breakup window', summary.breakup, 'breakup') +
+                 renderGroup('Closing follow-up window', summary.breakup, 'breakup') +
                  renderGroup('Referral opportunities', summary.referrals, 'referral');
-    if (!groups) groups = '<div class="op-empty">No contacts need attention right now.</div>';
+    if (!groups) groups = '<div class="op-empty">Nothing needs action from you right now' + (awaiting ? ' — ' + awaiting + ' message' + (awaiting === 1 ? '' : 's') + ' still awaiting a reply from them' : '') + '.</div>';
     var snoozedHtml = renderSnoozedSection(summary.snoozed || []);
     groups = groups + snoozedHtml;
 

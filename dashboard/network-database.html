@@ -651,8 +651,8 @@ textarea:focus-visible {
     <option value="recently_connected">Sort: Recently connected</option>
     <option value="engagement_score">Sort: Engagement</option>
   </select>
-  <button id="bulk-enrich" disabled>Enrich selected</button>
-  <button id="bulk-email" disabled>Find email selected</button>
+  <button id="bulk-enrich" disabled title="Look up public profile details (role, company, overlap signals) for the selected contacts — runs locally against LinkedIn, small AI cost per contact">Enrich selected</button>
+  <button id="bulk-email" disabled title="Search for a professional email address for the selected contacts">Find email selected</button>
   <button id="export-csv">Export CSV</button>
   <button id="open-saved" title="Saved searches">★ Saved</button>
   <!-- B1.3 (2026-05-20) — 3-state theme toggle. Dark default; persists in
@@ -689,6 +689,9 @@ textarea:focus-visible {
   </button>
 </div>
 
+<div class="filter-chip-row" role="note" style="opacity:0.8;font-size:12px;padding:2px 0">
+  Legend: <strong>warm</strong> = intro-path strength 0–5 (relationship recency + overlap; ≥3 = strong) · <strong>w/✉</strong> = verified professional email · <strong>1st-deg</strong> = direct LinkedIn connection · company chips read "<em>connections · with-email</em>"
+</div>
 <div class="chips" id="chip-row" role="group" aria-label="Target companies — click to filter by warm path to a target"></div>
 
 <main>

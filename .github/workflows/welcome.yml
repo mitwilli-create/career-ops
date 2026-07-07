@@ -6,6 +6,11 @@ on:
   issues:
     types: [opened]
 
+# Least-privilege default (Qodo finding 3, 2026-07-06). The welcome job widens
+# to issues:write + pull-requests:write below.
+permissions:
+  contents: read
+
 jobs:
   welcome:
     runs-on: ubuntu-latest
@@ -19,7 +24,7 @@ jobs:
       issues: write
       pull-requests: write
     steps:
-      - uses: actions/first-interaction@v3
+      - uses: actions/first-interaction@1c4688942c71f71d4f5502a26ea67c331730fa4d # v3.1.0
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           pr_message: |

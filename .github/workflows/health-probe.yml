@@ -30,6 +30,11 @@ concurrency:
   group: health-probe
   cancel-in-progress: true
 
+# Least-privilege (Qodo finding 3, 2026-07-06). Probes external URLs and pings
+# Telegram/Healthchecks via secrets — never checks out the repo or calls the
+# GitHub API, so GITHUB_TOKEN needs no scopes at all.
+permissions: {}
+
 jobs:
   probe-dashboard:
     runs-on: ubuntu-latest

@@ -13,13 +13,17 @@
  *             signals operator that dedupe drift has happened.
  *   --mark    Mark duplicates as Discarded with a DUPE-of-#N audit note.
  *             Preserves the row + audit trail. Recommended for cleanup runs.
- *   --delete  Remove duplicate lines entirely (LEGACY default). Loses
- *             audit trail. Kept for backward compat with existing callers
- *             (npm run dedup, scripts/post-batch-complete.sh, audit.mjs).
+ *   --delete  Remove duplicate lines entirely (LEGACY, explicit-only).
+ *             Loses audit trail. Must be passed explicitly — never the
+ *             default.
  *
- * Default mode (no flag): --delete (backward compat). Switching the default
- * to --check or --mark would silently change behavior for the 7 known
- * callers — out of scope for L2a. Migrate callers explicitly.
+ * Default mode (no flag): --mark. Changed from --delete on 2026-07-07 after
+ * the 2026-07-06 23:59 incident: test-all.mjs invoked the no-flag default
+ * against live data and DELETED 15 rows (incl. the Ramp cluster — see the
+ * DUPE tombstone notes on rows 2058/2595/2582/2519/2253 in
+ * data/applications.md, restored 2026-07-07). A destructive default behind
+ * an implicit invocation is the bug class; --mark preserves the row + audit
+ * trail. Callers that truly want row removal must pass --delete explicitly.
  *
  * --dry-run is a modifier — applies to any mode (no file writes).
  *
@@ -30,9 +34,14 @@
  * comma-qualifier guard is identical to merge-tracker.mjs::roleFuzzyMatch.
  */
 
-import { readFileSync, writeFileSync, copyFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, copyFileSync, existsSync, mkdirSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+// Single source of truth for applications.md row escaping (2026-07-07,
+// Qodo finding on PR #393): splitTableRow splits on UNESCAPED pipes only, so
+// an escaped `\|` inside company/role (canonical: row #2535) keeps columns
+// aligned, and escapeTableCell is idempotent (never double-escapes `\|`).
+import { splitTableRow, escapeTableCell } from './lib/tracker-row.mjs';
 
 const CAREER_OPS = dirname(fileURLToPath(import.meta.url));
 // Support both layouts: data/applications.md (boilerplate) and applications.md (original)
@@ -41,11 +50,13 @@ const APPS_FILE = existsSync(join(CAREER_OPS, 'data/applications.md'))
   : join(CAREER_OPS, 'applications.md');
 const DRY_RUN = process.argv.includes('--dry-run');
 
-// Mode dispatch — mutually exclusive. Default = delete (backward compat).
+// Mode dispatch — mutually exclusive. Default = mark (safe: preserves rows
+// + audit trail). --delete is legacy and must be requested explicitly —
+// see header for the 2026-07-06 15-row-deletion incident that forced this.
 const MODE_CHECK = process.argv.includes('--check');
-const MODE_MARK = process.argv.includes('--mark');
-const MODE_DELETE = process.argv.includes('--delete') ||
-  (!MODE_CHECK && !MODE_MARK); // default
+const MODE_DELETE = process.argv.includes('--delete');
+const MODE_MARK = process.argv.includes('--mark') ||
+  (!MODE_CHECK && !MODE_DELETE); // default
 const MODES_SET = [MODE_CHECK, MODE_MARK, MODE_DELETE].filter(Boolean).length;
 if (MODES_SET > 1) {
   console.error('FATAL: --check, --mark, --delete are mutually exclusive. Pick one.');
@@ -156,7 +167,10 @@ function parseScore(s) {
 }
 
 function parseAppLine(line) {
-  const parts = line.split('|').map(s => s.trim());
+  // Unescaped-pipe split — a `\|` inside company/role stays in its cell, so
+  // score/status land in the right columns (a naive split('|') shifts them,
+  // which mis-reads liveness during keeper selection).
+  const parts = splitTableRow(line).map(s => s.trim());
   if (parts.length < 9) return null;
   const num = parseInt(parts[1]);
   if (isNaN(num)) return null;
@@ -172,6 +186,14 @@ function parseAppLine(line) {
     notes: parts[9] || '',
     raw: line,
   };
+}
+
+// Rebuild a data row from splitTableRow() cells, preserving EVERY cell —
+// including extra pipe-separated note cells past col 9 (the `| triage X.X/5`
+// suffix ~114 rows carry by design). Fixed slice(1, 10) rebuilds dropped them.
+function rebuildRowLine(parts) {
+  const cells = parts[parts.length - 1] === '' ? parts.slice(1, -1) : parts.slice(1);
+  return '| ' + cells.join(' | ') + ' |';
 }
 
 // Read
@@ -211,6 +233,25 @@ for (const entry of entries) {
 const collisions = [];
 const LIVE_RE = /^(evaluated|applied|responded|interview|offer|evaluada|aplicado|respondido|entrevista|oferta)$/i;
 
+// Apply-pack presence — apply-pack/<num>-* dirs hold invested tailored
+// materials keyed by row num. Used as a keeper tiebreak (2026-07-07) so
+// dedupe never extinguishes the row an existing pack dir references,
+// orphaning the pack (canonical incident: Ramp #2582 carried the
+// hardened-pipeline apply-pack and was deleted on 2026-07-06).
+const APPLY_PACK_DIR = join(CAREER_OPS, 'apply-pack');
+const applyPackNums = new Set();
+if (existsSync(APPLY_PACK_DIR)) {
+  try {
+    for (const ent of readdirSync(APPLY_PACK_DIR, { withFileTypes: true })) {
+      if (!ent.isDirectory()) continue;
+      const m = ent.name.match(/^(\d+)-/);
+      if (m) applyPackNums.add(parseInt(m[1], 10));
+    }
+  } catch { /* unreadable dir — treat as no packs */ }
+}
+const isLive = (e) => LIVE_RE.test((e.status || '').trim());
+const hasApplyPack = (e) => applyPackNums.has(e.num);
+
 for (const [company, companyEntries] of groups) {
   if (companyEntries.length < 2) continue;
 
@@ -240,8 +281,20 @@ for (const [company, companyEntries] of groups) {
     const liveCount = cluster.filter(c => LIVE_RE.test((c.status || '').trim())).length;
     if (liveCount < 2) continue;
 
-    // Keeper = highest score. Tiebreak (same score) = earliest num.
+    // Keeper preference (2026-07-07 fix): live status > has apply-pack dir
+    // > score > earliest num. Pre-fix the sort was score-then-earliest-num,
+    // which let a Discarded row win keepership over live Evaluated rows
+    // (canonical incident, Ramp cluster 2026-07-06: keeper #2535 was
+    // Discarded on a 4.5-score tie via earliest num, while both deleted
+    // rows #2582/#2547 were Evaluated — and #2582's apply-pack dir was
+    // orphaned). Live-first guarantees a terminal row can never extinguish
+    // a live application; pack-presence next keeps the row the pack dir's
+    // num references.
     cluster.sort((a, b) => {
+      const la = isLive(a) ? 1 : 0, lb = isLive(b) ? 1 : 0;
+      if (lb !== la) return lb - la;
+      const pa = hasApplyPack(a) ? 1 : 0, pb = hasApplyPack(b) ? 1 : 0;
+      if (pb !== pa) return pb - pa;
       const sb = parseScore(b.score), sa = parseScore(a.score);
       if (sb !== sa) return sb - sa;
       return a.num - b.num;
@@ -305,15 +358,17 @@ if (MODE === 'mark') {
       }
       const lineIdx = entryLineMap.get(dup.num);
       if (lineIdx === undefined) continue;
-      const parts = lines[lineIdx].split('|').map(s => s.trim());
-      // markdown row: ['', num, date, company, role, score, status, pdf, report, notes, '']
+      // Unescaped-pipe split + full-cell rebuild: escaped `\|` in company/role
+      // stays put, and extra note cells past col 9 (triage suffix) survive.
+      const parts = splitTableRow(lines[lineIdx]).map(s => s.trim());
+      // markdown row: ['', num, date, company, role, score, status, pdf, report, notes, ..., '']
       if (parts.length < 10) continue;
       parts[6] = 'Discarded';
       const existingNote = parts[9] || '';
       const dupePrefix = `DUPE of #${c.keeper.num} (same company × variant-safe role match). Auto-marked by dedup-tracker.mjs --mark on ${TODAY_ISO}.`;
-      // Sanitize note: pipes break the markdown table
-      parts[9] = (dupePrefix + (existingNote ? ' Original: ' + existingNote : '')).replace(/\|/g, '\\|').slice(0, 600);
-      lines[lineIdx] = '| ' + parts.slice(1, 10).join(' | ') + ' |';
+      // escapeTableCell is idempotent — re-escapes nothing that's already `\|`
+      parts[9] = escapeTableCell(dupePrefix + (existingNote ? ' Original: ' + existingNote : '')).slice(0, 600);
+      lines[lineIdx] = rebuildRowLine(parts);
       marked++;
       console.log(`  📌 Mark #${dup.num} Discarded (DUPE of #${c.keeper.num} — ${dup.company} / ${dup.role}, ${dup.score})`);
     }
@@ -339,9 +394,9 @@ for (const c of collisions) {
   if (c.promotedStatus) {
     const lineIdx = entryLineMap.get(c.keeper.num);
     if (lineIdx !== undefined) {
-      const parts = lines[lineIdx].split('|').map(s => s.trim());
+      const parts = splitTableRow(lines[lineIdx]).map(s => s.trim());
       parts[6] = c.promotedStatus;
-      lines[lineIdx] = '| ' + parts.slice(1, -1).join(' | ') + ' |';
+      lines[lineIdx] = rebuildRowLine(parts);
       console.log(`  📝 #${c.keeper.num}: status promoted to "${c.promotedStatus}" (from #${c.promotedFromNum})`);
     }
   }

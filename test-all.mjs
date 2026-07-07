@@ -20,6 +20,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
 const QUICK = process.argv.includes('--quick');
 
+// Hang-watchdog ceiling for child test processes spawned by suite sections.
+// Env-tiered (never a bare literal at the callsite — Qodo timeout-constants
+// rule); clamp [10s, 10min] so a typo can't wedge CI or make it flaky.
+const TEST_CHILD_TIMEOUT_MS = Math.min(600_000, Math.max(10_000, Number(process.env.TEST_CHILD_TIMEOUT_MS) || 120_000));
+
 let passed = 0;
 let failed = 0;
 let warnings = 0;
@@ -989,6 +994,32 @@ try {
     if (line.trim()) console.log(`     ${line}`);
   }
   console.log(`     → Fix: derive REPO via git -C "<payload cwd>" rev-parse --show-toplevel in scripts/hooks/*.sh`);
+}
+
+// ── 26. DEDUP-TRACKER SAFE DEFAULT + KEEPER SELECTION ──
+
+console.log('\n26. Dedup-tracker — non-destructive default + live/apply-pack keeper preference');
+
+try {
+  // Runs tests/dedup-keeper-selection.test.mjs against a temp fixture tree —
+  // fails if the no-flag default ever regresses to --delete, or if keeper
+  // selection lets a Discarded row win over live rows / orphan an
+  // apply-pack dir (2026-07-06 Ramp-cluster incident: 15 rows deleted,
+  // Discarded #2535 kept over Evaluated #2582/#2547).
+  execFileSync('node', ['--test', 'tests/dedup-keeper-selection.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+    timeout: TEST_CHILD_TIMEOUT_MS,   // hang-watchdog: never let a stalled test wedge CI
+  });
+  pass('Dedup-tracker default is --mark + keeper prefers live > apply-pack > score > earliest num');
+} catch (err) {
+  fail('Dedup-tracker safe-default/keeper-selection regression');
+  const out = (err.stdout || '') + (err.stderr || '');
+  for (const line of out.split('\n').slice(0, 40)) {
+    if (line.trim()) console.log(`     ${line}`);
+  }
+  console.log(`     → Fix: dedup-tracker.mjs default mode must be --mark; keeper sort must be live > apply-pack > score > num`);
 }
 
 // ── SUMMARY ─────────────────────────────────────────────────────

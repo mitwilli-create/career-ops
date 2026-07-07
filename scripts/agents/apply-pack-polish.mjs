@@ -222,7 +222,17 @@ export async function runPolishPack(opts = {}) {
   const envCap = Number(process.env.POLISH_COST_CAP_USD);
   const costCap = Number.isFinite(opts.costCap) ? opts.costCap : (Number.isFinite(envCap) ? envCap : 500);
   const noCache = opts.noCache === true;
-  const maxRounds = opts.maxRoundsPerArtifact ?? Number(process.env.POLISH_MAX_ROUNDS) ?? 6;
+  // 2026-07-07 (blind-review BUG 2) — the old `Number(env) ?? 6` returned NaN
+  // when POLISH_MAX_ROUNDS was unset: `Number(undefined)` is NaN and `??` does
+  // NOT catch NaN (only null/undefined). That NaN flowed into polish-loop.mjs
+  // as `maxRounds`, where `while (rounds < NaN)` is always false → zero rounds
+  // ran → bestConfidence stayed 0 → every artifact REJECTED at confidence 0.000
+  // despite healthy L2 scores (row 2756 Relativity Space). Guard with
+  // Number.isFinite so an unset/garbage env can never poison the round count.
+  const _envMaxRounds = Number(process.env.POLISH_MAX_ROUNDS);
+  const maxRounds = Number.isFinite(opts.maxRoundsPerArtifact) ? opts.maxRoundsPerArtifact
+    : Number.isFinite(_envMaxRounds) ? _envMaxRounds
+    : 6;
 
   // Cost-warn threshold (2026-05-24). Per-artifact: lib/polish-loop.mjs logs
   // an NDJSON WARN every round once total artifact cost crosses the

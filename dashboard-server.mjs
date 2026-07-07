@@ -2151,13 +2151,31 @@ function computeStats() {
   const scanned = parseScanHistory();
 
   const companies = new Set(apps.map(a => a.company));
-  const applyNow = apps.filter(a =>
-    a.score >= 4.0 && ['Evaluated','Applied','Interview','Offer'].includes(a.status)
-  ).length;
+  // MUST match the build-time Apply-Now filter in scripts/build-dashboard.mjs
+  // (score ≥4.0, Evaluated|Responded only). The old Applied/Interview/Offer
+  // set inflated the live hero count above the baked queue/chip counts
+  // (blind-review 2026-07-07 #1 count-desync).
+  const applyNowRows = apps.filter(a =>
+    a.score >= 4.0 && ['Evaluated','Responded'].includes(a.status)
+  );
+  const applyNow = applyNowRows.length;
+  // 7d-inflow delta, mirroring build-time computeKPISparklines/summarizeSeries
+  // (new qualifying evals in the last 7 days vs the 7 days before).
+  const DAY_MS = 86400000;
+  const nowMs = Date.now();
+  let applyNowCur7 = 0, applyNowPrev7 = 0;
+  for (const a of applyNowRows) {
+    const t = Date.parse(a.date);
+    if (!Number.isFinite(t)) continue;
+    const age = nowMs - t;
+    if (age < 7 * DAY_MS) applyNowCur7++;
+    else if (age < 14 * DAY_MS) applyNowPrev7++;
+  }
   const applied = apps.filter(a => ['Applied','Interview','Offer'].includes(a.status)).length;
 
   return {
     applyNow,
+    applyNowDelta: applyNowCur7 - applyNowPrev7,
     totalEvals: apps.length,
     applied,
     pipelinePending: pipeline.total,

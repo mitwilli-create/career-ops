@@ -21,6 +21,7 @@ import { execSync } from 'child_process';
 import yaml from 'js-yaml';
 import { marked } from 'marked';
 import { renderTpgmWidget } from '../lib/tpgm-dashboard-widget.mjs';
+import { atomicWriteJson } from '../lib/atomic-write.mjs';
 import { parseApplicationsFile } from '../lib/parse-applications.mjs';
 import { statusKey, statusBadgeClass, STATUS_KEY_SOURCE, STATUS_BADGE_CLASS_SOURCE } from '../lib/status-key.mjs';
 import { networkSummary as _linkedInNetworkSummary, networkMeta as _linkedInNetworkMeta } from '../lib/linkedin-network.mjs';
@@ -2731,11 +2732,14 @@ function heroSparklineSVG(daily, label) {
   return `<svg class="hero-sparkline" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${title}"><title>${title}</title><path d="M${pts.join(' L')}" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>`;
 }
 function deltaPill(delta) {
-  if (delta === 0) return `<span class="hero-delta-pill hero-delta-flat" title="No change vs previous 7 days">±0 vs last 7d</span>`;
+  // Title spells out what the delta measures — it's eval INFLOW (new
+  // qualifying evaluations), not queue-size change (blind-review #1).
+  const titleTxt = 'New score-4.0+ open evaluations added in the last 7 days vs the 7 days before';
+  if (delta === 0) return `<span class="hero-delta-pill hero-delta-flat" id="live-apply-now-delta" title="${titleTxt}">±0 new vs prior 7d</span>`;
   const sign = delta > 0 ? '+' : '';
   const cls = delta > 0 ? 'hero-delta-up' : 'hero-delta-down';
   const arrow = delta > 0 ? '▲' : '▼';
-  return `<span class="hero-delta-pill ${cls}" title="Change vs previous 7 days">${arrow} ${sign}${delta} vs last 7d</span>`;
+  return `<span class="hero-delta-pill ${cls}" id="live-apply-now-delta" title="${titleTxt}">${arrow} ${sign}${delta} new vs prior 7d</span>`;
 }
 
 // ── Tier legend (from modes/_profile.md §1) ───────────────────────
@@ -5589,8 +5593,21 @@ async function build() {
     if (_pool.length) {
       const _pr = _pool[0]; // already sorted by score desc
       const _pos = getPositioning(_pr.reportPath);
-      // Extract first 2-3 bullets of positioning as the "Why this one" paragraph
-      const _posLines = (_pos || '').replace(/\*\*/g, '').split(/\n/).map(l => l.replace(/^[-•·*]+\s*/,'').trim()).filter(Boolean);
+      // Extract first 2-3 bullets of positioning as the "Why this one" paragraph.
+      // Prose-only: drop markdown structure (headings, tables, fences, quotes)
+      // and strip inline markup — the card renders escaped text, so leaked
+      // "### ..." syntax shows verbatim (blind-review 2026-07-07 #5).
+      const _posLines = (_pos || '')
+        .split(/\n/)
+        .map(l => l.trim())
+        .filter(l => l && !/^#{1,6}\s/.test(l) && !/^\|/.test(l) && !/^```/.test(l) && !/^>/.test(l))
+        .map(l => l
+          .replace(/^[-•·*]+\s*/, '')
+          .replace(/\*\*/g, '')
+          .replace(/`([^`]*)`/g, '$1')
+          .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+          .trim())
+        .filter(Boolean);
       // Word-aware cap: take up to 3 bullets, hard cap ~340 chars,
       // truncate at a word boundary and append … so we never cut mid-word
       // (2026-05-19 fix: was .slice(0, 200) → chopped "engineers" → "enginee").
@@ -13999,7 +14016,7 @@ async function build() {
       <span class="mc-strip-group-sep" aria-hidden="true"></span>
       <span class="mc-strip-group-label">Apply-Now</span>
       <div class="mc-strip-group">
-        <button type="button" class="mc-sys-chip mc-sys-chip-strong" onclick="document.getElementById('apply-now-section')?.scrollIntoView({behavior:'smooth',block:'start'})" title="Apply-Now rows with score ≥ 4.0" aria-label="${applyNow.length} Apply-Now roles with score 4.0 or higher">${applyNow.length} ≥4.0</button>
+        <button type="button" class="mc-sys-chip mc-sys-chip-strong" onclick="document.getElementById('apply-now-section')?.scrollIntoView({behavior:'smooth',block:'start'})" title="Apply-Now rows with score ≥ 4.0 (open Evaluated/Responded only)" aria-label="${applyNow.length} Apply-Now roles with score 4.0 or higher"><span id="live-apply-now-chip">${applyNow.length}</span> ≥4.0</button>
         <button type="button" class="mc-sys-chip mc-sys-chip-strong" onclick="document.getElementById('apply-now-section')?.scrollIntoView({behavior:'smooth',block:'start'})" title="Apply-Now rows with base salary ≥ $250K USD" aria-label="${applyNowHighComp} Apply-Now roles with base 250K or higher">${applyNowHighComp} ≥$250K</button>
       </div>
       <span class="mc-strip-meta" id="dashboard-meta" title="${htmlEscape(generated)}"><span id="live-updated">Updated ${htmlEscape(generated)}</span> · ${reportsToday} reports today</span>
@@ -14468,7 +14485,7 @@ async function build() {
       <div class="stat stat-cell" onclick="toggleStatPanel('applied')" title="Click to see in-flight applications — ${applyNow.length} evaluated roles queued and ready to apply">
         <div class="stat-label"><span class="label-full">Applied / In process</span><span class="label-short">Applied</span></div>
         <div class="stat-value" id="live-applied">${applied.length}</div>
-        <div class="stat-trend"><span class="stat-delta ${applyNow.length > 0 ? 'stat-delta-up' : 'stat-delta-flat'}" title="${applyNow.length} evaluated roles queued and ready to apply">${applyNow.length} ready to apply</span></div>
+        <div class="stat-trend"><span class="stat-delta ${applyNow.length > 0 ? 'stat-delta-up' : 'stat-delta-flat'}" title="${applyNow.length} evaluated roles queued and ready to apply"><span id="live-apply-now-sub">${applyNow.length}</span> ready to apply</span></div>
         <span class="stat-caret" aria-hidden="true">▾</span><span class="sr-only">Click to expand</span>
       </div>
     </div>
@@ -14770,7 +14787,7 @@ async function build() {
 
   ${applyNow.length > 0 ? `
   <div class="panel panel-strong" id="apply-now-section">
-    <h2 class="panel-title collapsible" onclick="togglePanel('apply-now-section',event)">Apply-Now Queue <span class="pill">${applyNow.length}</span>
+    <h2 class="panel-title collapsible" onclick="togglePanel('apply-now-section',event)">Apply-Now Queue <span class="pill" id="live-apply-now-pill">${applyNow.length}</span>
       <button type="button" id="apply-now-reset-order" class="reset-order-btn" hidden
         onclick="event.stopPropagation();resetApplyNowOrder()" aria-label="Reset to default sort (score desc, then date)">
         ↺ Reset order
@@ -14783,7 +14800,7 @@ async function build() {
       </button>` : ''}
       <span class="panel-chevron">▾</span>
     </h2>
-    <p class="panel-subtitle" title="Drag a row's ⋮⋮ handle to prioritize. Click any row to expand.">Score ≥ 4.0 · Evaluated / Responded / Interview only</p>
+    <p class="panel-subtitle" title="Drag a row's ⋮⋮ handle to prioritize. Click any row to expand.">Score ≥ 4.0 · open Evaluated / Responded rows only (Applied and Interview rows move to In Process)</p>
     <!-- P4.30 (2026-05-20): persistent tier-letter glossary strip so labels decode without click -->
     <div class="tier-glossary-strip" role="note" aria-label="Tier archetype legend">
       <span class="tg-strip-label">Tiers:</span>
@@ -14986,6 +15003,7 @@ async function build() {
   <div class="charts-grid" id="charts-section">
   <div class="panel" id="score-dist-panel">
     <h3 class="panel-title collapsible" onclick="togglePanel('score-dist-panel',event)">Score Distribution <span class="panel-chevron">▾</span></h3>
+    <p class="panel-subtitle">All evaluations ever, any status — includes applied, rejected, and discarded rows. The Apply-Now count above is smaller because it keeps only open Evaluated/Responded rows.</p>
     ${(() => {
       const segDefs = [
         { range: '4.0+',     label: 'Strong',   key: '4.0+',     cls: 's-strong'   },
@@ -15028,7 +15046,7 @@ async function build() {
               style="font-size:12px;font-weight:600;padding:6px 14px;border-radius:999px;background:var(--green-bg);color:var(--green-fg);border:1px solid var(--green-border);cursor:pointer;letter-spacing:0.01em">
         Rank by wealth potential &#x21bb;
       </button>
-      <span style="font-size:11px;color:var(--text-4)">Composite 0&ndash;100 across equity stage, AI-native tier, salary ceiling, IPO signals, skill-portability.</span>
+      <span style="font-size:11px;color:var(--text-4)">Opens a separate ranking scored 0&ndash;100 on equity stage, AI-native tier, salary ceiling, IPO signals, skill-portability. Bars below show evaluation counts, scaled to the top company.</span>
     </div>
     <div class="bar-chart" role="list" aria-label="Top companies by evaluation count">
       ${topCompanies.map(([company, count]) => {
@@ -16947,9 +16965,17 @@ function openRightRailForDetail(idx, detailRow) {
     //                                  Destructive action with confirmation prompt.
     //   DISMISS ("Dismiss for today") = day-only — hides row from Apply-Now queue
     //                                  until midnight PT. Status unchanged. No confirm.
-    const applyBtnHtml = applyHref
-      ? '<button type="button" class="drawer-btn-primary" data-drawer-action="apply" data-drill="drawer-action:apply:' + (num || '') + '" title="Open original job posting in a new tab">Apply</button>'
-      : '<button type="button" class="drawer-btn-primary" data-drill="drawer-action:apply:' + (num || '') + '" disabled>Apply</button>';
+    // blind-review 2026-07-07 #12: a Discarded/Rejected row (e.g. liveness
+    // sweep marked LINK EXPIRED) must not render an enabled Apply CTA. The
+    // runtime liveness probe also disables it, but that only covers rows the
+    // probe reaches — status is known right here at render time.
+    const _rowStatusTxt = ((statusEl && statusEl.textContent) || '').trim().toLowerCase();
+    const _rowClosed = /discarded|rejected/.test(_rowStatusTxt);
+    const applyBtnHtml = _rowClosed
+      ? '<button type="button" class="drawer-btn-primary" data-drill="drawer-action:apply:' + (num || '') + '" disabled style="opacity:0.5" title="Row status is ' + _drawerEscape(_rowStatusTxt) + ' — posting closed or passed on. Re-verify liveness before applying.">Role closed</button>'
+      : applyHref
+        ? '<button type="button" class="drawer-btn-primary" data-drawer-action="apply" data-drill="drawer-action:apply:' + (num || '') + '" title="Open original job posting in a new tab">Apply</button>'
+        : '<button type="button" class="drawer-btn-primary" data-drill="drawer-action:apply:' + (num || '') + '" disabled>Apply</button>';
     // "Create materials" — between Apply and Discard. Disabled if there's no
     // row number (e.g. preview rows synthesized without a tracker #).
     const materialsBtnHtml = num
@@ -30311,17 +30337,21 @@ function _renderPipelineActivity(data) {
   // "Updated X min ago" stamp based on the newest source-file timestamp.
   var newest = (data.newest_ms || 0);
   if (newest > 0) {
-    var ageSec = Math.max(0, Math.floor((Date.now() - newest) / 1000));
-    var ageLbl;
-    if (ageSec < 60) ageLbl = ageSec + 's ago';
-    else if (ageSec < 3600) ageLbl = Math.floor(ageSec / 60) + 'm ago';
-    else ageLbl = Math.floor(ageSec / 3600) + 'h ago';
-    stamp.textContent = 'Updated ' + ageLbl;
+    stamp.textContent = 'Pipeline state updated ' + _paAgeLabel(newest);
+    stamp.title = 'Newest write across the integrity-check / ingress-monitor / background-sweep state files';
     // Older than 12h = stale visually
-    stamp.classList.toggle('pa-stamp-stale', ageSec > 12 * 3600);
+    stamp.classList.toggle('pa-stamp-stale', (Date.now() - newest) > 12 * 3600 * 1000);
   } else {
     stamp.textContent = '—';
   }
+}
+// Past 48h an "Nh ago" count reads as gibberish ("1000h ago") — switch to a date.
+function _paAgeLabel(ms) {
+  var ageSec = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+  if (ageSec < 60) return ageSec + 's ago';
+  if (ageSec < 3600) return Math.floor(ageSec / 60) + 'm ago';
+  if (ageSec < 48 * 3600) return Math.floor(ageSec / 3600) + 'h ago';
+  return 'on ' + new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 // Ticker keeps the "Updated X ago" text current without re-fetching.
 function _startPipelineActivityTicker() {
@@ -30330,12 +30360,7 @@ function _startPipelineActivityTicker() {
     if (!data.newest_ms) return;
     var stamp = document.getElementById('pa-stamp');
     if (!stamp) return;
-    var ageSec = Math.max(0, Math.floor((Date.now() - data.newest_ms) / 1000));
-    var ageLbl;
-    if (ageSec < 60) ageLbl = ageSec + 's ago';
-    else if (ageSec < 3600) ageLbl = Math.floor(ageSec / 60) + 'm ago';
-    else ageLbl = Math.floor(ageSec / 3600) + 'h ago';
-    stamp.textContent = 'Updated ' + ageLbl;
+    stamp.textContent = 'Pipeline state updated ' + _paAgeLabel(data.newest_ms);
   }, 30000);
 }
 
@@ -31961,6 +31986,20 @@ async function refreshLiveStats() {
   if (!data) return;
   const set = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined) el.textContent = v; };
   set('live-apply-now', data.applyNow);
+  // Keep every ready-to-apply surface on the SAME live number — the hero
+  // updating alone while the header chip / queue pill / sub-stat stayed baked
+  // was the blind-review 2026-07-07 #1 count-desync.
+  set('live-apply-now-chip', data.applyNow);
+  set('live-apply-now-pill', data.applyNow);
+  set('live-apply-now-sub', data.applyNow);
+  if (data.applyNowDelta !== undefined) {
+    const dEl = document.getElementById('live-apply-now-delta');
+    if (dEl) {
+      const d = data.applyNowDelta;
+      dEl.className = 'hero-delta-pill ' + (d === 0 ? 'hero-delta-flat' : d > 0 ? 'hero-delta-up' : 'hero-delta-down');
+      dEl.textContent = d === 0 ? '±0 new vs prior 7d' : (d > 0 ? '▲ +' : '▼ ') + d + ' new vs prior 7d';
+    }
+  }
   set('live-total', data.totalEvals);
   set('live-applied', data.applied);
   set('live-pipeline', data.pipelinePending);
@@ -35524,20 +35563,32 @@ window._onContactsReady = function(cb) {
   if (window._CONTACTS_DATA && window._CONTACTS_DATA.length) { try { cb(); } catch(_){} return; }
   window._contactsReadyCallbacks.push(cb);
 };
-window._contactsReadyPromise = fetch('/data/contacts.json', { cache: 'no-cache' })
-  .then(function(r){ return r.ok ? r.json() : null; })
-  .then(function(payload){
-    if (!payload) return;
-    _CONTACTS_DATA = payload.contacts || [];
-    _CONTACTS_STATS = payload.stats || {};
-    window._CONTACTS_DATA = _CONTACTS_DATA;
-    window._CONTACTS_STATS = _CONTACTS_STATS;
-    var cbs = window._contactsReadyCallbacks || [];
-    window._contactsReadyCallbacks = [];
-    for (var i = 0; i < cbs.length; i++) { try { cbs[i](); } catch(_) {} }
-    if (typeof _updateContactsChip === 'function') _updateContactsChip();
-  })
-  .catch(function(err){ console.warn('[contacts] fetch failed:', err.message); });
+window._contactsLoaded = false;
+function _fetchContacts(attempt) {
+  return fetch('/data/contacts.json', { cache: 'no-cache' })
+    .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function(payload){
+      if (!payload) throw new Error('empty payload');
+      _CONTACTS_DATA = payload.contacts || [];
+      _CONTACTS_STATS = payload.stats || {};
+      window._CONTACTS_DATA = _CONTACTS_DATA;
+      window._CONTACTS_STATS = _CONTACTS_STATS;
+      window._contactsLoaded = true;
+      var cbs = window._contactsReadyCallbacks || [];
+      window._contactsReadyCallbacks = [];
+      for (var i = 0; i < cbs.length; i++) { try { cbs[i](); } catch(_) {} }
+      if (typeof _updateContactsChip === 'function') _updateContactsChip();
+    })
+    .catch(function(err){
+      // One delayed retry covers the transient mid-rebuild truncated-read
+      // case; a persistent failure leaves the chip on its "—" unloaded state
+      // instead of a false 0 (blind-review 2026-07-07 #19).
+      console.warn('[contacts] fetch failed (attempt ' + attempt + '):', err.message);
+      if (attempt < 2) return new Promise(function(res){ setTimeout(res, 4000); }).then(function(){ return _fetchContacts(attempt + 1); });
+      if (typeof _updateContactsChip === 'function') _updateContactsChip();
+    });
+}
+window._contactsReadyPromise = _fetchContacts(1);
 
 // 2026-05-22 — Closure 18: enrichment auto-queue. Build-time generated list
 // of contacts queued for enrichment refresh, fetched here so the drawer can
@@ -35578,9 +35629,17 @@ window._pillDataReadyPromise = fetch('/data/pill-data.json', { cache: 'no-cache'
 // quirks). The chip's initial textContent is "—", so without this we get
 // the stuck-em-dash glitch Mitchell flagged.
 function _updateContactsChip() {
-  var n = (_CONTACTS_DATA || []).length;
   var countEl = document.getElementById('sidebar-contacts-count');
   var subEl   = document.getElementById('sidebar-contacts-sub');
+  // Before the lazy contacts.json fetch resolves (or if it fails for good),
+  // show an explicit unloaded state — a literal "0 · 0 w/ email" next to a
+  // populated Network card reads as data corruption (blind-review #19).
+  if (!window._contactsLoaded) {
+    if (countEl) countEl.textContent = '—';
+    if (subEl) subEl.textContent = 'directory loading…';
+    return;
+  }
+  var n = (_CONTACTS_DATA || []).length;
   if (countEl) countEl.textContent = n > 999 ? (n/1000).toFixed(1) + 'k' : String(n);
   if (subEl) {
     var s = _CONTACTS_STATS || {};
@@ -38088,7 +38147,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 }
 #outreach-pulse .op-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px; }
 #outreach-pulse .op-title { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; margin: 0; color: var(--text, #0f172a); }
-#outreach-pulse .op-counts { font-size: 12.5px; font-weight: 500; color: var(--text2, #334155); font-variant-numeric: tabular-nums; }
+#outreach-pulse .op-counts { font-size: 12.5px; font-weight: 500; color: var(--text-2, #334155); font-variant-numeric: tabular-nums; }
 #outreach-pulse .op-counts strong { font-weight: 700; color: var(--text, #0f172a); }
 @media (prefers-color-scheme: dark) {
   #outreach-pulse .op-counts { color: #cbd5e1; }
@@ -38096,8 +38155,8 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   #outreach-pulse .op-banner-label { color: #b7b8c2; }
 }
 #outreach-pulse .op-group { margin-top: 14px; }
-#outreach-pulse .op-group-title { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text4, #64748b); margin: 0 0 8px; }
-#outreach-pulse .op-row { display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 10px 12px; border: 1px solid var(--border, #e2e8f0); border-radius: 8px; background: var(--surface2, #f8fafc); margin-bottom: 6px; }
+#outreach-pulse .op-group-title { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-4, #64748b); margin: 0 0 8px; }
+#outreach-pulse .op-row { display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 10px 12px; border: 1px solid var(--border, #e2e8f0); border-radius: 8px; background: var(--surface-2, #f8fafc); margin-bottom: 6px; }
 #outreach-pulse .op-row.op-due_soon { border-left: 3px solid #d97706; }
 #outreach-pulse .op-row.op-overdue { border-left: 3px solid #dc2626; }
 #outreach-pulse .op-row.op-breakup { border-left: 3px solid #991b1b; background: #fef2f2; }
@@ -38311,8 +38370,8 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   }
 }
 #outreach-pulse .op-name { font-weight: 600; color: var(--text, #0f172a); }
-#outreach-pulse .op-meta { font-size: 12px; color: var(--text3, #475569); margin-top: 2px; }
-#outreach-pulse .op-strategy { font-size: 12px; color: var(--text2, #1e293b); margin-top: 4px; }
+#outreach-pulse .op-meta { font-size: 12px; color: var(--text-3, #475569); margin-top: 2px; }
+#outreach-pulse .op-strategy { font-size: 12px; color: var(--text-2, #1e293b); margin-top: 4px; }
 #outreach-pulse .op-strategy strong { color: var(--text, #0f172a); }
 #outreach-pulse .op-actions { display: flex; gap: 6px; align-items: center; }
 #outreach-pulse .op-pill { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
@@ -38321,20 +38380,20 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 #outreach-pulse .op-pill-breakup { background: #1f2937; color: #fde68a; }
 #outreach-pulse .op-pill-referral { background: #dcfce7; color: #14532d; }
 #outreach-pulse .op-pill-review { background: #ede9fe; color: #5b21b6; }
-#outreach-pulse .op-empty { font-size: 13px; color: var(--text4, #64748b); padding: 8px 0; }
-#outreach-pulse .op-linked-app { font-size: 11px; color: var(--text3, #475569); margin-top: 2px; font-weight: 500; }
+#outreach-pulse .op-empty { font-size: 13px; color: var(--text-4, #64748b); padding: 8px 0; }
+#outreach-pulse .op-linked-app { font-size: 11px; color: var(--text-3, #475569); margin-top: 2px; font-weight: 500; }
 #outreach-pulse .op-linked-app a { color: inherit; text-decoration: none; border-bottom: 1px dotted currentColor; }
 #outreach-pulse .op-linked-app a:hover { color: #2563eb; }
-#outreach-pulse .op-linked-app-score { display: inline-block; background: var(--surface2, #f1f5f9); padding: 1px 6px; border-radius: 4px; font-variant-numeric: tabular-nums; margin-left: 4px; }
-#outreach-pulse .op-legend-toggle { font-size: 11px; color: var(--text4, #64748b); cursor: pointer; user-select: none; text-decoration: underline; margin-left: 8px; }
-#outreach-pulse .op-legend { display: none; margin: 10px 0 14px; padding: 12px; background: var(--surface2, #f1f5f9); border: 1px solid var(--border, #e2e8f0); border-radius: 8px; font-size: 12px; }
+#outreach-pulse .op-linked-app-score { display: inline-block; background: var(--surface-2, #f1f5f9); padding: 1px 6px; border-radius: 4px; font-variant-numeric: tabular-nums; margin-left: 4px; }
+#outreach-pulse .op-legend-toggle { font-size: 11px; color: var(--text-4, #64748b); cursor: pointer; user-select: none; text-decoration: underline; margin-left: 8px; }
+#outreach-pulse .op-legend { display: none; margin: 10px 0 14px; padding: 12px; background: var(--surface-2, #f1f5f9); border: 1px solid var(--border, #e2e8f0); border-radius: 8px; font-size: 12px; }
 #outreach-pulse .op-legend.open { display: block; }
 #outreach-pulse .op-legend table { width: 100%; border-collapse: collapse; }
 #outreach-pulse .op-legend th, #outreach-pulse .op-legend td { padding: 4px 8px; text-align: left; border-bottom: 1px solid var(--border, #e2e8f0); vertical-align: top; }
-#outreach-pulse .op-legend th { font-weight: 600; color: var(--text3, #475569); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
-#outreach-pulse .op-legend td:first-child { width: 24px; font-variant-numeric: tabular-nums; color: var(--text4, #64748b); }
+#outreach-pulse .op-legend th { font-weight: 600; color: var(--text-3, #475569); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+#outreach-pulse .op-legend td:first-child { width: 24px; font-variant-numeric: tabular-nums; color: var(--text-4, #64748b); }
 #outreach-pulse .op-legend td:nth-child(2) { width: 180px; font-weight: 600; color: var(--text, #0f172a); }
-#outreach-pulse .op-legend td:nth-child(3) { color: var(--text2, #1e293b); }
+#outreach-pulse .op-legend td:nth-child(3) { color: var(--text-2, #1e293b); }
 .outreach-app-chip { display: inline-flex; align-items: center; gap: 4px; background: rgba(22,163,74,0.12); color: #15803d; border: 1px solid rgba(22,163,74,0.35); padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; margin-left: 6px; vertical-align: middle; cursor: help; }
 .outreach-app-chip[data-urgency="overdue"] { background: rgba(220,38,38,0.10); color: #991b1b; border-color: rgba(220,38,38,0.35); }
 .outreach-app-chip[data-urgency="due_soon"] { background: rgba(217,119,6,0.12); color: #92400e; border-color: rgba(217,119,6,0.35); }
@@ -38558,7 +38617,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 #outreach-pulse .op-snooze-preset {
   appearance: none;
   border: 1px solid var(--border, #d1d5db);
-  background: var(--surface2, #f8fafc);
+  background: var(--surface-2, #f8fafc);
   color: var(--text, #0f172a);
   padding: 4px 8px;
   border-radius: 4px;
@@ -38574,7 +38633,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   padding: 3px 4px;
   border: 1px solid var(--border, #d1d5db);
   border-radius: 4px;
-  background: var(--surface2, #f8fafc);
+  background: var(--surface-2, #f8fafc);
   color: var(--text, #0f172a);
   font-family: inherit;
 }
@@ -38627,7 +38686,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   padding: 6px 10px;
   border: 1px solid var(--border, #e2e8f0);
   border-radius: 6px;
-  background: var(--surface2, #f8fafc);
+  background: var(--surface-2, #f8fafc);
   margin-bottom: 4px;
   font-size: 12px;
   align-items: center;
@@ -40721,7 +40780,10 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     const pillOutDir = join(ROOT, 'dashboard/data');
     mkdirSync(pillOutDir, { recursive: true });
     const pillJson = JSON.stringify(pillData);
-    writeFileSync(join(pillOutDir, 'pill-data.json'), pillJson);
+    // Atomic write — these artifacts are lazy-fetched by live clients; a
+    // direct writeFileSync mid-rebuild can serve a truncated file (the
+    // sidebar-CONTACTS-stuck-at-0 incident, blind-review 2026-07-07 #19).
+    atomicWriteJson(join(pillOutDir, 'pill-data.json'), pillData, { indent: 0 });
     const uniqueKeys = Object.keys(pillData).length;
     const savedBytes = pillInlineBytes - pillReplacements * 25; // ~25 bytes per data-pill-key="..." reference
     console.log(`  Externalized:      pill-data.json (${Buffer.byteLength(pillJson, 'utf8').toLocaleString()} bytes, ${uniqueKeys} unique payloads, ${pillReplacements} chips, saved ~${savedBytes.toLocaleString()} bytes inline)`);
@@ -40737,7 +40799,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     const contactsOutDir = join(ROOT, 'dashboard/data');
     mkdirSync(contactsOutDir, { recursive: true });
     const contactsPayload = { contacts: contactsDirectory, stats: contactsDirectoryStats };
-    writeFileSync(join(contactsOutDir, 'contacts.json'), JSON.stringify(contactsPayload));
+    atomicWriteJson(join(contactsOutDir, 'contacts.json'), contactsPayload, { indent: 0 });
     const contactsBytes = Buffer.byteLength(JSON.stringify(contactsPayload), 'utf8');
     console.log(`  Externalized:      contacts.json (${contactsBytes.toLocaleString()} bytes) — was inlined`);
   } catch (writeErr) {

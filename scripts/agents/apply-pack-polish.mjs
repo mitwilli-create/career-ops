@@ -40,7 +40,7 @@ try {
   config({ path: join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.env'), override: true });
 } catch { /* dotenv optional */ }
 
-// ── Polish hang fix Part A (2026-05-19) ───────────────────────────────────
+// ── Polish hang fix Part A (2026-05-19; re-plumbed 2026-07-07) ─────────────
 // The 2h41m hang Mitchell hit and the CV-only smoke-test re-hang both showed
 // the same signature: process alive, 0% CPU, 1 ESTABLISHED HTTPS socket held
 // open after the LLM response. Cause: Node undici keeps the TCP socket alive
@@ -49,26 +49,32 @@ try {
 // the polish loop's critic fan-out doesn't resolve until the awaited fetch
 // settles.
 //
-// Fix: monkey-patch globalThis.fetch at polish-orchestrator entry to ALWAYS
-// add a `Connection: close` header. LinkedIn / Anthropic / Perplexity / xAI /
-// OpenAI all honor the spec — connection closes after each request, no
-// keep-alive trap. Scoped to the polish chain only (this file is the only
-// orchestrator entry); other consumers of council.mjs are unaffected.
-const _polishOriginalFetch = globalThis.fetch;
-globalThis.fetch = (input, init = {}) => {
-  const headers = { ...(init.headers || {}), Connection: 'close' };
-  return _polishOriginalFetch(input, { ...init, headers, keepalive: false });
-};
+// Fix (Phase 0 convergence, 2026-07-07): the original fix monkey-patched
+// globalThis.fetch here — flagged 7/7 by the 2026-07-06 council/dealbreaker
+// adjudication as a global-monkey-patch anti-pattern. Replaced with an
+// explicit opt-in: council.mjs's connection-close mode adds
+// `Connection: close` + `keepalive: false` PER-REQUEST on every provider
+// fetch inside council.mjs (the polish chain's only LLM egress path).
+// Enabled below via setConnectionCloseMode(true) right after imports, plus
+// COUNCIL_CONNECTION_CLOSE=1 for any spawned children. Same wire-level
+// behavior as the old patch, zero globalThis mutation.
+// See lib/connection-close-fetch.mjs.
 
 import { harvestPolishSignals } from '../../lib/polish-signals.mjs';
 import { polishArtifact } from '../../lib/polish-loop.mjs';
 import { checkPackCoherence } from '../../lib/polish-coherence.mjs';
-import { initCostTrace } from '../../lib/council.mjs';
+import { initCostTrace, setConnectionCloseMode } from '../../lib/council.mjs';
 import { recordRun } from '../../lib/run-metrics.mjs';
 import { detectPolishSource, buildSkippedArtifactRecord } from '../../lib/polish-source-detection.mjs';
 import { runImpactDoc } from './impact-doc.mjs';
 import { runReferences } from './references.mjs';
 import { runReferrals } from './referrals.mjs';
+
+// Polish-chain connection hygiene (see block comment above): per-request
+// Connection: close on every council.mjs provider fetch, this process +
+// any spawned children.
+setConnectionCloseMode(true);
+process.env.COUNCIL_CONNECTION_CLOSE = '1';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..', '..');

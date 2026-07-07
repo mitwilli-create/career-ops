@@ -5,11 +5,11 @@
     <key>Label</key>
     <string>com.mitchell.career-ops.detector-health</string>
 
-    <key>ProgramArguments</key>
+        <key>ProgramArguments</key>
     <array>
         <string>/bin/zsh</string>
         <string>-lc</string>
-        <string>exec "$NVM_DIR/nvm-exec" node /Users/mitchellwilliams/Documents/career-ops/scripts/agents/detector-health-check.mjs</string>
+        <string>export NVM_DIR=&quot;$HOME/.nvm&quot;; [ -s &quot;$NVM_DIR/nvm.sh&quot; ] &amp;&amp; . &quot;$NVM_DIR/nvm.sh&quot;; exec node &apos;/Users/mitchellwilliams/Documents/career-ops/scripts/launchd-wrapper.mjs&apos; &apos;--label=com.mitchell.career-ops.detector-health&apos; &apos;--max-retries=0&apos; &apos;--retry-backoff-sec=60&apos; &apos;--&apos; &apos;/bin/zsh&apos; &apos;-lc&apos; &apos;exec &quot;$NVM_DIR/nvm-exec&quot; node /Users/mitchellwilliams/Documents/career-ops/scripts/agents/detector-health-check.mjs&apos;</string>
     </array>
 
     <key>EnvironmentVariables</key>

@@ -139,6 +139,85 @@ function info(msg) {
   process.stderr.write(`[launchd-wrapper] ${msg}\n`);
 }
 
+// ── Dead-man heartbeat pings (convergence Phase 0, 2026-07-07) ───────────────
+//
+// Every scheduled launchd job pings a self-hosted Healthchecks instance on
+// start and on completion, so a silently-dead job is detected by a MISSED
+// ping instead of by a human noticing stale data ~24h later. Adjudicated
+// decision (dealbreaker-final-20260706-111713.md Impasse B): keep launchd,
+// add self-hosted Healthchecks/Uptime Kuma heartbeats, do NOT adopt PM2.
+//
+// Config: HEARTBEAT_PING_BASE in the repo .env (or process env), e.g.
+//   HEARTBEAT_PING_BASE=http://127.0.0.1:8787/ping/<project-ping-key>
+// Slug-based pings with ?create=1 auto-provision the check on first ping —
+// zero per-job setup. See infra/healthchecks/README.md.
+//
+// FAIL-OPEN INVARIANT: unset config → no-op; server down / timeout / any
+// error → swallowed with a stderr warn. A heartbeat problem must NEVER
+// affect the wrapped job or the exit code launchd sees.
+
+const HEARTBEAT_TIMEOUT_MS = 10_000;      // fetch abort ceiling (black-holed-server guard)
+// Wait budgets (Qodo finding, PR #408): a down-but-hanging heartbeat server
+// must not add ~10s per ping to every job. Each awaited ping is raced
+// against a small budget — healthy localhost responds in ms; a black-holed
+// server costs at most ~5.5s total per job instead of ~20s. The fetch keeps
+// running to its own 10s abort in the background (start ping) or is dropped
+// at process exit (completion ping) — acceptable, fail-open either way.
+//
+// Why the START ping is NOT pure fire-and-forget: the wrapped command runs
+// via spawnSync, which BLOCKS the event loop — an unawaited fetch would not
+// even be dispatched until the job finishes, arriving together with the
+// completion ping and defeating the /start signal (runtime measurement,
+// "never started" vs "hung" distinction). The small race budget keeps the
+// start ping meaningful while bounding the delay it can add.
+const HEARTBEAT_START_WAIT_BUDGET_MS = 2_500;
+const HEARTBEAT_EXIT_WAIT_BUDGET_MS = 3_000;
+
+export function resolveHeartbeatBase(env = process.env, envFilePath = join(ROOT, '.env')) {
+  const fromEnv = (env.HEARTBEAT_PING_BASE || '').trim();
+  if (fromEnv) return fromEnv.replace(/\/+$/, '');
+  // Lightweight .env parse (no dotenv dep — wrapper must never throw)
+  try {
+    if (!existsSync(envFilePath)) return '';
+    const raw = readFileSync(envFilePath, 'utf-8');
+    const m = raw.match(/^\s*HEARTBEAT_PING_BASE\s*=\s*("?)([^"\n#]*)\1[^\n]*$/m);
+    return m ? m[2].trim().replace(/\/+$/, '') : '';
+  } catch {
+    return '';
+  }
+}
+
+export function heartbeatSlug(label) {
+  // 'com.mitchell.career-ops.scan' → 'scan'. Healthchecks slugs accept
+  // [a-zA-Z0-9_-]; launchd labels are dot-separated lowercase, so map any
+  // residual disallowed chars to '-' defensively.
+  return String(label).replace(/^com\.mitchell\.career-ops\./, '').replace(/[^a-zA-Z0-9_-]+/g, '-');
+}
+
+/**
+ * Ping the heartbeat server. `signal` is 'start' | exit code (number).
+ * Healthchecks semantics: /<slug>/start marks a run beginning (enables
+ * runtime measurement); /<slug>/<exit-code> reports completion — 0 =
+ * success, 1-255 = failure. ?create=1 auto-provisions unknown slugs.
+ * Never throws; never rejects.
+ */
+async function pingHeartbeat(label, signal) {
+  const base = resolveHeartbeatBase();
+  if (!base) return; // heartbeats not configured — silent no-op
+  const slug = heartbeatSlug(label);
+  const suffix = signal === 'start' ? 'start' : String(Math.min(Math.max(Number(signal) || 0, 0), 255));
+  const url = `${base}/${slug}/${suffix}?create=1`;
+  try {
+    await fetch(url, {
+      method: 'GET',
+      signal: AbortSignal.timeout(HEARTBEAT_TIMEOUT_MS),
+      headers: { 'User-Agent': 'career-ops-launchd-wrapper' },
+    });
+  } catch (err) {
+    warnState(`heartbeat ping failed for ${slug} (${err?.message || err}) — continuing (fail-open)`);
+  }
+}
+
 // ── Backoff sleep ─────────────────────────────────────────────────────────────
 
 function sleep(ms) {
@@ -172,6 +251,11 @@ async function run() {
   const [cmd, ...cmdArgs] = command;
 
   info(`starting label=${label} cmd=${cmd} args=[${cmdArgs.join(', ')}] max-retries=${maxRetries} backoff=${retryBackoffSec}s`);
+
+  // Dead-man heartbeat: mark run start (fail-open no-op when unconfigured).
+  // Race-capped so a hanging heartbeat server can't delay the job by more
+  // than HEARTBEAT_START_WAIT_BUDGET_MS — see the wait-budget block above.
+  await Promise.race([pingHeartbeat(label, 'start'), sleep(HEARTBEAT_START_WAIT_BUDGET_MS)]);
 
   let lastExitCode = 1;
   let attemptsUsed = 0;
@@ -245,8 +329,22 @@ async function run() {
 
   info(`done label=${label} exit=${lastExitCode} attempts=${attemptsUsed} duration=${durationSec}s`);
 
+  // Dead-man heartbeat: report completion with the real exit code
+  // (0 = success, non-zero = failure on the Healthchecks side). Fail-open.
+  // Awaited with a small race budget — NOT pure fire-and-forget, because a
+  // pending fetch at process.exit would be dropped before it ever hits the
+  // wire even on the healthy path; the race bounds the down-server cost
+  // while letting the fast localhost ping land normally.
+  await Promise.race([pingHeartbeat(label, lastExitCode), sleep(HEARTBEAT_EXIT_WAIT_BUDGET_MS)]);
+
   // Exit with the actual command's final exit code so launchd sees real status
   process.exit(lastExitCode);
 }
 
-run();
+// Import guard (added 2026-07-07 alongside the heartbeat pings): only run the
+// CLI when executed directly, so tests can import resolveHeartbeatBase /
+// heartbeatSlug without side effects. launchd invocation is unchanged.
+import { pathToFileURL } from 'node:url';
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  run();
+}

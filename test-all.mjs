@@ -1022,6 +1022,33 @@ try {
   console.log(`     → Fix: dedup-tracker.mjs default mode must be --mark; keeper sort must be live > apply-pack > score > num`);
 }
 
+// ── 27. PHASE 0 CONVERGENCE — CONNECTION-CLOSE WRAPPER + HEARTBEAT PINGS ──
+
+console.log('\n27. Phase 0 convergence — no fetch monkey-patch + dead-man heartbeat contract');
+
+try {
+  // (a) tests/connection-close-fetch.test.mjs — the per-request wrapper that
+  //     replaced the apply-pack-polish globalThis.fetch monkey-patch (includes
+  //     the exit-gate grep: no `globalThis.fetch =` assignment in lib/+scripts/).
+  // (b) tests/launchd-wrapper-heartbeat.test.mjs — launchd-wrapper +
+  //     cron-run.sh heartbeat pings: slug/start/exit-code contract, .env
+  //     resolution, FAIL-OPEN invariant (heartbeat problems never affect jobs).
+  execFileSync('node', ['--test', 'tests/connection-close-fetch.test.mjs', 'tests/launchd-wrapper-heartbeat.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+    timeout: TEST_CHILD_TIMEOUT_MS,   // hang-watchdog: never let a stalled test wedge CI
+  });
+  pass('Phase 0 convergence — connection-close wrapper + heartbeat ping contracts hold');
+} catch (err) {
+  fail('Phase 0 convergence regression (fetch monkey-patch back, or heartbeat contract broken)');
+  const out = (err.stdout || '') + (err.stderr || '');
+  for (const line of out.split('\n').slice(0, 40)) {
+    if (line.trim()) console.log(`     ${line}`);
+  }
+  console.log(`     → See lib/connection-close-fetch.mjs + infra/healthchecks/README.md`);
+}
+
 // ── SUMMARY ─────────────────────────────────────────────────────
 
 console.log('\n' + '='.repeat(50));

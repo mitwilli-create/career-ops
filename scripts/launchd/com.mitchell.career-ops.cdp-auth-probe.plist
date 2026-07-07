@@ -15,10 +15,11 @@
          30 minutes — fast enough to alarm before the morning heartbeat at
          09:30 PT picks up the state file. -->
 
-    <key>ProgramArguments</key>
+        <key>ProgramArguments</key>
     <array>
-        <string>/Users/mitchellwilliams/.nvm/versions/node/v24.14.0/bin/node</string>
-        <string>/Users/mitchellwilliams/Documents/career-ops/scripts/cdp-auth-probe.mjs</string>
+        <string>/bin/zsh</string>
+        <string>-lc</string>
+        <string>export NVM_DIR=&quot;$HOME/.nvm&quot;; [ -s &quot;$NVM_DIR/nvm.sh&quot; ] &amp;&amp; . &quot;$NVM_DIR/nvm.sh&quot;; exec node &apos;/Users/mitchellwilliams/Documents/career-ops/scripts/launchd-wrapper.mjs&apos; &apos;--label=com.mitchell.career-ops.cdp-auth-probe&apos; &apos;--max-retries=0&apos; &apos;--retry-backoff-sec=60&apos; &apos;--&apos; &apos;node&apos; &apos;/Users/mitchellwilliams/Documents/career-ops/scripts/cdp-auth-probe.mjs&apos;</string>
     </array>
 
     <key>WorkingDirectory</key>

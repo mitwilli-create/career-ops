@@ -52,6 +52,26 @@ ledger_finish() {
     fi
 }
 
+# ── Dead-man heartbeat ping (convergence Phase 0, 2026-07-07) ──────────────
+# Same contract as scripts/launchd-wrapper.mjs::pingHeartbeat — self-hosted
+# Healthchecks slug ping with auto-provision. Config: HEARTBEAT_PING_BASE in
+# process env or the repo .env. FAIL-OPEN: unset config → no-op; curl errors
+# swallowed. A heartbeat problem must never affect the job or its exit code.
+# Usage: hb_ping <exit-code>   (0 = success incl. cadence skips; 1-255 = fail)
+hb_ping() {
+    local rc="${1:-0}"
+    local base="${HEARTBEAT_PING_BASE:-}"
+    if [[ -z "$base" && -f "$REPO/.env" ]]; then
+        base="$(sed -n 's/^[[:space:]]*HEARTBEAT_PING_BASE[[:space:]]*=[[:space:]]*"\{0,1\}\([^"#]*\).*/\1/p' "$REPO/.env" | head -1 | tr -d '[:space:]')"
+    fi
+    [[ -z "$base" ]] && return 0
+    base="${base%/}"
+    (( rc < 0 || rc > 255 )) && rc=1
+    # -m 3: a hanging heartbeat server may add at most 3s to a job, never 10s
+    # (Qodo finding, PR #408). Fail-open semantics unchanged.
+    curl -fsS -m 3 -A career-ops-cron-run -o /dev/null "${base}/${LABEL}/${rc}?create=1" >/dev/null 2>&1 || true
+}
+
 # ── Cadence guard ──────────────────────────────────────────────────────────
 case "$GUARD" in
     always) ;;
@@ -61,6 +81,7 @@ case "$GUARD" in
         if (( 10#$WEEK % 2 != 0 )); then
             echo "$(ts) [SKIP] biweekly-even: ISO week $WEEK is odd" >> "$LOG"
             ledger_finish skipped "" "biweekly-even cadence guard"
+            hb_ping 0
             exit 0
         fi
         ;;
@@ -69,6 +90,7 @@ case "$GUARD" in
         if (( 10#$WEEK % 2 == 0 )); then
             echo "$(ts) [SKIP] biweekly-odd: ISO week $WEEK is even" >> "$LOG"
             ledger_finish skipped "" "biweekly-odd cadence guard"
+            hb_ping 0
             exit 0
         fi
         ;;
@@ -77,12 +99,14 @@ case "$GUARD" in
         if (( 10#$DAY > 7 )); then
             echo "$(ts) [SKIP] monthly-first: day-of-month $DAY > 7" >> "$LOG"
             ledger_finish skipped "" "monthly-first cadence guard"
+            hb_ping 0
             exit 0
         fi
         ;;
     *)
         echo "$(ts) [ERROR] unknown cadence-guard: $GUARD" >> "$LOG"
         ledger_finish fail "" "unknown cadence guard: $GUARD"
+        hb_ping 2
         exit 2
         ;;
 esac
@@ -99,6 +123,7 @@ if [[ "${1:-}" == "node" && -n "${2:-}" ]]; then
     if [[ ! -f "$SCRIPT" ]]; then
         echo "$(ts) [SKIP] target script not found: $SCRIPT (likely awaiting overnight haul deploy)" >> "$LOG"
         ledger_finish skipped "" "target script not found"
+        hb_ping 0
         exit 0
     fi
 fi
@@ -107,6 +132,7 @@ fi
 cd "$REPO" || {
     echo "$(ts) [ERROR] cd $REPO failed" >> "$LOG"
     ledger_finish fail "" "cd $REPO failed"
+    hb_ping 3
     exit 3
 }
 echo "$(ts) [START] $LABEL: $*" >> "$LOG"
@@ -118,4 +144,5 @@ if [[ $RC -eq 0 ]]; then
 else
     ledger_finish fail "" "exit code $RC"
 fi
+hb_ping "$RC"
 exit $RC

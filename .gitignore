@@ -719,3 +719,6 @@ data/calibration-state.json
 data/cv-tailor-retry-state.json
 data/remote-ai-sweep-report-*.md
 data/prompt-remote-ai-company-sweep-*.md
+
+# Self-hosted Healthchecks secret (convergence Phase 0, 2026-07-07)
+infra/healthchecks/.env.hc

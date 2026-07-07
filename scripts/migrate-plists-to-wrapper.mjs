@@ -63,6 +63,31 @@ const SKIP_LABELS = new Set([
   'com.mitchell.career-ops.dashboard-server',
   'com.mitchell.career-ops.telegram-bot',
   'com.mitchell.career-ops.chrome-debugging',
+  // Phase 0 heartbeat sweep additions (2026-07-07):
+  // Restart shims for persistent daemons — a "completion" ping on a
+  // process whose job is to background a daemon and exit would be
+  // misleading. Daemon liveness is monitored via HTTP checks instead.
+  'com.mitchell.career-ops.cloudflared-nohup-wrapper',
+  'com.mitchell.career-ops.dashboard-server-nohup-wrapper',
+  // WatchPaths-triggered (fires on cv.md / applications.md / reports/
+  // changes, no periodic schedule) — a period-based dead-man check would
+  // false-alarm whenever the watched files simply don't change.
+  'com.mitchell.career-ops.alignment-watcher',
+  // cron-run.sh-based jobs: the deployed bash wrapper at
+  // ~/.local/career-ops-wrappers/cron-run.sh pings the heartbeat itself
+  // (same slug convention) — wrapping again would double-ping.
+  'com.mitchell.career-ops.delta-ats-watch',
+  'com.mitchell.career-ops.delta-full-recalibration',
+  'com.mitchell.career-ops.gamma-truth-audit',
+  'com.mitchell.career-ops.network-database-build',
+  'com.mitchell.career-ops.network-enrich-batch',
+  // Detached-work job (Qodo round-3 finding, PR #408): the inner command
+  // backgrounds the real work (nohup … &) with AbandonProcessGroup=true,
+  // so a completion heartbeat would fire when the parent shell exits —
+  // a FALSE green with a meaningless runtime, not "prewarm finished".
+  // Its detached design is intentional (PR #236); converting it to a
+  // foreground job so it can heartbeat honestly is a Phase 4 candidate.
+  'com.mitchell.career-ops.prewarm-top-n',
 ]);
 
 // ── Minimal plist XML parser ──────────────────────────────────────────────────
@@ -173,25 +198,68 @@ function renderDiff(plistFile, oldItems, newItems) {
 // ── Build new ProgramArguments ────────────────────────────────────────────────
 
 /**
+ * POSIX single-quote a token for embedding in a `-lc` shell string.
+ * 'abc' → 'abc' ;  don't → 'don'\''t'
+ */
+function shellQuote(s) {
+  return `'` + String(s).replace(/'/g, `'\\''`) + `'`;
+}
+
+/**
+ * Strip version-PINNED node/claude binary paths from the ORIGINAL command so
+ * the rewritten plist is fully version-agnostic (Qodo finding, PR #408; repo
+ * precedent: node-instead-of-bash bug class + PR #61):
+ *   - argv0 `/usr/bin/env node …`                        → `node …`
+ *   - argv0 `…/.nvm/versions/node/vX/bin/node|claude`    → bare binary name
+ *   - the same pinned path INSIDE `-c`/`-lc` shell strings (e.g. the
+ *     prewarm-top-n nohup line)                          → bare binary name
+ * Bare names resolve from the nvm-provided PATH set up by the outer -lc
+ * launcher (see buildNewArgs), which follows the nvm `default` alias — an
+ * nvm upgrade no longer kills the job at exec time.
+ */
+const NVM_PINNED_BIN_RE = /(?:\/[\w@.+-]+)*\/\.nvm\/versions\/node\/[\w.-]+\/bin\/([\w.-]+)/g;
+function normalizeInnerCommand(args) {
+  let out = args.map(a => String(a).replace(NVM_PINNED_BIN_RE, '$1'));
+  if (out[0] === '/usr/bin/env' && out[1]) out = out.slice(1);
+  return out;
+}
+
+/**
  * Compute the new ProgramArguments that route through launchd-wrapper.mjs.
  *
- * The wrapper is always invoked as:
- *   node <wrapper-path> --label=<label> --max-retries=2 --retry-backoff-sec=60 -- <original...>
+ * Launch shape (version-agnostic, 2026-07-07 — Qodo finding on PR #408):
+ *   /bin/zsh -lc 'export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"; \
+ *                 exec node <wrapper> --label=… --max-retries=N --retry-backoff-sec=60 -- <original…>'
  *
- * We use the full absolute path to the node binary that is currently running
- * this script — consistent with how most plists already reference node.
+ * Why NOT a pinned node path as ProgramArguments[0]: an nvm upgrade/cleanup
+ * deletes /…/.nvm/versions/node/vX/bin/node and kills every job at exec
+ * time, before the wrapper or its heartbeat can run. Why NOT nvm-exec:
+ * verified 2026-07-07 that `nvm-exec node …` FAILS headlessly with
+ * "No NODE_VERSION provided; no .nvmrc file found"; sourcing nvm.sh uses
+ * the `default` alias and works (the pattern the audit/dashboard-server
+ * plists already use).
  */
-function buildNewArgs(label, originalArgs) {
-  const nodeBin = process.execPath; // path of the running node binary
-  return [
-    nodeBin,
-    WRAPPER_PATH,
-    `--label=${label}`,
-    '--max-retries=2',
-    '--retry-backoff-sec=60',
-    '--',
-    ...originalArgs,
-  ];
+function buildNewArgs(label, originalArgs, opts = {}) {
+  const wrapperPath = opts.repoRoot
+    ? join(opts.repoRoot, 'scripts', 'launchd-wrapper.mjs')
+    : WRAPPER_PATH;
+  // maxRetries default 2 (P1-8 original design). Phase 0 heartbeat sweep
+  // (2026-07-07) passes --max-retries=0 so adopting the wrapper for
+  // heartbeat pings is behavior-preserving — retry semantics can be
+  // enabled per-job later as a deliberate change.
+  const maxRetries = Number.isInteger(opts.maxRetries) && opts.maxRetries >= 0 ? opts.maxRetries : 2;
+  const inner = normalizeInnerCommand(originalArgs);
+  const cmd = [
+    'export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh";',
+    'exec node',
+    shellQuote(wrapperPath),
+    shellQuote(`--label=${label}`),
+    shellQuote(`--max-retries=${maxRetries}`),
+    shellQuote('--retry-backoff-sec=60'),
+    shellQuote('--'),
+    ...inner.map(shellQuote),
+  ].join(' ');
+  return ['/bin/zsh', '-lc', cmd];
 }
 
 // ── Already wrapped? ──────────────────────────────────────────────────────────
@@ -208,12 +276,23 @@ function main() {
     console.log(
       'Usage:\n' +
       '  node scripts/migrate-plists-to-wrapper.mjs          # dry-run: print diffs\n' +
-      '  node scripts/migrate-plists-to-wrapper.mjs --write  # apply + backup originals\n'
+      '  node scripts/migrate-plists-to-wrapper.mjs --write  # apply + backup originals\n' +
+      'Options:\n' +
+      '  --max-retries=N       retry count baked into rewritten plists (default 2; use 0 for behavior-preserving heartbeat-only adoption)\n' +
+      '  --repo-root=PATH      canonical repo root to bake into wrapper paths (default: this script\'s repo — pass the MAIN tree path when running from a worktree)\n' +
+      '  --node-bin=PATH       node binary path to bake in (default: current process.execPath)\n'
     );
     process.exit(0);
   }
 
   const writeMode = args.includes('--write');
+  const cliOpts = {};
+  for (const a of args) {
+    let m;
+    if ((m = a.match(/^--max-retries=(\d+)$/))) cliOpts.maxRetries = parseInt(m[1], 10);
+    else if ((m = a.match(/^--repo-root=(.+)$/))) cliOpts.repoRoot = m[1];
+    else if ((m = a.match(/^--node-bin=(.+)$/))) cliOpts.nodeBin = m[1];
+  }
 
   if (!writeMode) {
     console.log('DRY-RUN mode (add --write to apply)\n');
@@ -282,7 +361,7 @@ function main() {
       continue;
     }
 
-    const newArgs = buildNewArgs(label, originalArgs);
+    const newArgs = buildNewArgs(label, originalArgs, cliOpts);
     const diff = renderDiff(plistFile, originalArgs, newArgs);
 
     console.log(diff);

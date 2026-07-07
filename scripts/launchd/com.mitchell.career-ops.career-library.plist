@@ -11,11 +11,11 @@
          a public GitHub repo (configure GITHUB_LIBRARY_REPO env var first).
          Sunday 04:00 PT — runs after weekly-intel (02:00) so any new
          intelligence is reflected in the library context. -->
-    <key>ProgramArguments</key>
+        <key>ProgramArguments</key>
     <array>
         <string>/bin/zsh</string>
         <string>-lc</string>
-        <string>export NVM_DIR="$HOME/.nvm" &amp;&amp; [ -s "$NVM_DIR/nvm.sh" ] &amp;&amp; \. "$NVM_DIR/nvm.sh" &amp;&amp; exec node /Users/mitchellwilliams/Documents/career-ops/scripts/career-library-builder.mjs</string>
+        <string>export NVM_DIR=&quot;$HOME/.nvm&quot;; [ -s &quot;$NVM_DIR/nvm.sh&quot; ] &amp;&amp; . &quot;$NVM_DIR/nvm.sh&quot;; exec node &apos;/Users/mitchellwilliams/Documents/career-ops/scripts/launchd-wrapper.mjs&apos; &apos;--label=com.mitchell.career-ops.career-library&apos; &apos;--max-retries=0&apos; &apos;--retry-backoff-sec=60&apos; &apos;--&apos; &apos;/bin/zsh&apos; &apos;-lc&apos; &apos;export NVM_DIR=&quot;$HOME/.nvm&quot; &amp;&amp; [ -s &quot;$NVM_DIR/nvm.sh&quot; ] &amp;&amp; \. &quot;$NVM_DIR/nvm.sh&quot; &amp;&amp; exec node /Users/mitchellwilliams/Documents/career-ops/scripts/career-library-builder.mjs&apos;</string>
     </array>
 
     <key>WorkingDirectory</key>

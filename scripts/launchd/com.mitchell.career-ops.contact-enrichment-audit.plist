@@ -15,11 +15,11 @@
     <!-- Invoke node via a login zsh so nvm.sh sourcing resolves the user's
          current default node. Avoids hardcoding a version-pinned path that
          breaks on `nvm install`/`nvm alias default` upgrades. -->
-    <key>ProgramArguments</key>
+        <key>ProgramArguments</key>
     <array>
         <string>/bin/zsh</string>
         <string>-lc</string>
-        <string>exec "$HOME/.nvm/nvm-exec" node /Users/mitchellwilliams/Documents/career-ops/scripts/maintenance/contact-enrichment-month-1-audit.mjs</string>
+        <string>export NVM_DIR=&quot;$HOME/.nvm&quot;; [ -s &quot;$NVM_DIR/nvm.sh&quot; ] &amp;&amp; . &quot;$NVM_DIR/nvm.sh&quot;; exec node &apos;/Users/mitchellwilliams/Documents/career-ops/scripts/launchd-wrapper.mjs&apos; &apos;--label=com.mitchell.career-ops.contact-enrichment-audit&apos; &apos;--max-retries=0&apos; &apos;--retry-backoff-sec=60&apos; &apos;--&apos; &apos;/bin/zsh&apos; &apos;-lc&apos; &apos;exec &quot;$HOME/.nvm/nvm-exec&quot; node /Users/mitchellwilliams/Documents/career-ops/scripts/maintenance/contact-enrichment-month-1-audit.mjs&apos;</string>
     </array>
 
     <key>WorkingDirectory</key>

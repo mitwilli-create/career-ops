@@ -49,7 +49,7 @@ import {
 } from '../../lib/system-health-snapshot.mjs';
 import {
   archiveReverseOrphanHtmls, archiveOrphanApplyPacks,
-  archiveStaleHmIntel, sweepTmpLeaks,
+  archiveStaleHmIntel, sweepTmpLeaks, sweepGitIcloudJunk,
 } from '../../lib/system-health-cleanup.mjs';
 import { installRunRecord } from '../../lib/job-runs-ledger.mjs';
 import { escapeBackslashAndChar } from '../../lib/sanitize.mjs';
@@ -283,6 +283,19 @@ async function runCleanup(snap) {
   if (tmp.removed.length) {
     actions.push({ kind: 'tmp-sweep', count: tmp.removed.length, items: tmp.removed });
     log(`  removed ${tmp.removed.length} /tmp leaks (>24h)`);
+  }
+
+  // iCloud .git conflict-copy sweep. macOS "Desktop & Documents Folders"
+  // iCloud sync makes "<name> 2" / "index 40" duplicates of frequently
+  // rewritten git internals (index, config, refs, logs, worktree indexes).
+  // Accumulated copies eventually break `git fetch` with
+  // "bad object refs/heads/<branch> 2". No legitimate git internal filename
+  // or ref name contains a space, so a trailing " <digits>" is an unambiguous
+  // conflict copy. See CLAUDE.md "empty-tree add + iCloud dup storm" bug class.
+  const gitJunk = sweepGitIcloudJunk(join(ROOT, '.git'));
+  if (gitJunk.removed.length) {
+    actions.push({ kind: 'git-icloud-junk-sweep', count: gitJunk.removed.length, items: gitJunk.removed });
+    log(`  removed ${gitJunk.removed.length} iCloud .git conflict copies`);
   }
 
   // Write cleanup log

@@ -874,6 +874,31 @@ try {
   console.log(`     → Fix: default not-yet-computed count metrics to null (not 0) in lib/process-all-state.mjs::writeProcessState`);
 }
 
+// ── 23. iCLOUD .git CONFLICT-COPY SWEEP (delete only "<name> N" litter) ──
+
+console.log("\n23. iCloud .git sweep — deletes only conflict copies ('<name> N'), never a real git file");
+
+try {
+  // Runs tests/git-icloud-junk-sweep.test.mjs — proves lib/system-health-cleanup.mjs
+  // ::sweepGitIcloudJunk removes ONLY iCloud "<name> N" duplicates inside .git and
+  // never a legitimate git file/ref (no real git internal filename or ref name
+  // contains a space). Guards the daily system-maintainer --cleanup sweep that keeps
+  // the "empty-tree add + iCloud dup storm" bug class from breaking `git fetch`.
+  execFileSync('node', ['tests/git-icloud-junk-sweep.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+    timeout: 60000,
+  });
+  pass('iCloud .git sweep — only conflict copies deleted, real files intact (unit)');
+} catch (err) {
+  fail('iCloud .git sweep REGRESSED — sweep may delete real git files or miss conflict copies');
+  const out = (err.stdout || '') + (err.stderr || '');
+  for (const line of out.split('\n').slice(0, 30)) {
+    if (line.trim()) console.log(`     ${line}`);
+  }
+}
+
 // ── SUMMARY ─────────────────────────────────────────────────────
 
 console.log('\n' + '='.repeat(50));

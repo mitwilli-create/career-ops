@@ -929,7 +929,9 @@ async function councilFanOut(finding) {
   const cost = proposals.reduce((s, p) => s + (p.costUsd || 0), 0);
   log(`    ${proposals.length}/${COUNCIL_LINEUP.length} models responded (${(Date.now() - t0) / 1000}s, $${cost.toFixed(2)})`);
   if (missingKeys.length) {
-    log(`    skipped (missing env): ${missingKeys.map(m => m.model).join(', ')}`);
+    // Undispatchable entries are model-id problems, not env problems — label
+    // them accurately. Bug class: pricing-map-entry-without-dispatch-block.
+    log(`    skipped: ${missingKeys.map(m => `${m.model} (${m.undispatchable ? 'not dispatchable' : 'missing env'})`).join(', ')}`);
   }
 
   // Adjudicate: pick the proposal where MAJORITY say REAL_BUG and OLD-text matches verbatim

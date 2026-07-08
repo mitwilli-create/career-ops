@@ -1049,6 +1049,32 @@ try {
   console.log(`     → See lib/connection-close-fetch.mjs + infra/healthchecks/README.md`);
 }
 
+// ── 28. COUNCIL DISPATCH INTEGRITY (pricing-map ↔ PROVIDERS; no silent model drop) ──
+
+console.log("\n28. Council dispatch integrity — every priced/lineup model id is dispatchable or a documented escalation-target (no silent model drop)");
+
+try {
+  // Runs tests/council-dispatch-integrity.test.mjs — exits 1 if any DEFAULT_LINEUP /
+  // COUNCIL_FANOUT_LINEUP / TASK_ROUTING_MATRIX id lacks a PROVIDERS dispatch block,
+  // or a MODEL_COST_RATES entry is priced-but-undispatchable and not in
+  // ESCALATION_TARGET_PRICE_ONLY, or callCouncil stops surfacing undispatchable ids
+  // in missingKeys. Guards bug class pricing-map-entry-without-dispatch-block
+  // (silent model drop), surfaced 2026-06-05 by the reliability-evidence run.
+  execFileSync('node', ['tests/council-dispatch-integrity.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+    timeout: TEST_CHILD_TIMEOUT_MS,   // hang-watchdog: never let a stalled test wedge CI
+  });
+  pass('Council dispatch integrity — no priced-but-undispatchable models; callCouncil fails loud');
+} catch (err) {
+  fail('Council dispatch integrity — a model id is priced/listed but not dispatchable (silent-drop risk)');
+  const out = (err.stdout || '') + (err.stderr || '');
+  for (const line of out.split('\n').slice(0, 40)) {
+    if (line.trim()) console.log(`     ${line}`);
+  }
+}
+
 // ── SUMMARY ─────────────────────────────────────────────────────
 
 console.log('\n' + '='.repeat(50));

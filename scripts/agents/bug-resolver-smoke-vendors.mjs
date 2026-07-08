@@ -40,9 +40,16 @@ async function main() {
   let totalCost = 0;
 
   if (result.missingKeys && result.missingKeys.length > 0) {
-    console.log('Missing API keys:');
+    console.log('Missing API keys / undispatchable models:');
     for (const mk of result.missingKeys) {
-      console.log(`  ${mk.model}: ${mk.missingEnvVar} not set`);
+      if (mk.undispatchable) {
+        // Model-id problem, not an env problem — missingEnvVar carries the
+        // 'N/A (not dispatchable)' sentinel. Bug class:
+        // pricing-map-entry-without-dispatch-block.
+        console.log(`  ${mk.model}: NOT DISPATCHABLE — ${mk.reason}${mk.suggestion ? ` (use "${mk.suggestion}")` : ''}`);
+      } else {
+        console.log(`  ${mk.model}: ${mk.missingEnvVar} not set`);
+      }
     }
     console.log('');
   }

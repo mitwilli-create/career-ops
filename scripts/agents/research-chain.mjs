@@ -105,6 +105,13 @@ async function runResearcher({ question, model }) {
     opts: { timeoutMs: 180_000, maxTokens: 8000 },
   });
   if (res?.missingKeys?.length) {
+    // Branch on undispatchable — those entries are model-id problems, not env
+    // problems (missingEnvVar carries the 'N/A (not dispatchable)' sentinel).
+    // Bug class: pricing-map-entry-without-dispatch-block.
+    const undispatchable = res.missingKeys.filter(m => m.undispatchable);
+    if (undispatchable.length) {
+      throw new Error(`researcher cannot fire — model not dispatchable: ${undispatchable.map(m => `${m.model} (${m.reason})`).join(', ')}`);
+    }
     throw new Error(`researcher cannot fire — missing env keys: ${res.missingKeys.map(m => `${m.model} needs ${m.missingEnvVar}`).join(', ')}`);
   }
   const results = res?.results || [];
@@ -208,6 +215,11 @@ async function runDealbreaker({ handoffPath, reportPath, ceilingUsd, model }) {
     opts: { timeoutMs: 180_000, maxTokens: 6000 },
   });
   if (res?.missingKeys?.length) {
+    // Same undispatchable-vs-env split as the researcher guard above.
+    const undispatchable = res.missingKeys.filter(m => m.undispatchable);
+    if (undispatchable.length) {
+      throw new Error(`dealbreaker cannot fire — model not dispatchable: ${undispatchable.map(m => `${m.model} (${m.reason})`).join(', ')}`);
+    }
     throw new Error(`dealbreaker cannot fire — missing env keys: ${res.missingKeys.map(m => `${m.model} needs ${m.missingEnvVar}`).join(', ')}`);
   }
   const results = res?.results || [];

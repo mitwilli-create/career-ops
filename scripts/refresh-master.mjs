@@ -51,7 +51,7 @@ import {
 import { assertOrUpdateChecksums, IdentityLockViolation } from '../lib/identity-lock.mjs';
 import { recordAndCheck as recordDrift, buildDashboardMetricsSnapshot } from '../lib/metric-drift-tripwire.mjs';
 import { getAdapter } from '../lib/provider-adapters/index.mjs';
-import { verifyCacheWrite } from '../lib/refresh-verifier.mjs';
+import { verifyCacheWrite, buildSchemaSkeleton } from '../lib/refresh-verifier.mjs';
 import { validateCacheWrite } from '../lib/cache-write-validator.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -392,32 +392,46 @@ async function main() {
     if (useAdapter) {
       log(`  EXEC (adapter): $${q.cost} → ${adapterProvider} :: ${q.cache.id} :: row ${q.row.num} ${q.row.company}`);
       try {
-        const writerResult = await adapter.refresh(q.cache, q.row, {
-          caller: `refresh-master:${q.cache.id}`,
-          maxTokens: q.cache.maxTokens || 3500,
-          ...q.cache.providerOpts,
-        });
-        if (!writerResult.ok) {
-          log(`  WRITER FAILED: ${(writerResult.errors || []).join(' | ')}`);
-          errorCount++;
-          state.refresh_history[q.cache.id] = state.refresh_history[q.cache.id] || {};
-          state.refresh_history[q.cache.id][String(q.row.num)] = { lastRefreshedAt: ts(), result: 'WRITER_FAILED', error: (writerResult.errors || []).join(' | ').slice(0, 240) };
-          continue;
-        }
-
-        // Cross-architecture verifier
+        // Prior cache is read BEFORE the writer call (2026-07-08) so its
+        // structure can pin the writer prompt via schemaHint. The schema-blind
+        // default prompt made every run invent a new structure, which the
+        // verifier then correctly rejected as drift against the prior cache.
         let priorCache = null;
         try {
           const inspectedPath = inspectCacheForRow(q.cache, q.row).path;
           if (inspectedPath && existsSync(inspectedPath)) priorCache = JSON.parse(readFileSync(inspectedPath, 'utf8'));
         } catch { /* prior cache read best-effort */ }
+        const schemaHint = buildSchemaSkeleton(priorCache);
 
+        const writerResult = await adapter.refresh(q.cache, q.row, {
+          caller: `refresh-master:${q.cache.id}`,
+          maxTokens: q.cache.maxTokens || 3500,
+          schemaHint,
+          ...q.cache.providerOpts,
+        });
+        if (!writerResult.ok) {
+          // Never persist an empty diagnostic (2026-07-08: 6 WRITER_FAILED
+          // rows carried error:"" because the adapters returned ok:false with
+          // no errors[] on JSON-parse failure — swallowed-error smell, bug
+          // class findings-exit-code-conflated-with-spawn-failure).
+          const pm = writerResult.providerMetadata || {};
+          const errText = (writerResult.errors || []).join(' | ')
+            || `adapter returned ok:false with no error detail (model=${pm.model || writerResult.model || 'unknown'}, ` +
+               `finish_reason=${pm.finish_reason ?? pm.stop_reason ?? 'unknown'}, raw_content_length=${pm.raw_content_length ?? 'unknown'})`;
+          log(`  WRITER FAILED: ${errText}`);
+          errorCount++;
+          state.refresh_history[q.cache.id] = state.refresh_history[q.cache.id] || {};
+          state.refresh_history[q.cache.id][String(q.row.num)] = { lastRefreshedAt: ts(), result: 'WRITER_FAILED', error: errText.slice(0, 400) };
+          continue;
+        }
+
+        // Cross-architecture verifier
         const verifyResult = await verifyCacheWrite({
           writerResult,
           priorCache,
           cache: q.cache,
           row: q.row,
-          opts: { verifierProvider: q.cache.verifierProvider },
+          opts: { verifierProvider: q.cache.verifierProvider, schemaHint },
         });
 
         // Validate the write envelope
@@ -446,7 +460,16 @@ async function main() {
         if (verifyResult.verified === false) {
           log(`  VERIFIER REJECTED: escalate=${verifyResult.escalateToCouncil}, notes=${(verifyResult.notes || []).slice(0, 2).join('; ')}`);
           state.refresh_history[q.cache.id] = state.refresh_history[q.cache.id] || {};
-          state.refresh_history[q.cache.id][String(q.row.num)] = { lastRefreshedAt: ts(), result: 'VERIFIER_REJECTED', escalate: verifyResult.escalateToCouncil };
+          // Persist the verifier's reasoning (2026-07-08: entries previously
+          // recorded only the escalate flag — the WHY lived solely in the
+          // day's log file, making rejection waves undiagnosable from state).
+          state.refresh_history[q.cache.id][String(q.row.num)] = {
+            lastRefreshedAt: ts(),
+            result: 'VERIFIER_REJECTED',
+            escalate: verifyResult.escalateToCouncil,
+            verdict: verifyResult.rawVerdict || null,
+            notes: (verifyResult.notes || []).slice(0, 3).map(n => String(n).slice(0, 300)),
+          };
           // Phase 3 will adjudicate via council-3; Phase 2 just logs + skips write.
           errorCount++;
           continue;
@@ -461,12 +484,22 @@ async function main() {
         };
         mkdirSync(dirname(targetPath), { recursive: true });
         writeFileSync(targetPath, JSON.stringify(cacheBody, null, 2));
-        log(`  OK: wrote ${q.cache.id}/${q.row.num} (verifier=PASS, citations=${envelope.source_urls.length})`);
+        // verified can be true (PASS) or null (verifier disagreement /
+        // verifier unavailable — pre-existing semantics write anyway with the
+        // uncertainty recorded). 2026-07-08: history previously hardcoded
+        // verifier_passed:true here, misrecording disagreement writes.
+        log(`  OK: wrote ${q.cache.id}/${q.row.num} (verifier=${verifyResult.verified === true ? 'PASS' : 'DISAGREEMENT-null'}, citations=${envelope.source_urls.length})`);
         actualSpent += writerResult.costUsd || q.cost;
         firedCount++;
         state.spend_window_30d.push({ ts: ts(), usd: writerResult.costUsd || q.cost, cache: q.cache.id, key: String(q.row.num), provider: adapterProvider });
         state.refresh_history[q.cache.id] = state.refresh_history[q.cache.id] || {};
-        state.refresh_history[q.cache.id][String(q.row.num)] = { lastRefreshedAt: ts(), result: 'OK', verifier_passed: true, citations: envelope.source_urls.length };
+        state.refresh_history[q.cache.id][String(q.row.num)] = {
+          lastRefreshedAt: ts(),
+          result: 'OK',
+          verifier_passed: verifyResult.verified,
+          citations: envelope.source_urls.length,
+          ...(verifyResult.verified !== true ? { verifier_notes: (verifyResult.notes || []).slice(0, 3).map(n => String(n).slice(0, 300)) } : {}),
+        };
         if (q.isRotation) state.refresh_history['_layer3_rotation_last_fired_at'] = ts();
       } catch (e) {
         log(`  ERROR (adapter): ${e.message.slice(0, 200)}`);

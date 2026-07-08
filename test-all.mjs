@@ -1075,6 +1075,35 @@ try {
   }
 }
 
+// ── 29. REFRESH ADAPTER ERROR REPORTING + VERIFIER DISPLAY-TRUNCATION GUARD ──
+
+console.log("\n29. Refresh adapters fail loud + verifier prompt never fakes writer truncation");
+
+try {
+  // Runs tests/refresh-adapter-error-reporting.test.mjs — mocked-fetch, $0.
+  // Guards the 2026-07-08 refresh-master incident (15/29 VERIFIER_REJECTED +
+  // 6 WRITER_FAILED with empty error strings): (a) provider adapters must
+  // never return ok:false without a non-empty errors[] (bug class
+  // findings-exit-code-conflated-with-spawn-failure); (b) finish_reason=length
+  // / stop_reason=max_tokens is an explicit truncation failure; (c) the
+  // verifier prompt must never embed valid writer JSON cut mid-string without
+  // labeling it a display excerpt; (d) refresh-master persists verifier notes
+  // + a schema hint pins the writer to the prior cache's structure.
+  execFileSync('node', ['--test', 'tests/refresh-adapter-error-reporting.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+    timeout: TEST_CHILD_TIMEOUT_MS,   // hang-watchdog: never let a stalled test wedge CI
+  });
+  pass('Refresh adapter error reporting — adapters fail loud; verifier sees labeled excerpts, not fake truncation');
+} catch (err) {
+  fail('Refresh adapter error reporting — an adapter swallows errors or the verifier prompt fakes truncation again');
+  const out = (err.stdout || '') + (err.stderr || '');
+  for (const line of out.split('\n').slice(0, 40)) {
+    if (line.trim()) console.log(`     ${line}`);
+  }
+}
+
 // ── SUMMARY ─────────────────────────────────────────────────────
 
 console.log('\n' + '='.repeat(50));

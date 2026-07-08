@@ -190,7 +190,8 @@ const COMMON_INPUT = Object.freeze({
   });
   check('T5 throw → status:error', r.status === 'error', r);
   check('T5 error mentions threw', typeof r.error === 'string' && /threw/.test(r.error), r);
-  check('T5 score is 0 on error', r.score === 0, r);
+  check('T5 score is null on error (silent-zero guard)', r.score === null, r);
+  check('T5 unavailable flag set on error', r.unavailable === true, r);
   check('T5 signals empty on error', r.signals.length === 0, r);
   check('T5 gaps empty on error', r.gaps.length === 0, r);
 }

@@ -762,7 +762,11 @@ export async function runOmegaSteward(opts = {}) {
         try {
             const { annotateOmegaRecommendationsWithPersonaReview } = await import('../../lib/persona-omega-review.mjs');
             const personaSummary = await annotateOmegaRecommendationsWithPersonaReview(recommendations);
-            log(`phase 4 (persona-review): reviewed ${personaSummary.reviewedCount} proposals · ${personaSummary.findingsCount} findings · $${(personaSummary.costUsd || 0).toFixed(4)} spent`);
+            if (personaSummary.unavailable) {
+                log(`phase 4 (persona-review): did not run — ${personaSummary.skipped || 'unavailable'}`);
+            } else {
+                log(`phase 4 (persona-review): reviewed ${personaSummary.reviewedCount} proposals · ${personaSummary.findingsCount} findings · $${(personaSummary.costUsd || 0).toFixed(4)} spent`);
+            }
             if (personaSummary.errors?.length > 0) {
                 log(`phase 4 (persona-review): ${personaSummary.errors.length} persona errors (non-fatal):`);
                 for (const e of personaSummary.errors.slice(0, 3)) log(`   - rec ${e.recId} ${e.persona}: ${e.error?.slice?.(0, 100)}`);

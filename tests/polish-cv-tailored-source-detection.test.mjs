@@ -169,7 +169,7 @@ function makeTmpRoot(opts = {}) {
   check('T9.2 buildSkippedArtifactRecord → skip_reason matches', r.skip_reason === 'pdf-only-no-md-source', r);
   check('T9.3 buildSkippedArtifactRecord → actionable_suggestion forwarded',
     r.actionable_suggestion === 'Run cv-tailor first.', r);
-  check('T9.4 buildSkippedArtifactRecord → confidence=0', r.confidence === 0, r);
+  check('T9.4 buildSkippedArtifactRecord → confidence=null (never a confident 0 for a loop that never ran)', r.confidence === null, r);
   check('T9.5 buildSkippedArtifactRecord → rounds_used=0', r.rounds_used === 0, r);
   check('T9.6 buildSkippedArtifactRecord → cost_usd=0', r.cost_usd === 0, r);
   check('T9.7 buildSkippedArtifactRecord → not abandoned (just skipped)',

@@ -203,7 +203,10 @@ describe('Suite 4: omega-steward conditional persona triggers', () => {
     try {
       const summary = await annotateOmegaRecommendationsWithPersonaReview(recs);
       assert.equal(summary.skipped, 'PERSONA_OMEGA_REVIEW=false');
-      assert.equal(summary.reviewedCount, 0);
+      // Silent-zero guard: review never ran → count is null + unavailable,
+      // not a confident 0 (data-truth-auditor sweep 4).
+      assert.equal(summary.reviewedCount, null);
+      assert.equal(summary.unavailable, true);
     } finally {
       delete process.env.PERSONA_OMEGA_REVIEW;
     }

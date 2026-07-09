@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.mitchell.career-ops.scan-linkedin-saved-jobs</string>
+      <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-lc</string>
+        <string>export NVM_DIR=&quot;$HOME/.nvm&quot;; [ -s &quot;$NVM_DIR/nvm.sh&quot; ] &amp;&amp; . &quot;$NVM_DIR/nvm.sh&quot;; exec node &apos;/Users/mitchellwilliams/Documents/career-ops/scripts/launchd-wrapper.mjs&apos; &apos;--label=com.mitchell.career-ops.scan-linkedin-saved-jobs&apos; &apos;--max-retries=0&apos; &apos;--retry-backoff-sec=60&apos; &apos;--&apos; &apos;node&apos; &apos;/Users/mitchellwilliams/Documents/career-ops/scripts/scan-linkedin-saved-jobs.mjs&apos; &apos;--apply&apos; &apos;--scheduled&apos;</string>
+    </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/mitchellwilliams/Documents/career-ops</string>
+    <!-- 2026-07-08 LinkedIn saved-jobs ingest. Daily 07:15 PT — after the
+         06:00 regression-guard + 06:30 career-ops-health runs, before typical
+         Process All time, so newly saved jobs are in the pipeline when triage
+         fires. $0/run (no LLM). Ships LOADED-BUT-DISABLED per repo convention;
+         also gated by SCAN_LINKEDIN_SAVED_JOBS_ENABLED (the --scheduled flag
+         makes the script exit 0 no-op unless the env var is exactly 'true').
+         CalendarInterval plists don't need the nohup-wrapper (Pattern F is
+         KeepAlive-only). Nonzero exits are deliberate alarms: 2 = LinkedIn
+         auth expired (re-auth: node scripts/scrape-contact-photo.mjs
+         --setup-auth), 3 = saved-jobs DOM changed (silent-zero guard). -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>7</integer>
+    <key>Minute</key><integer>15</integer>
+  </dict>
+  <key>RunAtLoad</key><false/>
+  <key>KeepAlive</key><false/>
+    <!-- Ships loaded-but-disabled (repo convention, precedent:
+         content-ingest-hourly-grok.plist). Enable after reviewing the first
+         manual --apply run: launchctl enable gui/$UID/com.mitchell.career-ops.scan-linkedin-saved-jobs -->
+  <key>Disabled</key>
+  <true/>
+    <!-- Log path MUST live outside ~/Documents/ - macOS Tahoe TCC blocks
+         launchd from writing to log files under Documents (silent EX_CONFIG=78).
+         Pattern F / feedback_tahoe_sandbox_calendar_interval.md. -->
+  <key>StandardOutPath</key>
+  <string>/Users/mitchellwilliams/Library/Logs/career-ops/scan-linkedin-saved-jobs-launchd.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/mitchellwilliams/Library/Logs/career-ops/scan-linkedin-saved-jobs-launchd.err</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/mitchellwilliams/.nvm/versions/node/v24.14.0/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>HOME</key><string>/Users/mitchellwilliams</string>
+  </dict>
+</dict>
+</plist>

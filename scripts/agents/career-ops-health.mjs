@@ -479,12 +479,12 @@ async function checkOauthCredential() {
       findings.push(mkFinding('MED', 'oauth_credential',
         `LinkedIn storage state ${ageD.toFixed(0)}d old (Playwright cookies typically expire 30-45d)`,
         { citation: hashCite(linkedinState),
-          recommended_action: 'Re-run scripts/setup-auth.mjs to refresh' }));
+          recommended_action: 'Re-run: node scripts/scrape-contact-photo.mjs --setup-auth' }));
     }
   } else {
     findings.push(mkFinding('LOW', 'oauth_credential',
       `data/linkedin-storage-state.json missing — LinkedIn enrichment will fail`,
-      { recommended_action: 'Run scripts/setup-auth.mjs if LinkedIn flows are in use' }));
+      { recommended_action: 'Run: node scripts/scrape-contact-photo.mjs --setup-auth (if LinkedIn flows are in use)' }));
   }
 
   return { category: 'oauth_credential', findings, score: scoreCategory(findings) };

@@ -1110,6 +1110,32 @@ try {
   }
 }
 
+// ── 30. LINKEDIN SAVED-JOBS SCAN INVARIANTS ─────────────────────
+
+console.log('\n30. LinkedIn saved-jobs scan — extraction, dedup, row-format, silent-zero guard');
+
+try {
+  // Runs tests/scan-linkedin-saved-jobs.test.mjs — mocked Playwright context,
+  // $0, no network. Guards: pipeline rows stay URL-first (triage parse
+  // contract, bug class pipeline-ingest-format-drift); scraped pipes/newlines
+  // are sanitized; dedup honors loadSeenUrls + local state; page-1 zero
+  // anchors without an empty-state indicator is a FAILURE, never "0 new"
+  // (silent-zero bug class); login-wall redirects are detected.
+  execFileSync(process.execPath, ['tests/scan-linkedin-saved-jobs.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+    timeout: TEST_CHILD_TIMEOUT_MS,   // hang-watchdog: never let a stalled test wedge CI
+  });
+  pass('LinkedIn saved-jobs scan — row format, dedup, login-wall + silent-zero guards hold');
+} catch (err) {
+  fail('LinkedIn saved-jobs scan regression — row format / dedup / silent-zero guard broke');
+  const out = (err.stdout || '') + (err.stderr || '');
+  for (const line of out.split('\n').slice(0, 40)) {
+    if (line.trim()) console.log(`     ${line}`);
+  }
+}
+
 // ── SUMMARY ─────────────────────────────────────────────────────
 
 console.log('\n' + '='.repeat(50));

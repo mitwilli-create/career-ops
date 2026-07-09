@@ -7,14 +7,18 @@
  * terms.
  *
  * Per-pack workflow:
- *   1. Read JD body. PRIMARY source: apply-pack/<slug>/jd.md (the verbatim
- *      posting), used ALONE when present. FALLBACK (no usable jd.md):
- *      grok-intel.md (Block A excerpt) + README.md (role context) +
- *      one-pager.md, plus the eval report — passed explicitly via --report,
- *      or resolved by ROLE SLUG (never by bare numeric prefix: report numbers
- *      and tracker row numbers are independent num spaces — see
- *      resolveEvalReport).
- *   2. Tokenize, lowercase, drop stopwords + numeric-only tokens, count.
+ *   1. Read JD body. PRIMARY source: apply-pack/<slug>/jd-verbatim.md (the
+ *      verbatim posting; legacy name jd.md also honored), used ALONE when
+ *      present. SECONDARY (no verbatim file): the eval report's JD-BEARING
+ *      SECTIONS ONLY — Role Summary + the CV Match table's JD-requirement
+ *      column (see extractJdBearingText). The report is passed explicitly via
+ *      --report, or resolved by ROLE SLUG (never by bare numeric prefix:
+ *      report numbers and tracker row numbers are independent num spaces —
+ *      see resolveEvalReport). LAST RESORT: grok-intel.md + README.md +
+ *      one-pager.md + the full report (intel-concat).
+ *   2. Tokenize, lowercase, drop stopwords + numeric/date tokens, count.
+ *      Non-verbatim sources additionally drop REPORT_META_STOPWORDS
+ *      (evaluator scaffolding like `block` / `recruiter` / `report`).
  *      Sort by raw frequency; cap at top-20 (configurable).
  *   3. For each artifact (cv / cover-letter / form-fields / one-pager),
  *      compute the overlap with the JD top-20 — count matches, list misses.
@@ -51,7 +55,33 @@ const STOPWORDS = new Set([
   'some', 'such', 'only', 'own', 'same', 'too', 'very', 'just', 'one', 'two', 'three', 'i',
   'me', 'my', 'who', 'whom', 'which', 'what', 'these', 'those', 'am', 'doesn', 'don', 'didn',
   'haven', 'isn', 'wasn', 'weren', 'won', 'wouldn', 'couldn', 'shouldn', 'aren', 'shan',
+  'she', 'his', 'her', 'him', 'hers', 'himself', 'herself', 'across',
+  'also', 'well', 'within', 'including', 'every', 'rather', 'know', 'looking',
+  'extremely', 'single', 'time', 'working',
   'role', 'work', 'team', 'company', 'job', 'position', 'opportunity', 'candidate', 'experience',
+]);
+
+// Report/intel meta-vocabulary — evaluator scaffolding, tracker fields, pack
+// artifact names, and job-board plumbing that leaks into the term
+// distribution whenever the JD source is an eval report or the intel-concat
+// corpus rather than the verbatim posting. Dropped from JD-TERM RANKING for
+// non-verbatim sources only — a real JD's own words are never filtered.
+// Canonical incident (2026-07-08, packs 2507/2757/2758): hand-authored eval
+// reports produced "JD top terms" like `block` / `recruiter` / `comp` /
+// `apply` / `report` / `formatting-guide` / `2026-07-08` / `his`, driving
+// false below-threshold scores and garbage "recommended additions".
+export const REPORT_META_STOPWORDS = new Set([
+  // report structure + evaluator vocabulary
+  'block', 'blocks', 'report', 'reports', 'eval', 'evaluation', 'evaluated',
+  'score', 'scored', 'scoring', 'status', 'note', 'notes', 'legitimacy',
+  'archetype', 'verification', 'confirmed', 'inferred', 'bullet', 'bullets',
+  'row', 'rows', 'tracker', 'annotation',
+  // pack artifact names + apply plumbing
+  'formatting-guide', 'formatting', 'checklist', 'one-pager', 'apply',
+  'applied', 'applying', 'application', 'applications', 'apply-pack',
+  'recruiter', 'recruiters', 'comp', 'pdf', 'readme',
+  // job-board + link plumbing
+  'linkedin', 'greenhouse', 'ashby', 'lever', 'url', 'urls', 'https', 'http', 'www',
 ]);
 
 function tokenize(text) {
@@ -62,7 +92,9 @@ function tokenize(text) {
     .filter(Boolean)
     .map(t => t.replace(/^[-/]+|[-/]+$/g, ''))
     .filter(t => t.length >= 3)
-    .filter(t => !/^\d+$/.test(t))
+    // digits/date-shaped tokens ("2026", "2026-07-08", "07/08") are never JD
+    // keywords — report headers made dates rank as top terms pre-2026-07-08.
+    .filter(t => !/^[\d/-]+$/.test(t))
     .filter(t => !STOPWORDS.has(t));
 }
 
@@ -153,52 +185,120 @@ export function resolveEvalReport(packSlug, { root = ROOT } = {}) {
   return null;
 }
 
-// jd.md (and the assembled fallback corpus) must clear this floor before the
-// term extraction runs — a stub file shouldn't starve the keyword gate.
+// The JD source (verbatim file, report extract, or fallback corpus) must
+// clear this floor before term extraction runs — a stub shouldn't starve the
+// keyword gate.
 const MIN_JD_CHARS = 200;
+
+// Sources whose text IS the posting — their words are never meta-filtered.
+export const VERBATIM_JD_SOURCES = new Set(['jd-verbatim.md', 'jd.md']);
+
+/**
+ * Extract the JD-BEARING text from an eval report: the Role Summary section
+ * (whose Function/Seniority cells restate the posting) + the FIRST column of
+ * the CV Match table (the "JD requirement" cells). Everything else in a
+ * report is analysis ABOUT the candidate — Block C prose, legitimacy checks,
+ * header fields, rejection-gate annotations — and tokenizing it manufactures
+ * fake "JD keywords" (`block`, `recruiter`, `comp`, dates, pronouns).
+ * Returns '' when neither section is found. Exported for tests.
+ */
+export function extractJdBearingText(reportText) {
+  const text = String(reportText || '');
+  // Body of the first heading matching `re`, up to the next ## heading.
+  const section = (re) => {
+    const m = text.match(re);
+    if (!m) return null;
+    const rest = text.slice(m.index + m[0].length);
+    const end = rest.search(/^##\s/m);
+    return end === -1 ? rest : rest.slice(0, end);
+  };
+  const parts = [];
+  const roleSummary = section(/^##\s*(?:[A-Z]\)\s*)?Role Summary\b.*$/im);
+  if (roleSummary) parts.push(roleSummary);
+  const cvMatch = section(/^##\s*(?:[A-Z]\)\s*)?CV Match\b.*$/im);
+  if (cvMatch) {
+    for (const line of cvMatch.split('\n')) {
+      const t = line.trim();
+      if (!t.startsWith('|')) continue;
+      const first = t.replace(/^\|/, '').split('|')[0].trim();
+      if (!first) continue;
+      if (/^:?-+:?$/.test(first)) continue;                 // separator row
+      if (/^jd requirement/i.test(first)) continue;         // header row
+      parts.push(first);
+    }
+  }
+  return parts.join('\n').trim();
+}
 
 /**
  * Load JD-source text for a pack. Returns { text, source } where source is
- * 'jd.md' or 'intel-concat'. Exported for tests.
+ * 'jd-verbatim.md' | 'jd.md' | 'report-jd-sections' | 'intel-concat'.
+ * Exported for tests.
  *
- * PRIMARY — apply-pack/<slug>/jd.md (the verbatim posting), used ALONE.
- * Mixing in the intel files dilutes the term distribution with
- * meta-vocabulary (`inferred`, `https`, `www`, `recruiter`, `bullet`…) until
- * the "JD top terms" stop describing the job and the ≥50% gate scores
- * artifacts against noise (canonical incident: pack 049-perplexity-*,
- * 2026-06-10 — tailored-cv.md scored 30% against terms like `linkedin`/
- * `comp`/`https` while the real JD sat unused in jd.md). jd.md also wins
- * over --report: the eval report is an ANALYSIS of the JD, not the JD.
+ * PRIMARY — apply-pack/<slug>/jd-verbatim.md (canonical name, 2026-07-08) or
+ * legacy jd.md: the verbatim posting, used ALONE. Mixing in the intel files
+ * dilutes the term distribution with meta-vocabulary (`inferred`, `https`,
+ * `www`, `recruiter`, `bullet`…) until the "JD top terms" stop describing
+ * the job and the ≥50% gate scores artifacts against noise (canonical
+ * incident: pack 049-perplexity-*, 2026-06-10 — tailored-cv.md scored 30%
+ * against terms like `linkedin`/`comp`/`https` while the real JD sat unused
+ * in jd.md). The verbatim file also wins over --report: the eval report is
+ * an ANALYSIS of the JD, not the JD.
  *
- * FALLBACK (jd.md absent or under MIN_JD_CHARS) — concatenate grok-intel.md,
- * README.md, one-pager.md, then the eval report (explicit --report override
- * first, slug-based resolution otherwise — see resolveEvalReport).
+ * SECONDARY (no verbatim file) — the eval report's JD-bearing sections ONLY
+ * (Role Summary + CV Match JD-requirement cells, see extractJdBearingText),
+ * used ALONE. Report resolution: explicit --report override first, slug-based
+ * resolution otherwise (see resolveEvalReport). Canonical incident
+ * (2026-07-08, packs 2507/2757/2758): whole-report tokenization of
+ * hand-authored evals ranked report meta-vocabulary as "JD top terms".
+ *
+ * LAST RESORT (no verbatim file, no extractable report sections) —
+ * concatenate grok-intel.md, README.md, one-pager.md, plus the full report
+ * when one resolved.
  */
 export function loadJdText(packDir, slug, reportOverride = null, { root = ROOT } = {}) {
-  const jdPath = join(packDir, 'jd.md');
-  if (existsSync(jdPath) && statSync(jdPath).isFile()) {
-    const jd = readFileSync(jdPath, 'utf-8');
-    if (jd.trim().length >= MIN_JD_CHARS) return { text: jd, source: 'jd.md' };
+  for (const name of ['jd-verbatim.md', 'jd.md']) {
+    const p = join(packDir, name);
+    if (existsSync(p) && statSync(p).isFile()) {
+      const jd = readFileSync(p, 'utf-8');
+      if (jd.trim().length >= MIN_JD_CHARS) return { text: jd, source: name };
+    }
   }
+
+  let reportText = null;
+  if (reportOverride) {
+    const p = isAbsolute(reportOverride) ? reportOverride : join(root, reportOverride);
+    if (existsSync(p) && statSync(p).isFile()) {
+      reportText = readFileSync(p, 'utf-8');
+    } else {
+      console.error(`WARN: --report ${reportOverride} not found — falling back to slug resolution`);
+    }
+  }
+  if (reportText == null) {
+    const resolved = resolveEvalReport(slug, { root });
+    if (resolved) {
+      // The applications.md report-link column can go stale (row edited,
+      // report renamed/archived) — a missing file must degrade to the
+      // intel-concat fallback, never throw ENOENT and kill the pack run.
+      const p = join(root, resolved.path);
+      if (existsSync(p) && statSync(p).isFile()) {
+        reportText = readFileSync(p, 'utf-8');
+      } else {
+        console.error(`WARN: resolved report ${resolved.path} (via ${resolved.via}) missing on disk — falling back to intel-concat`);
+      }
+    }
+  }
+  if (reportText != null) {
+    const extracted = extractJdBearingText(reportText);
+    if (extracted.length >= MIN_JD_CHARS) return { text: extracted, source: 'report-jd-sections' };
+  }
+
   const parts = [];
   for (const name of ['grok-intel.md', 'README.md', 'one-pager.md']) {
     const p = join(packDir, name);
     if (existsSync(p)) parts.push(readFileSync(p, 'utf-8'));
   }
-  let reportLoaded = false;
-  if (reportOverride) {
-    const p = isAbsolute(reportOverride) ? reportOverride : join(root, reportOverride);
-    if (existsSync(p) && statSync(p).isFile()) {
-      parts.push(readFileSync(p, 'utf-8'));
-      reportLoaded = true;
-    } else {
-      console.error(`WARN: --report ${reportOverride} not found — falling back to slug resolution`);
-    }
-  }
-  if (!reportLoaded) {
-    const resolved = resolveEvalReport(slug, { root });
-    if (resolved) parts.push(readFileSync(join(root, resolved.path), 'utf-8'));
-  }
+  if (reportText != null) parts.push(reportText);
   return { text: parts.join('\n\n'), source: 'intel-concat' };
 }
 
@@ -229,9 +329,13 @@ function buildReport(slug, jdTopTerms, artifactScores, threshold, jdSource) {
   lines.push('');
   lines.push(`Generated by \`scripts/jd-keyword-score.mjs\` on ${new Date().toISOString().slice(0, 10)}.`);
   lines.push(`Threshold: ${Math.round(threshold * 100)}%. Below threshold = ATS-filter risk.`);
-  lines.push(`JD source: \`${jdSource}\`${jdSource === 'jd.md'
-    ? ' (verbatim posting)'
-    : ' (grok-intel + README + one-pager + eval report — add jd.md to the pack for clean JD terms)'}`);
+  const sourceNotes = {
+    'jd-verbatim.md': ' (verbatim posting)',
+    'jd.md': ' (verbatim posting)',
+    'report-jd-sections': ' (eval report: Role Summary + CV Match JD-requirement cells only — add jd-verbatim.md to the pack for the full posting)',
+    'intel-concat': ' (grok-intel + README + one-pager + eval report — add jd-verbatim.md to the pack for clean JD terms)',
+  };
+  lines.push(`JD source: \`${jdSource}\`${sourceNotes[jdSource] || ''}`);
   lines.push('');
   lines.push('## JD top terms');
   lines.push('');
@@ -275,7 +379,12 @@ export function processPack(packSlug, opts, { root = ROOT } = {}) {
   if (!jdText || jdText.trim().length < MIN_JD_CHARS) {
     return { slug: packSlug, ok: false, error: 'jd_text_too_short' };
   }
-  const jdTokens = tokenize(jdText);
+  let jdTokens = tokenize(jdText);
+  // Non-verbatim sources carry evaluator/report meta-vocabulary — drop it
+  // before ranking so the top-N describes the job, not the report.
+  if (!VERBATIM_JD_SOURCES.has(jdSource)) {
+    jdTokens = jdTokens.filter(t => !REPORT_META_STOPWORDS.has(t));
+  }
   const jdCounts = frequency(jdTokens);
   const jdTopTerms = topN(jdCounts, opts.top);
 

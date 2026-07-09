@@ -3,15 +3,25 @@
  * tests/jd-keyword-source.test.mjs
  *
  * INVARIANT: scripts/jd-keyword-score.mjs extracts "JD top terms" from the
- * pack's verbatim posting (apply-pack/<slug>/jd.md) when one exists — ALONE,
- * never diluted by grok-intel.md / README.md / the eval report. The
- * intel-concat corpus is a FALLBACK for packs without jd.md.
+ * pack's verbatim posting (apply-pack/<slug>/jd-verbatim.md, legacy jd.md)
+ * when one exists — ALONE, never diluted by grok-intel.md / README.md / the
+ * eval report. Without a verbatim file, the eval report's JD-BEARING
+ * SECTIONS ONLY (Role Summary + CV Match JD-requirement cells) are used;
+ * the intel-concat corpus is the LAST-RESORT fallback, meta-filtered.
  *
  * Born 2026-06-10: pack 049-perplexity-* carried a clean 2.8KB jd.md, but
  * loadJdText unconditionally concatenated the intel files + eval report, so
  * the "JD top terms" became meta-vocabulary (`inferred`, `https`, `bullet`,
  * `recruiter`, `comp`, `www`, `linkedin`) and tailored-cv.md scored 30%
  * against noise — the ≥50% threshold gate was meaningless.
+ *
+ * Extended 2026-07-08 (packs 2507/2757/2758): whole-report tokenization of
+ * HAND-AUTHORED eval reports ranked report meta-vocabulary (`block`,
+ * `recruiter`, `comp`, `apply`, `report`, `formatting-guide`, dates,
+ * pronouns) as "JD top terms", producing false 40-50% scores and garbage
+ * "recommended additions". Pinned here: jd-verbatim.md preferred; report
+ * fallback extracts Role Summary + JD-requirement cells only; non-verbatim
+ * sources drop REPORT_META_STOPWORDS; date-shaped tokens never rank.
  *
  * Also pins: cv-tailored.md (the L6 schema-typed artifact that renders to
  * the shipped PDF) is scored as the primary CV row, alongside legacy
@@ -23,7 +33,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { loadJdText, processPack } from '../scripts/jd-keyword-score.mjs';
+import { loadJdText, processPack, extractJdBearingText } from '../scripts/jd-keyword-score.mjs';
 
 let failures = 0;
 function check(label, cond, detail = '') {
@@ -83,7 +93,7 @@ fs.writeFileSync(
   `# Eval report\n**URL:** https://www.example.com\n${NOISE}`
 );
 
-console.log('jd-keyword-source — jd.md-primary JD-term extraction (fixture root)');
+console.log('jd-keyword-source — verbatim-JD-primary term extraction + report JD-sections fallback (fixture root)');
 
 // 1. loadJdText: jd.md wins, verbatim, alone.
 const l1 = loadJdText(packADir, packA, null, { root });
@@ -128,10 +138,13 @@ fs.writeFileSync(
   '# Eval\n' + 'telemetry widget pipeline observability dashboards alerting\n'.repeat(12)
 );
 const rB = processPack(packB, opts, { root });
-check('no jd.md → jd_source=intel-concat', rB.jd_source === 'intel-concat', JSON.stringify(rB.jd_source));
+check('no jd file + no extractable report sections → jd_source=intel-concat', rB.jd_source === 'intel-concat', JSON.stringify(rB.jd_source));
 check('fallback corpus includes slug-resolved eval report', (rB.jd_terms || []).includes('telemetry'), JSON.stringify(rB.jd_terms));
-check('fallback corpus includes intel files (noise present, pre-fix behavior preserved)',
-  (rB.jd_terms || []).includes('inferred'));
+check('fallback corpus still includes intel files (non-meta terms rank)',
+  (rB.jd_terms || []).includes('funnel'), JSON.stringify(rB.jd_terms));
+for (const meta of ['inferred', 'recruiter', 'comp', 'linkedin', 'https', 'www', 'bullet']) {
+  check(`intel-concat mode drops meta term "${meta}" (2026-07-08 fix)`, !(rB.jd_terms || []).includes(meta));
+}
 const pathsB = (rB.artifacts || []).map(a => a.path);
 check('L6-only pack scores cv-tailored.md (not master cv.md)',
   pathsB.includes('cv-tailored.md') && !pathsB.some(p => p.includes('cv.md (fallback)')), JSON.stringify(pathsB));
@@ -153,11 +166,119 @@ const rD = processPack(packD, opts, { root });
 const fallbackRows = (rD.artifacts || []).filter(a => a.path === 'cv.md (fallback)');
 check('no pack CV → master cv.md fallback row exactly once', fallbackRows.length === 1, JSON.stringify(rD.artifacts));
 
+// ── Pack E: jd-verbatim.md (canonical name, 2026-07-08) preferred over legacy
+//    jd.md; verbatim mode is NEVER meta-filtered — a JD's own words rank even
+//    when they collide with report meta-vocabulary. ──
+const packE = '304-verbco-recruiting-communications-lead';
+const JD_WITH_META_WORD = JD_TEXT + '\nPartner with recruiter teams.\n'.repeat(6);
+const packEDir = makePack(packE, {
+  'jd-verbatim.md': JD_WITH_META_WORD,
+  'jd.md': 'Legacy stale jd.md copy that must lose to jd-verbatim.md. '.repeat(10),
+});
+const lE = loadJdText(packEDir, packE, null, { root });
+check('jd-verbatim.md preferred over legacy jd.md', lE.source === 'jd-verbatim.md', JSON.stringify(lE.source));
+check('jd-verbatim.md used verbatim', lE.text === JD_WITH_META_WORD);
+const rE = processPack(packE, opts, { root });
+check('verbatim source is never meta-filtered ("recruiter" ranks when the JD says it)',
+  (rE.jd_terms || []).includes('recruiter'), JSON.stringify(rE.jd_terms));
+
+// ── Pack F: THE 2026-07-08 regression — hand-authored eval report, no
+//    verbatim JD file. Terms must come from Role Summary + CV Match
+//    JD-requirement cells ONLY; report meta-vocabulary, dates, pronouns,
+//    CV-evidence prose, and Block C prose must never rank. ──
+const packF = '2960-acme-head-of-social-communications';
+makePack(packF, {
+  'grok-intel.md': `# Grok intel\n${NOISE}`,
+  'README.md': `# Pack readme\n${NOISE}`,
+  'cover-letter.md': 'Cover letter on social communications strategy, voice stewardship, and breaking-news response.',
+  'cv-tailored.md': 'Social communications leader: platforms, community engagement, voice, response strategy.',
+});
+fs.writeFileSync(
+  path.join(root, 'reports', '2961-acme-head-of-social-communications-2026-07-08.md'),
+  `# Evaluation: Acme — Head of Social Communications
+
+**Date:** 2026-07-08
+**Archetype:** Communications (Tier B)
+**Score:** 4.6/5
+**Legitimacy:** High Confidence
+**URL:** https://job-boards.greenhouse.io/acme/jobs/123
+**PDF:** ❌ (apply-pack pending — see formatting-guide)
+**Model:** hand-evaluated (corpus-grounded)
+**Verification:** confirmed live 2026-07-08 via Greenhouse board API
+**Comp / logistics:** $345,000 to $460,000 · San Francisco
+
+---
+
+## A) Role Summary
+
+| Field | Value |
+|---|---|
+| Detected archetype | Communications (Tier B) |
+| Function | Own proactive and reactive social communications strategy: announcement moments, breaking-news response, community engagement, voice stewardship for social channels and platforms |
+| Seniority | Head of (8+ yrs leading social communications) |
+| Posted | 2026-07-08 |
+| Comp | $345,000 to $460,000 |
+
+## B) CV Match
+
+| JD requirement | CV evidence |
+|---|---|
+| 8+ yrs leading social communications and response strategy under public scrutiny | Founding-team newsroom producer; his social-first live shows |
+| Exceptional writing and mastery of nuanced brand voice on social platforms | Codified voice systems he built |
+| Built and managed online communities at scale with community engagement | Community programs for engineers |
+
+## C) Block C — Why This Fits The Candidate
+
+The recruiter will read his comp expectations in this report. Apply via the formatting-guide workflow. Block C prose must never rank as JD keywords.
+
+## G) Posting Legitimacy
+
+**High Confidence.** Official Greenhouse posting confirmed by the recruiter on the board. Apply directly.
+`
+);
+const rF = processPack(packF, opts, { root });
+check('hand-authored report → jd_source=report-jd-sections', rF.jd_source === 'report-jd-sections', JSON.stringify(rF.jd_source));
+check('"social" ranks in JD top terms', (rF.jd_terms || []).includes('social'), JSON.stringify(rF.jd_terms));
+check('"communications" ranks in JD top terms', (rF.jd_terms || []).includes('communications'));
+for (const meta of ['block', 'recruiter', 'comp', 'apply', 'report', 'formatting-guide',
+  'his', 'greenhouse', 'legitimacy', 'archetype', 'confirmed', 'linkedin']) {
+  check(`report meta term "${meta}" never ranks as a JD keyword`, !(rF.jd_terms || []).includes(meta), JSON.stringify(rF.jd_terms));
+}
+check('date-shaped tokens never rank (2026-07-08)', !(rF.jd_terms || []).some(t => /^[\d/-]+$/.test(t)), JSON.stringify(rF.jd_terms));
+check('CV-evidence cells excluded ("newsroom" is evidence-only)', !(rF.jd_terms || []).includes('newsroom'));
+check('Block C prose excluded ("workflow" is Block-C-only)', !(rF.jd_terms || []).includes('workflow'));
+
+// ── Pack G: stale applications.md report link (file missing on disk) must
+//    degrade to intel-concat, never throw ENOENT (CodeRabbit 2026-07-08). ──
+const packG = '305-ghostco-writer';
+makePack(packG, { 'grok-intel.md': `Ghostco writer context corpus.\n${NOISE}` });
+fs.mkdirSync(path.join(root, 'data'), { recursive: true });
+fs.writeFileSync(path.join(root, 'data', 'applications.md'), `# Applications Tracker
+
+| # | Date | Company | Role | Score | Status | PDF | Report | Notes |
+|---|------|---------|------|-------|--------|-----|--------|-------|
+| 305 | 2026-07-08 | Ghostco | Writer | 4.0/5 | Evaluated | ❌ | [9999](reports/9999-ghostco-writer-2026-01-01.md) | stale link — report file absent |
+`);
+let rG = null, threwG = false;
+try { rG = processPack(packG, opts, { root }); } catch { threwG = true; }
+check('stale report link never throws ENOENT', !threwG);
+check('stale report link degrades to intel-concat', rG?.jd_source === 'intel-concat', JSON.stringify(rG?.jd_source));
+
+// ── extractJdBearingText unit pins ──
+const reportF = fs.readFileSync(path.join(root, 'reports', '2961-acme-head-of-social-communications-2026-07-08.md'), 'utf-8');
+const ex = extractJdBearingText(reportF);
+check('extract includes Role Summary body', ex.includes('voice stewardship for social channels'));
+check('extract includes JD-requirement cells', ex.includes('response strategy under public scrutiny'));
+check('extract drops CV-evidence cells', !ex.includes('newsroom producer'));
+check('extract drops Block C + header + legitimacy sections',
+  !ex.includes('Block C prose') && !ex.includes('hand-evaluated') && !ex.includes('Official Greenhouse'));
+check('extract returns empty string when no sections found', extractJdBearingText('# Eval\nno structured sections here') === '');
+
 fs.rmSync(root, { recursive: true, force: true });
 
 if (failures > 0) {
   console.error(`\n✗ FAIL — ${failures} JD-source check(s) failed.`);
   process.exit(1);
 }
-console.log('\n✓ PASS — jd.md is the sole JD-term source when present; intel-concat only as fallback.');
+console.log('\n✓ PASS — verbatim JD is the sole term source when present; report fallback uses JD-bearing sections; meta terms never rank.');
 process.exit(0);

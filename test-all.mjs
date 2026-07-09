@@ -682,26 +682,32 @@ try {
   }
 }
 
-// ── 16e. JD-KEYWORD SOURCE (jd.md primary; intel-concat only as fallback) ──
+// ── 16e. JD-KEYWORD SOURCE (verbatim JD primary; report JD-sections fallback, meta-filtered) ──
 
-console.log("\n16e. JD keyword score — jd.md is the sole JD-term source when present; cv-tailored.md (L6) scored as primary CV row");
+console.log("\n16e. JD keyword score — jd-verbatim.md/jd.md is the sole JD-term source when present; report fallback = JD-bearing sections only; cv-tailored.md (L6) scored as primary CV row");
 
 try {
   // Runs tests/jd-keyword-source.test.mjs — pure-fixture unit tests on
-  // scripts/jd-keyword-score.mjs::loadJdText + processPack. Pins that a pack
-  // carrying jd.md extracts top terms from the verbatim posting — never the
+  // scripts/jd-keyword-score.mjs::loadJdText + extractJdBearingText +
+  // processPack. Pins that a pack carrying jd-verbatim.md (or legacy jd.md)
+  // extracts top terms from the verbatim posting — never the
   // grok-intel/README/eval-report meta-vocabulary (`https`, `www`, `inferred`,
   // `recruiter`) that made the ≥50% gate meaningless (pack 049 scored 30%
-  // against noise, 2026-06-10) — and that cv-tailored.md, the L6 artifact
-  // that renders to the shipped PDF, is scored ahead of legacy tailored-cv.md.
+  // against noise, 2026-06-10). Extended 2026-07-08 (packs 2507/2757/2758):
+  // without a verbatim file, only the report's Role Summary + CV Match
+  // JD-requirement cells feed extraction, and REPORT_META_STOPWORDS + date
+  // tokens never rank (`block`/`recruiter`/`comp`/`apply`/`2026-07-08`/`his`
+  // drove false 40-50% scores on hand-authored reports). cv-tailored.md, the
+  // L6 artifact that renders to the shipped PDF, is scored ahead of legacy
+  // tailored-cv.md.
   execFileSync('node', ['tests/jd-keyword-source.test.mjs'], {
     cwd: ROOT,
     stdio: ['ignore', 'pipe', 'pipe'],
     encoding: 'utf-8',
   });
-  pass('JD keyword source — jd.md-present packs extract real JD terms; L6 CV artifact scored');
+  pass('JD keyword source — verbatim JD wins; report fallback = JD-bearing sections, meta terms never rank; L6 CV artifact scored');
 } catch (err) {
-  fail('JD keyword source REGRESSED — intel noise back in JD top terms or CV artifact coverage lost');
+  fail('JD keyword source REGRESSED — report/intel meta-vocabulary back in JD top terms or CV artifact coverage lost');
   const out = (err.stdout || '') + (err.stderr || '');
   for (const line of out.split('\n').slice(0, 30)) {
     if (line.trim()) console.log(`     ${line}`);

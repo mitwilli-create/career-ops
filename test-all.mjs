@@ -1136,6 +1136,33 @@ try {
   }
 }
 
+// ── 31. STAGING HOST-GATE ───────────────────────────────────────
+
+console.log('\n31. Staging Host-gate — fail-closed, timing-safe, both staging hostnames gated');
+
+try {
+  // Runs tests/staging-host-gate.test.mjs — pure unit tests for
+  // lib/staging-host-gate.mjs (PR #418). Guards the no-auth staging exposure
+  // fix: non-staging Hosts (prod/localhost) always pass; staging Hosts require
+  // a configured secret AND a timing-safe token match (fail-closed); wrong /
+  // short / long / empty tokens are refused for both staging-dashboard.* and
+  // staging-origin.*.
+  execFileSync('node', ['--test', 'tests/staging-host-gate.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+    timeout: TEST_CHILD_TIMEOUT_MS,   // hang-watchdog: never let a stalled test wedge CI
+  });
+  pass('Staging Host-gate — fail-closed + timing-safe token compare hold; both staging hostnames gated');
+} catch (err) {
+  fail('Staging Host-gate regression — the no-auth staging exposure fix broke');
+  const out = (err.stdout || '') + (err.stderr || '');
+  // node:test prints its failure summary at the END, so show the last lines.
+  for (const line of out.split('\n').slice(-40)) {
+    if (line.trim()) console.log(`     ${line}`);
+  }
+}
+
 // ── SUMMARY ─────────────────────────────────────────────────────
 
 console.log('\n' + '='.repeat(50));

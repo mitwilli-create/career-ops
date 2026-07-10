@@ -43,19 +43,44 @@ jobs:
     steps:
       - name: Probe staging-dashboard.careers-ops.com
         id: probe
-        # Staging origin bypasses CF Access (no service token burn). Same
-        # dashboard-server backend, same launchd job — if staging is up, prod
-        # is up. If prod is down via CF specifically, that's a CF Access /
-        # tunnel issue, not the launchd job.
+        # Same dashboard-server backend, same launchd job — if staging responds,
+        # the launchd job is up.
+        #
+        # Staging is Host-gated at the origin (2026-07-09): any request without
+        # X-Staging-Token gets 403 (closes the no-auth crawler exposure).
+        #
+        # Expected status depends on whether the token is configured:
+        #   - token SET   -> require 200. A 403 now means the token is
+        #                    wrong/expired (a real misconfig), so fail.
+        #   - token UNSET -> require EXACTLY 403. That proves the server is up
+        #                    AND the gate is enforcing. A 200 here means the gate
+        #                    is NOT enforcing (misconfigured/disabled) — a
+        #                    security regression — so fail. A down server returns
+        #                    000/502/530.
+        env:
+          STAGING_TOKEN: ${{ secrets.STAGING_DASHBOARD_TOKEN }}
         run: |
           URL="https://staging-dashboard.careers-ops.com/"
-          CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$URL" || echo "000")
+          H=()
+          [ -n "$STAGING_TOKEN" ] && H=(-H "X-Staging-Token: $STAGING_TOKEN")
+          # Capture the status robustly: on curl failure force exactly 000
+          # (a bare `|| echo 000` would concatenate with curl's own output).
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "${H[@]}" "$URL") || CODE="000"
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
-          if [ "$CODE" = "200" ]; then
-            echo "✓ dashboard responded 200"
+          if [ -n "$STAGING_TOKEN" ]; then
+            if [ "$CODE" = "200" ]; then
+              echo "OK: dashboard-server up + staging token valid (HTTP 200)"
+            else
+              echo "::error::staging probe failed: HTTP $CODE with token configured (expected 200; 403 = bad/expired token)"
+              exit 1
+            fi
           else
-            echo "::error::dashboard returned HTTP $CODE (expected 200)"
-            exit 1
+            if [ "$CODE" = "403" ]; then
+              echo "OK: dashboard-server up + staging gate enforcing (HTTP 403, no token configured)"
+            else
+              echo "::error::staging probe failed: HTTP $CODE with no token (expected 403; 200 = gate NOT enforcing, other = server down)"
+              exit 1
+            fi
           fi
 
       - name: Ping Healthchecks (success)

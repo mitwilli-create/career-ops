@@ -8,6 +8,7 @@ import { join, extname, basename } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { randomBytes } from 'crypto';
+import { isStagingRequestAuthorized } from './lib/staging-host-gate.mjs';
 import { execSync as _execSync, spawn as _spawn, spawnSync as _spawnSync } from 'child_process';
 import { homedir } from 'os';
 import yaml from 'js-yaml';
@@ -4782,6 +4783,24 @@ process.on('SIGINT',  () => _gracefulShutdown('SIGINT'));
 // ── HTTP server ────────────────────────────────────────────────
 
 const server = createServer((req, res) => {
+  // ── Staging Host-gate (2026-07-09) ── see lib/staging-host-gate.mjs ──────
+  // Both staging hostnames (staging-dashboard.* via the CSP Worker and the raw
+  // staging-origin.* tunnel ingress) funnel through THIS origin, so one gate at
+  // the shared chokepoint closes both. Fail-closed, timing-safe token compare.
+  // Prod (CF Access) + localhost are non-staging Hosts and pass untouched.
+  {
+    const _host = req.headers.host || '';
+    // isStagingRequestAuthorized() already returns true for non-staging Hosts,
+    // so no separate isStagingHost() short-circuit is needed here.
+    if (!isStagingRequestAuthorized(_host, req.headers['x-staging-token'], process.env.STAGING_DASHBOARD_TOKEN)) {
+      const _reqPath = String(req.url || '').split('?')[0];
+      console.warn(`[staging-gate] 403 host=${_host} path=${_reqPath} at ${new Date().toISOString()}`);
+      res.writeHead(403, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
+      res.end('403 Forbidden: staging requires authentication (X-Staging-Token)\n');
+      return;
+    }
+  }
+
   const url = req.url.split('?')[0];
   const queryString = req.url.includes('?') ? req.url.split('?')[1] : '';
   const query = Object.fromEntries(new URLSearchParams(queryString));

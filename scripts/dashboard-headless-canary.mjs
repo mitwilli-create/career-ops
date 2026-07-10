@@ -45,11 +45,43 @@ const IGNORED_PATTERNS = [
   /Refused to apply style/i, // CF Access redirect noise
 ];
 
+// Staging is Host-gated (2026-07-09) — the origin returns 403 without
+// X-Staging-Token. Send it ONLY to an explicit allowlist of exact staging
+// hostnames (never to redirects or third-party subresources, and never via a
+// loose "contains staging" match) so the secret cannot leak off-origin.
+const _stagingToken = process.env.STAGING_DASHBOARD_TOKEN || '';
+const STAGING_HOST_ALLOWLIST = new Set([
+  'staging-dashboard.careers-ops.com',
+  'staging-origin.careers-ops.com',
+]);
+
 const browser = await chromium.launch({ headless: true });
 const ctx = await browser.newContext({
   viewport: { width: 1440, height: 900 },
   userAgent: 'safe-dashboard-deploy-canary/1.0',
 });
+
+if (_stagingToken) {
+  // Redirect-safe by construction: context.route intercepts EVERY request,
+  // including each redirect hop, as its own event with its own final URL. The
+  // token is attached only when THAT request's own URL is HTTPS + an exact
+  // staging host. A redirect from a staging host to any other origin arrives as
+  // a fresh interception whose URL is the new origin, so it fails the check and
+  // is continued WITHOUT the token — the secret can never ride a redirect off
+  // an allowlisted origin. (This is precisely why the token is injected per
+  // request here, not via context-level extraHTTPHeaders, which would apply to
+  // every request including cross-origin ones.)
+  await ctx.route('**', async (route) => {
+    let reqUrl;
+    try { reqUrl = new URL(route.request().url()); } catch { /* non-HTTP(S) */ }
+    if (reqUrl?.protocol === 'https:' && STAGING_HOST_ALLOWLIST.has(reqUrl.hostname.toLowerCase())) {
+      await route.continue({ headers: { ...(await route.request().allHeaders()), 'x-staging-token': _stagingToken } });
+    } else {
+      // Non-staging / cleartext / redirect-to-other-origin: never carry the token.
+      await route.continue();
+    }
+  });
+}
 const page = await ctx.newPage();
 
 const errors = [];

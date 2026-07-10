@@ -229,15 +229,38 @@ function inferArchetypes(group, name) {
 }
 
 // naming-convention compliance: <org>_<YYYY-MM>_<topic>_<kind>.<ext>
-const NAMING_RE = /^(corp-eng|xge)_\d{4}(-\d{2}|-q[1-4])?_[a-z0-9-]+_[a-z-]+\.[a-z0-9]+$/;
+// Two suffix shapes produced by prior rename passes are also compliant:
+//   - a numeric dedup suffix on the kind token (`_doc-2.docx`)
+//   - the `.sidecar.md` compound extension that lib/corpus-scanner.mjs globs on
+// Without these, already-renamed files get re-flagged and proposeName re-slugs
+// their conventional prefix into the topic (the 2026-07-10 stutter defect).
+const KINDS = ['script', 'transcript', 'video-final', 'video-raw', 'brief', 'guidance', 'impact',
+               'recognition', 'playbook', 'framework', 'agent-prompt', 'agent-kb',
+               'engagement-summary', 'exec-comms', 'notes', 'doc'];
+// kind token is restricted to the shared KINDS vocabulary so an unknown kind
+// (e.g. `_unknown.md`) is non-compliant and gets a rename proposal
+const NAMING_RE = new RegExp(
+  `^(corp-eng|xge)_\\d{4}(-\\d{2}|-q[1-4])?_[a-z0-9-]+_(?:${KINDS.join('|')})(-\\d+)?\\.(sidecar\\.md|[a-z0-9]+)$`,
+);
 function isNamingCompliant(name) { return NAMING_RE.test(name); }
 
 function proposeName(group, name) {
   const org = group === 'corp-eng' ? 'corp-eng' : group === 'xge-comms' ? 'xge' : group;
-  const ext = extname(name).slice(1).toLowerCase();
-  const kind = inferKind(name);
+  // `.sidecar.md` is a compound suffix, not a plain extension — it must survive renames
+  const isSidecar = /\.sidecar\.md$/i.test(name);
+  const ext = isSidecar ? 'sidecar.md' : extname(name).slice(1).toLowerCase();
+  let base = isSidecar ? name.slice(0, -'.sidecar.md'.length) : basename(name, extname(name));
+  // partially/already-conventional names: peel the org+date prefix and the kind
+  // suffix so they are reused verbatim instead of re-slugged into the topic
+  let date = null;
+  let kind = null;
+  const prefix = base.match(/^(corp-eng|xge)_(\d{4}(?:-(?:\d{2}|q[1-4]))?)_/i);
+  if (prefix) { date = prefix[2].toLowerCase(); base = base.slice(prefix[0].length); }
+  const kindTail = base.match(/_([a-z]+(?:-[a-z]+)*)(?:-\d+)?$/i);
+  if (kindTail && KINDS.includes(kindTail[1].toLowerCase())) { kind = kindTail[1].toLowerCase(); base = base.slice(0, kindTail.index); }
+  if (!kind) kind = inferKind(name);
   // strip Drive artifacts + prefixes
-  let base = basename(name, extname(name))
+  base = base
     .replace(/^Copy of /i, '')
     .replace(/^VIEW ONLY /i, '')
     .replace(/^EDITED CONTENT WITH REWRITES_? ?/i, 'edited-')
@@ -249,14 +272,18 @@ function proposeName(group, name) {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .split('-').filter(Boolean).slice(0, 6).join('-') || 'untitled';
-  // best-effort date token (YYYY or YYYY-MM) from filename
-  const dm = name.match(/\b(20\d{2})[-_ ]?(0[1-9]|1[0-2])?\b/) || name.match(/\bQ([1-4])\s*(20\d{2})\b/i);
-  let date = '0000';
-  if (dm) {
-    if (/Q/i.test(dm[0])) date = `${dm[2]}-q${dm[1]}`;
-    else date = dm[2] ? `${dm[1]}-${dm[2]}` : dm[1];
+  if (!date) {
+    // best-effort date token (YYYY or YYYY-MM) from filename; lookarounds instead
+    // of \b so underscore-delimited years (`_2019_`) still match
+    const dm = name.match(/(?:^|[^0-9a-z])Q([1-4])[-_ ]*(20\d{2})(?![0-9a-z])/i)
+      || name.match(/(?:^|[^0-9a-z])(20\d{2})[-_ ]?(0[1-9]|1[0-2])?(?![0-9])/i);
+    date = '0000';
+    if (dm) {
+      if (/Q/i.test(dm[0])) date = `${dm[2]}-q${dm[1]}`;
+      else date = dm[2] ? `${dm[1]}-${dm[2]}` : dm[1];
+    }
   }
-  return `${org}_${date}_${topic}_${kind}.${ext}`;
+  return `${org}_${date}_${topic}_${kind}${ext ? `.${ext}` : ''}`; // extensionless stays extensionless (no trailing dot)
 }
 
 // read a sidecar (.md) frontmatter for explicit archetype_tags / drive_link
@@ -447,9 +474,7 @@ function ensureNamingConventions() {
     _owner: 'scripts/agents/corpus-librarian.mjs',
     pattern: '<org>_<YYYY-MM>_<topic-slug>_<kind>.<ext>',
     orgs: ['corp-eng', 'xge'],
-    kinds: ['script', 'transcript', 'video-final', 'video-raw', 'brief', 'guidance', 'impact',
-            'recognition', 'playbook', 'framework', 'agent-prompt', 'agent-kb',
-            'engagement-summary', 'exec-comms', 'notes', 'doc'],
+    kinds: KINDS,
     strip_prefixes: ['Copy of ', 'VIEW ONLY ', 'EDITED CONTENT WITH REWRITES_'],
     strip_suffix_regex: '-\\d{3}-\\d{3}$',
     applies_to: ['data/corp-eng-artifacts', 'data/xge-comms-artifacts'],
@@ -463,13 +488,39 @@ function runNaming(index) {
   ensureNamingConventions();
   index ||= buildIndex();
   const proposals = [];
+  // uniqueness guard: a proposed target may never collide with an existing file
+  // or another proposal in the same directory (overwrite risk at apply time)
+  const takenByDir = new Map(); // dirRel → Set of lowercased basenames
+  const takenIn = (dirRel) => {
+    if (!takenByDir.has(dirRel)) {
+      const s = new Set();
+      try { for (const f of readdirSync(join(ROOT, dirRel))) s.add(f.toLowerCase()); }
+      catch (e) { if (e?.code !== 'ENOENT' && e?.code !== 'ENOTDIR') throw e; } // only a truly absent dir is safe to treat as empty — anything else would silently disable the collision guard
+      takenByDir.set(dirRel, s);
+    }
+    return takenByDir.get(dirRel);
+  };
   for (const i of index.items) {
     if (i.group !== 'corp-eng' && i.group !== 'xge-comms') continue;
     if (i.file_type === 'image') continue;   // images are archived, not renamed (decision-doc sub-task 5)
     if (i.naming_compliant) continue;
     const cur = basename(i.path);
-    const proposed = proposeName(i.group, cur);
+    let proposed = proposeName(i.group, cur);
     if (proposed === cur) continue;
+    // current names are NEVER freed up here: a proposal targeting another
+    // to-be-renamed file's current name would overwrite it if the renames
+    // execute in the wrong order at apply time. Keeping every existing name
+    // reserved makes any apply order safe (at the cost of an extra -N suffix).
+    const taken = takenIn(dirname(i.path));
+    if (taken.has(proposed.toLowerCase())) {
+      for (let n = 2; ; n++) {                 // dedup suffix on the kind token, matching intake style
+        let candidate = proposed.replace(/(\.(?:sidecar\.)?[a-z0-9]+)$/i, `-${n}$1`);
+        if (candidate === proposed) candidate = `${proposed}-${n}`; // no matchable extension — append, never loop forever
+        if (!taken.has(candidate.toLowerCase())) { proposed = candidate; break; }
+      }
+    }
+    if (proposed === cur) continue;            // suffixing can land back on the current name
+    taken.add(proposed.toLowerCase());
     proposals.push({ path: i.path, current: cur, proposed, kind: i.kind, group: i.group });
   }
   const out = {

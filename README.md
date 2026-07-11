@@ -1,21 +1,38 @@
-> **About this fork** — This repository is Mitchell Williams's working fork of `santifer/career-ops`, used since April 2026 to evaluate 740+ AI roles, generate 100+ tailored CVs, and run an unattended batch-eval pipeline. Santifer's original project is the framework; what follows below the divider is his README, intact, with attribution preserved. This top section explains what I changed and why it matters.
+> **About this fork**: This repository is Mitchell Williams's working fork of `santifer/career-ops`, used since April 2026 to evaluate 1,150+ AI roles, generate 100+ tailored CVs, and run an unattended batch-eval pipeline. Santifer's original project is the framework; what follows below the divider is his README, intact, with attribution preserved. This top section explains what I changed and why it matters.
 
 # What I changed (mitwilli-create's fork)
 
-I forked career-ops in April 2026 because I needed a production-grade workflow for evaluating frontier-AI roles at scale — not a job-application script. The original framework gave me the skill modes, the scoring rubric, and the pipeline shape. I extended it into a personal AI career-ops system:
+I forked career-ops in April 2026 because I needed a production-grade workflow for evaluating frontier-AI roles at scale, not a job-application script. The original framework gave me the skill modes, the scoring rubric, and the pipeline shape. I extended it into a personal AI career-ops system:
 
-- **Zero-token portal scanning** — direct Greenhouse / Ashby / Lever API hits replaced LLM-based JD discovery, dropping scan cost to zero and making nightly portal sweeps cron-friendly.
-- **Parallel-worker batch processing** — single-orchestrator design with skill-based delegation; full batch-status SSE pipeline; resume support for cancelled jobs.
-- **Corpus integration** — `cv.md`, `article-digest.md`, story-bank, and writing-samples wired into evaluation, tailoring, and outreach skills. The fork reads my actual voice and role bank rather than a generic profile.
-- **740+ role evaluations to date** — production agent serving my own pipeline. The dashboard at `dashboard.careers-ops.com` (private, CF Access) is the operational surface; this repo is the source.
+- **Zero-token portal scanning**: direct Greenhouse / Ashby / Lever API hits replaced LLM-based JD discovery, dropping scan cost to zero and making nightly portal sweeps cron-friendly.
+- **Parallel-worker batch processing**: single-orchestrator design with skill-based delegation; full batch-status SSE pipeline; resume support for cancelled jobs.
+- **Corpus integration**: `cv.md`, `article-digest.md`, story-bank, and writing-samples wired into evaluation, tailoring, and outreach skills. The fork reads my actual voice and role bank rather than a generic profile.
+- **1,150+ scored role reports to date**: production agent serving my own pipeline, counted from the report archive on disk. The dashboard at `dashboard.careers-ops.com` (private, CF Access) is the operational surface; this repo is the source.
 
-The most recent 30 days of commit activity shipped the Closure 08 + 09 sprint. What landed today (2026-05-22):
+## The system, live (captured 2026-07-10)
+
+<!-- demo-video: Loom walkthrough goes here (recording 2026-07-11) -->
+
+![The career-ops dashboard, live: 117 companies tracked, 11,692 postings scanned, 298 evaluations live in the tracker, 12 roles ready to apply](docs/screenshots/dashboard-live-20260710.png)
+
+*The operational dashboard, captured live. Rows naming companies in the active pipeline are blurred; everything else is exactly what the machine shows.*
+
+![Terminal census of the eval report archive: 2,936 files, 1,153 distinct numbered role reports, ids issued to 2,761](docs/screenshots/eval-census-20260710.png)
+
+*The report-archive census behind the 1,150+ number: 1,153 distinct scored role reports on disk.*
+
+![The launchd fleet: all 52 com.mitchell.career-ops agent labels registered and running](docs/screenshots/launchd-fleet-20260710.png)
+
+*The launchd inventory: 52 scheduled agents on the machine that runs the search.*
+
+
+A snapshot of one representative day of commit activity (2026-05-22, mid Closure 08 + 09 sprint):
 
 - `/api/batch/resume` endpoint for cancelled-batch recovery
 - SSE `last_batch` live update for the dashboard activity chip
 - Next-move drawer panel grounded in `[cv.md]` + `[article-digest.md]` citations
 - Process All confidence panel with rolling 5-run history
-- Dark-by-default story pages — 61 pages migrated
+- Dark-by-default story pages: 61 pages migrated
 - Content-density linter at build time (`lib/content-density-linter.mjs`)
 - 11 regex sites fixed inside the outer-template-unescape bug class
 
@@ -23,11 +40,11 @@ The most recent 30 days of commit activity shipped the Closure 08 + 09 sprint. W
 
 I'm targeting Forward Deployed Engineer, Applied AI, AI Program Manager, AI Enablement, and engineering-editorial roles at frontier AI labs. This repo is the longest-running demonstration of the pattern those roles ask for: shipped AI-native workflows on top of a real corpus, deployed to a real user (me), iterated under production constraints, and documented with editorial discipline.
 
-The original framework is santifer's. The 740 evaluations, the orchestrator architecture, the parallel batch processing, and the corpus integration are mine.
+The original framework is santifer's. The 1,150+ evaluations, the orchestrator architecture, the parallel batch processing, and the corpus integration are mine.
 
 ## Attribution + upstream
 
-Built on [`santifer/career-ops`](https://github.com/santifer/career-ops) — the original framework I forked from. Santifer's design is the substrate I extended. Issues / PRs against my fork target `mitwilli-create:main`; the upstream is read-only for me.
+Built on [`santifer/career-ops`](https://github.com/santifer/career-ops), the original framework I forked from. Santifer's design is the substrate I extended. Issues / PRs against my fork target `mitwilli-create:main`; the upstream is read-only for me.
 
 ---
 

@@ -1163,6 +1163,36 @@ try {
   }
 }
 
+// ── 32. CORPUS STALENESS — SUPERSEDED-BANNER RULE SET ───────────
+
+console.log('\n32. Corpus staleness — dated snapshots vs canonical/newest source-of-truth rules');
+
+try {
+  // Runs tests/corpus-staleness.test.mjs — tmp-fixture subprocess tests for
+  // corpus-librarian --staleness, $0, no live data touched (CI-safe: the
+  // fixture builds its own data/ tree via CORPUS_LIBRARIAN_ROOT). Guards the
+  // 2026-07-10 incident where the unbannered linkedin-alignment-2026-07-07.md
+  // drove a live LinkedIn tenure error: dated snapshot docs older than 7 days
+  // that are not the newest of their series must carry a top-of-file
+  // `> **SUPERSEDED` banner, and ANY dated doc on a canonical surface
+  // (data/linkedin-profile-canonical.md) must carry it regardless of age.
+  // Findings are proposed in a decision doc — the librarian never auto-edits.
+  execFileSync('node', ['--test', 'tests/corpus-staleness.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+    timeout: TEST_CHILD_TIMEOUT_MS,   // hang-watchdog: never let a stalled test wedge CI
+  });
+  pass('Corpus staleness — banner rules, canonical-surface shadow, series-newest exemption, exempt list all hold');
+} catch (err) {
+  fail('Corpus staleness regression — the SUPERSEDED-banner rule set broke');
+  const out = (err.stdout || '') + (err.stderr || '');
+  // node:test prints its failure summary at the END, so show the last lines.
+  for (const line of out.split('\n').slice(-40)) {
+    if (line.trim()) console.log(`     ${line}`);
+  }
+}
+
 // ── SUMMARY ─────────────────────────────────────────────────────
 
 console.log('\n' + '='.repeat(50));

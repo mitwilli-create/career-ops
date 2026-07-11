@@ -34,9 +34,18 @@ const {
 } = mod;
 
 // Fixed "now" so age math is deterministic. Reference: 2026-06-14.
+// These are ONLY safe for the pure-function tests, which pass todayMs: NOW —
+// the subprocess tests run the real script on the REAL clock and must use the
+// relative dates below. Hardcoded dates in the subprocess fixture were a
+// time-bomb: '2026-06-10' ("fresh") crossed the 30-day STALE_DAYS threshold at
+// 2026-07-11T00:00Z and every CI run started failing (2 discards ≠ expected 1).
 const NOW = Date.parse('2026-06-14T12:00:00Z');
 const old = '2026-04-01'; // ~74d before NOW → stale
 const fresh = '2026-06-10'; // ~4d before NOW → fresh
+// Relative dates for subprocess fixtures (script uses Date.now(); no --today flag).
+const isoDaysAgo = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+const oldLive = isoDaysAgo(74);  // always stale, whatever the wall clock says
+const freshLive = isoDaysAgo(4); // always fresh
 const ctxBase = { todayMs: NOW, staleDays: STALE_DAYS_DEFAULT, overrideSet: new Set(), queueIndex: new Map(), livenessMap: new Map() };
 
 function trackerLine({ num, date, company, role, score, status, report = '', notes = '' }) {
@@ -184,10 +193,10 @@ function makeFixtureTracker(dir) {
     '',
     '| # | Date | Company | Role | Score | Status | PDF | Report | Notes |',
     '|---|------|---------|------|-------|--------|-----|--------|-------|',
-    trackerLine({ num: 200, date: old, company: 'LowCo', role: 'Analyst', score: '3.2/5', status: 'Evaluated', notes: 'stale below floor' }),
-    trackerLine({ num: 201, date: old, company: 'HiCo', role: 'AI PgM', score: '4.6/5', status: 'Evaluated', notes: 'keeper' }),
-    trackerLine({ num: 202, date: old, company: 'AppliedCo', role: 'Eng', score: '1.0/5', status: 'Applied', notes: 'out of scope' }),
-    trackerLine({ num: 203, date: fresh, company: 'FreshCo', role: 'PM', score: '2.0/5', status: 'Evaluated', notes: 'fresh' }),
+    trackerLine({ num: 200, date: oldLive, company: 'LowCo', role: 'Analyst', score: '3.2/5', status: 'Evaluated', notes: 'stale below floor' }),
+    trackerLine({ num: 201, date: oldLive, company: 'HiCo', role: 'AI PgM', score: '4.6/5', status: 'Evaluated', notes: 'keeper' }),
+    trackerLine({ num: 202, date: oldLive, company: 'AppliedCo', role: 'Eng', score: '1.0/5', status: 'Applied', notes: 'out of scope' }),
+    trackerLine({ num: 203, date: freshLive, company: 'FreshCo', role: 'PM', score: '2.0/5', status: 'Evaluated', notes: 'fresh' }),
     '| 204 | langchain | — | SKIP | ❌ | Evaluated | — | corrupted | do not touch |',
   ].join('\n');
   writeFileSync(tracker, lines + '\n');

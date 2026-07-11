@@ -737,7 +737,6 @@ interview-prep/
 batch/triage-advance.tsv
 batch/triage-benchmark.tsv
 batch/daily-quota.json
-batch/triage-prompt.md
 dashboard/assets/demo/
 data/dispatch/forecast-templates.json
 reusable-prompt-*.md

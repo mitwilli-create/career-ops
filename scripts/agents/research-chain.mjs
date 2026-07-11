@@ -14,6 +14,21 @@
  * USAGE
  *   node scripts/agents/research-chain.mjs --question "..." [--ceiling-usd 5] [--no-dealbreaker]
  *
+ *   LAUNCH CONTRACT (bug class subagent-background-child-reaped-on-completion,
+ *   2026-07-10): this runner takes many minutes end-to-end.
+ *   - Main session: launch via background Bash and rely on the harness
+ *     <task-notification> for completion — the canonical signal per AGENTS.md
+ *     § Background Agent Completion. Never poll a file for completion when
+ *     the notification is available.
+ *   - (Sub)agent whose turn may end before the run finishes: plain
+ *     `run_in_background: true` gets the process tree SIGKILLed at turn end.
+ *     Launch detached instead — `nohup node scripts/agents/research-chain.mjs
+ *     ... > run.log 2>&1 &`. Detachment forfeits the harness notification, so
+ *     file handoff is unavoidable there: wait on the OUTPUTS paths below with
+ *     a finite DEADLINE (suggest 40 min), read run.log's NDJSON heartbeat for
+ *     liveness, and on expiry log the timeout, tail run.log, and proceed
+ *     without the missing report (state the gap) rather than looping forever.
+ *
  * OUTPUTS
  *   ~/.claude/agents/runs/researcher-report-<ts>.md       (Phase B)
  *   ~/.claude/agents/runs/_handoffs/dealbreaker-<ts>-<hex>.json   (Phase C)

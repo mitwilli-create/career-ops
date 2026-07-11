@@ -1193,6 +1193,58 @@ try {
   }
 }
 
+// ── 33. CORPUS CITATION-SLUG CONTRACT ───────────────────────────
+
+console.log('\n33. Corpus citation-slug — writer (sidecar-gen) and reader (librarian --citations) share one derivation');
+
+try {
+  // Runs tests/corpus-citation-slug.test.mjs — pure fixtures + source-wiring
+  // asserts, no dependence on the gitignored dump trees. Guards the
+  // 2026-07-10 drift where the librarian re-derived citation slugs through
+  // proposeName() and stripped `outline-` topic prefixes, diverging 4 slugs
+  // from their sidecars' frontmatter. Bug class:
+  // slug-truncation-contract-drift-writer-verifier-reader.
+  const slugChildOut = execFileSync('node', ['tests/corpus-citation-slug.test.mjs'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+    timeout: TEST_CHILD_TIMEOUT_MS,   // hang-watchdog: never let a stalled test wedge CI
+  });
+  // Exit 0 alone is not proof the assertions ran — require the explicit
+  // verdict sentinel on the success path too.
+  if (!slugChildOut.includes('CITATION_SLUG_CONTRACT_VERDICT: PASS')) {
+    // Attach the captured stdout so the catch's diagnostic dump can show
+    // what the child actually printed instead of an empty block.
+    const noVerdictErr = new Error('child exited 0 without a PASS contract verdict');
+    noVerdictErr.stdout = slugChildOut;
+    throw noVerdictErr;
+  }
+  pass('Corpus citation-slug contract — both surfaces import lib/corpus-citation-slug.mjs; outline- topics survive verbatim');
+} catch (err) {
+  // Distinguish a real contract failure from a runner problem. Only a child
+  // that reached its verdict line (explicit sentinel) counts as a contract
+  // verdict — a syntax error, import crash, spawn error, or timeout also
+  // yields a non-zero status but never prints the sentinel, so it must not
+  // read as citation drift.
+  const childOut = String(err.stdout || '');
+  if (childOut.includes('CITATION_SLUG_CONTRACT_VERDICT: FAIL')) {
+    fail('Corpus citation-slug contract drift — writer and reader slug derivations diverged');
+  } else {
+    fail(`Corpus citation-slug test RUNNER failure (no contract verdict) — ${
+      err.signal ? `child killed by ${err.signal}${err.killed ? ` (hang-watchdog timeout after ${TEST_CHILD_TIMEOUT_MS}ms)` : ''}`
+      : typeof err.status === 'number' ? `child exited ${err.status} without a verdict`
+      : (err.code || err.message || 'unknown spawn error')
+    }`);
+  }
+  for (const [label, stream] of [['stdout', err.stdout], ['stderr', err.stderr]]) {
+    const lines = String(stream || '').split('\n').filter(l => l.trim()).slice(-20);
+    if (lines.length) {
+      console.log(`     ── ${label} (last ${lines.length} lines) ──`);
+      for (const line of lines) console.log(`     ${line}`);
+    }
+  }
+}
+
 // ── SUMMARY ─────────────────────────────────────────────────────
 
 console.log('\n' + '='.repeat(50));

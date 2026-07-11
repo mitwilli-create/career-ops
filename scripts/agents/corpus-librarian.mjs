@@ -50,6 +50,7 @@ import {
 import { join, dirname, basename, extname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { citationSlug, citationMarker, lookupDriveLink, CORPUS_DATE_RE_SRC } from '../../lib/corpus-citation-slug.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = process.env.CORPUS_LIBRARIAN_ROOT || join(__dirname, '..', '..');
@@ -243,11 +244,18 @@ const KINDS = ['script', 'transcript', 'video-final', 'video-raw', 'brief', 'gui
                'recognition', 'playbook', 'framework', 'agent-prompt', 'agent-kb',
                'engagement-summary', 'exec-comms', 'notes', 'doc'];
 // kind token is restricted to the shared KINDS vocabulary so an unknown kind
-// (e.g. `_unknown.md`) is non-compliant and gets a rename proposal
+// (e.g. `_unknown.md`) is non-compliant and gets a rename proposal. The date
+// arm comes from the shared CORPUS_DATE_RE_SRC (lib/corpus-citation-slug.mjs)
+// so the naming audit and the citation-slug derivation can never drift on
+// the date vocabulary.
 const NAMING_RE = new RegExp(
-  `^(corp-eng|xge)_\\d{4}(-\\d{2}|-q[1-4])?_[a-z0-9-]+_(?:${KINDS.join('|')})(-\\d+)?\\.(sidecar\\.md|[a-z0-9]+)$`,
+  `^(corp-eng|xge)_${CORPUS_DATE_RE_SRC}_[a-z0-9-]+_(?:${KINDS.join('|')})(-\\d+)?\\.(sidecar\\.md|[a-z0-9]+)$`,
 );
 function isNamingCompliant(name) { return NAMING_RE.test(name); }
+
+// org+date prefix of an already-conventional name (proposeName peels it so the
+// date is reused verbatim). Hoisted — CORPUS_DATE_RE_SRC is static.
+const CONVENTIONAL_PREFIX_RE = new RegExp(`^(corp-eng|xge)_(${CORPUS_DATE_RE_SRC})_`, 'i');
 
 function proposeName(group, name) {
   const org = group === 'corp-eng' ? 'corp-eng' : group === 'xge-comms' ? 'xge' : group;
@@ -259,7 +267,7 @@ function proposeName(group, name) {
   // suffix so they are reused verbatim instead of re-slugged into the topic
   let date = null;
   let kind = null;
-  const prefix = base.match(/^(corp-eng|xge)_(\d{4}(?:-(?:\d{2}|q[1-4]))?)_/i);
+  const prefix = base.match(CONVENTIONAL_PREFIX_RE);
   if (prefix) { date = prefix[2].toLowerCase(); base = base.slice(prefix[0].length); }
   const kindTail = base.match(/_([a-z]+(?:-[a-z]+)*)(?:-\d+)?$/i);
   if (kindTail && KINDS.includes(kindTail[1].toLowerCase())) { kind = kindTail[1].toLowerCase(); base = base.slice(0, kindTail.index); }
@@ -561,16 +569,19 @@ async function runCitations(index) {
     driveStatus = ds.driveEnabled?.() ? 'enabled-but-scope-limited' : 'disabled';
   } catch { driveStatus = 'lib-missing'; }
 
-  // citation_slug = the proposed-name topic (stable cite key)
+  // citation_slug = the filename's <topic> token, via the ONE shared helper
+  // the sidecar writer also imports (lib/corpus-citation-slug.mjs). Deriving
+  // it through the proposeName rename path here stripped `outline-` topic
+  // prefixes (its raw-Drive-name cleanup) and drifted 4 slugs from their
+  // sidecars — bug class slug-truncation-contract-drift-writer-verifier-reader.
   const citeable = index.items.filter(i =>
     (i.group === 'corp-eng' || i.group === 'xge-comms') && (i.file_type === 'document' || i.file_type === 'text'));
   const proposals = citeable.map(i => {
-    const marker = i.group === 'corp-eng' ? 'corp-eng' : 'xge-comms';
-    const slug = proposeName(i.group, basename(i.path)).replace(/^[^_]+_[^_]+_/, '').replace(/_[^_]+\.[a-z0-9]+$/, '');
+    const slug = citationSlug(i.path);
     return {
       path: i.path,
-      citation_marker: `[${marker}: ${slug}]`,
-      drive_link: linkMap.links[slug] || i.drive_link || 'TBD',
+      citation_marker: citationMarker(i.group, slug),
+      drive_link: lookupDriveLink(linkMap.links, slug) || i.drive_link || 'TBD',
     };
   });
   const resolved = proposals.filter(p => p.drive_link !== 'TBD').length;

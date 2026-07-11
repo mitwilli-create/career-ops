@@ -28,6 +28,7 @@ import { readdirSync, statSync, existsSync, writeFileSync, readFileSync } from '
 import { join, dirname, basename, extname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { citationSlug, citationSource, citationMarker, lookupDriveLink, CORPUS_DATE_RE_SRC } from '../../lib/corpus-citation-slug.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..', '..');
@@ -45,6 +46,9 @@ const DUMPS = [
 
 const TEXT_EXTS = new Set(['md', 'txt', 'srt']);
 const DOC_EXTS = new Set(['docx', 'doc', 'pdf']);
+// underscore-delimited date token in a conventional filename — shared date
+// vocabulary; hoisted since CORPUS_DATE_RE_SRC is static.
+const DATE_TOKEN_RE = new RegExp(`_(${CORPUS_DATE_RE_SRC})_`);
 function log(s) { process.stderr.write(s + '\n'); }
 
 function walk(dir, acc = []) {
@@ -87,10 +91,6 @@ function inferArchetypes(org, name) {
   if (/recognition|impact|promo/.test(n)) return ['B'];
   return ['B', 'A2-PgM'];
 }
-function citationSlug(name) {
-  return basename(name, extname(name)).replace(/^[^_]+_[^_]+_/, '').replace(/_[^_]+$/, '') || basename(name, extname(name));
-}
-
 let callCouncil = null;
 async function getCouncil() {
   if (callCouncil || NO_LLM) return callCouncil;
@@ -150,8 +150,8 @@ async function main() {
       const kind = inferKind(name);
       const tags = inferArchetypes(org, name);
       const slug = citationSlug(name);
-      const marker = org === 'xge' ? 'xge-comms' : 'corp-eng';
-      const dateM = name.match(/_(\d{4}(?:-\d{2}|-q[1-4])?)_/);
+      const marker = citationSource(org);
+      const dateM = name.match(DATE_TOKEN_RE);
       const fm = [
         '---',
         `source: ${marker}`,
@@ -160,8 +160,8 @@ async function main() {
         `kind: ${kind}`,
         `archetype_tags: [${tags.join(', ')}]`,
         `citation_slug: ${slug}`,
-        `citation_marker: "[${marker}: ${slug}]"`,
-        `drive_link: ${driveLinks[slug] || 'TBD'}`,
+        `citation_marker: "${citationMarker(org, slug)}"`,
+        `drive_link: ${lookupDriveLink(driveLinks, slug) || 'TBD'}`,
         `artifact: ${JSON.stringify(relative(ROOT, f))}`,
         `title: ${JSON.stringify(name.replace(/_/g, ' '))}`,
         `summary: ${JSON.stringify(summary)}`,

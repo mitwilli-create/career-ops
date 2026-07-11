@@ -722,3 +722,22 @@ data/prompt-remote-ai-company-sweep-*.md
 
 # Self-hosted Healthchecks secret (convergence Phase 0, 2026-07-07)
 infra/healthchecks/.env.hc
+
+# --- public-release hygiene (2026-07-10 history purge) ---
+# personal-data paths that were removed from history; ignore so they can never re-enter
+.claude/audit/
+.claude/knowledge/career-ops/
+dashboard/stories/
+data/archive/
+data/cv-archives/
+data/human-examples/
+data/tracker-archives/
+data/role-enrichment/
+interview-prep/
+batch/triage-advance.tsv
+batch/triage-benchmark.tsv
+batch/daily-quota.json
+batch/triage-prompt.md
+dashboard/assets/demo/
+data/dispatch/forecast-templates.json
+reusable-prompt-*.md

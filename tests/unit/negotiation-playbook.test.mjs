@@ -11,11 +11,11 @@ import {
 
 // ─── Constants verification ───────────────────────────────────────────────────
 
-test('calibration constants match brief 2026-05-16', () => {
-  assert.equal(FLOOR_BASE, 175_000, 'floor base is $110K');
-  assert.equal(TARGET_TC_LOW, 250_000, 'target TC low is $250K');
-  assert.equal(TARGET_TC_HIGH, 320_000, 'target TC high is $240K');
-  assert.equal(AUTO_ACTIVATE_THRESHOLD, 300_000, 'auto-activate at $300K');
+test('example default constants are wired', () => {
+  assert.equal(FLOOR_BASE, 150_000, 'floor base example default');
+  assert.equal(TARGET_TC_LOW, 200_000, 'target TC low example default');
+  assert.equal(TARGET_TC_HIGH, 275_000, 'target TC high example default');
+  assert.equal(AUTO_ACTIVATE_THRESHOLD, 250_000, 'auto-activate example default');
 });
 
 // ─── getNegotiationPlaybook: activation logic ─────────────────────────────────
@@ -70,7 +70,7 @@ test('walk_away script always references $110K floor', () => {
   const result = getNegotiationPlaybook({ offer_total: 300_000, stage: 'series-c' });
   const baseScript = result.scripts.find(s => s.scenario === 'base_counter_anchor');
   assert.ok(baseScript, 'base_counter_anchor script exists');
-  assert.ok(baseScript.walk_away.includes('$110K'), 'walk_away references floor');
+  assert.ok(baseScript.walk_away.includes('150,000') || baseScript.walk_away.includes('$150K'), 'walk_away references floor');
 });
 
 test('expected_uplift is positive and p90 >= p50', () => {
@@ -87,9 +87,9 @@ test('expected_uplift is positive and p90 >= p50', () => {
 test('talking_points include floor and target range', () => {
   const result = getNegotiationPlaybook({ offer_total: 310_000, stage: 'series-c', ai_native: true });
   const tpText = result.talking_points.join(' ');
-  assert.ok(tpText.includes('$110K'), 'talking points mention floor');
-  assert.ok(tpText.includes('$250K') || tpText.includes('250'), 'talking points mention target low');
-  assert.ok(tpText.includes('$240K') || tpText.includes('320'), 'talking points mention target high');
+  assert.ok(tpText.includes('150,000') || tpText.includes('$150K'), 'talking points mention floor');
+  assert.ok(tpText.includes('200,000') || tpText.includes('200'), 'talking points mention target low');
+  assert.ok(tpText.includes('275,000') || tpText.includes('275'), 'talking points mention target high');
 });
 
 test('throws on invalid offer_total', () => {

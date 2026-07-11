@@ -42,13 +42,13 @@ describe('applyWealthLens — deterministic mode', () => {
     assert.ok(result.ceiling_estimate > 300_000, 'pre-IPO ceiling should be >300K');
   });
 
-  test('wealth-misaligned: base below absolute walk-line $110K', async () => {
+  test('wealth-misaligned: base below absolute walk-line', async () => {
     const result = await applyWealthLens(
-      { base: 150_000 },
+      { base: 120_000 },
       { company: 'SomeStartup' },
     );
     assert.equal(result.signal, 'wealth-misaligned');
-    assert.ok(result.why.includes('175,000') || result.why.includes('walk-line'), 'why should mention walk-line');
+    assert.ok(result.why.includes('150,000') || result.why.includes('walk-line'), 'why should mention walk-line');
   });
 
   test('wealth-mixed: equity undisclosed at pre-IPO AI-native company', async () => {
@@ -60,9 +60,9 @@ describe('applyWealthLens — deterministic mode', () => {
     assert.ok(result.why.toLowerCase().includes('undisclosed'), 'why should mention undisclosed');
   });
 
-  test('wealth-misaligned: TC below $250K target, no pre-IPO upside', async () => {
+  test('wealth-misaligned: TC below target, no pre-IPO upside', async () => {
     const result = await applyWealthLens(
-      { base: 190_000, equity_annual_vest: 20_000 },
+      { base: 160_000, equity_annual_vest: 20_000 },
       { company: 'MaturePublicCorp', ai_native: false, pre_ipo: false },
     );
     assert.equal(result.signal, 'wealth-misaligned');

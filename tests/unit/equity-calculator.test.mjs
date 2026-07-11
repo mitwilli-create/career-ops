@@ -128,9 +128,9 @@ test('computeEquityForRole: returns equity + assumptions', () => {
     series: 'series-c',
   });
   assert.ok(equity && typeof equity.exit_value_post_tax === 'number');
-  assert.equal(assumptions.floor_base, 175_000, 'floor_base is $110K per calibration brief');
-  assert.equal(assumptions.target_tc_low, 250_000, 'target_tc_low is $250K');
-  assert.equal(assumptions.target_tc_high, 320_000, 'target_tc_high is $240K');
+  assert.equal(assumptions.floor_base, 150_000, 'floor_base example default');
+  assert.equal(assumptions.target_tc_low, 200_000, 'target_tc_low example default');
+  assert.equal(assumptions.target_tc_high, 275_000, 'target_tc_high example default');
   assert.equal(assumptions.series, 'series-c');
 });
 

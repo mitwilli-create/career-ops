@@ -467,7 +467,7 @@ function renderPrompt({ date, questions, brief, applications, pipeline }) {
     promptBody.push('- **Most recent calibration brief:** none on file.');
   }
   promptBody.push('- **Target archetypes (priority order):** AI Program Manager > AI Solutions Architect > Forward Deployed Engineer > AI Enablement Lead > Engineering Editorial Lead (bridge role only).');
-  promptBody.push('- **Comp target:** $250-320K TC; floor $110K base; pre-IPO Series C+ only.');
+  promptBody.push('- **Comp target:** configure your own TC range, base floor, and stage filter here.');
   promptBody.push('- **Geography:** Seattle (current) > West Coast metros > Dallas/Chicago > NYC > international.');
   promptBody.push('- **Transition constraint:** Mitchell needs an offer in hand before leaving Google. (The legacy "<3-month runway" framing of this constraint was retired 2026-05-25; the underlying requirement — secure-offer-first — is unchanged.)');
   promptBody.push('');

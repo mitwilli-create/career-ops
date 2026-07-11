@@ -1172,7 +1172,7 @@ function serverColBadge(parsed, locationRaw) {
 
 // Render the Base Salary table cell. Color tiers (Mitchell's targets):
 //   ≥ targetMin (default $130K) — green
-//   ≥ floor (default $110K) — amber
+//   ≥ floor (configured) — amber
 //   <  floor — red
 //   no data — grey em-dash
 function renderBaseCell(reportPath, floors, locationRaw, company, role) {

@@ -48,7 +48,7 @@
 | Data Point | Value | Source |
 |------------|-------|--------|
 | Base salary range | $180-220K | Levels.fyi, similar AI infra roles |
-| Total comp (with equity) | $250-320K | Glassdoor estimates |
+| Total comp (with equity) | $210-280K | Glassdoor estimates |
 | Demand trend | High -- LLM infra is top-5 most in-demand | LinkedIn job trends |
 
 ## E) Personalization Plan

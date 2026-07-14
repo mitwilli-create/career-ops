@@ -11,7 +11,9 @@ I forked career-ops in April 2026 because I needed a production-grade workflow f
 
 ## The system, live (captured 2026-07-10)
 
-<!-- demo-video: Loom walkthrough goes here (recording 2026-07-11) -->
+[![career-ops dashboard walkthrough, two minutes, narrated](docs/career-ops-demo-preview.gif)](https://thestorytellermitch.com/career-ops)
+
+*A two-minute narrated walkthrough of the dashboard. [Watch the full video](https://thestorytellermitch.com/career-ops) on the case-study page. Produced with [PictureLock](https://thestorytellermitch.com/picture-lock); the voice is cloned with consent, the camera and callouts are composited in code, and it runs on a scrubbed demo dataset, so every company on screen is invented and everything else is real.*
 
 ![The career-ops dashboard, live: 117 companies tracked, 11,692 postings scanned, 298 evaluations live in the tracker, 12 roles ready to apply](docs/screenshots/dashboard-live-20260710.png)
 

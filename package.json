@@ -70,7 +70,7 @@
     "mailparser": "^3.9.8",
     "marked": "^18.0.6",
     "mjml": "^5.2.1",
-    "nodemailer": "^8.0.7",
+    "nodemailer": "^9.0.3",
     "playwright": "^1.61.1",
     "sqlite-vec": "^0.1.9",
     "zod": "^4.4.3"

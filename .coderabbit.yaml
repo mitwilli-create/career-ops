@@ -4,8 +4,15 @@ reviews:
   request_changes_workflow: false
   high_level_summary: true
   poem: false
+  # The QA contract says no hosted reviewer may run from a trigger, hook, scheduler, CI job,
+  # pull request comment or unattended loop, and that CodeRabbit is a manual fallback that
+  # needs a named per-run approval for a specific pull request. auto_review is exactly the
+  # trigger that contract forbids, and it fired on this pull request without being asked.
+  # The same setting was turned off in the working repository and never carried over here.
+  # Turning this off does not remove CodeRabbit. A human can still request one review on
+  # demand by commenting `@coderabbitai review` on a pull request, which is the approved shape.
   auto_review:
-    enabled: true
+    enabled: false
     drafts: false
     base_branches:
       - main

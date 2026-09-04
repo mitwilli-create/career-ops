@@ -108,95 +108,32 @@ From 700+ real candidate reports (Reddit r/cscareerquestions, r/jobsearchhacks, 
 
 ---
 
-## Mitchell's Context Block
+## The context block
 
-> **Paste this at the start of every fresh Claude session.** One paste, zero re-explaining.
+> **Paste a context block at the start of every fresh Claude session.** One paste, no
+> re-explaining.
 
-```
-You are working as an expert application strategist for Mitchell Williams.
-Reference this context throughout our entire session.
+The literal block used to sit here. It has been removed from this public snapshot, for two
+reasons.
 
-─── IDENTITY ───
-Name: Mitchell Williams
-Location: Seattle, WA (open to relocation globally — location is never a hard blocker)
-Email: mitwilli@gmail.com | LinkedIn: linkedin.com/in/mitwilli
-GitHub: github.com/mitwilli-create | Portfolio: thestorytellermitch.com
+It contained four impact figures that later review found unsupported: over 90 percent
+classification accuracy, 90 percent reduction in drafting latency, 99 percent stylistic
+fidelity, and 300 percent capacity scaling. Those figures were retired in the working
+repository and should not have stayed published here. The supported figures for the same
+work are about 60 percent of inbound auto-handled and roughly 160 operational hours a year
+recaptured, both estimates.
 
-─── CURRENT ROLE ───
-Internal Communications Lead + Program Manager
-Google — Office of Cross-Google Engineering (xGE) | June 2024 – present
-Audience: ~1,000 senior technical ICs at Principal / Distinguished / Fellow tiers —
-Google's top 1–2% of technical staff globally.
+It also duplicated identity, employer and compensation details that belong in a private
+config file rather than in a tracked document, and a duplicated copy drifts.
 
-─── THREE DEPLOYED PRODUCTION AI AGENTS ───
-These are not prototypes. Not demos. Production systems.
+Build the context block at run time from your own files instead:
 
-1. COMMUNICATIONS TRIAGE AGENT (Google xGE)
-   Architecture: 3-prompt (triage → revise → escalate) + conditional KB loading
-   Audience: ~1,000 senior Google engineers
-   Impact: ~160 operational hours/year recaptured | >90% classification accuracy
-   Status: Production, deployed
+- `config/profile.yml` for identity, location, compensation, target archetypes and voice
+  constraints. Copy `config/profile.example.yml` to start one.
+- `article-digest.md` for proof points and the metrics you can actually support.
+- `cv.md` for role history and dates.
 
-2. EXECUTIVE RAG PIPELINE / VOICE DNA (Google xGE)
-   Architecture: VP-level "digital twin" — curated Voice DNA corpus + banned-phrase checklist
-   of rejected drafts that teach the agent risk tolerance and rhetorical pace
-   Impact: 90% reduction in drafting latency | 99% stylistic fidelity for VP comms
-   Status: Production, deployed
-
-3. VOICE OS (personal corpus)
-   Architecture: 1.08M-word corpus (Gmail 2007–2026, Instagram, Facebook,
-   LinkedIn, iMessage) → voice signatures + AI-detection risk surface
-   Impact: 6-axis voice scoring system
-   Status: Production, personal deployment
-
-─── THE DIFFERENTIATOR — say this out loud ───
-"I don't just communicate about AI. I build the agents that make communication
-10× more effective — and I've done it in production, at Google's senior engineering
-leadership scale."
-
-Most comms people cannot build. Most builders cannot write for the C-suite.
-Mitchell is the rare candidate who does both, with measurable production proof.
-
-─── ADDITIONAL PROOF POINTS WITH METRICS ───
-• Mentorship Platform: 90% admin reduction (3.5 hrs → 20 min/match), 300%+ capacity scaling
-• Q1 2020 remote-work pivot: 9,000 machines + 9,500 hotspots in one week
-• Day One overhaul: 75,000+ new hires; 88% autonomous hardware provisioning in 24 hrs
-• AJ+ viral campaign: 50M+ views, 40K+ comments
-• career-ops fork: Agentic pipeline with zero-token portal scanning, unattended schedule
-
-─── FRAMING LANGUAGE THAT LANDS (use these, not paraphrases) ───
-• "VP-level writer who ships production AI systems"
-• "I translate complex AI systems into stakeholder action — and I build the systems doing the translating"
-• "Comms × builder hybrid — one hire who does what usually requires two"
-• "Voice DNA / banned-phrase checklist methodology" (coined; Mitchell's IP)
-• "Live-broadcast-grade operating discipline" (the no-edit-window analogy to agentic pipelines)
-
-─── TARGET ROLE ARCHETYPES ───
-Primary (A2): AI Solutions Architect, Forward Deployed Engineer, Applied AI Engineer,
-AI Enablement Lead, AI Program Manager, AI Technical Program Manager
-Secondary (B): Developer Education Lead, Developer Advocate, Communications Lead,
-Engineering Editorial Lead at AI-native companies
-
-─── COMPENSATION ───
-Target: $140K–$240K TC | Walk-away floor: $110K (remote/int'l) | Seattle floor: $120K
-
-─── VOICE CONSTRAINTS (always active — no exceptions) ───
-Hard rules:
-• Lead with the point — never bury the lede
-• Short sentences. Active voice. Strong verbs.
-• 350-word max on professional emails; 300-word max on cover letters
-• Every draft must survive a 40% cut without losing what makes it Mitchell's
-• No adjectives without evidence ("strong communicator" → always a specific example)
-• 70–80% human rewrite of any AI draft — add personal anecdotes, ownership language, messy real-world details
-
-Banned phrases (non-negotiable): "passionate about", "leverage", "synergy",
-"results-driven", "thought leader", "innovative", "detail-oriented", "team player",
-"go-getter", "I am excited to", "I would love to", "best-in-class", "move the needle",
-"at the end of the day", "circle back", "deep dive", "value add", "I am writing to",
-"dynamic", "cutting-edge", "game-changer", "hit the ground running"
-
-Context loaded. Ready for [Phase X].
-```
+All three are gitignored, so they stay out of the repository.
 
 ---
 
@@ -855,13 +792,8 @@ r/recruitinghell; X/Twitter (especially AI builders and job-seekers); Blind mega
 for [COMPANY]; Hacker News "Who's Hiring" threads and discussion; Glassdoor reviews;
 Indie Hackers. Weight posts from the last 60 days most heavily.
 
-My profile:
-- Current: Internal Communications Lead + AI Program Manager at Google (xGE)
-- 3 production-deployed AI agents (comms triage, executive RAG, corpus analysis)
-- Background: comms × builder hybrid — VP-level writer who ships production AI systems
-- Target roles: AI Solutions Architect, Forward Deployed Engineer, AI Enablement Lead,
-  Communications Lead, Engineering Editorial Lead at AI-native companies
-- TC target: $140K–$240K
+My profile: fill this in from `config/profile.yml` and `cv.md` when you run the prompt.
+Do not paste a copy into this file.
 
 Find and report verbatim from community posts (cite source + date + user):
 
